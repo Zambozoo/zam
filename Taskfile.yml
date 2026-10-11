@@ -46,3 +46,20 @@ tasks:
       - make -C internal/5_build/runtime
       - cmd: ./internal/5_build/runtime/bin/zam {{.CLI_ARGS}}
         ignore_error: true
+
+  hashes:
+    desc: "Fetch Homebrew and Scoop SHA256 hashes for a release (usage: task hashes VERSION=v0.1.0)"
+    cmds:
+      - |
+        if [ -z "{{.VERSION}}" ]; then
+          echo "Error: Please provide a version. Example: task hashes VERSION=v0.1.0"
+          exit 1
+        fi
+        echo "=== Homebrew Source Tarball Hash ({{.VERSION}}) ==="
+        curl -sL https://github.com/Zambozoo/zam/archive/refs/tags/{{.VERSION}}.tar.gz | shasum -a 256
+        
+        echo -e "\n=== Scoop Windows AMD64 Zip Hash ({{.VERSION}}) ==="
+        curl -sL https://github.com/Zambozoo/zam/releases/download/{{.VERSION}}/zam-{{.VERSION}}-windows-amd64.zip | shasum -a 256
+        
+        echo -e "\n=== Scoop Windows ARM64 Zip Hash ({{.VERSION}}) ==="
+        curl -sL https://github.com/Zambozoo/zam/releases/download/{{.VERSION}}/zam-{{.VERSION}}-windows-arm64.zip | shasum -a 256
