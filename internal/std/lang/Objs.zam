@@ -1,0 +1,13 @@
+import "Obj.zam";
+
+namespace Objs {
+    // Mark the object, ignoring o.Mark and it's fields
+    static fun void(Obj*) Mark = (o) {
+        native(STD_MARK_OVERRIDE){void(Obj*)}(o);
+    }
+
+    // Delete the object from the GC chain, ignoring o.Delete
+    static fun void(Obj*) Delete = (o) {
+        native(STD_DELETE_OVERRIDE){void(Obj*)}(o);
+    }
+}

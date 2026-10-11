@@ -1,0 +1,2 @@
+// Array-based min max heap
+class ArrHeap[A] {}

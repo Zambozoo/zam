@@ -1,0 +1,19 @@
+import "../io/local/File.zam";
+import "Strs.zam";
+
+namespace System {
+    fun void(int) Exit = (code) {
+        native(STD_SYSTEM_EXIT){void(int)}(code);
+    }
+
+    fun void(str) Panic = (s) {
+        type(File).StdErr.WriteStr(s);
+        type(System).Exit(-1);
+    }
+
+    fun void(str, any...) Panicf = (fmt, args) {
+        var str s = type(Strs).Sprintf(fmt, args);
+        type(File).StdErr.WriteStr(s);
+        type(System).Exit(-1);
+    }
+}

@@ -1,0 +1,6 @@
+namespace Rand {
+    fun uint() Uint = () {
+        // native call
+        return 0U;
+    }
+}

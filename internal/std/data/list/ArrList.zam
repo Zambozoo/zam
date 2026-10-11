@@ -1,0 +1,282 @@
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arrs.zam";
+import "../../lang/Arr.zam";
+
+// Circularly buffered array-based list
+class ArrList[A] {
+    var A* arr;
+    var uint start;
+    var uint len;
+    var uint cap;
+
+    static fun[A] ArrList[A]*(uint, A...) New = (len, args) {
+        return type(ArrList)[A].NewWithCap(len, len, args...);
+    }
+
+    fun void(uint, A...) Init = (len, args) {
+        this.InitWithCap(len, len, args...);
+    }
+
+    static fun[A] ArrList[A]*(uint, uint, A...) NewWithCap = (cap, len, args) {
+        var ArrList[A]* a = new(ArrList[A]);
+        a.InitWithCap(cap, len, args...);
+        return a;
+    }
+
+    fun void(uint, uint, A...) InitWithCap = (cap, len, args) {
+        if(cap < len) {
+            cap = len;
+        }
+        this.arr = new(A, cap);
+        this.cap = cap;
+        this.len = len;
+        this.start = cap / 4U;
+        for(var uint i = 0U; i < len; i++) {
+            this.arr[(this.start + i) % cap] = args[i];
+        }
+    }
+
+    private fun void() grow = () {
+        var uint newCap = this.cap * 2U;
+        if(newCap == 0U) {
+            newCap = 1U;
+        }
+        var uint newStart = newCap / 4U;
+        var A* a = new(A, newCap);
+        if(this.start + this.len <= this.cap) {
+            type(Arrs)[A].Copy(this.len, this.arr + this.start, a + newStart);
+        } else {
+            var uint firstCount = this.cap - this.start;
+            type(Arrs)[A].Copy(firstCount, this.arr + this.start, a + newStart);
+            type(Arrs)[A].Copy(this.len - firstCount, this.arr, a + newStart + firstCount);
+        }
+        free(this.arr);
+        this.arr = a;
+        this.cap = newCap;
+        this.start = newStart;
+    }
+
+    fun A() GetFirst = () {
+        if(this.len == 0U) {
+            type(System).Panic("Arr out of bounds");
+        }
+        return this.arr[this.start];
+    }
+
+    fun A() GetLast = () {
+        if(this.len == 0U) {
+            type(System).Panic("Arr out of bounds");
+        }
+        return this.arr[(this.start + this.len - 1U) % this.cap];
+    }
+
+    fun A(uint) Get = (i) {
+        if(i >= this.len) {
+            type(System).Panic("Arr out of bounds");
+        }
+        return this.arr[(this.start + i) % this.cap];
+    }
+
+    fun A(A) SetFirst = (v) {
+        if(this.len == 0U) {
+            type(System).Panic("Arr out of bounds");
+        }
+        var A old = this.arr[this.start];
+        this.arr[this.start] = v;
+        return old;
+    }
+
+    fun A(A) SetLast = (v) {
+        if(this.len == 0U) {
+            type(System).Panic("Arr out of bounds");
+        }
+        var uint p = (this.start + this.len - 1U) % this.cap;
+        var A old = this.arr[p];
+        this.arr[p] = v;
+        return old;
+    }
+
+    fun A(uint, A) Set = (i, v) {
+        if(i >= this.len) {
+            type(System).Panic("Arr out of bounds");
+        }
+        var uint p = (this.start + i) % this.cap;
+        var A old = this.arr[p];
+        this.arr[p] = v;
+        return old;
+    }
+
+    fun void(A) AddFirst = (v) {
+        if(this.len == this.cap) {
+            this.grow();
+        }
+        this.start = (this.start + this.cap - 1U) % this.cap;
+        this.arr[this.start] = v;
+        this.len++;
+    }
+
+    fun void(A) AddLast = (v) {
+        if(this.len == this.cap) {
+            this.grow();
+        }
+        this.arr[(this.start + this.len) % this.cap] = v;
+        this.len++;
+    }
+
+    fun void(uint, A) Add = (i, v) {
+        if(i > this.len) {
+            type(System).Panic("Arr out of bounds");
+        } else if(i == this.len) {
+            return this.AddLast(v);
+        } else if(i == 0U) {
+            return this.AddFirst(v);
+        }
+
+        if(this.len == this.cap) {
+            this.grow();
+        }
+
+        var uint srcPhys = (this.start + i) % this.cap;
+        var uint dstPhys = (this.start + i + 1U) % this.cap;
+        var uint count = this.len - i;
+        if(srcPhys + count <= this.cap && dstPhys + count <= this.cap) {
+            type(Arrs)[A].Copy(count, this.arr + srcPhys, this.arr + dstPhys);
+        } else {
+            for(var uint j = this.len; j > i; j--) {
+                this.arr[(this.start + j) % this.cap] = this.arr[(this.start + j - 1U) % this.cap];
+            }
+        }
+        this.arr[(this.start + i) % this.cap] = v;
+        this.len++;
+    }
+
+    fun A() RemoveFirst = () {
+        if(this.len == 0U) {
+            type(System).Panic("Arr out of bounds");
+        }
+        var A old = this.arr[this.start];
+        this.start = (this.start + 1U) % this.cap;
+        this.len--;
+        return old;
+    }
+
+    fun A() RemoveLast = () {
+        if(this.len == 0U) {
+            type(System).Panic("Arr out of bounds");
+        }
+        this.len--;
+        return this.arr[(this.start + this.len) % this.cap];
+    }
+
+    fun A(uint) Remove = (i) {
+        if(i >= this.len) {
+            type(System).Panic("Arr out of bounds");
+        }
+        var A old = this.arr[(this.start + i) % this.cap];
+        this.len--;
+
+        var uint srcPhys = (this.start + i + 1U) % this.cap;
+        var uint dstPhys = (this.start + i) % this.cap;
+        var uint count = this.len - i;
+        if(srcPhys + count <= this.cap && dstPhys + count <= this.cap) {
+            type(Arrs)[A].Copy(count, this.arr + srcPhys, this.arr + dstPhys);
+        } else {
+            for(var uint j = i; j < this.len; j++) {
+                this.arr[(this.start + j) % this.cap] = this.arr[(this.start + j + 1U) % this.cap];
+            }
+        }
+        return old;
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+        this.InitWithCap(1U, 0U);
+    }
+
+    fun Arr[A]*() Arr = () {
+        var A* a = new(A, this.len);
+        for(var uint i = 0U; i < this.len; i++) {
+            a[i] = this.arr[(this.start + i) % this.cap];
+        }
+        return type(Arr)[A].New(this.len, a...);
+    }
+
+    fun Iter[A]*() Iter = () {
+        var Iter[A]* i = new(Iter[A]);
+        i.Init(this);
+        return i;
+    }
+
+    fun str() Str = () {
+        var str s = "[";
+        var str spacer = "";
+        for(var uint i = 0U; i < this.len; i++) {
+            s = s + spacer + this.arr[(this.start + i) % this.cap]{str};
+            spacer = ", ";
+        }
+        return s + "]";
+    }
+
+    fun void() Delete = () {
+        for(var uint i = 0U; i < this.len; i++) {
+            var uint p = (this.start + i) % this.cap;
+            if(!(@this.arr[p] <: type(void*))) {
+                // Only clean up raw values
+                delete(&(this.arr[p]));
+            }
+        }
+        free(this.arr);
+    }
+
+    fun void() Mark = () {
+        for(var uint i = 0U; i < this.len; i++) {
+            mark(this.arr[(this.start + i) % this.cap]);
+        }
+    }
+
+    private class Iter[A] {
+        var ArrList[A]* l;
+        var uint i;
+
+        fun void(ArrList[A]*) Init = (l) {
+            this.InitWithIndex(l, 0U);
+        }
+
+        fun void(ArrList[A]*, uint) InitWithIndex = (l, i) {
+            if(i >= l.Len()) {
+                type(System).Panic("Arr out of bounds");
+            }
+            this.l = l;
+            this.i = i;
+        }
+
+        fun Pair[A, bool]() Next = () {
+            var Pair[A, bool] p;
+            if(this.i >= this.l.Len()) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.l.Get(this.i);
+            this.i++;
+            p.second = true;
+            return p;
+        }
+
+        fun Pair[A, bool]() Prev = () {
+            var Pair[A, bool] p;
+            if(this.i == 0U) {
+                p.second = false;
+                return p;
+            }
+            this.i--;
+            p.first = this.l.Get(this.i);
+            p.second = true;
+            return p;
+        }
+    }
+}

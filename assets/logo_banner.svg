@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+    
+    <!-- Black -->
+    <path fill="#0b0b0f" d="M0 0h1280v640H0z"/>
+    
+    <!-- { \ } -->
+    <g transform="rotate(60 325.16 307)">
+        <g dominant-baseline="central" font-family="monospace" font-size="320" font-weight="bold" text-anchor="middle" transform="scale(1 1.1)">
+            <text x="150.7" y="277.3" fill="#0ff">{</text>
+            <text x="296.1" y="281.8" fill="#f0f" transform="scale(1.1 1)">\</text>
+            <text x="500.7" y="277.3" fill="#fc0">}</text>
+        </g>
+    </g>
+
+    <!-- ZAM -->
+    <g dominant-baseline="central" font-family="monospace" font-size="320" font-weight="bold" text-anchor="middle" transform="scale(1 1.1)">
+        <text x="706.7" y="297.3" fill="#0ff">Z</text>
+        <text x="906.7" y="297.3" fill="#f0f">A</text>
+        <text x="1106.7" y="297.3" fill="#fc0">M</text>
+    </g>
+</svg>

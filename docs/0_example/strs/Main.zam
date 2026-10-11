@@ -1,0 +1,16 @@
+import std("io/*");
+import std("Strs.zam");
+
+namespace Main {
+    class Stringed {
+        fun str() Str = () {
+            return "I'm a string";
+        }
+    }
+    
+    static fun void(uint, str...) main = (argC, argV) {
+        var Stringed ss;
+        var str s = type(Strs).Sprintf("%v%d", &ss, 5);
+        type(File).StdOut().WriteStr(s);
+    }
+}

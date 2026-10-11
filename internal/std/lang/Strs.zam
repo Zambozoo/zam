@@ -1,0 +1,100 @@
+import "Pair.zam";
+
+namespace Strs {
+    // ToBytes hands back the str's own bytes and length. The pointer is the
+    // str's own bytes field — a plain cast, no copy, NUL-terminated — so the
+    // caller must not outlive the str; use Strs.FromBytes on the result if
+    // lifetime independence is needed.
+    static fun Pair[byte*, int](str) ToBytes = (s) {
+        var Pair[byte*, int] p;
+        p.first = s{byte*};
+        p.second = type(Strs).ByteLen(s);
+        return p;
+    }
+
+    // FromBytes copies the given byte run into a fresh str allocation. The
+    // caller may free the source buffer immediately after.
+    static fun str(byte*, int) FromBytes = (b, i) {
+        var str s;
+        native(STD_STRS_FROM_BYTES){void(byte*, int, str*)}(b, i, &s);
+        return s;
+    }
+
+    // Chars hands back the str's bytes typed as char* and the number of code
+    // points they decode to. The pointer aliases the str's own bytes — a
+    // plain cast, no copy — so the caller must not outlive the str. Reading a
+    // char through it reads one byte at the char's low eight bits and whatever
+    // follows above them; it is a reinterpretation for the C side rather than a
+    // decoded run.
+    static fun Pair[char*, int](str) Chars = (s) {
+        var Pair[char*, int] p;
+        p.first = s{char*};
+        p.second = type(Strs).CharLen(s);
+        return p;
+    }
+
+    // ToChars encodes a run of code points as a fresh UTF-8 str.
+    static fun str(char*, int) ToChars = (cs, i) {
+        var str s;
+        native(STD_STRS_TO_CHARS){void(char*, int, str*)}(cs, i, &s);
+        return s;
+    }
+
+    // The number of UTF-8 code points in the str.
+    static fun int(str) CharLen = (s) {
+        var int n;
+        native(STD_STRS_CHAR_LEN){void(str, int*)}(s, &n);
+        return n;
+    }
+
+    // The number of bytes in the str.
+    static fun int(str) ByteLen = (s) {
+        var int n;
+        native(STD_STRS_BYTE_LEN){void(str, int*)}(s, &n);
+        return n;
+    }
+
+    // Sprintf renders fmt with the args laid in where its directives sit.
+    // Every directive but %% consumes one arg, which is read as a str through
+    // the usual {str} cast: an any peels to its payload and the payload
+    // formats under its own rules, so a %v is nothing more than the type-
+    // driven cast every value already answers to. A dangling % at the end of
+    // fmt is left as a literal, and a %% is a single literal percent.
+    //
+    // The args' count is not passed with the variadic, so a directive that
+    // reaches past the end of args reads past the array. The format string
+    // is the count there is, as it is for printf everywhere else.
+    static fun str(str, any...) Sprintf = (fmt, args) {
+        var str result = "";
+        var int argIndex = 0;
+        var Pair[byte*, int] fmtBytes = type(Strs).ToBytes(fmt);
+        var byte* b = fmtBytes.first;
+        var int n = fmtBytes.second;
+
+        for (var int i = 0; i < n; ) {
+            if (b[i]{int} != '%'{int}) {
+                var int start = i;
+                for (; i < n; i = i + 1) {
+                    if (b[i]{int} == '%'{int}) {
+                        break;
+                    }
+                }
+                result = result + type(Strs).FromBytes(b + start, i - start);
+            } else {
+                i = i + 1;
+                if (i >= n) {
+                    result = result + "%";
+                } else if (b[i]{int} == '%'{int}) {
+                    result = result + "%";
+                    i = i + 1;
+                } else {
+                    result = result + args[argIndex]{str};
+                    argIndex = argIndex + 1;
+                    i = i + 1;
+                }
+            }
+        }
+
+        return result;
+    }
+}

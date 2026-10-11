@@ -1,0 +1,2 @@
+// Edwards-curve Digital Signature Algorithm
+namespace Ed25519 {}

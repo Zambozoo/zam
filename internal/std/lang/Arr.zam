@@ -1,0 +1,37 @@
+import "System.zam";
+
+class Arr[A] {
+    var A* arr;
+    var uint len;
+
+    static fun[A] Arr[A]*(uint, A...) New = (count, args) {
+        var Arr[A]* a = new(Arr[A]);
+        a.Init(count, args...);
+        return a;
+    }
+
+    fun void(uint, A...) Init = (count, args) {
+        this.len = count;
+        this.arr = args;
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun A(uint) Get = (i) {
+        if(i >= this.len) {
+            type(System).Panic("Arr out of bounds");
+        }
+        return this.arr[i];
+    }
+
+    fun A(uint, A) Set = (i, t) {
+        if(i >= this.len) {
+            type(System).Panic("Arr out of bounds");
+        }
+        var A old = this.arr[i];
+        this.arr[i] = t;
+        return old;
+    }
+}

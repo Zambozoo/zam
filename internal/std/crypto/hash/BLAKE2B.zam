@@ -1,0 +1,2 @@
+// BLAKE2B hashing algorithm
+namespace BLAKE2B {}

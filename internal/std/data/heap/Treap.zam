@@ -1,0 +1,2 @@
+// Probabilistic tree-based min max heap
+class Treap[A] {}

@@ -1,0 +1,45 @@
+import "RWMutex.zam";
+
+class Atomic[A] {
+    var RWMutex m;
+    var A v;
+
+    static fun Atomic[A]*(A) New = (v) {
+        var Atomic[A]* a = new(Atomic[A]);
+        return a.Init(v);
+    }
+
+    fun void(A) Init = (v) {
+        this.m.Init();
+        this.a = v;
+    }
+
+    fun A() Load = () {
+        this.m.RLock();
+        var A v = this.v;
+        this.m.RUnlock();
+        return v;
+    }
+
+    fun A(A) Set = (v) {
+        this.m.Lock();
+        var A old = this.v;
+        this.v = v;
+        this.m.Unlock();
+        return old;
+    }
+
+    fun Pair[A, bool](A, bool(A, A)) Update = (v, f) {
+        this.m.Lock();
+        var Pair[A, bool] p;
+        if(f(this.v, v)) {
+            p.second = true;
+            p.first = this.v;
+            this.v = v;
+        } else {
+            p.second = false;
+        }
+        this.m.Unlock();
+        return p;
+    }
+}

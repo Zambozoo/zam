@@ -1,0 +1,19 @@
+class Semaphore {
+    static fun void(uint) New = (i) {
+        var Semaphore* s = new(Semaphore);
+        s.Init(i);
+        return s;
+    }
+
+    fun void(uint) Init = (i) {
+        // TODO
+    }
+
+    fun void() Wait = () {
+        // TODO
+    }
+
+    fun void() Unlock = () {
+        // TODO
+    }
+}

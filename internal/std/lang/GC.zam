@@ -1,0 +1,9 @@
+namespace GC {
+    fun void() Lock = () {
+        native(STD_GC_LOCK){void()}();
+    }
+
+    fun void() Unlock = () {
+        native(STD_GC_UNLOCK){void()}();
+    }
+}

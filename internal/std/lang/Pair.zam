@@ -1,0 +1,4 @@
+class Pair[A, B] {
+    public var A first;
+    public var B second;
+}

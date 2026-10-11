@@ -1,0 +1,2 @@
+// bcrypt a password-hashing function
+namespace BCrypt {}

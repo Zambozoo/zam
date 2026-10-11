@@ -1,0 +1,2 @@
+// Insersion-ordered tree-based min max heap
+class Queap[A] {}

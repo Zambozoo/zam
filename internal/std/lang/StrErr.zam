@@ -1,0 +1,15 @@
+class StrErr {
+    var str msg;
+
+    fun void(str) Init = (msg) {
+        this.msg = msg;
+    }
+
+    fun str() Str = () {
+        return this.msg;
+    }
+
+    fun str() Err = () {
+        return this.msg;
+    }
+}

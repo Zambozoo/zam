@@ -1,0 +1,357 @@
+import "../../lang/GC.zam";
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+
+// Doubly-linked XOR List
+class LinkList[A] {
+    private struct Node[A] {
+        var uint xor;
+        var A val;
+    }
+
+    var uint len;
+    var Node[A]* head;
+    var Node[A]* tail;
+
+    static fun[A] LinkList[A]*(uint, A...) New = (len, args) {
+        var LinkList[A]* l = new(LinkList[A]);
+        l.Init(len, args...);
+        return l;
+    }
+
+    fun void(uint, A...) Init = (len, args) {
+        this.len = len;
+        this.head = null;
+
+        var Node[A]* prev = null;
+        for(var uint i = 0U; i < len; i++) {
+            var Node[A]* cur = new(Node[A]);
+            cur.val = args[i];
+            cur.xor = prev{uint};
+            if(i == 0U) {
+                this.head = cur;
+            } else {
+                prev.xor = prev.xor ^ cur{uint};
+            }
+            prev = cur;
+        }
+
+        this.tail = prev;
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+    }
+
+    fun Node[A]*(uint) getNode = (i) {
+        if(i >= this.len) {
+            type(System).Panic("LinkList out of bounds");
+        }
+
+        var Node[A]* prev = null;
+        var Node[A]* cur = this.head;
+        for(var uint j = 0U; j < i; j++) {
+            var Node[A]* next = (prev{uint} ^ cur.xor){void*}{Node[A]*};
+            prev = cur;
+            cur = next;
+        }
+        return cur;
+    }
+
+    fun A() GetFirst = () {
+        if(this.len == 0U) {
+            type(System).Panic("LinkList out of bounds");
+        }
+        return this.head.val;
+    }
+
+    fun A() GetLast = () {
+        if(this.len == 0U) {
+            type(System).Panic("LinkList out of bounds");
+        }
+        return this.tail.val;
+    }
+
+    fun A(uint) Get = (i) {
+        return this.getNode(i).val;
+    }
+
+    fun A(A) SetFirst = (v) {
+        if(this.len == 0U) {
+            type(System).Panic("LinkList out of bounds");
+        }
+        var A old = this.head.val;
+        this.head.val = v;
+        return old;
+    }
+
+    fun A(A) SetLast = (v) {
+        if(this.len == 0U) {
+            type(System).Panic("LinkList out of bounds");
+        }
+        var A old = this.head.val;
+        this.tail.val = v;
+        return old;
+    }
+    
+    fun A(uint, A) Set = (i, v) {
+        var Node[A]* n = this.getNode(i);
+        var A old = n.val;
+        n.val = v;
+        return old;
+    }
+
+    fun void(A) AddFirst = (v) {
+        var Node[A]* n = new(Node[A]);
+        n.val = v;
+        n.xor = this.head{uint};
+        type(GC).Lock();
+        this.head.xor = this.head.xor ^ n{uint};
+        this.head = n;
+        type(GC).Unlock();
+        this.len++;
+    }
+
+    fun void(A) AddLast = (v) {
+        var Node[A]* n = new(Node[A]);
+        n.val = v;
+        n.xor = this.tail{uint};
+        type(GC).Lock();
+        this.tail.xor = this.tail.xor ^ n{uint};
+        this.tail = n;
+        type(GC).Unlock();
+        this.len++;
+    }
+
+    fun void(uint, A) Add = (i, v) {
+        if(i > this.len) {
+            type(System).Panic("LinkList out of bounds");
+        } else if(i == this.len) {
+            return this.AddLast(v);
+        } else if(i == 0U) {
+            return this.AddFirst(v);
+        }
+
+        var Node[A]* prev = null;
+        var Node[A]* cur = this.head;
+        for(var uint j = 0U; j < i; j++) {
+            var Node[A]* next = (prev{uint} ^ cur.xor){void*}{Node[A]*};
+            prev = cur;
+            cur = next;
+        }
+
+        var Node[A]* n = new(Node[A]);
+        n.val = v;
+        n.xor = prev{uint} ^ cur{uint};
+        type(GC).Lock();
+        prev.xor = prev.xor ^ cur{uint} ^ n{uint};
+        cur.xor = cur.xor ^ prev{uint} ^ n{uint};
+        type(GC).Unlock();
+        this.len++;
+    }
+    
+    fun A() RemoveFirst = () {
+        if(this.len == 0U) {
+            type(System).Panic("LinkList out of bounds");
+        }
+        var Node[A]* oldHead = this.head;
+        var A old = oldHead.val;
+
+        if(this.len == 1U) {
+            this.head = null;
+            this.tail = null;
+        } else {
+            var Node[A]* newHead = (oldHead.xor){void*}{Node[A]*};
+            type(GC).Lock();
+            this.head = newHead;
+            newHead.xor = newHead.xor ^ oldHead{uint};
+            type(GC).Unlock();
+        }
+
+        this.len--;
+        if(!(@oldHead.val <: type(void*))) {
+            // Only clean up raw values
+            delete(&(oldHead.val));
+        }
+        free(oldHead);
+        return old;
+    }
+
+    fun A() RemoveLast = () {
+        if(this.len == 0U) {
+            type(System).Panic("LinkList out of bounds");
+        }
+        var Node[A]* oldTail = this.tail;
+        var A old = oldTail.val;
+
+        if(this.len == 1U) {
+            this.head = null;
+            this.tail = null;
+        } else {
+            var Node[A]* newTail = (oldTail.xor){void*}{Node[A]*};
+            type(GC).Lock();
+            this.tail = newTail;
+            newTail.xor = newTail.xor ^ oldTail{uint};
+            type(GC).Unlock();
+        }
+
+        this.len--;
+        if(!(@oldTail.val <: type(void*))) {
+            // Only clean up raw values
+            delete(&(oldTail.val));
+        }
+        free(oldTail);
+        return old;
+    }
+
+    fun A(uint) Remove = (i) {
+        if(i >= this.len) {
+            type(System).Panic("LinkList out of bounds");
+        } else if(i == 0U) {
+            return this.RemoveFirst();
+        } else if(i == this.len - 1U) {
+            return this.RemoveLast();
+        }
+
+        var Node[A]* prev = null;
+        var Node[A]* cur = this.head;
+        for(var uint j = 0U; j < i; j++) {
+            var Node[A]* nx = (prev{uint} ^ cur.xor){void*}{Node[A]*};
+            prev = cur;
+            cur = nx;
+        }
+        var Node[A]* next = (prev{uint} ^ cur.xor){void*}{Node[A]*};
+        var A old = cur.val;
+
+        type(GC).Lock();
+        prev.xor = prev.xor ^ cur{uint} ^ next{uint};
+        next.xor = next.xor ^ cur{uint} ^ prev{uint};
+        type(GC).Unlock();
+
+        this.len--;
+        if(!(@cur.val <: type(void*))) {
+            // Only clean up raw values
+            delete(&(cur.val));
+        }
+        free(cur);
+        return old;
+    }
+
+    fun Arr[A]*() Arr = () {
+        var A* arr = new(A, this.len);
+        var uint prev = 0U;
+        var uint i = 0U;
+        for(var Node[A]* n = this.head; n != null;) {
+            var Node[A]* next = (prev ^ n.xor){void*}{Node[A]*};
+            prev = n{uint};
+            arr[i] = n.val;
+            n = next;
+            i++;
+        }
+        return type(Arr)[A].New(this.len, arr...);
+    }
+
+    fun Iter[A]*() Iter = () {
+        var Iter[A]* i = new(Iter[A]);
+        i.Init(this);
+        return i;
+    }
+
+    fun str() Str = () {
+        var str s = "[";
+        var str spacer = "";
+        var uint prev = 0U;
+        for(var Node[A]* n = this.head; n != null;) {
+            var Node[A]* next = (prev ^ n.xor){void*}{Node[A]*};
+            prev = n{uint};
+            s = s + spacer + n.val{str};
+            spacer = ", ";
+            n = next;
+        }
+        return s + "]";
+    }
+
+    fun void() Delete = () {
+        var uint prev = 0U;
+        for(var Node[A]* n = this.head; n != null;) {
+            var Node[A]* next = (prev ^ n.xor){void*}{Node[A]*};
+            prev = n{uint};
+            if(!(@n.val <: type(void*))) {
+                // Only clean up raw values
+                delete(&(n.val));
+            }
+            free(n);
+            n = next;
+        }
+        this.len = 0U;
+        this.head = null;
+        this.tail = null;
+    }
+
+    fun void() Mark = () {
+        var uint prev = 0U;
+        for(var Node[A]* n = this.head; n != null;) {
+            var Node[A]* next = (prev ^ n.xor){void*}{Node[A]*};
+            prev = n{uint};
+            mark(n.val);
+            n = next;
+        }
+    }
+
+    private class Iter[A] {
+        var LinkList[A]* l;
+        var Node[A]* prev;
+        var Node[A]* cur;
+
+        fun void(LinkList[A]*) Init = (l) {
+            this.InitWithIndex(l, 0U);
+        }
+
+        fun void(LinkList[A]*, uint) InitWithIndex = (l, i) {
+            if(i >= l.Len()) {
+                type(System).Panic("Arr out of bounds");
+            }
+            this.l = l;
+            this.prev = null;
+            this.cur = l.head;
+            for(var uint j = 0U; j < i; j++) {
+                var Node[A]* next = (this.prev{uint} ^ this.cur.xor){void*}{Node[A]*};
+                this.prev = this.cur;
+                this.cur = next;
+            }
+        }
+
+        fun Pair[A, bool]() Next = () {
+            var Pair[A, bool] p;
+            if(this.cur == null) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.cur.val;
+            p.second = true;
+            var Node[A]* next = (this.prev{uint} ^ this.cur.xor){void*}{Node[A]*};
+            this.prev = this.cur;
+            this.cur = next;
+            return p;
+        }
+
+        fun Pair[A, bool]() Prev = () {
+            var Pair[A, bool] p;
+            if(this.prev == null) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.prev.val;
+            p.second = true;
+            var Node[A]* prevPrev = (this.prev.xor ^ this.cur{uint}){void*}{Node[A]*};
+            this.cur = this.prev;
+            this.prev = prevPrev;
+            return p;
+        }
+    }
+}

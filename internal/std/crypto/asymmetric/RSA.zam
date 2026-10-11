@@ -1,0 +1,2 @@
+// Rivest–Shamir–Adleman Cryptosystem
+namespace RSA {}

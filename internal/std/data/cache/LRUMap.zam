@@ -1,0 +1,1 @@
+class LRUMap[A, B] {}

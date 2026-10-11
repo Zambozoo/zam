@@ -1,0 +1,18 @@
+class Mutex {
+    fun void() RLock = () {
+        // TODO
+    }
+
+
+    fun void() RUnlock = () {
+        // TODO
+    }
+
+    fun void() Lock = () {
+        // TODO
+    }
+    
+    fun void Unlock = () {
+        // TODO
+    }
+}

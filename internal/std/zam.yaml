@@ -1,0 +1,5 @@
+name: "Zam Standard Library"
+version: "0.0.0"
+native:
+  files: ["std.c"]
+dependencies:

@@ -1,0 +1,9 @@
+namespace Arrs {
+    // Copy moves len elements of A from src to dst. The element type goes
+    // across the C boundary as its id so the native asks the image how wide
+    // one A is — a template is not one width — and overlapping ranges inside
+    // the same run are allowed, the native uses memmove.
+    static fun[A] void(uint, A*, A*) Copy = (len, src, dst) {
+        native(STD_ARRS_COPY){void(type, uint, void*, void*)}(type(A), len, src, dst);
+    }
+}

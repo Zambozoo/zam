@@ -1,0 +1,2 @@
+// Message-Digest Algorithm 5
+namespace MD5 {}

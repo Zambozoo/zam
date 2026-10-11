@@ -1,0 +1,108 @@
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "../../lang/Objs.zam";
+
+class File {
+    static private fun File*(int) newWithFD = (fd) {
+        var File* f = new(File);
+        f.fd = fd;
+        return f;
+    }
+
+    static var File*$ StdIn = newWithFD(0);
+    static var File*$ StdOut = newWithFD(1);
+    static var File*$ StdErr = newWithFD(2);
+
+    private var int fd;
+
+    // The POSIX open flags, each exposed as a static method that asks the C
+    // side for its OS-specific integer value. Compose a mode with bitwise `|`:
+    //
+    //     var int mode = type(File).ReadWrite() | type(File).Create();
+    //
+    // The values are OS-specific — Linux and macOS pick different bits for
+    // every flag past the three access modes — so a method call is the only
+    // honest way to spell them from the zam side. A static var cannot be used
+    // because static initializer order is undefined (see memory on
+    // project_static_init_is_ub) and the value depends on a native call.
+    static private fun int(int) flag = (code) {
+        var int v;
+        native(STD_FILE_FLAG){void(int, int*)}(code, &v);
+        return v;
+    }
+    static var int$ ReadOnly  = flag(0);
+    static var int$ WriteOnly = flag(1);
+    static var int$ ReadWrite = flag(2);
+    static var int$ Create    = flag(3);
+    static var int$ Exclusive = flag(4);
+    static var int$ Truncate  = flag(5);
+    static var int$ Append    = flag(6);
+
+    static fun Pair[File*, Err*](str, int) New = (path, mode) {
+        var File* f = new(File);
+        var Pair[File*, Err*] p;
+        p.second = f.Init(path, mode);
+        if (p.second == null) {
+            p.first = f;
+        }
+        return p;
+    }
+
+    fun Err*(str, int) Init = (path, mode) {
+        var str errStr;
+        native(STD_FILE_INIT){void(str, int, int*, str*)}(path, mode, &(this.fd), &errStr);
+        if (errStr != null) {
+            var StrErr* se = new(StrErr);
+            se.Init(errStr);
+            return se;
+        }
+        return null;
+    }
+
+    fun Pair[int, Err*](byte*, int) Write = (buffer, count) {
+        var Pair[int, Err*] p;
+        var str errStr;
+        native(STD_FILE_WRITE){void(int*, byte*, int, int*, str*)}(&(this.fd), buffer, count, &(p.first), &errStr);
+        if (errStr != null) {
+            var StrErr* se = new(StrErr);
+            se.Init(errStr);
+            p.second = se;
+        }
+        return p;
+    }
+
+    fun Pair[int, Err*](str) WriteStr = (s) {
+        var Pair[byte*, int] bytes = type(Strs).ToBytes(s);
+        return this.Write(bytes.first, bytes.second);
+    }
+
+    fun Pair[int, Err*](byte*, int) Read = (buffer, count) {
+        var Pair[int, Err*] p;
+        var str errStr;
+        native(STD_FILE_READ){void(int*, byte*, int, int*, str*)}(&(this.fd), buffer, count, &(p.first), &errStr);
+        if (errStr != null) {
+            var StrErr* se = new(StrErr);
+            se.Init(errStr);
+            p.second = se;
+        }
+        return p;
+    }
+
+    fun Err*() Close = () {
+        var str errStr;
+        native(STD_FILE_CLOSE){void(int*, str*)}(&(this.fd), &errStr);
+        if (errStr != null) {
+            var StrErr* se = new(StrErr);
+            se.Init(errStr);
+            return se;
+        }
+        return null;
+    }
+
+    fun void() Delete = () {
+        this.Close();
+        type(Objs).Delete(this);
+    }
+}

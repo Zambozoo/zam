@@ -1,0 +1,32 @@
+class WaitGroup[A] {
+    static fun[A] WaitGroup[A]() New = () {
+        return NewWithSize(0U);
+    }
+
+    // Max size of 0 means no max size
+    static fun[A] WaitGroup[A](uint) NewWithMaxSize = (i) {
+        var WaitGroup[A]* wg = new(WaitGroup);
+        wg.InitWithMaxSize(i);
+        return wg;
+    }
+
+    fun void() Init = () {
+        this.InitWithMaxSize(0U);
+    }
+
+    fun void(uint) InitWithSize = (i) {
+        // TODO
+    }
+
+    fun void(void()) Do = (f) {
+        // TODO
+    }
+
+    fun void(int) Add = (i) {
+        // TODO
+    }
+
+    fun void() Wait = () {
+        // TODO
+    }
+}

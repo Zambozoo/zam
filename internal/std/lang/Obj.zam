@@ -1,0 +1,29 @@
+abstract Obj {
+    fun bool(Obj*) Eq = (o) {
+        return this{void*} == o{void*};
+    }
+
+    fun int(Obj*) Cmp = (o) {
+        return this{int} <=> o{int};
+    }
+
+    fun int() Hash = () {
+        return this{void*}{int};
+    }
+
+    fun str() Str = () {
+        return "Obj"+this{int}{str};
+    }
+
+    // Mark the object by traversing its fields
+    // Called by mark(o)
+    fun void() Mark = () {
+        native(STD_MARK){void(Obj*)}(this);
+    }
+
+    // Delete the object by removing it from the GC chain
+    // Called by delete(o)
+    fun void() Delete = () {
+        native(STD_DELETE){void(Obj*)}(this);
+    }
+}

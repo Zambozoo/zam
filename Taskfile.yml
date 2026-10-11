@@ -1,0 +1,48 @@
+version: '3'
+
+vars:
+  # Example: task run -- CLI_ARGS="-v -o out path/to/input"
+  CLI_ARGS: ''
+
+tasks:
+  mocks:
+    desc: Regenerate mocks from .mockery.yaml (mockery)
+    cmds:
+      - go run github.com/vektra/mockery/v2@v2.52.2
+
+  run:
+    desc: Run the main program (set CLI_ARGS for flags and the input file)
+    silent: true
+    cmds:
+      # go run prints an extra "exit status 1" line on failure; build + exec avoids it.
+      - mkdir -p bin && go build -o bin/zam ./cmd/
+      - cmd: ./bin/zam {{.CLI_ARGS}}
+        ignore_error: true
+
+  build:
+    desc: Build the Zam binary
+    cmds:
+      - go build -o zam cmd/main.go
+
+  test:
+    desc: Run all tests and print per-function coverage
+    cmds:
+      - go test ./... -count=1 -cover -coverprofile=coverage.out
+      - go tool cover -func=coverage.out
+
+  runtime:
+    desc: Build the C runtime
+    cmds:
+      - make -C internal/5_build/runtime
+
+  runtime:clean:
+    cmds:
+      - make -C internal/5_build/runtime clean
+
+  runtime:run:
+    desc: Run an image through the C runtime (set CLI_ARGS to the image path)
+    silent: true
+    cmds:
+      - make -C internal/5_build/runtime
+      - cmd: ./internal/5_build/runtime/bin/zam {{.CLI_ARGS}}
+        ignore_error: true

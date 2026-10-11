@@ -1,0 +1,32 @@
+import std("io/local/*");
+import std("data/list/*");
+import std("lang/*");
+
+namespace Main {
+    interface Iter[A] {
+        virtual fun Pair[A, bool]() Next;
+    }
+    
+    interface Iterable[A] {
+        virtual fun Iter[A]*() Iter;
+    }
+
+    fun[A] void(Iterable[A]*) Print = (i) {
+        type(File).StdOut.WriteStr(i{str} + "\n");
+        var Iter[A]* iter = i.Iter();
+        for(var Pair[A, bool] p = iter.Next(); p.second; p = iter.Next()) {
+            type(File).StdOut.WriteStr(p.first{str} + "\n");
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Iterable[str]* al = type(ArrList)[str].New(argC, argV...);
+        type(Main)[str].Print(al);
+
+        var Iterable[str]* ll = type(LinkList)[str].New(argC, argV...);
+        type(Main)[str].Print(ll);
+
+        var Iterable[str]* sl = type(SkipList)[str].New(argC, argV...);
+        type(Main)[str].Print(sl);
+    }
+}

@@ -1,0 +1,3 @@
+interface Err {
+    virtual fun str() Err;
+}

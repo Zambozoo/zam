@@ -1,0 +1,2 @@
+// HMAC-based Extract-and-Expand Key Derivation Function
+namespace HKDF {}

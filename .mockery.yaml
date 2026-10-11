@@ -1,0 +1,51 @@
+# Regenerate: `task mocks` or `go generate ./internal/syntax/...`
+issue-845-fix: true
+resolve-type-alias: false
+unroll-variadic: false
+inpackage: true
+
+mockname: "{{lower .Mock}}_{{camelcase .InterfaceName}}"
+filename: "{{lower .Mock}}_{{lower .InterfaceName}}_test.go"
+
+packages:
+  github.com/zambozoo/zam/internal/0_base:
+    interfaces:
+      fileProvider:
+        config:
+          dir: "internal/0_base"
+      client:
+        config:
+          dir: "internal/0_base"
+  github.com/zambozoo/zam/internal/1_command:
+    interfaces:
+      fileProvider:
+        config:
+          dir: "internal/1_command"
+      logger:
+        config:
+          dir: "internal/1_command"
+  github.com/zambozoo/zam/internal/2_syntax:
+    interfaces:
+      fileProvider:
+        config:
+          dir: "internal/2_syntax"
+      runeReader:
+        config:
+          dir: "internal/2_syntax"
+      gitProvider:
+        config:
+          dir: "internal/2_syntax"
+      syntaxParser:
+        config:
+          dir: "internal/2_syntax"
+      lexer:
+        config:
+          dir: "internal/2_syntax"
+  io:
+    interfaces:
+      ReadCloser:
+        config:
+          dir: "internal/2_syntax"
+          outpkg: syntax
+          inpackage: false
+  github.com/zambozoo/zam/internal/3_semantic:

@@ -1,0 +1,7 @@
+import std("io/*");
+
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        type(File).StdOut.WriteStr("Hello World!\n");
+    }
+}

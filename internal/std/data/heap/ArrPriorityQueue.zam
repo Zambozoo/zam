@@ -1,0 +1,2 @@
+// Associative array-based priority deque
+class ArrPriorityQueue[A,B] {}
