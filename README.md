@@ -1,6 +1,6 @@
 # Zam Programming Language
 ![Zam Logo](assets/logo_banner.png)
-Zam is an imperative, multi-pass language featuring imperative interfaces, advanced generics, and user-defined GC hooks and inline struct-hack types.
+Zam is an imperative, multi-pass language featuring imperative interfaces, advanced generics, user-defined GC hooks, and inline struct-hack types.
 
 ```
 import std("io/File.zam");
