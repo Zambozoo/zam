@@ -265,7 +265,7 @@ func ancestorDirs(filePath string) iter.Seq[string] {
 // ProjectFilePath returns the project file path for the given path.
 func (fp *FileProvider) ProjectFilePath(p *Path) (*Path, error) {
 	if IsStdPath(p) {
-		return StdPath(projectFileNameLong), nil
+		return StdPath(projectFileNameShort), nil
 	}
 
 	if !p.InZip() {

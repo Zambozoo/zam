@@ -50,7 +50,7 @@ func TestListCodeFilesOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "B.zam"), []byte(""), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "A.zam"), []byte(""), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yaml"), []byte(""), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yml"), []byte(""), 0o600))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "Deep.zam"), []byte(""), 0o600))
 
@@ -74,7 +74,7 @@ func TestListCodeFilesInsideZip(t *testing.T) {
 	f, err := os.Create(archivePath)
 	require.NoError(t, err)
 	w := zip.NewWriter(f)
-	for _, name := range []string{"src/B.zam", "src/A.zam", "src/sub/Deep.zam", "src/zam.yaml"} {
+	for _, name := range []string{"src/B.zam", "src/A.zam", "src/sub/Deep.zam", "src/zm.yml"} {
 		entry, err := w.Create(name)
 		require.NoError(t, err)
 		_, err = io.WriteString(entry, "")
@@ -94,21 +94,22 @@ func TestListCodeFilesInsideZip(t *testing.T) {
 	assert.Equal(t, []string{"src/A.zam", "src/B.zam"}, inners)
 }
 
-// TestListCodeFilesInStd walks the embedded stdlib under a known subdirectory.
-// std://io is the one subpackage the stdlib ships, so its contents are what
-// pins the std backend without reaching for a file that may be renamed next
-// week; the assertion is a subset so the test does not break on a new file
-// being added beside the ones named here.
+// TestListCodeFilesInStd walks the embedded standard library under a known
+// subdirectory. std://io/local is one of the sub-packages the standard
+// library ships, so its contents are what pins the std backend without
+// reaching for a file that may be renamed next week; the assertion is a
+// subset so the test does not break on a new file being added beside the
+// ones named here.
 func TestListCodeFilesInStd(t *testing.T) {
 	var fileProvider FileProvider
-	children, err := fileProvider.ListCodeFiles(StdPath("io"))
+	children, err := fileProvider.ListCodeFiles(StdPath("io/local"))
 	require.NoError(t, err)
 
 	outers := make(map[string]bool, len(children))
 	for _, child := range children {
 		outers[child.Outer] = true
 	}
-	for _, name := range []string{"std://io/File.zam"} {
+	for _, name := range []string{"std://io/local/File.zam"} {
 		assert.True(t, outers[name], "expected %q in listing, got %v", name, outers)
 	}
 }

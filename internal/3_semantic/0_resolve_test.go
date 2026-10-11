@@ -37,7 +37,7 @@ func validate(t *testing.T, entry string, others map[string]string) []error {
 	t.Helper()
 
 	dir := t.TempDir()
-	writeFile(t, dir, "zam.yaml", "name: \"resolve\"\nversion: \"0.0.0\"\ndependencies:\n")
+	writeFile(t, dir, "zam.yml", "name: \"resolve\"\nversion: \"0.0.0\"\ndependencies:\n")
 	for name, body := range others {
 		writeFile(t, dir, name, body)
 	}

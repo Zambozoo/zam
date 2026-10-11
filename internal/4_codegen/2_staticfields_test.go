@@ -37,7 +37,7 @@ func compileTypes(t *testing.T, body string) (
 	t.Helper()
 
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yaml"),
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yml"),
 		[]byte("name: \"statics\"\nversion: \"0.0.0\"\ndependencies:\n"), 0o600))
 	entry := filepath.Join(dir, "Main.zam")
 	require.NoError(t, os.WriteFile(entry, []byte(body), 0o600))

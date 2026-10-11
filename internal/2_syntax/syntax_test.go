@@ -38,7 +38,7 @@ func writeFile(t *testing.T, dir, name, body string) string {
 
 func writeManifest(t *testing.T, dir string) {
 	t.Helper()
-	writeFile(t, dir, "zam.yaml", "name: \"imports\"\nversion: \"0.0.0\"\ndependencies:\n")
+	writeFile(t, dir, "zam.yml", "name: \"imports\"\nversion: \"0.0.0\"\ndependencies:\n")
 }
 
 // namespaceSource is a file holding nothing but a namespace, so that importing
@@ -291,7 +291,7 @@ func TestNewASTExpandsGlobImportOnDisk(t *testing.T) {
 func TestNewASTExpandsGlobImportFromStd(t *testing.T) {
 	dir := t.TempDir()
 	writeManifest(t, dir)
-	entry := writeFile(t, dir, "Main.zam", "import std(\"io/*\");\n"+mainSource)
+	entry := writeFile(t, dir, "Main.zam", "import std(\"io/local/*\");\n"+mainSource)
 
 	ast, errs := NewAST(
 		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 2},
@@ -303,7 +303,7 @@ func TestNewASTExpandsGlobImportFromStd(t *testing.T) {
 	for _, entry := range ast.CodeFiles.All() {
 		outers[entry.Key.Outer] = true
 	}
-	for _, name := range []string{"std://io/File.zam"} {
+	for _, name := range []string{"std://io/local/File.zam"} {
 		assert.True(t, outers[name], "expected %q in CodeFiles, got %v", name, outers)
 	}
 }
@@ -352,11 +352,11 @@ func TestNewASTRejectsAnAliasedGlobImport(t *testing.T) {
 func TestNewASTResolvesAPackageImportInsideItsDependency(t *testing.T) {
 	dir := t.TempDir()
 	archive := writeArchive(t, dir, "dep.zip", map[string]string{
-		"zam.yaml": "name: \"dep\"\nversion: \"0.0.0\"\ndependencies:\n",
-		"Dep.zam":  namespaceSource("Dep"),
+		"zam.yml": "name: \"dep\"\nversion: \"0.0.0\"\ndependencies:\n",
+		"Dep.zam": namespaceSource("Dep"),
 	})
 
-	writeFile(t, dir, "zam.yaml", "name: \"imports\"\nversion: \"0.0.0\"\n"+
+	writeFile(t, dir, "zam.yml", "name: \"imports\"\nversion: \"0.0.0\"\n"+
 		"dependencies:\n  dep: \"https://example.invalid/dep.zip\"\n")
 	entry := writeFile(t, dir, "Main.zam", "import dep(\"Dep.zam\");\n"+mainSource)
 
