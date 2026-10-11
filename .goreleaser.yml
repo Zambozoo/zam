@@ -24,20 +24,6 @@ archives:
         format: zip
     name_template: "{{ .ProjectName }}-v{{ .Version }}-{{ .Os }}-{{ .Arch }}"
 
-brews:
-  - name: zam
-    repository:
-      owner: Zambozoo
-      name: homebrew-zam
-      token: "{{ .Env.GITHUB_TOKEN }}"
-    directory: Formula
-    homepage: "https://github.com/Zambozoo/zam"
-    description: "The Zam programming language"
-    license: "MIT"
-    conflicts: []
-    test: |
-      assert_match "zam", shell_output("#{bin}/zam --version")
-
 checksum:
   name_template: 'checksums.txt'
 
