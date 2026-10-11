@@ -7,6 +7,7 @@
     <g transform="rotate(60 325.16 307)">
         <g dominant-baseline="central" font-family="monospace" font-size="320" font-weight="bold" text-anchor="middle" transform="scale(1 1.1)">
             <text x="150.7" y="277.3" fill="#0ff">{</text>
+            <!--- y="307.5" -->
             <text x="296.1" y="281.8" fill="#f0f" transform="scale(1.1 1)">\</text>
             <text x="500.7" y="277.3" fill="#fc0">}</text>
         </g>
