@@ -16,4 +16,28 @@ namespace System {
         type(File).StdErr.WriteStr(s);
         type(System).Exit(-1);
     }
+
+    namespace GC {
+        fun void() Lock = () {
+            native(STD_GC_LOCK){void()}();
+        }
+
+        fun void() Unlock = () {
+            native(STD_GC_UNLOCK){void()}();
+        }
+    }
+
+    namespace Signal {
+        fun void(uint, void()) Handle = (sig, f) {
+
+        }
+
+        fun void(uint) Raise = (sig) {
+
+        }
+
+        fun void(uint, uint) Send = (sig, pid) {
+
+        }
+    }
 }

@@ -34,7 +34,7 @@ It'll start with an import, as we need to print to `stdout`.
 To access it, we'll import the standard library `std/io/local/File.zam` file.
 ```go
 // Main.zam
-import std("io/File.zam");
+import std("io/local/File.zam");
 ```
 
 Next, we need the root declaration.
@@ -57,7 +57,7 @@ Meanwhile, the `str...` parameter is the variadic `argV`, or the actual array of
 The `str...` type decays to `str*` inside a method.
 ```go
 // Main.zam
-import std("io/File.zam");
+import std("io/local/File.zam");
 
 namespace Main {
     fun void(uint, str...) main = (_, _) {}
@@ -71,7 +71,7 @@ Next, we'll call its `WriteStr` method with the `"Hello World!"` string argument
 Lastly, we end the statement with a semicolon.
 ```go
 // Main.zam
-import std("io/File.zam");
+import std("io/local/File.zam");
 
 namespace Main {
     fun void(uint, str...) main = (_, _) {
@@ -83,6 +83,6 @@ namespace Main {
 ## Running
 To build the program, run the following from just outside the project directory:
 ```bash
-zam -o helloworld docs/0_example/helloworld/Main.zam
+zam -o helloworld helloworld/Main.zam
 ./helloworld
 ```
