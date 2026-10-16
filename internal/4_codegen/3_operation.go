@@ -1505,6 +1505,12 @@ func (v *operationVisitor) emitStaticMember(f *syntax.FieldMember) error {
 // enum value is an instance lying in its slot rather than a reference to one
 // somewhere else, and it is created the way anything is: from what was written
 // for it, and where nothing was written, from its type.
+//
+// After the default value is in place, the enum constant's ordinal is written
+// into the one-word discriminant at the head of the slot (see
+// [instanceHeaderByteSizeOf] for KindEnum). The runtime's equality instruction
+// reads this word to tell BigEndian from LittleEndian — without it, two
+// member-less enum values would be bitwise identical and compare equal.
 func (v *operationVisitor) emitEnumValue(f *syntax.FieldEnum) error {
 	enum := f.OuterDecl().(*syntax.DeclEnum)
 	enumType := enum.DeclType()
@@ -1514,6 +1520,24 @@ func (v *operationVisitor) emitEnumValue(f *syntax.FieldEnum) error {
 	v.emitPushTypeID(enumType)
 	v.emitDefaultValue(enumType)
 	v.emitPushTypeID(enumType)
+	v.emit(OpStore)
+	v.emitPopLocation()
+
+	// Stamp the discriminant. The slot is reinterpreted as a uint for this
+	// store so the ordinal lands at offset zero, where equalValues reads it.
+	ordinal := uint64(0)
+	for _, sf := range enum.StaticFields() {
+		if sf == f {
+			break
+		}
+		if _, ok := sf.(*syntax.FieldEnum); ok {
+			ordinal++
+		}
+	}
+	v.emitPushStaticSlot(*f.Index(), syntax.TypeUint)
+	v.emitPushTypeID(syntax.TypeUint)
+	v.emitPushWords(ordinal)
+	v.emitPushTypeID(syntax.TypeUint)
 	v.emit(OpStore)
 	v.emitPopLocation()
 

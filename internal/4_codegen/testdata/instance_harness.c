@@ -92,6 +92,11 @@ static void headerDump(void) {
     // to hold a kind in. It is reported here so the compiler's own rule can be
     // held to it beside the four that are.
     put("tailedStructHeaderBytes", ZAMTAILED_STRUCT_HEADER_BYTES);
+    // An enum's one-word discriminant, which lives at the head of every enum
+    // value so two member-less values of the same enum are distinguishable at
+    // all. See instanceHeaderByteSizeOf for KindEnum on the compiler side and
+    // inlineValueHeaderBytes / memberHeaderBytes in the runtime.
+    put("enumHeaderBytes", ZAMWORD_BYTES);
 
    ZamWord buffer[8];
     memset(buffer, 0, sizeof(buffer));

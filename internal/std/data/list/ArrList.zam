@@ -223,13 +223,6 @@ class ArrList[A] {
     }
 
     fun void() Delete = () {
-        for(var uint i = 0U; i < this.len; i++) {
-            var uint p = (this.start + i) % this.cap;
-            if(!(@this.arr[p] <: type(void*))) {
-                // Only clean up raw values
-                delete(&(this.arr[p]));
-            }
-        }
         free(this.arr);
     }
 
@@ -248,7 +241,7 @@ class ArrList[A] {
         }
 
         fun void(ArrList[A]*, uint) InitWithIndex = (l, i) {
-            if(i >= l.Len()) {
+            if(i > l.Len()) {
                 type(System).Panic("Arr out of bounds");
             }
             this.l = l;

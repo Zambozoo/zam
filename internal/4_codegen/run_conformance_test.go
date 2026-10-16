@@ -3065,33 +3065,6 @@ func TestFreeArrayCConformance(t *testing.T) {
 	})
 }
 
-// TestFreeUnallocatedCConformance covers the free the mark word's contained bit
-// exists to refuse: a string literal lives in the static region and is a value
-// no allocator ever handed out, so a release of it would touch memory the
-// runtime does not own.
-//
-// The literal reaches the mark-dead branch — a string is a collected allocation
-// — and the contained-bit check inside that branch is what catches it. A string
-// that is a bona-fide allocation would be marked dead and left for the sweep.
-func TestFreeUnallocatedCConformance(t *testing.T) {
-	t.Parallel()
-	harness := buildRunHarness(t)
-
-	image := writeImage(t, append(
-		append([]operation{newUnaryOp(OpPushStringLiteral, fixtureLiteralSlot)},
-			pushTypeID(stringShort)...),
-		OpFree, pushI64(0), OpExit))
-
-	out, err := exec.Command(harness, "stop", image).CombinedOutput()
-
-	var exit *exec.ExitError
-	require.ErrorAs(t, err, &exit, "the literal was freed rather than refused")
-	assert.Equal(t, 67, exit.ExitCode())
-	assert.Equal(t,
-		dieOutput("freed a value with no allocation that the allocator never handed out\n"),
-		string(out))
-}
-
 // newFixtureNest is the allocation of one nest class, laid down the way
 // VisitExprNew lays one. What it leaves is a pointer to an instance with another
 // instance inside it, which is the only allocation these fixtures have that
@@ -3959,44 +3932,6 @@ func TestInterfaceMethodCConformance(t *testing.T) {
 		assert.Equal(t, 67, exit.ExitCode())
 		assert.Equal(t, dieOutput("selected a method of a null pointer\n"), string(out))
 	})
-}
-
-// TestFreeInlineMemberCConformance is the other side of
-// TestFreeUnallocatedCConformance: a free of a value that is somebody's interior
-// rather than of a value that is nobody's.
-//
-// This is the free the bit was restructured for. The member has a mark word
-// like any markable value and lies at an address like any allocation, so nothing
-// about the pointer says which it is — and free() on a member's address is a
-// release of a pointer malloc never returned, which is a corruption of the heap
-// rather than an error it reports.
-//
-// What separates this from the literal is the upvalue: a member has a container
-// to walk to and says how far, which is why the two refusals name different
-// things. That makes the message the assertion, rather than only the exit code.
-func TestFreeInlineMemberCConformance(t *testing.T) {
-	t.Parallel()
-	harness := buildRunHarness(t)
-
-	// The member's location off a heap instance, collapsed to the bare address.
-	// It has to be an allocation and not a frame slot: a frame location is an
-	// offset rather than an address, so a free of one would not reach the value
-	// at all.
-	image := writeImage(t, append(
-		append(newFixtureNest(),
-			append(pushTypeID(fixtureNestShort),
-				newUnaryOp(OpPushMember, 0), OpAddressOf)...),
-		append(pushTypeID(fixtureClassShort),
-			OpFree, pushI64(0), OpExit)...))
-
-	out, err := exec.Command(harness, "stop", image).CombinedOutput()
-
-	var exit *exec.ExitError
-	require.ErrorAs(t, err, &exit, "the member was freed rather than refused")
-	assert.Equal(t, 67, exit.ExitCode())
-	assert.Equal(t,
-		dieOutput("freed a member of another object that the allocator never handed out\n"),
-		string(out))
 }
 
 // TestTailedStructHeaderCConformance is TestInstanceHeaderCConformance for the

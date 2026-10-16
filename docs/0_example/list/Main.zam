@@ -1,5 +1,6 @@
 import std("io/local/*");
 import std("data/list/*");
+import std("data/sort/*");
 import std("lang/*");
 
 namespace Main {
@@ -9,6 +10,7 @@ namespace Main {
     
     interface Iterable[A] {
         virtual fun Iter[A]*() Iter;
+        virtual fun Arr[A]*() Arr;
     }
 
     fun[A] void(Iterable[A]*) Print = (i) {
@@ -26,7 +28,11 @@ namespace Main {
         var Iterable[str]* ll = type(LinkList)[str].New(argC, argV...);
         type(Main)[str].Print(ll);
 
-        var Iterable[str]* sl = type(SkipList)[str].New(argC, argV...);
-        type(Main)[str].Print(sl);
+        // var Iterable[str]* sl = type(SkipList)[str].New(argC, argV...);
+        // type(Main)[str].Print(sl);
+
+        var Arr[str]* arr = al.Arr();
+        type(Sort)[str].SortArr(arr);
+        type(File).StdOut.WriteStr(arr{str} + "\n");
     }
 }

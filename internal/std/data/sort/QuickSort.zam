@@ -1,1 +1,49 @@
-namespace QuickSort {}
+import "../../lang/Arr.zam";
+
+namespace QuickSort {
+    fun[A] void(A*, A*) swap = (a, b) {
+        var A t = *a;
+        *a = *b;
+        *b = t;
+    }
+
+    // Lomuto partition. The pivot is arr[high]. i is kept as the next write
+    // slot for elements smaller than the pivot — the classic "i = low - 1"
+    // would underflow when low is zero.
+    fun[A] uint(A*, uint, uint) partition = (arr, low, high) {
+        var A pivot = arr[high];
+
+        var uint i = low;
+        for (var uint j = low; j < high; j++) {
+            if (arr[j] < pivot) {
+                type(QuickSort)[A].swap(&arr[i], &arr[j]);
+                i++;
+            }
+        }
+        type(QuickSort)[A].swap(&arr[i], &arr[high]);
+        return i;
+    }
+
+    fun[A] void(A*, uint, uint) quickSort = (arr, low, high) {
+        if (low < high) {
+            var uint pi = type(QuickSort)[A].partition(arr, low, high);
+
+            // pi may equal low when nothing was smaller than the pivot; skip
+            // the left recursion in that case so pi - 1U does not underflow.
+            if (pi > low) {
+                type(QuickSort)[A].quickSort(arr, low, pi - 1U);
+            }
+            type(QuickSort)[A].quickSort(arr, pi + 1U, high);
+        }
+    }
+
+    fun[A] void(uint, A...) Sort = (len, arr) {
+        if (len > 0U) {
+            type(QuickSort)[A].quickSort(arr, 0U, len - 1U);
+        }
+    }
+
+    fun[A] void(Arr[A]*) SortArr = (arr) {
+       type(QuickSort)[A].Sort(arr.Len(), arr.Arr()...);
+    }
+}

@@ -18,26 +18,132 @@ namespace System {
     }
 
     namespace GC {
-        fun void() Lock = () {
-            native(STD_GC_LOCK){void()}();
+        fun void() Block = () {
+            native(STD_GC_BLOCK){void()}();
         }
 
-        fun void() Unlock = () {
-            native(STD_GC_UNLOCK){void()}();
+        fun void() Unblock = () {
+            native(STD_GC_UNBLOCK){void()}();
         }
     }
 
-    namespace Signal {
-        fun void(uint, void()) Handle = (sig, f) {
+    enum Endian {
+        BigEndian,
+        LittleEndian;
 
+        private static var uint one = 1U;
+
+        static fun Endian() Endianness = () {
+            var byte* bytes = (&one){uint}{void*}{byte*};
+            return bytes[0]{int} == 1 ? type(Endian).LittleEndian : type(Endian).BigEndian;
         }
 
-        fun void(uint) Raise = (sig) {
+        fun str() Str = () {
+            return *this == type(Endian).BigEndian ? "BigEndian" : "LittleEndian";
+        }
+    }
 
+    // Signal names each POSIX signal the standard library exposes and binds
+    // the OS-level number at startup through a resolver native, since the
+    // same name maps to different ints across OSes (SIGUSR1 is 10 on Linux,
+    // 30 on macOS). Methods act on the receiver's initialized number — using
+    // the enum closes the surface so a program cannot ask the kernel about a
+    // signal the kernel does not have.
+    //
+    // Each value's init index is its position in the init table below;
+    // keep the two in step. The one-word discriminant automatically written
+    // ahead of every enum value is what makes two Signal values comparable
+    // (see enum == in equalValues).
+    enum Signal {
+        SIGHUP.init(0),
+        SIGINT.init(1),
+        SIGQUIT.init(2),
+        SIGILL.init(3),
+        SIGABRT.init(4),
+        SIGFPE.init(5),
+        SIGKILL.init(6),
+        SIGSEGV.init(7),
+        SIGPIPE.init(8),
+        SIGALRM.init(9),
+        SIGTERM.init(10),
+        SIGSTOP.init(11),
+        SIGCONT.init(12),
+        SIGCHLD.init(13),
+        SIGUSR1.init(14),
+        SIGUSR2.init(15);
+
+        // sig is the OS-level signal number init stored. It is read by
+        // every other method as the one word the C natives take.
+        var int sig;
+
+        // init is the per-value initializer: the enum field syntax
+        // SIGHUP.init(0) runs this on the slot the value lies in, which
+        // leaves this.sig holding the OS number the kernel associates with
+        // the name at idx.
+        private fun void(int) init = (idx) {
+            var int os;
+            native(STD_SIGNAL_INIT){void(int, int*)}(idx, &os);
+            this.sig = os;
         }
 
-        fun void(uint, uint) Send = (sig, pid) {
+        // Raise this signal on the current process. The OS default fires
+        // unless Handle was called first.
+        fun void() Raise = () {
+            native(STD_SIGNAL_RAISE){void(int)}(this.sig);
+        }
 
+        // Send this signal to another process. Maps to kill(pid, sig).
+        fun void(uint) Send = (pid) {
+            native(STD_SIGNAL_SEND){void(int, uint)}(this.sig, pid);
+        }
+
+        // Send this signal to another thread of this process by its OS
+        // thread id (the raw bits of pthread_t). Maps to pthread_kill.
+        fun void(uint) ThreadSend = (threadID) {
+            native(STD_SIGNAL_THREAD_SEND){void(int, uint)}(this.sig, threadID);
+        }
+
+        // Register f as this signal's handler on the calling thread. The
+        // closure runs between instructions after the C handler flagged a
+        // delivery; see pollSignalHandlers in run.c.
+        fun void(void()) Handle = (f) {
+            native(STD_SIGNAL_HANDLE){void(int, void())}(this.sig, f);
+        }
+
+        // Add this signal to the process-wide signal mask so it is held
+        // pending for every thread until Unblock.
+        fun void() Block = () {
+            native(STD_SIGNAL_BLOCK){void(int)}(this.sig);
+        }
+
+        // Remove this signal from the process-wide mask. Pending deliveries
+        // fire now.
+        fun void() Unblock = () {
+            native(STD_SIGNAL_UNBLOCK){void(int)}(this.sig);
+        }
+
+        // Add this signal to the calling thread's own mask.
+        fun void() ThreadBlock = () {
+            native(STD_SIGNAL_THREAD_BLOCK){void(int)}(this.sig);
+        }
+
+        // Remove this signal from the calling thread's own mask.
+        fun void() ThreadUnblock = () {
+            native(STD_SIGNAL_THREAD_UNBLOCK){void(int)}(this.sig);
+        }
+
+        // Report whether this signal is in the process-wide mask right now.
+        fun bool() IsBlocked = () {
+            var bool blocked;
+            native(STD_SIGNAL_IS_BLOCKED){void(int, bool*)}(this.sig, &blocked);
+            return blocked;
+        }
+
+        // Report whether this signal is in the calling thread's own mask.
+        fun bool() IsThreadBlocked = () {
+            var bool blocked;
+            native(STD_SIGNAL_IS_THREAD_BLOCKED){void(int, bool*)}(this.sig, &blocked);
+            return blocked;
         }
     }
 }

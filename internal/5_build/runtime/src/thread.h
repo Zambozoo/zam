@@ -1,6 +1,7 @@
 #pragma once
 
 #include <pthread.h>
+#include <signal.h>
 
 #include "common.h"
 #include "instance.h"
@@ -231,6 +232,20 @@ struct ZamThread {
     // every thread is reachable from it, which is what the collector walks to
     // find every root.
     struct ZamThread *next;
+
+    // Signal state lives here rather than process-wide so each thread
+    // dispatches only the handlers it registered. The C signal handler reads
+    // its ZamThread back out of thread-local storage (see currentZamThread
+    // in native.c) and ORs the bit into this mask; the interpreter polls
+    // between instructions on the thread it is driving.
+    //
+    // pendingSignalMask is written from the signal context, which is why it
+    // is volatile sig_atomic_t rather than a plain uint. signalHandlers
+    // holds the zam closure pointer the program handed in through
+    // Signal.Handle; the collector cannot yet see these, which matches the
+    // existing ZAMTODO on collection.
+    volatile sig_atomic_t pendingSignalMask;
+    void *signalHandlers[ZAM_SIGNAL_MAX];
 };
 
 _Static_assert(offsetof(ZamThread, header.mark) == 0,
@@ -366,3 +381,18 @@ bool zam_thread_visit(ZamThread *thread, ZamWord left, ZamWord right,
 // zam_thread_run drives one thread until it stops, and is what a spawned thread
 // is started on as much as what the main thread is run by.
 ZamResult zam_thread_run(ZamThread *thread);
+
+// zam_thread_install_signal_slot records the C signal handler on the OS side
+// and binds this thread as the one that dispatches it. Storage for the
+// closure pointer is on the thread itself.
+void zam_thread_install_signal_slot(ZamThread *thread, int sig, void *closure);
+
+// zam_thread_take_pending_signal returns the next signal this thread has
+// pending, clearing the bit as part of the read, or -1 if nothing is
+// pending. Called by the interpreter's poll between instructions.
+int zam_thread_take_pending_signal(ZamThread *thread);
+
+// zam_thread_bind_current records this thread as the one the C signal
+// handler delivers to for the current OS thread. Called at the top of a
+// thread's run, before any Signal.Handle registration could fire.
+void zam_thread_bind_current(ZamThread *thread);

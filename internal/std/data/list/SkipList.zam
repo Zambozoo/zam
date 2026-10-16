@@ -114,10 +114,6 @@ class SkipList[A] {
 
     fun void() Delete = () {
         for(var Node~[A]* n = this.nexts[0]; n != null;) {
-            if(!(@n.val <: type(void*))) {
-                // Only clean up raw values
-                delete(&(n.val));
-            }
             var Node~[A]* old = n;
             n = n.nexts[0].n;
             free(old);
@@ -144,7 +140,7 @@ class SkipList[A] {
         }
 
         fun void(SkipList[A]*, uint) InitWithIndex = (l, i) {
-            if(i >= l.Len()) {
+            if(i > l.Len()) {
                 type(System).Panic("Arr out of bounds");
             }
             this.l = l;

@@ -865,6 +865,15 @@ func instanceHeaderByteSizeOf(kind syntax.FieldKind, tailed bool) uint64 {
 		if tailed {
 			return wordByteSize
 		}
+	case syntax.KindEnum:
+		// An enum's instances are the values named in the declaration, and
+		// their only intrinsic difference is which one of those they are —
+		// no user-declared member separates BigEndian from LittleEndian when
+		// neither was given a body. A one-word discriminant held at the head
+		// of every enum value is what makes them distinguishable; equality
+		// reads this word to decide, and emitEnumValue writes each value's
+		// ordinal here as the value is laid down.
+		return wordByteSize
 	}
 	return 0
 }

@@ -2,6 +2,8 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
@@ -248,15 +250,15 @@ static void stdArrsCopy(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
-// stdGcLock and stdGcUnlock are placeholders for the GC pause pair the zam
+// stdGcBlock and stdGcUnblock are placeholders for the GC pause pair the zam
 // side already names. The collector itself has not been written, so there is
 // nothing to pause or resume; the natives return cleanly so a program that
 // calls GC.Lock()/GC.Unlock() around a critical section still runs.
-static void stdGcLock(ZamThread *thread) {
+static void stdGcBlock(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
-static void stdGcUnlock(ZamThread *thread) {
+static void stdGcUnblock(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
@@ -269,6 +271,186 @@ static void stdSystemExit(ZamThread *thread) {
     (void)thread;
     int code = (int)zam_native_argument(thread, 0);
     exit(code);
+}
+
+// stdSignalRaise sends the signal to this process. raise() returns 0 on
+// success and non-zero on failure; the native swallows the result since the
+// zam signature returns void. Failure here means the OS rejected the signal
+// number — a program bug the user wrote the wrong code for — rather than
+// anything the caller could recover from.
+static void stdSignalRaise(ZamThread *thread) {
+    int sig = (int)zam_native_argument(thread, 0);
+    (void)raise(sig);
+    zam_native_return_void(thread);
+}
+
+// stdSignalSend sends a signal to another process. The zam signature takes
+// (sig, pid) in that order to match Signal.Send; kill() takes (pid, sig).
+// Any OS error is swallowed, as with Raise.
+static void stdSignalSend(ZamThread *thread) {
+    int sig = (int)zam_native_argument(thread, 0);
+    pid_t pid = (pid_t)zam_native_argument(thread, 1);
+    (void)kill(pid, sig);
+    zam_native_return_void(thread);
+}
+
+// stdSignalInit maps a Signal enum ordinal to the OS-level signal number for
+// the running platform. The index set is this native's contract with
+// System.Signal — adding a signal to the enum means adding a case here, and
+// a mismatch would hand the kernel a number the enum name does not stand
+// for. Keep the switch in step with the init(N) initializers in System.zam.
+static void stdSignalInit(ZamThread *thread) {
+    int idx = (int)zam_native_argument(thread, 0);
+    ZamInt *out = (ZamInt *)zam_native_argument_pointer(thread, 1);
+    int sig;
+    switch (idx) {
+    case 0:  sig = SIGHUP;  break;
+    case 1:  sig = SIGINT;  break;
+    case 2:  sig = SIGQUIT; break;
+    case 3:  sig = SIGILL;  break;
+    case 4:  sig = SIGABRT; break;
+    case 5:  sig = SIGFPE;  break;
+    case 6:  sig = SIGKILL; break;
+    case 7:  sig = SIGSEGV; break;
+    case 8:  sig = SIGPIPE; break;
+    case 9:  sig = SIGALRM; break;
+    case 10: sig = SIGTERM; break;
+    case 11: sig = SIGSTOP; break;
+    case 12: sig = SIGCONT; break;
+    case 13: sig = SIGCHLD; break;
+    case 14: sig = SIGUSR1; break;
+    case 15: sig = SIGUSR2; break;
+    default:
+        zam_native_panic(thread, "STD_SIGNAL_INIT: unknown signal index");
+    }
+    *out = (ZamInt)sig;
+    zam_native_return_void(thread);
+}
+
+// stdSignalThreadSend sends a signal to another thread of this process. The
+// zam signature takes (sig, threadID) in that order to match Signal.ThreadSend;
+// pthread_kill takes (pthread_t, int). The thread id crosses the ABI as the
+// uint word the caller handed in, which is the raw bits of the OS-level
+// pthread_t — the only way the two sides agree on which thread is meant.
+static void stdSignalThreadSend(ZamThread *thread) {
+    int sig = (int)zam_native_argument(thread, 0);
+    uint64_t threadID = zam_native_argument(thread, 1);
+    pthread_t tid;
+    memcpy(&tid, &threadID, sizeof tid < sizeof threadID
+                                 ? sizeof tid
+                                 : sizeof threadID);
+    (void)pthread_kill(tid, sig);
+    zam_native_return_void(thread);
+}
+
+// setOneSignal builds a sigset_t holding just sig. Returns false if either
+// the empty-set call or the add fails, which on every platform means sig is
+// out of range for a sigset.
+static bool setOneSignal(int sig, sigset_t *out) {
+    if (sigemptyset(out) != 0)
+        return false;
+    if (sigaddset(out, sig) != 0)
+        return false;
+    return true;
+}
+
+// stdSignalBlock and stdSignalUnblock change the process-wide signal mask so
+// a signal is held pending (or released) across every thread. Fire-and-
+// forget on the zam side; an invalid signal number panics rather than being
+// reported back silently, since it is a program bug the caller cannot
+// recover from.
+static void stdSignalBlock(ZamThread *thread) {
+    int sig = (int)zam_native_argument(thread, 0);
+    sigset_t set;
+    if (!setOneSignal(sig, &set) ||
+        sigprocmask(SIG_BLOCK, &set, NULL) != 0)
+        zam_native_panic(thread, "STD_SIGNAL_BLOCK: invalid signal number");
+    zam_native_return_void(thread);
+}
+
+static void stdSignalUnblock(ZamThread *thread) {
+    int sig = (int)zam_native_argument(thread, 0);
+    sigset_t set;
+    if (!setOneSignal(sig, &set) ||
+        sigprocmask(SIG_UNBLOCK, &set, NULL) != 0)
+        zam_native_panic(thread, "STD_SIGNAL_UNBLOCK: invalid signal number");
+    zam_native_return_void(thread);
+}
+
+// stdSignalThreadBlock and stdSignalThreadUnblock are the per-thread form,
+// touching only the calling thread's mask. pthread_sigmask has the same
+// shape as sigprocmask but is thread-local; the C handler respects whichever
+// mask the OS consults, which on a per-thread signal is this one.
+static void stdSignalThreadBlock(ZamThread *thread) {
+    int sig = (int)zam_native_argument(thread, 0);
+    sigset_t set;
+    if (!setOneSignal(sig, &set) ||
+        pthread_sigmask(SIG_BLOCK, &set, NULL) != 0)
+        zam_native_panic(thread,
+                         "STD_SIGNAL_THREAD_BLOCK: invalid signal number");
+    zam_native_return_void(thread);
+}
+
+static void stdSignalThreadUnblock(ZamThread *thread) {
+    int sig = (int)zam_native_argument(thread, 0);
+    sigset_t set;
+    if (!setOneSignal(sig, &set) ||
+        pthread_sigmask(SIG_UNBLOCK, &set, NULL) != 0)
+        zam_native_panic(thread,
+                         "STD_SIGNAL_THREAD_UNBLOCK: invalid signal number");
+    zam_native_return_void(thread);
+}
+
+// stdSignalIsBlocked and stdSignalIsThreadBlocked read the current mask
+// without changing it — passing NULL as the set to {sig,pthread}_sigmask is
+// how POSIX spells "just hand me the current mask" — and report whether sig
+// is a member.
+static void stdSignalIsBlocked(ZamThread *thread) {
+    int sig = (int)zam_native_argument(thread, 0);
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
+    sigset_t current;
+    if (sigprocmask(0, NULL, &current) != 0)
+        zam_native_panic(thread, "STD_SIGNAL_IS_BLOCKED: sigprocmask failed");
+    int member = sigismember(&current, sig);
+    if (member < 0)
+        zam_native_panic(thread,
+                         "STD_SIGNAL_IS_BLOCKED: invalid signal number");
+    *out = member != 0;
+    zam_native_return_void(thread);
+}
+
+static void stdSignalIsThreadBlocked(ZamThread *thread) {
+    int sig = (int)zam_native_argument(thread, 0);
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
+    sigset_t current;
+    if (pthread_sigmask(0, NULL, &current) != 0)
+        zam_native_panic(thread,
+                         "STD_SIGNAL_IS_THREAD_BLOCKED: pthread_sigmask failed");
+    int member = sigismember(&current, sig);
+    if (member < 0)
+        zam_native_panic(thread,
+                         "STD_SIGNAL_IS_THREAD_BLOCKED: invalid signal number");
+    *out = member != 0;
+    zam_native_return_void(thread);
+}
+
+// Install the zam closure as the handler for sig on the calling thread. The
+// native stores the closure in the thread's own handler table and asks the
+// OS to deliver future occurrences through the shared C handler. The C
+// handler itself only ORs a bit into the current thread's pending mask —
+// running the closure directly from signal context would re-enter the
+// interpreter from a place that cannot safely call anything that is not
+// async-signal-safe.
+static void stdSignalHandle(ZamThread *thread) {
+    uint64_t sig = zam_native_argument(thread, 0);
+    ZamWord closure = zam_native_argument(thread, 1);
+    if (sig >= ZAM_SIGNAL_MAX)
+        zam_native_panic(thread,
+                         "STD_SIGNAL_HANDLE: signal number out of range");
+
+    zam_thread_install_signal_slot(thread, (int)sig,
+                                   (void *)(uintptr_t)closure);
+    zam_native_return_void(thread);
 }
 
 const ZamNativeEntry zamNativeTable[] = {
@@ -286,9 +468,20 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_STRS_CHAR_LEN", stdStrsCharLen},
     {"STD_STRS_BYTE_LEN", stdStrsByteLen},
     {"STD_ARRS_COPY", stdArrsCopy},
-    {"STD_GC_LOCK", stdGcLock},
-    {"STD_GC_UNLOCK", stdGcUnlock},
+    {"STD_GC_BLOCK", stdGcBlock},
+    {"STD_GC_UNBLOCK", stdGcUnblock},
     {"STD_SYSTEM_EXIT", stdSystemExit},
+    {"STD_SIGNAL_INIT", stdSignalInit},
+    {"STD_SIGNAL_RAISE", stdSignalRaise},
+    {"STD_SIGNAL_SEND", stdSignalSend},
+    {"STD_SIGNAL_THREAD_SEND", stdSignalThreadSend},
+    {"STD_SIGNAL_HANDLE", stdSignalHandle},
+    {"STD_SIGNAL_BLOCK", stdSignalBlock},
+    {"STD_SIGNAL_UNBLOCK", stdSignalUnblock},
+    {"STD_SIGNAL_THREAD_BLOCK", stdSignalThreadBlock},
+    {"STD_SIGNAL_THREAD_UNBLOCK", stdSignalThreadUnblock},
+    {"STD_SIGNAL_IS_BLOCKED", stdSignalIsBlocked},
+    {"STD_SIGNAL_IS_THREAD_BLOCKED", stdSignalIsThreadBlocked},
 };
 
 const uint64_t zamNativeTableCount =

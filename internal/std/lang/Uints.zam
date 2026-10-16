@@ -1,0 +1,3 @@
+namespace Uints {
+    var uint$ Max = 18446744073709551615U;
+}

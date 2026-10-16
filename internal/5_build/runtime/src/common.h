@@ -8,6 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+// ZAM_SIGNAL_MAX is the number of signals each thread can register a handler
+// for. 32 covers every POSIX standard signal and the realtime range the
+// runtime cares to expose.
+#define ZAM_SIGNAL_MAX 32
+
 // A word is the unit the image is written in and the unit the operand stack
 // counts in. Every offset the image carries is a byte offset, but every one of
 // them is a multiple of this, so nothing is ever read misaligned.

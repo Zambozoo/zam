@@ -1011,6 +1011,23 @@ static ZamResult equalValues(ZamThread *thread, ZamTypeID leftType,
             *equal = false;
             return ZAMRESULT_CONTINUE;
         }
+
+        // An enum carries a one-word discriminant at the head of every
+        // value, written per enum constant by emitEnumValue. Two enum
+        // values of the same enum type are equal iff their discriminants
+        // match — user members are tied to the discriminant, so walking
+        // them would answer the same question with more work.
+        if (zam_image_bucket_of(image, ZAMTYPE_DECL(leftType.shortID)) ==
+            ZAMBUCKET_ENUM) {
+            uint64_t leftTag, rightTag;
+            memcpy(&leftTag, zam_thread_location_address(thread, leftLocation),
+                   sizeof leftTag);
+            memcpy(&rightTag, zam_thread_location_address(thread, rightLocation),
+                   sizeof rightTag);
+            *equal = leftTag == rightTag;
+            return ZAMRESULT_CONTINUE;
+        }
+
         uint64_t leftHeader = inlineValueHeaderBytes(image, leftType);
         uint64_t rightHeader = inlineValueHeaderBytes(image, rightType);
 
@@ -1693,9 +1710,17 @@ static void stampArrayTail(const ZamImage *image, uint8_t *first,
 static uint64_t memberHeaderBytes(const ZamThread *thread,
                                   const ZamImage *image, ZamTypeID objectType,
                                  ZamWord object) {
-    if (!isMarkableInstance(image, objectType))
-        return isTailedStruct(image, objectType) ? ZAMTAILED_STRUCT_HEADER_BYTES
-                                                 : 0;
+    if (!isMarkableInstance(image, objectType)) {
+        if (isTailedStruct(image, objectType))
+            return ZAMTAILED_STRUCT_HEADER_BYTES;
+        // An enum carries a one-word discriminant at the head of every
+        // value, so user members live past it. Keep this in step with
+        // instanceHeaderByteSizeOf for KindEnum on the compiler side.
+        if (zam_image_bucket_of(image, ZAMTYPE_DECL(objectType.shortID)) ==
+            ZAMBUCKET_ENUM)
+            return ZAMWORD_BYTES;
+        return 0;
+    }
 
     void *instance = zam_thread_location_address(thread, object);
     return zam_object_header_bytes(zam_mark_word_of(instance)->kind);
@@ -1730,7 +1755,15 @@ static uint64_t valueHeaderBytes(const ZamImage *image, ZamTypeID type) {
 static uint64_t inlineValueHeaderBytes(const ZamImage *image, ZamTypeID type) {
     if (isMarkableInstance(image, type))
         return valueHeaderBytes(image, type);
-    return isTailedStruct(image, type) ? ZAMTAILED_STRUCT_HEADER_BYTES : 0;
+    if (isTailedStruct(image, type))
+        return ZAMTAILED_STRUCT_HEADER_BYTES;
+    // An enum carries a one-word discriminant at the head of every value,
+    // written by the compiler's emitEnumValue, and user members live past
+    // it. Equality below reads this word directly rather than walking any
+    // further.
+    if (zam_image_bucket_of(image, ZAMTYPE_DECL(type.shortID)) == ZAMBUCKET_ENUM)
+        return ZAMWORD_BYTES;
+    return 0;
 }
 
 // An instruction is one opcode byte followed by however many immediate words
@@ -3097,6 +3130,23 @@ static ZamResult step(ZamThread *thread) {
     // instances — gets marked dead so the next sweep reclaims it; handing one
     // of those to free() would double-manage memory the sweep list still points
     // at. Everything else is the program's own and is raw-freed.
+    //
+    // A run of reference slots is the one shape that does not fit either rule.
+    // new(X, n) for X in string, function, thread or interface takes OpNew's
+    // raw branch — the block is a flat run of pointer slots with no header in
+    // front of them, since each slot's pointee stays collected on its own — and
+    // the same pointeeOf that says a slot's type is collected would steer this
+    // free into a mark-word write against the first slot. The pointer shape of
+    // the type is what tells the two apart: a free of the primitive itself
+    // (type = str) names the collected allocation the pointer-shaped value
+    // addresses, and a free through a pointer to one (type = str*) names the
+    // raw slot block.
+    //
+    // Nothing is checked. A pointer the allocator never handed out, or one
+    // taken into the middle of a block, is the caller's own undefined
+    // behavior, the same as a free of a bogus int* would be — this keeps the
+    // one shape and the many shapes consistent and keeps the free path a
+    // single mark-dead or a single malloc free.
     case OpFree: {
         const ZamImage *image = &thread->vm->image;
        ZamTypeID type = zam_thread_pop_type(thread);
@@ -3112,13 +3162,17 @@ static ZamResult step(ZamThread *thread) {
         // a header behind the pointer.
        ZamTypeID pointee = pointeeOf(image, type);
         if (isCollectedAllocation(image, pointee)) {
-           ZamMarkWord *mark = zam_mark_word_of((void *)(uintptr_t)pointer);
-            if (mark->contained)
-                zam_die(ZAMEXIT_PANIC,
-                        "freed a %s that the allocator never handed out\n",
-                        mark->upvalue != 0 ? "member of another object"
-                                           : "value with no allocation");
-            mark->state = ZAMMARK_STATE_DEAD;
+            bool typeIsPointer =
+                type.arrayLength == 0 &&
+                zam_image_bucket_of(image, ZAMTYPE_DECL(type.shortID)) ==
+                    ZAMBUCKET_POINTER;
+            if (typeIsPointer && !isMarkableInstance(image, pointee)) {
+                free((void *)(uintptr_t)pointer);
+                return ZAMRESULT_CONTINUE;
+            }
+
+            zam_mark_word_of((void *)(uintptr_t)pointer)->state =
+                ZAMMARK_STATE_DEAD;
             return ZAMRESULT_CONTINUE;
         }
 
@@ -3838,7 +3892,15 @@ static ZamResult step(ZamThread *thread) {
             // bytes, whose header carries the closure's shortID rather than
             // the receiver's and so would read as a type that enumerates no
             // open generic arguments at all.
-            receiver = (void *)(uintptr_t)*zam_closure_entry_value(entry);
+            //
+            // The word may be a real pointer (a heap receiver) or a frame
+            // location (a stack-allocated receiver's address survived the
+            // call as the same tagged form it was captured in). Both go
+            // through zam_thread_location_address — a real pointer is left
+            // alone and a frame location is resolved to the stack byte it
+            // names — so one branch answers for both.
+            receiver = zam_thread_location_address(
+                thread, *zam_closure_entry_value(entry));
         } else {
            ZamWord location =
                 thread->operands[zam_thread_frame_base(thread) + slot];
@@ -4006,14 +4068,76 @@ static void *threadMain(void *arg) {
     return NULL;
 }
 
+// dispatchSignalClosure synthesizes the frame a zam-side call would have built
+// and jumps into the closure's body. Reached from pollSignalHandlers between
+// instructions, so thread->instructionOffset is where control resumes once
+// the closure's OpReturnVoid pops the frame.
+//
+// The frame is the one OpCallMethod expects: the closure address at slot 0,
+// and any captures above it. For a Signal.Handle closure the parameter list
+// is empty (the signature is void()), so there are no caller-pushed args to
+// put between the two.
+static void dispatchSignalClosure(ZamThread *thread, void *closurePtr) {
+    const ZamImage *image = &thread->vm->image;
+   ZamClosure *closure = zam_closure_of(closurePtr);
+
+    zam_thread_push(thread, (ZamWord)(uintptr_t)closurePtr);
+    zam_thread_push_mark(thread, thread->operandCount - 1);
+    uint64_t base = thread->operandCount - 1;
+
+    zam_thread_push_function(thread, thread->instructionOffset, base);
+    thread->instructionOffset = closure->instruction;
+
+    // Captures land past the (empty) argument list, which is where the body
+    // was compiled to read them.
+    if (closure->captureCount != 0) {
+        const ZamWord *entry = closureCaptures(image, closure);
+        for (uint64_t i = 0; i < closure->captureCount; i++) {
+           ZamTypeID capType = zam_closure_entry_type(entry);
+            const ZamWord *capValue = zam_closure_entry_value(entry);
+            uint64_t capWords = valueWordsOf(image, capType);
+            for (uint64_t w = 0; w < capWords; w++)
+                zam_thread_push(thread, capValue[w]);
+            markPushedValue(thread, image, capType);
+            entry = zam_closure_entry_next(entry, capWords);
+        }
+    }
+}
+
+// pollSignalHandlers takes one pending signal, if there is one, and jumps
+// into whatever closure Signal.Handle registered for it. Called between
+// instructions so the dispatched closure runs on a frame whose return
+// address is the instruction we were about to run next.
+static void pollSignalHandlers(ZamThread *thread) {
+    int sig = zam_thread_take_pending_signal(thread);
+    if (sig < 0)
+        return;
+    void *closure = thread->signalHandlers[sig];
+    if (closure == NULL)
+        return;
+    dispatchSignalClosure(thread, closure);
+}
+
 ZamResult zam_thread_run(ZamThread *thread) {
-    while ((thread->result = step(thread)) == ZAMRESULT_CONTINUE)
-        ;
-    return thread->result;
+    // Bind this OS thread to the ZamThread so a signal reaching this thread
+    // routes into its own pending mask. A thread that never binds would have
+    // its signals dropped — which is the safe default rather than firing
+    // whatever closures the previous OS thread had registered.
+    zam_thread_bind_current(thread);
+    for (;;) {
+        pollSignalHandlers(thread);
+        thread->result = step(thread);
+        if (thread->result != ZAMRESULT_CONTINUE)
+            return thread->result;
+    }
 }
 
 ZamResult zam_vm_run(ZamVM *vm, int argC, const char *argV[]) {
    ZamThread *main = &vm->main;
+
+    // Signals delivered to this OS thread route to the main ZamThread's own
+    // pending mask. Must happen before Signal.Handle can be called.
+    zam_thread_bind_current(main);
 
     // Main is entered on a frame like any other method, and being fallen into
     // rather than called there is no caller to have built it, so the words it
@@ -4055,6 +4179,13 @@ ZamResult zam_vm_run(ZamVM *vm, int argC, const char *argV[]) {
             zam_vm_collect(vm);
             vm->collectionRequested = false;
         }
+
+        // Signals the C handler flagged while this thread was executing
+        // dispatch here, between instructions, into whatever closure
+        // Signal.Handle registered for them. The handler runs on the main
+        // thread's own frame so its return lands right back where the signal
+        // interrupted it.
+        pollSignalHandlers(main);
 
         main->result = step(main);
     }

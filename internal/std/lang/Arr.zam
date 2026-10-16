@@ -19,6 +19,10 @@ class Arr[A] {
         return this.len;
     }
 
+    fun A*() Arr = () {
+        return this.arr;
+    }
+
     fun A(uint) Get = (i) {
         if(i >= this.len) {
             type(System).Panic("Arr out of bounds");
@@ -33,5 +37,15 @@ class Arr[A] {
         var A old = this.arr[i];
         this.arr[i] = t;
         return old;
+    }
+
+    fun str() Str = () {
+        var str s = "[";
+        var str spacer = "";
+        for(var uint i = 0U; i < this.len; i++) {
+            s = s + spacer + this.arr[i]{str};
+            spacer = ", ";
+        }
+        return s + "]";
     }
 }

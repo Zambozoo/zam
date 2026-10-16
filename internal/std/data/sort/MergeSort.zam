@@ -1,1 +1,52 @@
-namespace MergeSort {}
+import "../../lang/Arr.zam";
+import "../../lang/Arrs.zam";
+
+namespace MergeSort {
+    // Merges the two sorted halves arr[l..m] and arr[m+1..r] through buf
+    fun[A] void(A*, A*, uint, uint, uint) merge = (arr, buf, l, m, r) {
+        type(Arrs)[A].Copy(r - l + 1U, arr + l, buf + l);
+
+        var uint i = l;
+        var uint j = m + 1U;
+        var uint k = l;
+        for (;i <= m && j <= r;) {
+            if (buf[i] <= buf[j]) {
+                arr[k] = buf[i];
+                i++;
+            } else {
+                arr[k] = buf[j];
+                j++;
+            }
+            k++;
+        }
+        if (i <= m) {
+            type(Arrs)[A].Copy(m - i + 1U, buf + i, arr + k);
+        }
+    }
+
+    // l is for left index and r is right index of the
+    // sub-array of arr to be sorted
+    fun[A] void(A*, A*, uint, uint) mergeSort = (arr, buf, l, r) {
+        if (l < r) {
+            var uint m = l + (r - l) / 2U;
+
+            // Sort first and second halves
+            type(MergeSort)[A].mergeSort(arr, buf, l, m);
+            type(MergeSort)[A].mergeSort(arr, buf, m + 1U, r);
+
+            type(MergeSort)[A].merge(arr, buf, l, m, r);
+        }
+    }
+
+    fun[A] void(uint, A...) Sort = (len, arr) {
+        if (len > 0U) {
+            var A* buf = new(A, len);
+            type(MergeSort)[A].mergeSort(arr, buf, 0U, len - 1U);
+            free(buf);
+        }
+    }
+
+    fun[A] void(Arr[A]*) SortArr = (arr) {
+       type(MergeSort)[A].Sort(arr.Len(), arr.Arr()...);
+    }
+}

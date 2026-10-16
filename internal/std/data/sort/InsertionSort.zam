@@ -1,1 +1,22 @@
-namespace InsertionSort {}
+import "../../lang/Arr.zam";
+import "../../lang/Uints.zam";
+
+namespace InsertionSort {
+    fun[A] void(uint, A...) Sort = (len, arr) {
+        for (var uint i = 1U; i < len; i++) {
+            var A key = arr[i];
+            var uint j = i - 1U;
+
+            for (;j != type(Uints).Max && arr[j] > key;) {
+                arr[j + 1U] = arr[j];
+                j = j - 1U;
+            }
+
+            arr[j + 1U] = key;
+        }
+    }
+
+    fun[A] void(Arr[A]*) SortArr = (arr) {
+       type(InsertionSort)[A].Sort(arr.Len(), arr.Arr()...);
+    }
+}

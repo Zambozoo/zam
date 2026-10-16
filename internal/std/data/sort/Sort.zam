@@ -1,1 +1,230 @@
-namespace Sort {}
+import "../../lang/Arr.zam";
+import "../../lang/Arrs.zam";
+import "../list/ArrList.zam";
+
+// TimSort
+namespace Sort {
+    // Walks the input finding natural runs, extends short runs to minRun.
+    fun[A] void(A*, A*, ArrList[uint]*, ArrList[uint]*, uint) run = (arr, tmp, runBase, runLen, len) {
+        var uint lo = 0U;
+        var uint remaining = len;
+        var uint minRun = type(Sort).minRunLength(remaining);
+
+        for (;remaining != 0U;) {
+            var uint rl = type(Sort)[A].countRunAndMakeAscending(arr, lo, lo + remaining);
+
+            if (rl < minRun) {
+                var uint force = remaining < minRun ? remaining : minRun;
+                type(Sort)[A].binarySort(arr, lo, lo + force, lo + rl);
+                rl = force;
+            }
+
+            runBase.AddLast(lo);
+            runLen.AddLast(rl);
+            type(Sort)[A].mergeCollapse(arr, tmp, runBase, runLen);
+
+            lo = lo + rl;
+            remaining = remaining - rl;
+        }
+
+        type(Sort)[A].mergeForceCollapse(arr, tmp, runBase, runLen);
+    }
+
+    // Merge adjacent runs on the stack until the TimSort invariants hold.
+    fun[A] void(A*, A*, ArrList[uint]*, ArrList[uint]*) mergeCollapse = (arr, tmp, runBase, runLen) {
+        for (;runBase.Len() > 1U;) {
+            var uint n = runBase.Len() - 2U;
+            if (n > 0U && runLen.Get(n - 1U) <= runLen.Get(n) + runLen.Get(n + 1U)) {
+                if (runLen.Get(n - 1U) < runLen.Get(n + 1U)) {
+                    n = n - 1U;
+                }
+                type(Sort)[A].mergeAt(arr, tmp, runBase, runLen, n);
+            } else if (runLen.Get(n) <= runLen.Get(n + 1U)) {
+                type(Sort)[A].mergeAt(arr, tmp, runBase, runLen, n);
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Merge all remaining runs into one.
+    fun[A] void(A*, A*, ArrList[uint]*, ArrList[uint]*) mergeForceCollapse = (arr, tmp, runBase, runLen) {
+        for (;runBase.Len() > 1U;) {
+            var uint n = runBase.Len() - 2U;
+            if (n > 0U && runLen.Get(n - 1U) < runLen.Get(n + 1U)) {
+                n = n - 1U;
+            }
+            type(Sort)[A].mergeAt(arr, tmp, runBase, runLen, n);
+        }
+    }
+
+    // Merge the runs at stack positions i and i+1.
+    fun[A] void(A*, A*, ArrList[uint]*, ArrList[uint]*, uint) mergeAt = (arr, tmp, runBase, runLen, i) {
+        var uint base1 = runBase.Get(i);
+        var uint len1 = runLen.Get(i);
+        var uint base2 = runBase.Get(i + 1U);
+        var uint len2 = runLen.Get(i + 1U);
+
+        runLen.Set(i, len1 + len2);
+        if (i + 3U == runBase.Len()) {
+            runBase.Set(i + 1U, runBase.Get(i + 2U));
+            runLen.Set(i + 1U, runLen.Get(i + 2U));
+        }
+        runBase.RemoveLast();
+        runLen.RemoveLast();
+
+        if (len1 <= len2) {
+            type(Sort)[A].mergeLo(arr, tmp, base1, len1, base2, len2);
+        } else {
+            type(Sort)[A].mergeHi(arr, tmp, base1, len1, base2, len2);
+        }
+    }
+
+    // Merge when len1 <= len2
+    fun[A] void(A*, A*, uint, uint, uint, uint) mergeLo = (arr, tmp, base1, len1, base2, len2) {
+        type(Arrs)[A].Copy(len1, arr + base1, tmp);
+
+        var uint cursorT = 0U;
+        var uint cursor2 = base2;
+        var uint dest = base1;
+
+        for (;len1 > 0U && len2 > 0U;) {
+            if ((arr[cursor2] <=> tmp[cursorT]) < 0) {
+                arr[dest] = arr[cursor2];
+                cursor2 = cursor2 + 1U;
+                len2 = len2 - 1U;
+            } else {
+                arr[dest] = tmp[cursorT];
+                cursorT = cursorT + 1U;
+                len1 = len1 - 1U;
+            }
+            dest = dest + 1U;
+        }
+
+        if (len1 > 0U) {
+            type(Arrs)[A].Copy(len1, tmp + cursorT, arr + dest);
+        }
+    }
+
+    // Merge when len1 > len2
+    fun[A] void(A*, A*, uint, uint, uint, uint) mergeHi = (arr, tmp, base1, len1, base2, len2) {
+        type(Arrs)[A].Copy(len2, arr + base2, tmp);
+
+        var uint endLeft = base1 + len1;
+        var uint endT = len2;
+        var uint endDest = base2 + len2;
+
+        for (;len1 > 0U && len2 > 0U;) {
+            endDest = endDest - 1U;
+            if ((tmp[endT - 1U] <=> arr[endLeft - 1U]) < 0) {
+                arr[endDest] = arr[endLeft - 1U];
+                endLeft = endLeft - 1U;
+                len1 = len1 - 1U;
+            } else {
+                arr[endDest] = tmp[endT - 1U];
+                endT = endT - 1U;
+                len2 = len2 - 1U;
+            }
+        }
+
+        if (len2 > 0U) {
+            type(Arrs)[A].Copy(endT, tmp, arr + base1);
+        }
+    }
+
+    // minRunLength returns a value in [16, 32] such that len / result is
+    // close to but no larger than a power of 2.
+    fun uint(uint) minRunLength = (n) {
+        var uint r = 0U;
+        for (;n >= 32U;) {
+            r = r | (n & 1U);
+            n = n / 2U;
+        }
+        return n + r;
+    }
+
+    // Reverse arr[lo..hi) in place.
+    fun[A] void(A*, uint, uint) reverseRange = (arr, lo, hi) {
+        if (lo + 1U >= hi) {
+            return;
+        }
+        hi = hi - 1U;
+        for (;lo < hi;) {
+            var A t = arr[lo];
+            arr[lo] = arr[hi];
+            arr[hi] = t;
+            lo = lo + 1U;
+            hi = hi - 1U;
+        }
+    }
+
+    // Find the length of the natural run beginning at lo in arr[lo..hi).
+    fun[A] uint(A*, uint, uint) countRunAndMakeAscending = (arr, lo, hi) {
+        var uint runHi = lo + 1U;
+        if (runHi == hi) {
+            return 1U;
+        }
+
+        if ((arr[runHi] <=> arr[lo]) < 0) {
+            runHi = runHi + 1U;
+            for (;runHi < hi && (arr[runHi] <=> arr[runHi - 1U]) < 0; runHi = runHi + 1U) {}
+            type(Sort)[A].reverseRange(arr, lo, runHi);
+        } else {
+            runHi = runHi + 1U;
+            for (;runHi < hi && (arr[runHi] <=> arr[runHi - 1U]) >= 0; runHi = runHi + 1U) {}
+        }
+        return runHi - lo;
+    }
+
+    // Binary insertion sort over arr[lo..hi), assuming arr[lo..start) is already sorted.
+    fun[A] void(A*, uint, uint, uint) binarySort = (arr, lo, hi, start) {
+        if (start == lo) {
+            start = start + 1U;
+        }
+        for (;start < hi; start = start + 1U) {
+            var A pivot = arr[start];
+            var uint left = lo;
+            var uint right = start;
+            for (;left < right;) {
+                var uint mid = (left + right) / 2U;
+                if ((pivot <=> arr[mid]) < 0) {
+                    right = mid;
+                } else {
+                    left = mid + 1U;
+                }
+            }
+            for (var uint i = start; i > left; i = i - 1U) {
+                arr[i] = arr[i - 1U];
+            }
+            arr[left] = pivot;
+        }
+    }
+
+    fun[A] void(uint, A...) Sort = (len, arr) {
+        if (len < 2U) {
+            return;
+        }
+
+        if (len < 32U) {
+            var uint initRun = type(Sort)[A].countRunAndMakeAscending(arr, 0U, len);
+            type(Sort)[A].binarySort(arr, 0U, len, initRun);
+            return;
+        }
+
+        var A* tmp = new(A, len / 2U + 1U);
+        var ArrList[uint]* runBase = type(ArrList)[uint].NewWithCap(32U, 0U);
+        var ArrList[uint]* runLen = type(ArrList)[uint].NewWithCap(32U, 0U);
+
+        type(Sort)[A].run(arr, tmp, runBase, runLen, len);
+
+        delete(runBase);
+        free(runBase);
+        delete(runLen);
+        free(runLen);
+        free(tmp);
+    }
+
+    fun[A] void(Arr[A]*) SortArr = (arr) {
+        type(Sort)[A].Sort(arr.Len(), arr.Arr()...);
+    }
+}

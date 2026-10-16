@@ -2,6 +2,54 @@
 
 #include "vm.h"
 
+// currentZamThread records which ZamThread the OS thread is driving. The C
+// signal handler reads this to find the per-thread pending mask it should
+// OR into; the mask lives on the ZamThread so each line of execution
+// dispatches only the handlers it registered.
+//
+// Set at the top of a thread's run via zam_thread_bind_current. A thread
+// that has not yet bound sees a NULL here, in which case the signal is
+// dropped — nothing has claimed it, and reaching through NULL would be a
+// crash before any program observed anything.
+static __thread ZamThread *currentZamThread;
+
+static void zamSignalHandler(int sig) {
+   ZamThread *thread = currentZamThread;
+    if (thread == NULL)
+        return;
+    if (sig < 0 || sig >= ZAM_SIGNAL_MAX)
+        return;
+    thread->pendingSignalMask |= (sig_atomic_t)1u << sig;
+}
+
+void zam_thread_bind_current(ZamThread *thread) { currentZamThread = thread; }
+
+void zam_thread_install_signal_slot(ZamThread *thread, int sig, void *closure) {
+    if (sig < 0 || sig >= ZAM_SIGNAL_MAX)
+        return;
+    thread->signalHandlers[sig] = closure;
+
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_handler = zamSignalHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_RESTART;
+    (void)sigaction(sig, &sa, NULL);
+}
+
+int zam_thread_take_pending_signal(ZamThread *thread) {
+    sig_atomic_t mask = thread->pendingSignalMask;
+    if (mask == 0)
+        return -1;
+    for (int sig = 0; sig < ZAM_SIGNAL_MAX; sig++) {
+        if (mask & ((sig_atomic_t)1u << sig)) {
+            thread->pendingSignalMask &= ~((sig_atomic_t)1u << sig);
+            return sig;
+        }
+    }
+    return -1;
+}
+
 static const char *const resultNames[] = {
     "CONTINUE",
     "EXIT",

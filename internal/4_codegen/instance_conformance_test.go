@@ -178,6 +178,9 @@ func TestObjectHeaderInvariant(t *testing.T) {
 		// for a kind to sit in. What holds this to the compiler is
 		// TestInstanceHeaderByteSizeCConformance; here it is only the number.
 		"tailedStructHeaderBytes=8",
+		// The one-word discriminant every enum value carries. See
+		// TestInstanceHeaderByteSizeCConformance for the compiler/runtime pin.
+		"enumHeaderBytes=8",
 		"string.state=1",
 		"string.kind=0",
 		"string.upvalue=4276993775",
@@ -245,12 +248,12 @@ func TestInstanceHeaderByteSizeCConformance(t *testing.T) {
 		{"abstract", syntax.KindAbstract, false, "objectHeaderBytes"},
 		{"tailed abstract", syntax.KindAbstract, true, "tailedHeaderBytes"},
 		{"tailed struct", syntax.KindStruct, true, "tailedStructHeaderBytes"},
+		{"enum", syntax.KindEnum, false, "enumHeaderBytes"},
 
-		// The two that keep none. There is no runtime number to compare, the
+		// The one that keeps none. There is no runtime number to compare, the
 		// reader adding nothing at all, so what is asserted is the compiler's
 		// side alone: a header here is one the runtime would never step over.
 		{"struct", syntax.KindStruct, false, ""},
-		{"enum", syntax.KindEnum, false, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			compiler := instanceHeaderByteSizeOf(test.kind, test.tailed)

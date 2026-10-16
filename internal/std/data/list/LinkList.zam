@@ -109,10 +109,10 @@ class LinkList[A] {
         var Node[A]* n = new(Node[A]);
         n.val = v;
         n.xor = this.head{uint};
-        type(System.GC).Lock();
+        type(System.GC).Block();
         this.head.xor = this.head.xor ^ n{uint};
         this.head = n;
-        type(System.GC).Unlock();
+        type(System.GC).Unblock();
         this.len++;
     }
 
@@ -120,10 +120,10 @@ class LinkList[A] {
         var Node[A]* n = new(Node[A]);
         n.val = v;
         n.xor = this.tail{uint};
-        type(System.GC).Lock();
+        type(System.GC).Block();
         this.tail.xor = this.tail.xor ^ n{uint};
         this.tail = n;
-        type(System.GC).Unlock();
+        type(System.GC).Unblock();
         this.len++;
     }
 
@@ -147,10 +147,10 @@ class LinkList[A] {
         var Node[A]* n = new(Node[A]);
         n.val = v;
         n.xor = prev{uint} ^ cur{uint};
-        type(System.GC).Lock();
+        type(System.GC).Block();
         prev.xor = prev.xor ^ cur{uint} ^ n{uint};
         cur.xor = cur.xor ^ prev{uint} ^ n{uint};
-        type(System.GC).Unlock();
+        type(System.GC).Unblock();
         this.len++;
     }
     
@@ -166,10 +166,10 @@ class LinkList[A] {
             this.tail = null;
         } else {
             var Node[A]* newHead = (oldHead.xor){void*}{Node[A]*};
-            type(System.GC).Lock();
+            type(System.GC).Block();
             this.head = newHead;
             newHead.xor = newHead.xor ^ oldHead{uint};
-            type(System.GC).Unlock();
+            type(System.GC).Unblock();
         }
 
         this.len--;
@@ -193,10 +193,10 @@ class LinkList[A] {
             this.tail = null;
         } else {
             var Node[A]* newTail = (oldTail.xor){void*}{Node[A]*};
-            type(System.GC).Lock();
+            type(System.GC).Block();
             this.tail = newTail;
             newTail.xor = newTail.xor ^ oldTail{uint};
-            type(System.GC).Unlock();
+            type(System.GC).Unblock();
         }
 
         this.len--;
@@ -227,10 +227,10 @@ class LinkList[A] {
         var Node[A]* next = (prev{uint} ^ cur.xor){void*}{Node[A]*};
         var A old = cur.val;
 
-        type(System.GC).Lock();
+        type(System.GC).Block();
         prev.xor = prev.xor ^ cur{uint} ^ next{uint};
         next.xor = next.xor ^ cur{uint} ^ prev{uint};
-        type(System.GC).Unlock();
+        type(System.GC).Unblock();
 
         this.len--;
         if(!(@cur.val <: type(void*))) {
@@ -280,10 +280,6 @@ class LinkList[A] {
         for(var Node[A]* n = this.head; n != null;) {
             var Node[A]* next = (prev ^ n.xor){void*}{Node[A]*};
             prev = n{uint};
-            if(!(@n.val <: type(void*))) {
-                // Only clean up raw values
-                delete(&(n.val));
-            }
             free(n);
             n = next;
         }
@@ -312,7 +308,7 @@ class LinkList[A] {
         }
 
         fun void(LinkList[A]*, uint) InitWithIndex = (l, i) {
-            if(i >= l.Len()) {
+            if(i > l.Len()) {
                 type(System).Panic("Arr out of bounds");
             }
             this.l = l;
