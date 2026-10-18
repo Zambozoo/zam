@@ -117,6 +117,13 @@ type (
 		instanceMembers        []memberDefinition
 		instanceByteSize       uint64
 		initializerInstruction uint64
+		// valueCount is how many values are backed by a primitive: every
+		// value of an enum declared with one, and none otherwise.
+		valueCount uint64
+		// valueSlot is the static slot of the first value's primitive. The
+		// rest follow it back to back in declaration order, so a value's
+		// discriminant is the byte offset of its primitive from this slot.
+		valueSlot uint64
 	}
 	typeDefinitionStruct struct {
 		// instanceMethodsCount uint64
@@ -312,7 +319,7 @@ func (t *typeDefinitionStruct) Read(p []byte) (int, error) {
 func (t *typeDefinitionEnum) ByteCount() int {
 	return countedByteCount(t.instanceMethods) +
 		countedByteCount(t.instanceMembers) +
-		2*wordByteSize
+		4*wordByteSize
 }
 
 func (t *typeDefinitionEnum) Read(p []byte) (int, error) {
@@ -321,7 +328,7 @@ func (t *typeDefinitionEnum) Read(p []byte) (int, error) {
 	}
 
 	totalBytes, _ := readAllWords(p, len(t.instanceMethods), len(t.instanceMembers))
-	n, _ := readAllWords(p[totalBytes:], t.instanceByteSize, t.initializerInstruction)
+	n, _ := readAllWords(p[totalBytes:], t.instanceByteSize, t.initializerInstruction, t.valueCount, t.valueSlot)
 	totalBytes += n
 	n, _ = readAll(p[totalBytes:], t.instanceMethods)
 	totalBytes += n
@@ -621,6 +628,35 @@ func (cv *typeDefinitionsInstantiatorVisitor) VisitDeclEnum(d *syntax.DeclEnum) 
 	cv.reader.enumDefinitions = append(cv.reader.enumDefinitions, def)
 	cv.visitNestedDecls(d)
 	return nil
+}
+
+// enumValues returns an enum's values in declaration order, which is the order
+// their primitives are laid out in.
+func enumValues(d *syntax.DeclEnum) []*syntax.FieldEnum {
+	var values []*syntax.FieldEnum
+	for _, f := range d.StaticFields() {
+		if value, ok := f.(*syntax.FieldEnum); ok {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
+// enumDiscriminant is what an enum value carries at its head to say which value
+// it is: for an enum backed by a primitive, the byte offset of the value's
+// primitive from the first value's, and otherwise its ordinal.
+func enumDiscriminant(f *syntax.FieldEnum) uint64 {
+	enum := f.OuterDecl().(*syntax.DeclEnum)
+	stride := uint64(1)
+	if primitive := enum.Primitive(); primitive != nil {
+		stride, _ = fieldByteInfo(primitive)
+	}
+	for i, value := range enumValues(enum) {
+		if value == f {
+			return uint64(i) * stride
+		}
+	}
+	panic("unreachable")
 }
 
 func (cv *typeDefinitionsInstantiatorVisitor) VisitDeclClass(d *syntax.DeclClass) error {

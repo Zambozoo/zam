@@ -256,6 +256,9 @@ func (v *genericCycleDetectorVisitor) VisitFieldEnum(f *syntax.FieldEnum) error 
 	for _, parameter := range f.Parameters {
 		parameter.Accept(v)
 	}
+	if f.Value != nil {
+		f.Value.Accept(v)
+	}
 	return nil
 }
 

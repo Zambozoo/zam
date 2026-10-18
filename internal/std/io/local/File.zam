@@ -5,6 +5,23 @@ import "../../lang/Strs.zam";
 import "../../lang/Objs.zam";
 
 class File {
+    // The POSIX open flags
+    enum Flag : byte {
+        ReadOnly(flag(0)),
+        WriteOnly(flag(1)),
+        ReadWrite(flag(2)),
+        Create(flag(3)),
+        Exclusive(flag(4)),
+        Truncate(flag(5)),
+        Append(flag(6));
+
+        static private fun byte(int) flag = (code) {
+            var int v;
+            native(STD_FILE_FLAG){void(int, int*)}(code, &v);
+            return v{byte};
+        }
+    }
+
     static private fun File*(int) newWithFD = (fd) {
         var File* f = new(File);
         f.fd = fd;
@@ -16,29 +33,6 @@ class File {
     static var File*$ StdErr = newWithFD(2);
 
     private var int fd;
-
-    // The POSIX open flags, each exposed as a static method that asks the C
-    // side for its OS-specific integer value. Compose a mode with bitwise `|`:
-    //
-    //     var int mode = type(File).ReadWrite() | type(File).Create();
-    //
-    // The values are OS-specific — Linux and macOS pick different bits for
-    // every flag past the three access modes — so a method call is the only
-    // honest way to spell them from the zam side. A static var cannot be used
-    // because static initializer order is undefined (see memory on
-    // project_static_init_is_ub) and the value depends on a native call.
-    static private fun int(int) flag = (code) {
-        var int v;
-        native(STD_FILE_FLAG){void(int, int*)}(code, &v);
-        return v;
-    }
-    static var int$ ReadOnly  = flag(0);
-    static var int$ WriteOnly = flag(1);
-    static var int$ ReadWrite = flag(2);
-    static var int$ Create    = flag(3);
-    static var int$ Exclusive = flag(4);
-    static var int$ Truncate  = flag(5);
-    static var int$ Append    = flag(6);
 
     static fun Pair[File*, Err*](str, int) New = (path, mode) {
         var File* f = new(File);

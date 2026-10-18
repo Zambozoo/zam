@@ -949,6 +949,38 @@ func (e *ExprNAry) ResolvedType() Type {
 	return e.ComputedType
 }
 
+// NewStrCall returns the call of Str on what object points at, when object is a
+// pointer to an enum or struct that declares Str as a str(). Such a value is
+// laid out inline and carries no header to dispatch through, so a cast of its
+// pointer to str names the method rather than leaving it to the runtime.
+func NewStrCall(object Expr) (*ExprNAry, bool) {
+	w, ok := StripConst(object.ResolvedType()).(*TypeWrapped)
+	if !ok || w.Kind() != TypeKindPointer {
+		return nil, false
+	}
+	resolvable, ok := StripConst(w.Type).(TypeResolvable)
+	if !ok || resolvable.Decl() == nil {
+		return nil, false
+	}
+	decl := resolvable.Decl()
+	if decl.Kind() != KindEnum && decl.Kind() != KindStruct {
+		return nil, false
+	}
+	method, ok := decl.GetInstanceMethod("Str")
+	if !ok {
+		return nil, false
+	}
+	ft, ok := method.FieldType().(*TypeFunction)
+	if !ok || len(ft.ParameterTypes) != 0 || StripConst(ft.ReturnType).Kind() != TypeKindString {
+		return nil, false
+	}
+	return &ExprNAry{
+		kind:         ExprKindCall,
+		Exprs:        []Expr{&ExprField{Expr: object, Field: method.Name(), ComputedType: ft}},
+		ComputedType: ft.ReturnType,
+	}, true
+}
+
 // Start implements the [Expr] interface.
 func (e *ExprNative) Start() *Token {
 	return e.start

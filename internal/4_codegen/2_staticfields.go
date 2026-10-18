@@ -132,7 +132,30 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitDeclEnum(d *syntax.
 	p.fillMembers(def.instanceMembers, d)
 	p.fillMethods(def.instanceMethods, d)
 	p.visitStaticFields(d)
+	p.layEnumValues(def, d)
 	return nil
+}
+
+// layEnumValues lays the primitives an enum's values are backed by back to back
+// in declaration order, each in a static slot of its own, so that one is
+// reached from the first by its value's discriminant.
+func (p *staticTypesandTypeDefinitionsPopulatorVisitor) layEnumValues(def *typeDefinitionEnum, d *syntax.DeclEnum) {
+	primitive := d.Primitive()
+	if primitive == nil {
+		return
+	}
+
+	r := p.reader
+	size, align := fieldByteInfo(primitive)
+	p.offset = alignUp(p.offset, align)
+	def.valueSlot = uint64(len(r.staticInstanceMaps))
+	for _, value := range enumValues(d) {
+		*value.ValueIndex() = len(r.staticInstanceMaps)
+		r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
+		p.stampStaticHeaders(p.offset, primitive)
+		p.offset += size
+		def.valueCount++
+	}
 }
 
 func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitDeclClass(d *syntax.DeclClass) error {

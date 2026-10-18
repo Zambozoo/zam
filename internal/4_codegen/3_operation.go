@@ -749,6 +749,16 @@ const (
 	// entry of its own — the usual rule for a value and the id above it.
 	//   (code) | [any*,targetTypeID] {anyMarkEntry} -> [value] {valueMarkEntry?}
 	OpAnyUnbox
+
+	// OpEnumValue pushes a pointer to the static slot holding the primitive a
+	// value of a primitive-backed enum is backed by. The primitives lie back to
+	// back from the slot the definition the type id names gives, and the value's
+	// discriminant is the byte offset of its own from there; nothing about the
+	// value but its first word is read, and the rest of it is spent. What is
+	// left is half of a location, as with [OpPushStatic], so a load through it
+	// reads the primitive.
+	//   (code) | [enumWords...,enumTypeID] {enumMarkEntries?} -> [staticPointer] {staticPointerMarkEntry}
+	OpEnumValue
 )
 
 // ReceiverSlotClosure is the OpPushReceiverType operand that reads `this`
@@ -1369,38 +1379,55 @@ func (v *operationVisitor) VisitFieldEnum(f *syntax.FieldEnum) error { return ni
 // first operation, so these lie ahead of the main method's own body and control
 // falls out of the last of them into it. They leave the stack as they found it,
 // which is the frame the main method was entered on.
+//
+// Every static method in the program is built before any other static is
+// initialized. Building one reads nothing, so it can go first, and going first
+// is what lets any initializer call any static method wherever it was written —
+// an enum's values most of all, which are always written ahead of the enum's
+// own methods.
 func (v *operationVisitor) emitStaticInitializers() error {
-	for _, entry := range v.ast.CodeFiles.All() {
-		if err := v.emitDeclStaticInitializers(entry.Value.Decl); err != nil {
-			return err
+	for _, methods := range []bool{true, false} {
+		for _, entry := range v.ast.CodeFiles.All() {
+			if err := v.emitDeclStaticInitializers(entry.Value.Decl, methods); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-// emitDeclStaticInitializers initializes the statics a declaration holds and
-// those the declarations nested inside it hold, in the order they were written.
-// A nested declaration is a static field of the one it lies in, which is what
-// makes the walk a single loop.
-func (v *operationVisitor) emitDeclStaticInitializers(d syntax.Decl) error {
+// emitDeclStaticInitializers initializes either the static methods or the other
+// statics a declaration holds and those the declarations nested inside it hold,
+// in the order they were written. A nested declaration is a static field of the
+// one it lies in, which is what makes the walk a single loop.
+func (v *operationVisitor) emitDeclStaticInitializers(d syntax.Decl, methods bool) error {
 	for _, f := range d.StaticFields() {
 		switch f := f.(type) {
+		case *syntax.FieldMethod:
+			if !methods {
+				continue
+			}
+			if err := v.emitStaticMethod(f); err != nil {
+				return err
+			}
 		case *syntax.FieldMember:
+			if methods {
+				continue
+			}
 			if err := v.emitStaticMember(f); err != nil {
 				return err
 			}
 		case *syntax.FieldEnum:
-			if err := v.emitEnumValue(f); err != nil {
-				return err
+			if methods {
+				continue
 			}
-		case *syntax.FieldMethod:
-			if err := v.emitStaticMethod(f); err != nil {
+			if err := v.emitEnumValue(f); err != nil {
 				return err
 			}
 		}
 	}
 	for child := range d.Decls() {
-		if err := v.emitDeclStaticInitializers(child); err != nil {
+		if err := v.emitDeclStaticInitializers(child, methods); err != nil {
 			return err
 		}
 	}
@@ -1506,11 +1533,13 @@ func (v *operationVisitor) emitStaticMember(f *syntax.FieldMember) error {
 // somewhere else, and it is created the way anything is: from what was written
 // for it, and where nothing was written, from its type.
 //
-// After the default value is in place, the enum constant's ordinal is written
-// into the one-word discriminant at the head of the slot (see
-// [instanceHeaderByteSizeOf] for KindEnum). The runtime's equality instruction
-// reads this word to tell BigEndian from LittleEndian — without it, two
-// member-less enum values would be bitwise identical and compare equal.
+// After the default value is in place, the value's discriminant is written into
+// the one word at the head of the slot (see [instanceHeaderByteSizeOf] for
+// KindEnum and [enumDiscriminant] for what it holds). The
+// runtime's equality instruction reads this word to tell BigEndian from
+// LittleEndian — without it, two member-less enum values would be bitwise
+// identical and compare equal — and [OpEnumValue] reads it to find the slot a
+// primitive-backed value's primitive is held in, which is set here as well.
 func (v *operationVisitor) emitEnumValue(f *syntax.FieldEnum) error {
 	enum := f.OuterDecl().(*syntax.DeclEnum)
 	enumType := enum.DeclType()
@@ -1523,24 +1552,27 @@ func (v *operationVisitor) emitEnumValue(f *syntax.FieldEnum) error {
 	v.emit(OpStore)
 	v.emitPopLocation()
 
-	// Stamp the discriminant. The slot is reinterpreted as a uint for this
-	// store so the ordinal lands at offset zero, where equalValues reads it.
-	ordinal := uint64(0)
-	for _, sf := range enum.StaticFields() {
-		if sf == f {
-			break
-		}
-		if _, ok := sf.(*syntax.FieldEnum); ok {
-			ordinal++
-		}
-	}
+	// The slot is reinterpreted as a uint for this store so the discriminant
+	// lands at offset zero, where equalValues and OpEnumValue read it.
 	v.emitPushStaticSlot(*f.Index(), syntax.TypeUint)
 	v.emitPushTypeID(syntax.TypeUint)
-	v.emitPushWords(ordinal)
+	v.emitPushWords(enumDiscriminant(f))
 	v.emitPushTypeID(syntax.TypeUint)
 	v.emit(OpStore)
 	v.emitPopLocation()
 
+	if f.Value != nil {
+		primitive := enum.Primitive()
+		v.emitPushStaticSlot(*f.ValueIndex(), primitive)
+		v.emitPushTypeID(primitive)
+		if err := v.emitValueAs(f.Value, primitive); err != nil {
+			return err
+		}
+		v.emitPushTypeID(primitive)
+		v.emit(OpStore)
+		v.emitPopLocation()
+		return nil
+	}
 	if f.Init == nil {
 		return nil
 	}
@@ -3531,7 +3563,22 @@ func methodOpcode(d syntax.DeclTypeable) Opcode {
 func (v *operationVisitor) VisitExprCast(e *syntax.ExprCast) error {
 	from, to := syntax.StripConst(e.Expr.ResolvedType()), syntax.StripConst(e.Type)
 
+	if enum, ok := syntax.EnumBackingCast(from, to); ok {
+		primitive := enum.Primitive()
+		if err := v.emitValue(e.Expr); err != nil {
+			return err
+		}
+		v.emitPushTypeID(from)
+		v.emit(OpEnumValue)
+		v.emitPushTypeID(primitive)
+		v.emit(OpLoad)
+		v.emitWordCast(primitive, to)
+		return nil
+	}
 	if to.Kind() == syntax.TypeKindString {
+		if call, ok := syntax.NewStrCall(e.Expr); ok {
+			return call.Accept(v)
+		}
 		return v.emitStringCast(e.Expr, from)
 	}
 	// The any branches each want the other kind to be anything but any, so

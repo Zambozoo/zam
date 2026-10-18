@@ -164,6 +164,9 @@ func (c *genericTypeCollector) VisitFieldEnum(f *syntax.FieldEnum) error {
 	for _, parameter := range f.Parameters {
 		parameter.Accept(c)
 	}
+	if f.Value != nil {
+		f.Value.Accept(c)
+	}
 	return nil
 }
 

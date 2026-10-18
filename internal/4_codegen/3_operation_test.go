@@ -627,3 +627,112 @@ func storeWordOperations(slot uint64, value []operation) []operation {
 	return append(ops, OpStore,
 		OpPopWord, OpPopWord, OpPopWord, OpPopWord)
 }
+
+// TestPrimitiveEnumCastReadsThroughTheDefinition pins the two halves of a
+// primitive-backed enum: the values' primitives lie back to back in declaration
+// order from the slot its definition names, which is what lets a discriminant be
+// a byte offset from there, and a cast to the primitive reads through that slot
+// with OpEnumValue rather than through the value.
+func TestPrimitiveEnumCastReadsThroughTheDefinition(t *testing.T) {
+	reader := compileOperations(t, `
+namespace Main {
+`+mainMethod+`
+    enum Mask : int {
+        A(1),
+        B(1 << 7),
+        C(3 * 5);
+    }
+
+    static fun int() f = () {
+        return type(Mask).B{int};
+    }
+}
+`)
+	assert.True(t, containsOpcode(reader.operations, OpEnumValue),
+		"OpEnumValue was not emitted for a cast of an enum to its primitive")
+
+	var backed []*typeDefinitionEnum
+	for _, def := range reader.enumDefinitions {
+		if def := def.(*typeDefinitionEnum); def.valueCount > 0 {
+			backed = append(backed, def)
+		}
+	}
+	require.Len(t, backed, 1)
+	require.Equal(t, uint64(3), backed[0].valueCount)
+
+	first := backed[0].valueSlot
+	offsets := reader.staticInstanceMaps[first : first+3]
+	assert.Equal(t, offsets[0]+wordByteSize, offsets[1])
+	assert.Equal(t, offsets[1]+wordByteSize, offsets[2])
+}
+
+// TestPointerToInlineValueCastsToStrThroughStr pins where a declaration's Str is
+// reached from a cast: an enum or struct lies inline and carries no header to
+// dispatch through, so its pointer's cast to str calls Str by name, while the
+// value's own cast reads what it is backed by.
+func TestPointerToInlineValueCastsToStrThroughStr(t *testing.T) {
+	for name, test := range map[string]struct {
+		cast       string
+		wantBacked bool
+	}{
+		"pointer": {cast: `(&n){str}`},
+		"value":   {cast: `n{str}`, wantBacked: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			reader := compileOperations(t, `
+namespace Main {
+`+mainMethod+`
+    enum Name : str {
+        X("backing");
+
+        fun str() Str = () {
+            return "override";
+        }
+    }
+
+    static fun str() f = () {
+        var Name n = type(Name).X;
+        return `+test.cast+`;
+    }
+}
+`)
+			assert.False(t, containsOpcode(reader.operations, OpCastToString),
+				"a cast of an enum or its pointer to str should not reach OpCastToString")
+			assert.Equal(t, test.wantBacked, containsOpcode(reader.operations, OpEnumValue))
+		})
+	}
+}
+
+// TestStaticMethodsAreBuiltBeforeOtherStatics pins the order statics are
+// initialized in: every static method's closure is built before any other static
+// is, so an initializer may call a static method written after it — an enum's
+// values always being written ahead of the enum's methods.
+func TestStaticMethodsAreBuiltBeforeOtherStatics(t *testing.T) {
+	reader := compileOperations(t, `
+namespace Main {
+`+mainMethod+`
+    enum Code : int {
+        A(twice(1));
+
+        private static fun int(int) twice = (x) {
+            return x * 2;
+        }
+    }
+
+    static var int later = type(Code).A{int};
+}
+`)
+	lastLambda, firstDefault := -1, -1
+	for i, op := range reader.operations {
+		if b, ok := op.(*binaryOperation); ok && b.opcode == OpNewLambda {
+			lastLambda = i
+		}
+		if bare, ok := op.(Opcode); ok && bare == OpDefaultValue && firstDefault < 0 {
+			firstDefault = i
+		}
+	}
+	require.GreaterOrEqual(t, lastLambda, 0)
+	require.GreaterOrEqual(t, firstDefault, 0)
+	assert.Less(t, lastLambda, firstDefault,
+		"a static method's closure was built after the enum value that calls it")
+}

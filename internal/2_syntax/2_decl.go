@@ -230,6 +230,9 @@ type (
 	// DeclEnum is a enum declaration.
 	DeclEnum struct {
 		decl
+		// primitive is the type every value is backed by, or nil when the
+		// enum declares none.
+		primitive Type
 	}
 	// DeclInterface is a interface declaration.
 	DeclInterface struct {
@@ -1469,6 +1472,19 @@ func newDeclEnum(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclEn
 	}
 	*parser.Decl() = decl
 
+	if tok, err := parser.Match(TTColon); err != nil {
+		return nil, err
+	} else if tok != nil {
+		primitive, err := newType(parser)
+		if err != nil {
+			return nil, err
+		}
+		if _, ok := enumPrimitives[primitive.Kind()]; !ok {
+			return nil, fmt.Errorf("enum %s cannot be backed by %s", name, primitive.String())
+		}
+		decl.primitive = primitive
+	}
+
 	if _, err := parser.Consume(TTLeftBrace); err != nil {
 		return nil, err
 	}
@@ -1480,7 +1496,7 @@ func newDeclEnum(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclEn
 			break
 		}
 
-		field, err := newFieldEnum(parser)
+		field, err := newFieldEnum(parser, decl)
 		if err != nil {
 			return nil, err
 		}
@@ -1534,6 +1550,56 @@ func newDeclEnum(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclEn
 // Accept implements the [Decl] interface.
 func (d *DeclEnum) Accept(visitor FieldVisitor) error {
 	return visitor.VisitDeclEnum(d)
+}
+
+// Primitive returns the type every value of the enum is backed by, or nil when
+// the enum declares none.
+func (d *DeclEnum) Primitive() Type {
+	return d.primitive
+}
+
+// enumPrimitives are the kinds an enum may be backed by.
+var enumPrimitives = map[TypeKind]struct{}{
+	TypeKindBool:   {},
+	TypeKindChar:   {},
+	TypeKindByte:   {},
+	TypeKindInt:    {},
+	TypeKindUint:   {},
+	TypeKindFloat:  {},
+	TypeKindString: {},
+}
+
+// EnumBackingCast returns the enum a cast from type from to type to reads the
+// backing primitive of: from must be a value of a primitive-backed enum, and to
+// a primitive an enum could be backed by. A cast to str reads the primitive
+// only when the enum is backed by str.
+func EnumBackingCast(from, to Type) (*DeclEnum, bool) {
+	enum, ok := PrimitiveEnum(from)
+	if !ok {
+		return nil, false
+	}
+	tk := StripConst(to).Kind()
+	if _, ok := enumPrimitives[tk]; !ok {
+		return nil, false
+	}
+	if tk == TypeKindString && enum.primitive.Kind() != TypeKindString {
+		return nil, false
+	}
+	return enum, true
+}
+
+// PrimitiveEnum returns the enum t is a value of when that enum is backed by a
+// primitive. A pointer to such an enum is not one of its values.
+func PrimitiveEnum(t Type) (*DeclEnum, bool) {
+	resolvable, ok := StripConst(t).(TypeResolvable)
+	if !ok {
+		return nil, false
+	}
+	enum, ok := resolvable.Decl().(*DeclEnum)
+	if !ok || enum.primitive == nil {
+		return nil, false
+	}
+	return enum, true
 }
 
 // DeclType implements the [DeclTypeable] interface.

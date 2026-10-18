@@ -4052,6 +4052,30 @@ static ZamResult step(ZamThread *thread) {
         return ZAMRESULT_CONTINUE;
     }
 
+    // The value's first word is its discriminant, the byte offset of its
+    // primitive from the first value's, and the rest of it is spent unread.
+    // The primitive's slot is pushed the way OpPushStatic pushes one.
+    case OpEnumValue: {
+        const ZamImage *image = &thread->vm->image;
+       ZamTypeID type = zam_thread_pop_type(thread);
+       ZamWord discriminant =
+            zam_thread_peek(thread, valueWordsOf(image, type) - 1);
+        popValue(thread, image, type);
+
+        const ZamEnumDefinition *d =
+            zam_enum_definition(image, ZAMTYPE_DECL(type.shortID));
+        if (d->valueCount == 0)
+            zam_die(ZAMEXIT_PANIC, "enum %u is not backed by a primitive\n",
+                    type.shortID);
+
+        zam_thread_push(
+            thread,
+            (ZamWord)(uintptr_t)(zam_vm_static(thread->vm, d->valueSlot) +
+                                 discriminant));
+        zam_thread_push_mark(thread, thread->operandCount - 1);
+        return ZAMRESULT_CONTINUE;
+    }
+
     case ZAMOPCODE_COUNT:
         break;
     }

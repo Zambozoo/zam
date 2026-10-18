@@ -134,6 +134,9 @@ func (r *referenceTypeResolverVisitor) VisitFieldEnum(f *syntax.FieldEnum) error
 	for _, param := range f.Parameters {
 		param.Accept(r)
 	}
+	if f.Value != nil {
+		f.Value.Accept(r)
+	}
 	return nil
 }
 

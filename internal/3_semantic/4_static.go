@@ -347,14 +347,28 @@ func (v *staticSemanticsValidatorVisitor) VisitDeclStruct(d *syntax.DeclStruct) 
 // instance to set it up: it is called on the slot the value already lies in and
 // works through the receiver, so what it takes is checked against what the value
 // was written with and what it returns is not checked at all. A value naming no
-// method is the instance its members default to and asks nothing.
+// method is the instance its members default to and asks nothing. A value of an
+// enum backed by a primitive is written with what it is backed by, which is
+// checked against that primitive.
 func (v *staticSemanticsValidatorVisitor) VisitFieldEnum(f *syntax.FieldEnum) error {
 	defer v.at(f)()
+	outerDecl := f.OuterDecl().(*syntax.DeclEnum)
+
+	if f.Value != nil {
+		primitive := outerDecl.Primitive()
+		if err := f.Value.Accept(v); err != nil {
+			return nil
+		}
+		if !v.lastExprType.IsSubtypeOf(initTarget(primitive)) {
+			v.errf("enum value %s.%s is not a subtype of %s", outerDecl.Name(), f.Name(), primitive.String())
+		}
+		return nil
+	}
+
 	if f.Init == nil {
 		return nil
 	}
 
-	outerDecl := f.OuterDecl().(*syntax.DeclEnum)
 	initMethod, ok := outerDecl.GetInstanceMethod(*f.Init)
 	if !ok {
 		v.errf("missing init method %s.%s for enum field %s", outerDecl.Name(), *f.Init, f.Name())
@@ -799,6 +813,14 @@ func castableTo(src, target syntax.Type) bool {
 	if src.Equals(target) {
 		return true
 	}
+
+	// A value of an enum backed by a primitive reads as that primitive, and so
+	// casts to whatever the primitive does. The way back is not a cast: most
+	// words name no value.
+	if enum, ok := syntax.EnumBackingCast(src, target); ok {
+		return castableTo(enum.Primitive(), target)
+	}
+
 	sk, tk := src.Kind(), target.Kind()
 
 	// Every value can be written out as a string: a primitive by what its word

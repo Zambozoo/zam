@@ -244,12 +244,30 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 			definition: &typeDefinitionEnum{
 				instanceMethods: testMethods(), instanceMembers: testMembers(),
 				instanceByteSize: 16, initializerInstruction: 41,
+				valueCount: 3, valueSlot: 12,
 			},
 			want: concat([]string{
 				"methodCount=2",
 				"memberCount=2",
 				"instanceByteSize=16",
 				"initializerInstruction=41",
+				"valueCount=3",
+				"valueSlot=12",
+			}, wantMethods, wantMembers),
+		},
+		{
+			kind: "enum",
+			definition: &typeDefinitionEnum{
+				instanceMethods: testMethods(), instanceMembers: testMembers(),
+				instanceByteSize: 16, initializerInstruction: 41,
+			},
+			want: concat([]string{
+				"methodCount=2",
+				"memberCount=2",
+				"instanceByteSize=16",
+				"initializerInstruction=41",
+				"valueCount=0",
+				"valueSlot=0",
 			}, wantMethods, wantMembers),
 		},
 		{

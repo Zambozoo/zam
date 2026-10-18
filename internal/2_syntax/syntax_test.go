@@ -446,6 +446,92 @@ func TestNewASTLocatesASyntaxError(t *testing.T) {
 	}
 }
 
+// TestNewASTParsesPrimitiveEnum pins the shape of an enum backed by a primitive:
+// the primitive follows a colon, and every value is written with what it is
+// backed by.
+func TestNewASTParsesPrimitiveEnum(t *testing.T) {
+	for _, primitive := range []string{"bool", "char", "byte", "int", "uint", "float", "str"} {
+		t.Run(primitive, func(t *testing.T) {
+			errs := parseEntry(t, `
+namespace Main {
+    enum Flag : `+primitive+` {
+        A(x),
+        B(y);
+    }
+    static fun void(int, str...) main = (argc, argv) { return; }
+}
+`)
+			assert.Empty(t, errs)
+		})
+	}
+}
+
+// TestNewASTRejectsMalformedPrimitiveEnum holds an enum's values to the form its
+// declaration asks for: a value of a primitive-backed enum names no initializer
+// and must be written with a value, a value of any other enum cannot be, and
+// only a primitive may back an enum.
+func TestNewASTRejectsMalformedPrimitiveEnum(t *testing.T) {
+	for name, test := range map[string]struct {
+		source   string
+		expected string
+	}{
+		"initializer in a primitive enum": {
+			source: `
+namespace Main {
+    enum Flag : int {
+        A.init(1);
+        private fun void(int) init = (x) {}
+    }
+    static fun void(int, str...) main = (argc, argv) { return; }
+}
+`,
+			expected: "enum value Flag.A must be written with a int value",
+		},
+		"bare value in a primitive enum": {
+			source: `
+namespace Main {
+    enum Flag : int { A; }
+    static fun void(int, str...) main = (argc, argv) { return; }
+}
+`,
+			expected: "enum value Flag.A must be written with a int value",
+		},
+		"value in an enum without a primitive": {
+			source: `
+namespace Main {
+    enum Flag { A(1); }
+    static fun void(int, str...) main = (argc, argv) { return; }
+}
+`,
+			expected: "enum value Flag.A cannot be written with a value",
+		},
+		"backed by a declaration": {
+			source: `
+namespace Main {
+    enum Flag : Main { A(1); }
+    static fun void(int, str...) main = (argc, argv) { return; }
+}
+`,
+			expected: "enum Flag cannot be backed by",
+		},
+		"backed by any": {
+			source: `
+namespace Main {
+    enum Flag : any { A(1); }
+    static fun void(int, str...) main = (argc, argv) { return; }
+}
+`,
+			expected: "enum Flag cannot be backed by",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			errs := parseEntry(t, test.source)
+			require.NotEmpty(t, errs)
+			assert.Contains(t, errs[0].Error(), test.expected)
+		})
+	}
+}
+
 // parseEntry runs a one-file project through the parser and answers the errors
 // it collected, without failing the test on them: this is the shape a blank-
 // identifier test wants, since a parse that was supposed to fail is what the

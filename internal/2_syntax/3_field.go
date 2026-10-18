@@ -139,6 +139,12 @@ type (
 		field
 		Init       *string
 		Parameters []Expr
+		// Value is what the value is backed by in an enum declared with a
+		// primitive, and nil otherwise.
+		Value Expr
+		// valueIndex is the static slot Value is held in, assigned once
+		// static layout has run.
+		valueIndex int
 	}
 )
 
@@ -706,11 +712,41 @@ func (c *MethodConcrete) Index() *int { return &c.index }
 // emitted at, assigned once codegen has emitted the body.
 func (c *MethodConcrete) Instruction() *uint64 { return &c.instruction }
 
-// newFieldEnum creates a new field enum.
-func newFieldEnum(parser SyntaxParser) (*FieldEnum, error) {
+// newFieldEnum creates a new field enum. A value of an enum backed by a
+// primitive is written with the constant it stands for, NAME(expr), and names no
+// initializer; a value of any other enum is written bare or as NAME.init(...).
+func newFieldEnum(parser SyntaxParser, enum *DeclEnum) (*FieldEnum, error) {
 	start, err := parser.Consume(TTIdentifier)
 	if err != nil {
 		return nil, err
+	}
+	name := start.Value.(string)
+
+	if enum.primitive != nil {
+		if _, err := parser.Consume(TTLeftParen); err != nil {
+			return nil, fmt.Errorf("enum value %s.%s must be written with a %s value: %w", enum.name, name, enum.primitive.String(), err)
+		}
+		value, err := newExpr(parser)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := parser.Consume(TTRightParen); err != nil {
+			return nil, err
+		}
+		return &FieldEnum{
+			field: field{
+				start:     start,
+				outerDecl: *parser.Decl(),
+				name:      name,
+			},
+			Value: value,
+		}, nil
+	}
+
+	if tok, err := parser.Match(TTLeftParen); err != nil {
+		return nil, err
+	} else if tok != nil {
+		return nil, fmt.Errorf("enum value %s.%s cannot be written with a value: %s is not backed by a primitive", enum.name, name, enum.name)
 	}
 
 	if tok, err := parser.Match(TTPeriod); err != nil {
@@ -720,7 +756,7 @@ func newFieldEnum(parser SyntaxParser) (*FieldEnum, error) {
 			field: field{
 				start:     start,
 				outerDecl: *parser.Decl(),
-				name:      start.Value.(string),
+				name:      name,
 			},
 		}, nil
 	}
@@ -790,4 +826,10 @@ func (f *FieldEnum) Modifiers() Modifier {
 // Accept implements the [Field] interface.
 func (f *FieldEnum) Accept(visitor FieldVisitor) error {
 	return visitor.VisitFieldEnum(f)
+}
+
+// ValueIndex returns a pointer to the static slot Value is held in, assigned
+// once static layout has run.
+func (f *FieldEnum) ValueIndex() *int {
+	return &f.valueIndex
 }

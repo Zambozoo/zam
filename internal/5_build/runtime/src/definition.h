@@ -172,12 +172,17 @@ zam_struct_members(const ZamStructDefinition *d) {
 }
 
 // An enum is a struct that carries no tail: its instances are the values named
-// in the declaration and none of them is variable-length.
+// in the declaration and none of them is variable-length. The primitives an
+// enum's values are backed by lie back to back in declaration order from
+// valueSlot, and a value's discriminant is the byte offset of its own from
+// there; valueCount is zero for an enum backed by none.
 typedef struct ZamEnumDefinition {
     uint64_t methodCount;
     uint64_t memberCount;
     uint64_t instanceByteSize;
     uint64_t initializerInstruction;
+    uint64_t valueCount;
+    uint64_t valueSlot;
    ZamWord body[];
 } ZamEnumDefinition;
 

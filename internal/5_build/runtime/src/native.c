@@ -273,6 +273,26 @@ static void stdSystemExit(ZamThread *thread) {
     exit(code);
 }
 
+// stdSystemProcessID reports getpid(), the id Signal.Send hands to kill().
+static void stdSystemProcessID(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+    *out = (ZamWord)getpid();
+    zam_native_return_void(thread);
+}
+
+// stdSystemThreadID reports pthread_self() as the raw bits of the pthread_t,
+// which is the form stdSignalThreadSend copies back out of the word.
+static void stdSystemThreadID(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+    pthread_t tid = pthread_self();
+    uint64_t threadID = 0;
+    memcpy(&threadID, &tid, sizeof tid < sizeof threadID
+                                ? sizeof tid
+                                : sizeof threadID);
+    *out = (ZamWord)threadID;
+    zam_native_return_void(thread);
+}
+
 // stdSignalRaise sends the signal to this process. raise() returns 0 on
 // success and non-zero on failure; the native swallows the result since the
 // zam signature returns void. Failure here means the OS rejected the signal
@@ -298,7 +318,7 @@ static void stdSignalSend(ZamThread *thread) {
 // the running platform. The index set is this native's contract with
 // System.Signal — adding a signal to the enum means adding a case here, and
 // a mismatch would hand the kernel a number the enum name does not stand
-// for. Keep the switch in step with the init(N) initializers in System.zam.
+// for. Keep the switch in step with the signalNumber(N) calls in System.zam.
 static void stdSignalInit(ZamThread *thread) {
     int idx = (int)zam_native_argument(thread, 0);
     ZamInt *out = (ZamInt *)zam_native_argument_pointer(thread, 1);
@@ -471,6 +491,8 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_GC_BLOCK", stdGcBlock},
     {"STD_GC_UNBLOCK", stdGcUnblock},
     {"STD_SYSTEM_EXIT", stdSystemExit},
+    {"STD_SYSTEM_PROCESS_ID", stdSystemProcessID},
+    {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},
     {"STD_SIGNAL_INIT", stdSignalInit},
     {"STD_SIGNAL_RAISE", stdSignalRaise},
     {"STD_SIGNAL_SEND", stdSignalSend},
