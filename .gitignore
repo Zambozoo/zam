@@ -11,3 +11,4 @@ zam
 node_modules
 *.vsix
 editors/vscode/LICENSE
+editors/vscode/images

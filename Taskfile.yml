@@ -31,12 +31,20 @@ tasks:
       - go tool cover -func=coverage.out
 
   vscode:
-    desc: Build and package the VS Code extension
+    desc: Build and package the editor extension, and install it into VS Code and Cursor where present
     dir: editors/vscode
     cmds:
       - npm install
       - npm run compile
       - npm run package
+      - |
+        status=0
+        for editor in code cursor; do
+          if command -v $editor >/dev/null; then
+            $editor --install-extension zam.vsix --force || status=1
+          fi
+        done
+        exit $status
 
   runtime:
     desc: Build the C runtime

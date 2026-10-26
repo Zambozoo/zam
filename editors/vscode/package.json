@@ -5,6 +5,7 @@
   "version": "0.0.1",
   "publisher": "zambozoo",
   "license": "MIT",
+  "icon": "images/icon.png",
   "repository": {
     "type": "git",
     "url": "https://github.com/Zambozoo/zam",
@@ -27,7 +28,11 @@
         "extensions": [
           ".zam"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/icon.png",
+          "dark": "./images/icon.png"
+        }
       }
     ],
     "grammars": [
@@ -61,7 +66,8 @@
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "package": "cp ../../LICENSE LICENSE && vsce package"
+    "package": "npm run assets && vsce package --out zam.vsix",
+    "assets": "mkdir -p images && cp ../../LICENSE LICENSE && cp ../../assets/logo_square.png images/icon.png"
   },
   "dependencies": {
     "vscode-languageclient": "^9.0.1"
