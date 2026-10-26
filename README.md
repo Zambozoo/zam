@@ -16,7 +16,6 @@ The best place to start is the [documentation](docs).
 
 ## TODO
 Zam is far from complete.
-* Implement GC
 * Implement the `std` package
     * Sync - Concurrency Primitives
     * Crypto - Cryptographic Primitives
@@ -25,7 +24,7 @@ Zam is far from complete.
     * Data - Data Structures
     * Lang - Language and System Primtives
     * Codec - Encoding and Compression
-* Implement a language server
 * Implement a testing framework
+* Implement debugging
 * Export LLVM instead of bytecode
 * Bootstrap the language

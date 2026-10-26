@@ -10,17 +10,21 @@
 #include <unistd.h>
 
 #include "definition.h"
+#include "gc.h"
 #include "thread.h"
 #include "vm.h"
 
-// STD_MARK hands the receiver to the collector. Object.Mark names it, and
-// Object.MarkObject names the same entry for the "bypass the user's override"
-// path — the override is applied by the zam-side dispatch choosing to call
-// the static directly, which spares a second native entry that would do the
-// same work.
+// STD_MARK is Object's own Mark: while collecting, everything the receiver's
+// members hold is reachable. STD_MARK_OVERRIDE is Objs.Mark: the receiver is
+// reachable, and nothing it holds is traced.
 static void stdMark(ZamThread *thread) {
-    (void)thread;
-    ZAMTODO("STD_MARK: hand the receiver to the collector");
+    zam_gc_mark_members(thread, zam_native_argument(thread, 0));
+    zam_native_return_void(thread);
+}
+
+static void stdMarkOverride(ZamThread *thread) {
+    zam_gc_mark_only(thread, zam_native_argument(thread, 0));
+    zam_native_return_void(thread);
 }
 
 // STD_DELETE marks the receiver's allocation dead for the next sweep. It is
@@ -100,8 +104,10 @@ static void stdFileInit(ZamThread *thread) {
     // create the file — O_CREAT, O_TMPFILE — and is ignored otherwise, so
     // passing it unconditionally is safe. The caller does not control it yet;
     // a permissions parameter would be a straightforward follow-up.
+    zam_native_block_begin(thread);
     int fd = open(cpath, mode, 0644);
     int openErrno = errno;
+    zam_native_block_end(thread);
     free(cpath);
     if (fd < 0) {
         *errOut = errorMessage(thread, openErrno);
@@ -146,10 +152,14 @@ static void stdFileWrite(ZamThread *thread) {
    ZamInt *nOut = (ZamInt *)zam_native_argument_pointer(thread, 3);
    ZamWord *errOut = (ZamWord *)zam_native_argument_pointer(thread, 4);
 
-    ssize_t written = write((int)*fdPtr, buffer, count);
+    int fd = (int)*fdPtr;
+    zam_native_block_begin(thread);
+    ssize_t written = write(fd, buffer, count);
+    int writeErrno = errno;
+    zam_native_block_end(thread);
     if (written < 0) {
         *nOut = 0;
-        *errOut = errorMessage(thread, errno);
+        *errOut = errorMessage(thread, writeErrno);
     } else {
         *nOut = (ZamInt)written;
         *errOut = 0;
@@ -168,8 +178,13 @@ static void stdFileWrite(ZamThread *thread) {
 static void stdFileClose(ZamThread *thread) {
    ZamInt *fdPtr = (ZamInt *)zam_native_argument_pointer(thread, 0);
    ZamWord *errOut = (ZamWord *)zam_native_argument_pointer(thread, 1);
-    if (close((int)*fdPtr) < 0)
-        *errOut = errorMessage(thread, errno);
+    int fd = (int)*fdPtr;
+    zam_native_block_begin(thread);
+    int closed = close(fd);
+    int closeErrno = errno;
+    zam_native_block_end(thread);
+    if (closed < 0)
+        *errOut = errorMessage(thread, closeErrno);
     else
         *errOut = 0;
     zam_native_return_void(thread);
@@ -182,10 +197,14 @@ static void stdFileRead(ZamThread *thread) {
    ZamInt *nOut = (ZamInt *)zam_native_argument_pointer(thread, 3);
    ZamWord *errOut = (ZamWord *)zam_native_argument_pointer(thread, 4);
 
-    ssize_t bytesRead = read((int)*fdPtr, buffer, count);
+    int fd = (int)*fdPtr;
+    zam_native_block_begin(thread);
+    ssize_t bytesRead = read(fd, buffer, count);
+    int readErrno = errno;
+    zam_native_block_end(thread);
     if (bytesRead < 0) {
         *nOut = 0;
-        *errOut = errorMessage(thread, errno);
+        *errOut = errorMessage(thread, readErrno);
     } else {
         *nOut = (ZamInt)bytesRead;
         *errOut = 0;
@@ -250,15 +269,18 @@ static void stdArrsCopy(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
-// stdGcBlock and stdGcUnblock are placeholders for the GC pause pair the zam
-// side already names. The collector itself has not been written, so there is
-// nothing to pause or resume; the natives return cleanly so a program that
-// calls GC.Lock()/GC.Unlock() around a critical section still runs.
+// stdGcBlock and stdGcUnblock freeze and unfreeze collection for the calling
+// thread. They nest: a collection waits until every GC.Block a thread has
+// made is matched by a GC.Unblock and the thread reaches its next safepoint.
 static void stdGcBlock(ZamThread *thread) {
+    thread->gcBlockDepth++;
     zam_native_return_void(thread);
 }
 
 static void stdGcUnblock(ZamThread *thread) {
+    if (thread->gcBlockDepth == 0)
+        zam_native_panic(thread, "GC.Unblock without a matching GC.Block");
+    thread->gcBlockDepth--;
     zam_native_return_void(thread);
 }
 
@@ -475,7 +497,7 @@ static void stdSignalHandle(ZamThread *thread) {
 
 const ZamNativeEntry zamNativeTable[] = {
     {"STD_MARK", stdMark},
-    {"STD_MARK_OVERRIDE", stdMark},
+    {"STD_MARK_OVERRIDE", stdMarkOverride},
     {"STD_DELETE", stdDelete},
     {"STD_DELETE_OVERRIDE", stdDelete},
     {"STD_FILE_INIT", stdFileInit},
@@ -618,6 +640,10 @@ void zam_native_return(ZamThread *thread, const uint64_t *words,
 void zam_native_return_void(ZamThread *thread) {
     zam_thread_pop_function(thread);
 }
+
+void zam_native_block_begin(ZamThread *thread) { zam_vm_enter_safe(thread); }
+
+void zam_native_block_end(ZamThread *thread) { zam_vm_leave_safe(thread); }
 
 _Noreturn void zam_native_panic(ZamThread *thread, const char *message) {
     (void)thread;

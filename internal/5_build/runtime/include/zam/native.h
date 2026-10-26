@@ -71,6 +71,18 @@ void zam_native_return(ZamThread *thread, const uint64_t *words,
                        uint64_t wordCount, uint64_t markPointerBits);
 void zam_native_return_void(ZamThread *thread);
 
+// zam_native_block_begin and zam_native_block_end bracket a call that may
+// block — a read, a write, a wait on a lock — so that a collection need not
+// wait for it to return. Between the two a native may fill a buffer of plain
+// bytes it was handed, but must not read or write a reference or call any
+// other function here, since a collection may be reading them. Read every
+// argument before beginning, and write every result after ending.
+//
+// Blocking while the calling thread has frozen collection with GC.Block ends
+// the run, since what the call waits on may be waiting on a collection.
+void zam_native_block_begin(ZamThread *thread);
+void zam_native_block_end(ZamThread *thread);
+
 // zam_native_panic ends the run from inside a native, for the failures a native
 // can see and the program cannot be handed back: there are no exceptions to
 // throw and no Result to return.

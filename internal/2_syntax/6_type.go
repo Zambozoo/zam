@@ -127,6 +127,9 @@ type (
 		// for — an enclosing declaration, a nested one, or an import — is
 		// settled by resolution rather than by the parse.
 		Ids []string
+		// IdTokens are the tokens Ids are written at, and are empty for a
+		// reference no source was written for.
+		IdTokens []*Token
 
 		// decl is the declaration of the tailed type.
 		decl DeclTypeable
@@ -514,6 +517,7 @@ func newTypeBase(parser SyntaxParser, canBeTailed bool) (Type, error) {
 	}
 
 	ids := []string{start.Value.(string)}
+	idTokens := []*Token{start}
 	for {
 		if tok, err := parser.Match(TTPeriod); err != nil {
 			return nil, err
@@ -527,6 +531,7 @@ func newTypeBase(parser SyntaxParser, canBeTailed bool) (Type, error) {
 		}
 
 		ids = append(ids, tok.Value.(string))
+		idTokens = append(idTokens, tok)
 	}
 
 	var t Type
@@ -552,6 +557,7 @@ func newTypeBase(parser SyntaxParser, canBeTailed bool) (Type, error) {
 		start:     start,
 		outerDecl: *parser.Decl(),
 		Ids:       ids,
+		IdTokens:  idTokens,
 	}
 
 	if tilde, err := parser.Match(TTTilde); err != nil {

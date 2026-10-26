@@ -1,6 +1,7 @@
 #pragma once
 
 #include <pthread.h>
+#include <stdatomic.h>
 
 #include "common.h"
 #include "zam/native.h"
@@ -36,22 +37,55 @@ typedef struct ZamVM {
     // allocation and is never linked, its storage being the stack's to reclaim.
     // That is what makes the link a reliable answer to "did the allocator hand
     // this out", rather than only to "does this have a mark word".
-    void *allocations;
+    //
+    // Every thread allocates onto it, so the head is swapped in atomically
+    // rather than under a lock.
+    _Atomic(void *) allocations;
 
     // allocatedByteCount is what the heap holds, and nextCollectionByteCount is
-    // what it has to reach for a collection to be asked for. The ratio between
-    // them is the program's to set, and comes in on the image.
-    uint64_t allocatedByteCount;
-    uint64_t nextCollectionByteCount;
+    // what it has to reach for a collection to be asked for: the trigger ratio
+    // of heapByteCount, the size the heap is let grow to. The heap starts at the
+    // size the image asks for and doubles whenever what a collection leaves
+    // would already ask for the next one. The ratio is the program's to set,
+    // and comes in on the image.
+    _Atomic uint64_t allocatedByteCount;
+    _Atomic uint64_t nextCollectionByteCount;
+    uint64_t heapByteCount;
     double gcTriggerRatio;
 
-    // collectionRequested is set by whichever thread crossed the threshold and
-    // read by the loop, which is the only place a collection may actually
-    // happen: a thread mid-instruction is a thread whose stacks do not yet say
-    // what they will.
-    bool collectionRequested;
+    // collectionRequested is set by whichever thread crossed the threshold.
+    // A collection happens only at a safepoint, between instructions: a thread
+    // mid-instruction is a thread whose stacks do not yet say what they will.
+    //
+    // stopRequested is set while a collector is stopping the other threads or
+    // collecting, and is what every other thread parks on at its next
+    // safepoint. Both are read without the lock on every instruction, and
+    // changed only under it.
+    atomic_bool collectionRequested;
+    atomic_bool stopRequested;
+
+    // collectionLock guards every thread's state and the two flags above, and
+    // collectionChanged is signalled whenever any of them changes: a thread
+    // parking or entering a safe region wakes the collector waiting for it, and
+    // the end of a collection wakes every thread waiting to resume.
     pthread_mutex_t collectionLock;
+    pthread_cond_t collectionChanged;
     pthread_mutex_t threadLock;
+
+    // markableDecls caches, per declaration, whether a value of it holds
+    // anything the collector must visit: zero until asked, then one for no
+    // and two for yes.
+    _Atomic uint8_t *markableDecls;
+
+    // collector is the thread collecting, while one is. Everything a
+    // collection runs runs on it, and every other thread is stopped.
+    ZamThread *collector;
+
+    // gray is the collector's work: allocations it has reached and not yet
+    // traced through.
+    void **gray;
+    uint64_t grayCount;
+    uint64_t grayCapacity;
 
     // main is the thread control begins on and the head of the list of every
     // live thread. That list is what the collector walks to find every root, so
@@ -88,6 +122,11 @@ void zam_vm_free(ZamVM *vm);
 // for an empty variadic call.
 ZamResult zam_vm_run(ZamVM *vm, int argC, const char *argV[]);
 
+// zam_vm_exit ends the process as a run that stopped with result says to. A
+// thread still running when main stops is ended with the process, so the VM
+// is torn down only where none is: the rest still read it to the last.
+_Noreturn void zam_vm_exit(ZamVM *vm, ZamResult result);
+
 // zam_vm_static is the address of a static slot, which is what a push of one
 // leaves and what a load or store then reads through.
 uint8_t *zam_vm_static(ZamVM *vm, uint64_t slot);
@@ -108,15 +147,40 @@ uint8_t *zam_vm_static(ZamVM *vm, uint64_t slot);
 // allocator is not told.
 //
 // Every allocation is threaded onto vm->allocations as it is made, so the heap
-// is walkable from the VM alone. Nothing is freed yet — zam_vm_collect is still
-// a stub — but the list a sweep needs is now kept rather than deferred.
+// is walkable from the VM alone.
 void *zam_vm_alloc(ZamVM *vm, ZamThread *thread, ZamObjectKind kind,
                   ZamTypeShort shortID, uint64_t elementCount,
                    uint64_t objectBytes);
 
-// zam_vm_collect is the collection itself, run from the loop between
-// instructions and never from inside one.
-void zam_vm_collect(ZamVM *vm);
+// zam_vm_collect is the collection itself, run by collector. It is run only
+// by zam_vm_safepoint, with every other thread stopped.
+void zam_vm_collect(ZamVM *vm, ZamThread *collector);
+
+// zam_vm_safepoint is where a thread stops for a collection, and is run
+// between every two instructions. A collection asked for is run by the first
+// thread to reach one, which stops every other thread before collecting and
+// resumes them after; a thread reaching one while another collects waits there
+// until the collection is over.
+//
+// A thread that has frozen the collector with GC.Block passes its safepoints
+// as if nothing were asked, so a collection waits for every frozen thread to
+// unfreeze and reach its next one.
+void zam_vm_safepoint(ZamVM *vm, ZamThread *thread);
+
+// zam_vm_enter_safe and zam_vm_leave_safe bracket a call that may block, such
+// as a join or a read. A thread between the two counts as stopped, so a
+// collection need not wait for the call to return; leaving waits out any
+// collection in progress. Between the two the thread must not touch the heap
+// or its own stacks, which the collector may be reading.
+//
+// A frozen thread may not block. Whatever it waits on may be waiting on a
+// collection, which is waiting on it, so entering dies instead.
+void zam_vm_enter_safe(ZamThread *thread);
+void zam_vm_leave_safe(ZamThread *thread);
+
+// zam_vm_thread_exited records that a thread has run its last instruction, so
+// a collection no longer waits for it.
+void zam_vm_thread_exited(ZamThread *thread);
 
 // zam_natives_resolve binds every name the image carries to a function in the
 // table this interpreter was built with. It lives in native.c beside that

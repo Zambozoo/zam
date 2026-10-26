@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -687,4 +688,278 @@ func TestNewASTKeepsLineStartsForLaterPasses(t *testing.T) {
 	require.NotEqual(t, -1, index)
 	assert.Equal(t, "[3:1]", file.Location(ast.MainCodeDecl.Start()).Position.String(),
 		"the declaration begins on the third line, the first two being blank")
+}
+
+// TestNewASTRecoversFromSyntaxErrors pins where a parse picks up again after an
+// error: past the next `;`, or at the `}` closing the braces the failed element
+// began in. Each case's errors are listed by the line they are found on, which
+// is what says both that the parse went on and where it went on from.
+func TestNewASTRecoversFromSyntaxErrors(t *testing.T) {
+	for name, test := range map[string]struct {
+		source string
+		lines  []int
+	}{
+		"statements in a block": {
+			source: `namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        var int = 1;
+        var int y = 2;
+        return return;
+    }
+}
+`,
+			lines: []int{3, 5},
+		},
+		"fields in a declaration": {
+			source: `namespace Main {
+    static var int = 1;
+    static var int y = 2;
+    static fun int() = () { return 1; }
+}
+`,
+			lines: []int{2, 4},
+		},
+		"a statement missing its semicolon before the block closes": {
+			source: `namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        var int x = 1
+    }
+    static var int = 2;
+}
+`,
+			lines: []int{4, 5},
+		},
+		"braces opened while skipping are skipped whole": {
+			source: `namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        var int = lambda int():() { return 1; };
+        var int = 3;
+    }
+}
+`,
+			lines: []int{3, 3, 4},
+		},
+		"a cast is part of the expression being skipped": {
+			source: `namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        var int = a{int} * b;
+        var int = a{int} - b;
+        var int = @{int} == @{int};
+        var int = 1;
+    }
+}
+`,
+			lines: []int{3, 4, 5, 6},
+		},
+		"a block holding only blocks": {
+			source: `namespace Main {
+    static fun void(int) g = (a b) { if (a) {} }
+    static fun void() h = () {}
+    static var int = 1;
+}
+`,
+			lines: []int{2, 4},
+		},
+		"an empty block": {
+			source: `namespace Main {
+    static fun void(int) g = (a b) {}
+    static var int = 1;
+}
+`,
+			lines: []int{2, 3},
+		},
+		"a method whose header fails": {
+			source: `namespace Main {
+    static fun int(int) h = (a b) { return a; }
+    static var int = 1;
+    static fun int() g = () { return 1 }
+    static var int = 2;
+}
+`,
+			lines: []int{2, 3, 4, 5},
+		},
+		"a nested declaration": {
+			source: `namespace Main {
+    class C {
+        var int = 1;
+    }
+    static var int = 2;
+}
+`,
+			lines: []int{3, 5},
+		},
+		"an enum value list": {
+			source: `namespace Main {
+    enum E { A, 1; }
+    static var int = 2;
+}
+`,
+			lines: []int{2, 3},
+		},
+		"an enum value list missing its semicolon": {
+			source: `namespace Main {
+    enum E { A, B }
+    static var int = 2;
+}
+`,
+			lines: []int{2, 3},
+		},
+		"an import": {
+			source: `import ;
+
+namespace Main {
+    static var int = 2;
+}
+`,
+			lines: []int{1, 4},
+		},
+		"the end of the file": {
+			source: `namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        var int = 1;
+`,
+			lines: []int{3, 4},
+		},
+		"a lexing error after a syntax error": {
+			source: `namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        var int = 1;
+        var str s = "open
+`,
+			lines: []int{3, 4},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			errs := parseEntry(t, test.source)
+			var lines []int
+			for _, err := range errs {
+				var located *base.Error
+				require.ErrorAs(t, err, &located)
+				require.NotNil(t, located.Location.Position, "%v", err)
+				lines = append(lines, located.Location.Position.Line)
+			}
+			slices.Sort(lines)
+			assert.Equal(t, test.lines, lines, "%v", errs)
+		})
+	}
+}
+
+// An error the parse recovered from leaves the AST in place beside it, with the
+// file marked as missing what failed to parse; one the parse gave up on leaves
+// no AST at all.
+func TestNewASTHandsBackARecoveredTree(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir)
+
+	recovered := writeFile(t, dir, "Main.zam", "namespace Main {\n    static var int = 1;\n    static var int y = 2;\n}\n")
+	ast, errs := NewAST(&command.Command{InputPath: base.NewPath(recovered, ""), MaxThreads: 1}, &base.FileProvider{}, &mock_GitProvider{})
+	require.Len(t, errs, 1)
+	require.NotNil(t, ast)
+	file, _ := ast.CodeFiles.Get(*base.NewPath(recovered, ""))
+	require.NotNil(t, file)
+	assert.True(t, file.HasSyntaxErrors)
+	_, ok := ast.MainCodeDecl.GetStaticField("y")
+	assert.True(t, ok, "what parsed after the error is kept")
+
+	abandoned := writeFile(t, dir, "Broken.zam", "namespace Broken {\n")
+	ast, errs = NewAST(&command.Command{InputPath: base.NewPath(abandoned, ""), MaxThreads: 1}, &base.FileProvider{}, &mock_GitProvider{})
+	assert.NotEmpty(t, errs)
+	assert.Nil(t, ast)
+}
+
+// TestNewASTKeepsWhatAFailedElementDeclared pins what a recovered parse keeps
+// of an element that failed once its name had been read: the name, with what
+// failed after it left off, so that the name still resolves. A block that lost
+// a statement says so.
+func TestNewASTKeepsWhatAFailedElementDeclared(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir)
+	entry := writeFile(t, dir, "Main.zam", `import "Missing/*";
+
+namespace Main {
+    static var int count = ;
+    static fun int(int) h = (a b) { return a; }
+    enum E : int { A(), B(2); }
+    static fun int() f = () {
+        var int x = ;
+        return x;
+    }
+}
+`)
+	ast, errs := NewAST(&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1}, &base.FileProvider{}, &mock_GitProvider{})
+	require.Len(t, errs, 5, "%v", errs)
+	require.NotNil(t, ast)
+
+	file, _ := ast.CodeFiles.Get(*base.NewPath(entry, ""))
+	assert.True(t, file.BrokenImports)
+
+	decl := ast.MainCodeDecl
+	count, ok := decl.GetStaticField("count")
+	require.True(t, ok)
+	assert.Nil(t, count.(*FieldMember).Expr)
+
+	h, ok := decl.GetStaticMethod("h")
+	require.True(t, ok)
+	assert.True(t, h.Body.(*StmtBlock).Broken)
+
+	enum, ok := decl.GetDecl("E")
+	require.True(t, ok)
+	a, ok := enum.GetStaticField("A")
+	require.True(t, ok)
+	assert.Nil(t, a.(*FieldEnum).Value)
+
+	f, ok := decl.GetStaticMethod("f")
+	require.True(t, ok)
+	body := f.Body.(*StmtBlock)
+	assert.True(t, body.Broken)
+	require.Len(t, body.Stmts, 2)
+	assert.Equal(t, "x", body.Stmts[0].(*StmtVariable).Name())
+	assert.Nil(t, body.Stmts[0].(*StmtVariable).Expr)
+}
+
+// TestNewASTPlacesStrFirstInEnumsAndStructs pins where an enum's or struct's Str
+// is found: first among its instance methods, whether written there, written
+// later, or given by default to a declaration that wrote none. A Str of any
+// other kind than an instance str() is reported.
+func TestNewASTPlacesStrFirstInEnumsAndStructs(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir)
+	entry := writeFile(t, dir, "Main.zam", `namespace Main {
+    struct Plain {
+        var int x;
+        fun int() Get = () { return this.x; }
+    }
+    struct Written {
+        fun int() Get = () { return 1; }
+        fun str() Str = () { return "written"; }
+    }
+    enum Bare { A, B; }
+    static fun void(uint, str...) main = (_, _) { return; }
+}
+`)
+	ast, errs := NewAST(&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1}, &base.FileProvider{}, &mock_GitProvider{})
+	require.Empty(t, errs)
+
+	for _, name := range []string{"Plain", "Written", "Bare"} {
+		t.Run(name, func(t *testing.T) {
+			decl, ok := ast.MainCodeDecl.GetDecl(name)
+			require.True(t, ok)
+			str, ok := decl.GetInstanceMethod(StrMethodName)
+			require.True(t, ok)
+			assert.Equal(t, 0, *str.Index())
+			assert.NotNil(t, str.Body)
+		})
+	}
+
+	for name, source := range map[string]string{
+		"of another type": `namespace Main { struct S { fun int() Str = () { return 1; } } }`,
+		"static":          `namespace Main { enum E { A; static fun str() Str = () { return "e"; } } }`,
+		"a member":        `namespace Main { struct S { var str Str; } }`,
+	} {
+		t.Run("a Str "+name, func(t *testing.T) {
+			errs := parseEntry(t, source)
+			require.Len(t, errs, 1)
+			assert.Contains(t, errs[0].Error(), "must be an instance method of type str()")
+		})
+	}
 }

@@ -8,3 +8,6 @@ internal/5_build/runtime/build
 bin
 vendor
 zam
+node_modules
+*.vsix
+editors/vscode/LICENSE

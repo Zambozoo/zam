@@ -81,8 +81,8 @@ func isStdPathStr(pathStr string) bool {
 	return strings.HasPrefix(pathStr, stdScheme)
 }
 
-// stdKey returns the StdFS key for a standard library path.
-func stdKey(p *Path) string {
+// StdName returns the name a standard library path addresses its file by.
+func StdName(p *Path) string {
 	return strings.TrimPrefix(p.Outer, stdScheme)
 }
 
@@ -107,7 +107,7 @@ func (p *Path) Resolve(pathStr string) string {
 	// put back in front. The stdlib's archive happens to be the compiler
 	// binary, which is why there is no zip indirection to walk.
 	if IsStdPath(p) {
-		return stdScheme + path.Join(path.Dir(stdKey(p)), filepath.ToSlash(pathStr))
+		return stdScheme + path.Join(path.Dir(StdName(p)), filepath.ToSlash(pathStr))
 	}
 
 	if p.InZip() {
@@ -345,7 +345,7 @@ func (fp *FileProvider) ListCodeFiles(dir *Path) ([]*Path, error) {
 // of a std path is the whole address — std:// scheme plus the inner key — and
 // embed.FS does not spell the scheme, so the walk is over the key alone.
 func listStdCodeFiles(dir *Path) ([]*Path, error) {
-	key := stdKey(dir)
+	key := StdName(dir)
 	if key == "" {
 		key = "."
 	}
@@ -441,7 +441,7 @@ func childName(p *Path) string {
 // Reader returns a reader for the given path.
 func (fp *FileProvider) Reader(p *Path) (io.ReadCloser, error) {
 	if IsStdPath(p) {
-		return std.FS.Open(stdKey(p))
+		return std.FS.Open(StdName(p))
 	}
 
 	if !p.InZip() {

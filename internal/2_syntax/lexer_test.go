@@ -315,3 +315,34 @@ func TestLexer_Next(t *testing.T) {
 		})
 	}
 }
+
+// TestLexReportsWhereEachTokenEnds pins what a token's length is found from:
+// a token records only where it starts, so lexing the source again is what says
+// where it stops. Offsets count runes, so a multi-byte rune is one, and the
+// tokens read before a lexing error come back with the error.
+func TestLexReportsWhereEachTokenEnds(t *testing.T) {
+	tokens, err := Lex(io.NopCloser(strings.NewReader("var  str s = \"é\"; // c\n12u")))
+	assert.NoError(t, err)
+
+	type got struct {
+		kind       TokenKind
+		start, end uint
+	}
+	var spans []got
+	for _, tok := range tokens {
+		spans = append(spans, got{tok.Kind, tok.Offset, tok.End})
+	}
+	assert.Equal(t, []got{
+		{TTVar, 0, 3},
+		{TTString, 5, 8},
+		{TTIdentifier, 9, 10},
+		{TTEqual, 11, 12},
+		{TTStringLiteral, 13, 16},
+		{TTSemiColon, 16, 17},
+		{TTUintLiteral, 23, 26},
+	}, spans)
+
+	tokens, err = Lex(io.NopCloser(strings.NewReader("x \"open")))
+	assert.ErrorIs(t, err, errUnterminatedStringLiteral)
+	assert.Len(t, tokens, 1)
+}

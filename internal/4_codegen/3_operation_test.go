@@ -666,11 +666,11 @@ namespace Main {
 	assert.Equal(t, offsets[1]+wordByteSize, offsets[2])
 }
 
-// TestPointerToInlineValueCastsToStrThroughStr pins where a declaration's Str is
-// reached from a cast: an enum or struct lies inline and carries no header to
-// dispatch through, so its pointer's cast to str calls Str by name, while the
-// value's own cast reads what it is backed by.
-func TestPointerToInlineValueCastsToStrThroughStr(t *testing.T) {
+// TestStrCastOfEnumValueReadsItsBacking pins which cast to str reads a
+// str-backed enum's backing value: the value's own. A pointer to it is written
+// out by its Str, which the runtime finds for itself, so its cast is the plain
+// string cast every other value gets.
+func TestStrCastOfEnumValueReadsItsBacking(t *testing.T) {
 	for name, test := range map[string]struct {
 		cast       string
 		wantBacked bool
@@ -684,10 +684,6 @@ namespace Main {
 `+mainMethod+`
     enum Name : str {
         X("backing");
-
-        fun str() Str = () {
-            return "override";
-        }
     }
 
     static fun str() f = () {
@@ -696,8 +692,6 @@ namespace Main {
     }
 }
 `)
-			assert.False(t, containsOpcode(reader.operations, OpCastToString),
-				"a cast of an enum or its pointer to str should not reach OpCastToString")
 			assert.Equal(t, test.wantBacked, containsOpcode(reader.operations, OpEnumValue))
 		})
 	}

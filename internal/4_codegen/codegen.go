@@ -2,6 +2,7 @@ package codegen
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"iter"
 	"math"
@@ -87,6 +88,9 @@ type (
 		// static method registry, the lookup table OpPushGenericStaticSlot
 		// walks when a generic method is called with open type arguments.
 		genericStaticMethodsByteOffset int
+		// staticRootsByteOffset is the byte offset of the static root table,
+		// which opens with the number of entries.
+		staticRootsByteOffset int
 		// operationsByteOffset is the byte offset of the operations.
 		operationsByteOffset int
 	}
@@ -152,6 +156,11 @@ type (
 		// a reference with ground arguments takes the compile-time fast path
 		// and never touches this.
 		genericStaticMethods []genericStaticMethodEntry
+
+		// staticRoots is every static member, method and enum value, with the
+		// type of what its slot holds, which is what the collector reads the
+		// static region by.
+		staticRoots []staticRoot
 		// genericStaticMethodIDs maps a generic static method's syntax field
 		// to the id it was assigned in the registry above. Lookups happen at
 		// every call site that needs the runtime dispatch path, and the first
@@ -223,7 +232,7 @@ type (
 // reservedTypeIDCount is the number of type ids reserved for primitive types.
 // Primitives occupy the range [0, reservedTypeIDCount) and each primitive's
 // type id is its TypeKind value directly.
-var reservedTypeIDCount = uint16(syntax.TypeKindAny) + 1
+var reservedTypeIDCount = uint16(syntax.TypeKindUint) + 1
 
 func readFloat64(p []byte, value float64) (int, error) {
 	if len(p) < wordByteSize {
@@ -302,6 +311,7 @@ func (b *counts) words() []int {
 		b.staticImageByteOffset,
 		b.nativesByteOffset,
 		b.genericStaticMethodsByteOffset,
+		b.staticRootsByteOffset,
 		b.operationsByteOffset,
 	}
 }
@@ -423,6 +433,9 @@ func (cr *codegenReader) calculateByteCounts() (*counts, []int) {
 
 	bc.genericStaticMethodsByteOffset = offset
 	offset += genericStaticMethodsByteCount(cr.genericStaticMethods)
+
+	bc.staticRootsByteOffset = offset
+	offset += wordByteSize + len(cr.staticRoots)*staticRootByteCount
 
 	bc.operationsByteOffset = offset
 
@@ -601,12 +614,51 @@ func (cr *codegenReader) Read(p []byte) (int, error) {
 	}
 	totalBytes += n
 
+	n, err = readStaticRoots(p[totalBytes:], cr.staticRoots)
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
 	n, err = readAll(p[totalBytes:], cr.operations)
 	if err != nil {
 		return 0, err
 	}
 	totalBytes += n
 
+	return totalBytes, nil
+}
+
+// staticRoot is one static the collector reads the static region by: the slot
+// and the type of what lies in it.
+type staticRoot struct {
+	slot int
+	typ  typeInstance
+}
+
+// staticRootByteCount is how wide one entry of the static root table is.
+const staticRootByteCount = 4 * wordByteSize
+
+// readStaticRoots writes the static root table: the entry count, then each
+// entry's slot and type id.
+func readStaticRoots(p []byte, roots []staticRoot) (int, error) {
+	totalBytes, err := readInt(p, len(roots))
+	if err != nil {
+		return 0, err
+	}
+	for _, root := range roots {
+		n, err := readInt(p[totalBytes:], root.slot)
+		if err != nil {
+			return 0, err
+		}
+		totalBytes += n
+
+		n, err = root.typ.Read(p[totalBytes:])
+		if err != nil {
+			return 0, err
+		}
+		totalBytes += n
+	}
 	return totalBytes, nil
 }
 
@@ -621,7 +673,41 @@ type Result struct {
 	NativeNames []string
 }
 
+// validateMainMethod requires the main code declaration to have the method a
+// program is entered through. It is asked here rather than by semantic
+// validation because only a program has an entry: a file checked on its own,
+// as an editor checks one, is valid without one.
+func validateMainMethod(ast *syntax.AST) error {
+	// The arguments are the run of strings the program was invoked with, which
+	// is what a variadic says and a pointer only implies. The count still comes
+	// separately: a variadic conveys no length, so nothing else would say where
+	// the arguments stop.
+	mainType := &syntax.TypeFunction{
+		ReturnType: syntax.TypeVoid,
+		ParameterTypes: []syntax.Type{
+			syntax.TypeUint,
+			syntax.NewWrappedType(syntax.TypeKindVariadic, syntax.TypeString),
+		},
+	}
+
+	decl := ast.MainCodeDecl
+	location := decl.File().Location(decl.Start())
+	mainMethod, ok := decl.GetStaticMethod(base.MainMethodName)
+	if !ok {
+		return base.NewError(fmt.Errorf("main method not found in main code declaration %s", decl.Name()), location)
+	}
+	if !mainMethod.FieldType().Equals(mainType) {
+		return base.NewError(fmt.Errorf("main method %s.%s is of type %q, not %q",
+			decl.Name(), base.MainMethodName, mainMethod.FieldType().String(), mainType.String()), location)
+	}
+	return nil
+}
+
 func GenerateCode(cmd *command.Command, ast *syntax.AST) (*Result, error) {
+	if err := validateMainMethod(ast); err != nil {
+		return nil, err
+	}
+
 	reader := &codegenReader{
 		gcTriggerRatio:         cmd.GCTriggerRatio,
 		initialStackSize:       cmd.InitialStackSize,

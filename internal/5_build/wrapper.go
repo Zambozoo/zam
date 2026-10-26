@@ -145,8 +145,8 @@ func writeMain(w *bufio.Writer) {
 		`int main(int argc, const char *argv[]) {
     // The VM is initialised from the baked-in byte array rather than from a
     // file on disk, so the binary is self-contained. Everything after is
-    // what the standalone runner does: run to completion, read the status
-    // the program's OpExit left on the main thread, and tear the VM down.
+    // what the standalone runner does: run to completion and end the process
+    // with the status the program's OpExit left on the main thread.
     //
     // argv[0] is the program binary's own name; argv[1..argc-1] are what the
     // user passed. Only the latter are the program's own arguments and are
@@ -154,14 +154,7 @@ func writeMain(w *bufio.Writer) {
    ZamVM vm;
     zam_vm_init_from_bytes(&vm, zam_image_bytes, zam_image_byte_count);
 
-   ZamResult result = zam_vm_run(&vm, argc - 1, argv + 1);
-    uint8_t status = vm.main.exitStatus;
-    zam_vm_free(&vm);
-
-    if (result != ZAMRESULT_EXIT)
-        zam_die(ZAMEXIT_PANIC, "the program stopped: %s\n",
-                zam_result_name(result));
-    return status;
+    zam_vm_exit(&vm, zam_vm_run(&vm, argc - 1, argv + 1));
 }
 `)
 }

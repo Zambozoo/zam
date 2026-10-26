@@ -384,6 +384,9 @@ func (r *referenceTypeResolverVisitor) setDecl(t *syntax.TypeReference, d syntax
 		return fmt.Errorf("declaration %q is not a typeable", t.String())
 	}
 	t.SetDecl(declTypeable)
+	if n := len(t.IdTokens); n > 0 {
+		r.ast.References.Add(t.OuterDecl().File(), t.IdTokens[n-1], syntax.TargetOf(d), nil)
+	}
 	return nil
 }
 

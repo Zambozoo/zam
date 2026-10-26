@@ -30,6 +30,14 @@ tasks:
       - go test ./... -count=1 -cover -coverprofile=coverage.out
       - go tool cover -func=coverage.out
 
+  vscode:
+    desc: Build and package the VS Code extension
+    dir: editors/vscode
+    cmds:
+      - npm install
+      - npm run compile
+      - npm run package
+
   runtime:
     desc: Build the C runtime
     cmds:

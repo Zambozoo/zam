@@ -162,10 +162,12 @@ static const uint64_t markEntryBytes[] = {
     [ZAMMARK_OBJECT] = sizeof(ZamMarkObject),
     [ZAMMARK_ARRAY] = sizeof(ZamMarkArray),
     [ZAMMARK_SCOPE] = sizeof(ZamMarkScope),
+    [ZAMMARK_VALUE] = sizeof(ZamMarkValue),
+    [ZAMMARK_INTERIOR] = sizeof(ZamMarkInterior),
 };
 
 uint64_t zam_mark_entry_bytes(ZamMarkKind kind) {
-    if (kind > ZAMMARK_SCOPE)
+    if (kind > ZAMMARK_INTERIOR)
         zam_die(ZAMEXIT_PANIC, "mark stack holds no kind %d\n", (int)kind);
     return markEntryBytes[kind];
 }
@@ -215,6 +217,35 @@ void zam_thread_push_array_mark(ZamThread *thread, ZamTypeID type,
     pushEntry(thread, &entry, sizeof entry);
 }
 
+void zam_thread_push_indirect_array_mark(ZamThread *thread, ZamTypeID type,
+                                         uint64_t operand) {
+   ZamMarkArray entry = {
+        .kind = ZAMMARK_ARRAY,
+        .operand = operand,
+        .element = type.shortID,
+        .indirect = 1,
+        .length = type.arrayLength,
+    };
+    pushEntry(thread, &entry, sizeof entry);
+}
+
+void zam_thread_push_value_mark(ZamThread *thread, ZamTypeID type,
+                                uint64_t operand) {
+   ZamMarkValue entry = {.kind = ZAMMARK_VALUE, .operand = operand};
+    zam_type_id_write((ZamWord *)&entry.type, type);
+    pushEntry(thread, &entry, sizeof entry);
+}
+
+void zam_thread_push_interior_mark(ZamThread *thread, uint64_t operand,
+                                   uint64_t distance) {
+   ZamMarkInterior entry = {
+        .kind = ZAMMARK_INTERIOR,
+        .operand = operand,
+        .distance = distance,
+    };
+    pushEntry(thread, &entry, sizeof entry);
+}
+
 // Where a search for the topmost entry may begin. Everything below the innermost
 // open scope or call belongs to an enclosing one, and an enclosing scope's
 // entries are never the top while this one is open, so the walk starts at
@@ -229,28 +260,50 @@ static uint64_t markSearchFloor(const ZamThread *thread) {
     return floor;
 }
 
-bool zam_thread_pop_mark(ZamThread *thread, uint64_t operand) {
+// popMark takes the topmost entry off if it names the operand word, and
+// answers its kind, or ZAMMARK_FUNCTION where it took nothing.
+static ZamMarkKind popMark(ZamThread *thread, uint64_t operand,
+                           uint64_t *distance) {
     uint64_t last = thread->markByteCount;
     for (uint64_t at = markSearchFloor(thread); at < thread->markByteCount;) {
         last = at;
         at += zam_mark_entry_bytes(zam_mark_kind_at(thread, at));
     }
     if (last == thread->markByteCount)
-        return false;
+        return ZAMMARK_FUNCTION;
 
-    // Both kinds put the operand offset in the same place, so which of the two
-    // it is does not have to be told apart to ask whether it names this word.
+    // Every kind that names a word puts the operand offset in the same place,
+    // so which one it is does not have to be told apart to ask whether it
+    // names this word.
    ZamMarkKind kind = zam_mark_kind_at(thread, last);
-    if (kind != ZAMMARK_OBJECT && kind != ZAMMARK_ARRAY)
-        return false;
+    if (kind != ZAMMARK_OBJECT && kind != ZAMMARK_ARRAY &&
+        kind != ZAMMARK_VALUE && kind != ZAMMARK_INTERIOR)
+        return ZAMMARK_FUNCTION;
 
    ZamMarkObject entry;
     readEntry(thread, last, &entry, sizeof entry);
     if (entry.operand != operand)
-        return false;
+        return ZAMMARK_FUNCTION;
 
+    *distance = 0;
+    if (kind == ZAMMARK_INTERIOR) {
+       ZamMarkInterior interior;
+        readEntry(thread, last, &interior, sizeof interior);
+        *distance = interior.distance;
+    }
     thread->markByteCount = last;
-    return true;
+    return kind;
+}
+
+bool zam_thread_pop_mark(ZamThread *thread, uint64_t operand) {
+    uint64_t distance;
+    return popMark(thread, operand, &distance) != ZAMMARK_FUNCTION;
+}
+
+bool zam_thread_pop_object_mark(ZamThread *thread, uint64_t operand,
+                                uint64_t *distance) {
+   ZamMarkKind kind = popMark(thread, operand, distance);
+    return kind == ZAMMARK_OBJECT || kind == ZAMMARK_INTERIOR;
 }
 
 void *zam_thread_location_address(const ZamThread *thread, ZamWord location) {
@@ -317,9 +370,10 @@ ZamMarkFunction zam_thread_pop_function(ZamThread *thread) {
     // and everything from there up went with it.
     for (uint64_t at = markSearchFloor(thread); at < thread->markByteCount;) {
        ZamMarkKind kind = zam_mark_kind_at(thread, at);
-        if (kind == ZAMMARK_OBJECT || kind == ZAMMARK_ARRAY) {
-            // Both kinds name their word in the same place, so which of the two
-            // it is does not have to be told apart to read the offset.
+        if (kind == ZAMMARK_OBJECT || kind == ZAMMARK_ARRAY ||
+            kind == ZAMMARK_VALUE || kind == ZAMMARK_INTERIOR) {
+            // Every kind that names a word names it in the same place, so which
+            // one it is does not have to be told apart to read the offset.
            ZamMarkObject named;
             readEntry(thread, at, &named, sizeof named);
             if (named.operand >= entry.operandPop) {

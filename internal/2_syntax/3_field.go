@@ -35,6 +35,8 @@ type (
 		// Start returns the token the field begins at, which is where an error
 		// about the field is reported from.
 		Start() *Token
+		// NameToken returns the token the field's name is written at.
+		NameToken() *Token
 
 		// Accept visits the field with the given visitor.
 		Accept(visitor FieldVisitor) error
@@ -58,6 +60,8 @@ type (
 		start     *Token
 		outerDecl Decl
 		name      string
+		// nameToken is the token the name is written at.
+		nameToken *Token
 		index     int
 	}
 
@@ -86,7 +90,9 @@ type (
 		// Parameters names the slots the caller pushes its arguments into, in
 		// order, and is as long as the type's parameter list.
 		Parameters []string
-		Body       Stmt
+		// ParameterTokens are the tokens Parameters are written at.
+		ParameterTokens []*Token
+		Body            Stmt
 		// instruction is where the body was emitted, filled in by codegen once
 		// it has been. It lies on the field rather than on any one type's method
 		// table because a method a subclass does not override is the very same
@@ -289,6 +295,11 @@ func (f *field) Name() string {
 	return f.name
 }
 
+// NameToken returns the token the field's name is written at.
+func (f *field) NameToken() *Token {
+	return f.nameToken
+}
+
 // Index returns the index of the field.
 func (f *field) Index() *int {
 	return &f.index
@@ -386,31 +397,32 @@ func newFieldMember(parser SyntaxParser, start *Token, modifiers Modifier, canBe
 		return nil, err
 	}
 
+	member := &FieldMember{
+		field: field{
+			start:     start,
+			outerDecl: *parser.Decl(),
+			name:      name.Value.(string),
+			nameToken: name,
+		},
+		modifiers: modifiers,
+		fieldType: _type,
+	}
 	if tok, err := parser.Match(TTEqual); err != nil {
-		return nil, err
+		return nil, keep(member, err)
 	} else if tok == nil {
 		if _, err := parser.Consume(TTSemiColon); err != nil {
-			return nil, err
+			return nil, keep(member, err)
 		}
-
-		return &FieldMember{
-			field: field{
-				start:     start,
-				outerDecl: *parser.Decl(),
-				name:      name.Value.(string),
-			},
-			modifiers: modifiers,
-			fieldType: _type,
-		}, nil
+		return member, nil
 	}
 
 	expr, err := newExpr(parser)
 	if err != nil {
-		return nil, err
+		return nil, keep(member, err)
 	}
 
 	if _, err := parser.Consume(TTSemiColon); err != nil {
-		return nil, err
+		return nil, keep(member, err)
 	}
 
 	return &FieldMember{
@@ -418,6 +430,7 @@ func newFieldMember(parser SyntaxParser, start *Token, modifiers Modifier, canBe
 			start:     start,
 			outerDecl: *parser.Decl(),
 			name:      name.Value.(string),
+			nameToken: name,
 		},
 		fieldType: _type,
 		modifiers: modifiers,
@@ -461,32 +474,35 @@ func (f *FieldMember) Map(types map[GenericArgKey]Type) FieldTypeable {
 
 // parseParameterNames reads the comma-separated parameter list between the
 // current parenthesis and the next right paren, which both method and lambda
-// bodies open the same way. A parameter written as `_` arrives as a
-// [TTUnderscore] and is kept as [BlankName]; anything else is a plain
-// identifier whose value is the written name.
-func parseParameterNames(parser SyntaxParser) ([]string, error) {
+// bodies open the same way, and answers each name with the token it is written
+// at. A parameter written as `_` arrives as a [TTUnderscore] and is kept as
+// [BlankName]; anything else is a plain identifier whose value is the written
+// name.
+func parseParameterNames(parser SyntaxParser) ([]string, []*Token, error) {
 	if tok, err := parser.Match(TTRightParen); err != nil {
-		return nil, err
+		return nil, nil, err
 	} else if tok != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	var parameters []string
+	var tokens []*Token
 	for {
 		tok, err := parser.ConsumeAny(TTIdentifier, TTUnderscore)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		name := BlankName
 		if tok.Kind == TTIdentifier {
 			name = tok.Value.(string)
 		}
 		parameters = append(parameters, name)
+		tokens = append(tokens, tok)
 
 		if tok, err := parser.ConsumeAny(TTComma, TTRightParen); err != nil {
-			return nil, err
+			return nil, nil, err
 		} else if tok.Kind == TTRightParen {
-			return parameters, nil
+			return parameters, tokens, nil
 		}
 	}
 }
@@ -547,16 +563,27 @@ func newFieldMethod(parser SyntaxParser, start *Token, modifiers Modifier) (*Fie
 		return nil, err
 	}
 	method.name = name.Value.(string)
+	method.nameToken = name
+
+	// Whatever fails past the name leaves the method kept, so that the name
+	// still resolves. The body it may not have got is an empty one, broken so
+	// that nothing reads its emptiness as the method falling off its end.
+	fail := func(err error) (*FieldMethod, error) {
+		if method.Body == nil {
+			method.Body = &StmtBlock{start: name, Broken: true}
+		}
+		return nil, keep(method, err)
+	}
 
 	if tok, err := parser.Match(TTEqual); err != nil {
-		return nil, err
+		return fail(err)
 	} else if tok == nil {
 		if _, err = parser.Consume(TTSemiColon); err != nil {
-			return nil, err
+			return fail(err)
 		}
 
 		if !modifiers.Has(ModifierVirtual) {
-			return nil, fmt.Errorf("non-virtual methods must have a body")
+			return fail(fmt.Errorf("non-virtual methods must have a body"))
 		}
 
 		return method, nil
@@ -567,22 +594,22 @@ func newFieldMethod(parser SyntaxParser, start *Token, modifiers Modifier) (*Fie
 	}
 
 	if _, err = parser.Consume(TTLeftParen); err != nil {
-		return nil, err
+		return fail(err)
 	}
 
-	parameters, err := parseParameterNames(parser)
+	parameters, parameterTokens, err := parseParameterNames(parser)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
-
 	if len(parameters) != len(typeFunction.ParameterTypes) {
-		return nil, fmt.Errorf("method parameter length mismatch, expected %d, got %d", len(typeFunction.ParameterTypes), len(parameters))
+		return fail(fmt.Errorf("method parameter length mismatch, expected %d, got %d", len(typeFunction.ParameterTypes), len(parameters)))
 	}
 	method.Parameters = parameters
+	method.ParameterTokens = parameterTokens
 
 	body, err := newStmt(parser)
 	if err != nil {
-		return nil, err
+		return fail(err)
 	}
 	method.Body = body
 
@@ -722,84 +749,77 @@ func newFieldEnum(parser SyntaxParser, enum *DeclEnum) (*FieldEnum, error) {
 	}
 	name := start.Value.(string)
 
+	// Whatever fails past the name leaves the value kept, bare, so that the
+	// name still resolves.
+	value := &FieldEnum{
+		field: field{
+			start:     start,
+			outerDecl: *parser.Decl(),
+			name:      name,
+			nameToken: start,
+		},
+	}
+
 	if enum.primitive != nil {
 		if _, err := parser.Consume(TTLeftParen); err != nil {
-			return nil, fmt.Errorf("enum value %s.%s must be written with a %s value: %w", enum.name, name, enum.primitive.String(), err)
+			return nil, keep(value, fmt.Errorf("enum value %s.%s must be written with a %s value: %w", enum.name, name, enum.primitive.String(), err))
 		}
-		value, err := newExpr(parser)
+		expr, err := newExpr(parser)
 		if err != nil {
-			return nil, err
+			return nil, keep(value, err)
 		}
 		if _, err := parser.Consume(TTRightParen); err != nil {
-			return nil, err
+			return nil, keep(value, err)
 		}
-		return &FieldEnum{
-			field: field{
-				start:     start,
-				outerDecl: *parser.Decl(),
-				name:      name,
-			},
-			Value: value,
-		}, nil
+		value.Value = expr
+		return value, nil
 	}
 
 	if tok, err := parser.Match(TTLeftParen); err != nil {
-		return nil, err
+		return nil, keep(value, err)
 	} else if tok != nil {
-		return nil, fmt.Errorf("enum value %s.%s cannot be written with a value: %s is not backed by a primitive", enum.name, name, enum.name)
+		return nil, keep(value, fmt.Errorf("enum value %s.%s cannot be written with a value: %s is not backed by a primitive", enum.name, name, enum.name))
 	}
 
 	if tok, err := parser.Match(TTPeriod); err != nil {
-		return nil, err
+		return nil, keep(value, err)
 	} else if tok == nil {
-		return &FieldEnum{
-			field: field{
-				start:     start,
-				outerDecl: *parser.Decl(),
-				name:      name,
-			},
-		}, nil
+		return value, nil
 	}
 
 	tok, err := parser.Consume(TTIdentifier)
 	if err != nil {
-		return nil, err
+		return nil, keep(value, err)
 	}
 	init := new(string)
 	*init = tok.Value.(string)
 
 	if _, err := parser.Consume(TTLeftParen); err != nil {
-		return nil, err
+		return nil, keep(value, err)
 	}
 
 	var parameters []Expr
 	if tok, err := parser.Match(TTRightParen); err != nil {
-		return nil, err
+		return nil, keep(value, err)
 	} else if tok == nil {
 		for {
 			expr, err := newExpr(parser)
 			if err != nil {
-				return nil, err
+				return nil, keep(value, err)
 			}
 			parameters = append(parameters, expr)
 
 			if tok, err := parser.ConsumeAny(TTComma, TTRightParen); err != nil {
-				return nil, err
+				return nil, keep(value, err)
 			} else if tok.Kind == TTRightParen {
 				break
 			}
 		}
 	}
 
-	return &FieldEnum{
-		field: field{
-			start:     start,
-			outerDecl: *parser.Decl(),
-			name:      start.Value.(string),
-		},
-		Init:       init,
-		Parameters: parameters,
-	}, nil
+	value.Init = init
+	value.Parameters = parameters
+	return value, nil
 }
 
 // Kind implements the [Field] interface.

@@ -8,6 +8,7 @@ import (
 	base "github.com/zambozoo/zam/internal/0_base"
 	command "github.com/zambozoo/zam/internal/1_command"
 	syntax "github.com/zambozoo/zam/internal/2_syntax"
+	semantic "github.com/zambozoo/zam/internal/3_semantic"
 	"github.com/zambozoo/zam/internal/std"
 )
 
@@ -36,12 +37,12 @@ func TestStdFSHasExpectedFiles(t *testing.T) {
 	}
 }
 
-// TestStdFilesParse runs each standard library file through the whole syntax
-// parser, so a file whose grammar is wrong is caught here rather than at the
-// first program to import it. Semantic validation is deliberately not run: a
-// standard library file is not a program and has no main method, which is
-// the one thing the semantic pass asks of an entry.
-func TestStdFilesParse(t *testing.T) {
+// TestStdFilesValidate runs each standard library file through the syntax
+// parser and semantic validation, so a file that is malformed or ill-typed is
+// caught here rather than at the first program to import it. A standard library
+// file is not a program and has no main method, which only code generation asks
+// of an entry.
+func TestStdFilesValidate(t *testing.T) {
 	for _, name := range []string{"lang/Err", "lang/Pair", "lang/StrErr", "lang/Strs", "lang/Objs", "lang/System", "io/local/File"} {
 		t.Run(name, func(t *testing.T) {
 			cmd := &command.Command{
@@ -52,6 +53,7 @@ func TestStdFilesParse(t *testing.T) {
 			require.Empty(t, errs)
 			assert.NotNil(t, ast)
 			assert.NotNil(t, ast.MainCodeDecl, "the entry file is parsed as the main decl")
+			assert.Empty(t, semantic.ValidateAST(ast))
 		})
 	}
 }

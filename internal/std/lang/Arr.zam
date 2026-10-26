@@ -39,6 +39,12 @@ class Arr[A] {
         return old;
     }
 
+    fun void() Mark = () {
+        for(var uint i = 0U; i < this.len; i++) {
+            mark(this.arr[i]);
+        }
+    }
+
     fun str() Str = () {
         var str s = "[";
         var str spacer = "";

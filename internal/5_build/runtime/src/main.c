@@ -19,15 +19,5 @@ int main(int argc, const char *argv[]) {
    ZamVM vm;
     zam_vm_init(&vm, argv[1]);
 
-   ZamResult result = zam_vm_run(&vm, argc - 2, argv + 2);
-    uint8_t status = vm.main.exitStatus;
-    zam_vm_free(&vm);
-
-    // Only a program that exited says what to end with. Anything else stopped
-    // in a way the program did not choose, and reporting its status as the
-    // program's would be claiming it ran.
-    if (result != ZAMRESULT_EXIT)
-        zam_die(ZAMEXIT_PANIC, "the program stopped: %s\n",
-                zam_result_name(result));
-    return status;
+    zam_vm_exit(&vm, zam_vm_run(&vm, argc - 2, argv + 2));
 }

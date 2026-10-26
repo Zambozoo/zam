@@ -10,6 +10,7 @@ import (
 	semantic "github.com/zambozoo/zam/internal/3_semantic"
 	codegen "github.com/zambozoo/zam/internal/4_codegen"
 	build "github.com/zambozoo/zam/internal/5_build"
+	"github.com/zambozoo/zam/internal/lsp"
 )
 
 type step string
@@ -21,6 +22,7 @@ const (
 	stepCodegen  step = "codegen"
 	stepExport   step = "export"
 	stepBuild    step = "build"
+	stepLSP      step = "lsp"
 )
 
 func handleErrors(logger *base.Logger, step step, errs ...error) {
@@ -49,6 +51,12 @@ func handleErrors(logger *base.Logger, step step, errs ...error) {
 
 func main() {
 	logger := base.Logger{}
+
+	if len(os.Args) > 1 && os.Args[1] == "lsp" {
+		handleErrors(&logger, stepLSP, lsp.Run())
+		return
+	}
+
 	fileProvider := base.FileProvider{}
 
 	cmd, err := command.New(os.Args, &fileProvider)

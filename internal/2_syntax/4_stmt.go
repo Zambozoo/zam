@@ -89,6 +89,10 @@ type (
 		start *Token
 		// Stmts is the statements of the block.
 		Stmts []Stmt
+		// Broken says a statement of the block failed to parse and is missing
+		// from Stmts, which may leave it looking as though control runs past
+		// the end of the block where what was written does not.
+		Broken bool
 	}
 
 	// StmtVariable is a statement that is a variable declaration.
@@ -97,6 +101,8 @@ type (
 		start *Token
 		// name is the name of the variable.
 		name string
+		// nameToken is the token the name is written at.
+		nameToken *Token
 		// _type is the type of the variable.
 		Type Type
 		// Expr is the expression of the variable.
@@ -498,6 +504,7 @@ func (s *StmtLabel) Accept(visitor StmtVisitor) error {
 // newStmtBlock creates a new statement that is a block of statements.
 func newStmtBlock(parser SyntaxParser, start *Token) (*StmtBlock, error) {
 	var stmts []Stmt
+	broken := false
 	for {
 		if tok, err := parser.Match(TTRightBrace); err != nil {
 			return nil, err
@@ -505,16 +512,25 @@ func newStmtBlock(parser SyntaxParser, start *Token) (*StmtBlock, error) {
 			break
 		}
 
+		recoverFrom := parser.Checkpoint()
 		stmt, err := newStmt(parser)
 		if err != nil {
-			return nil, err
+			broken = true
+			if stmt, ok := kept[Stmt](err); ok {
+				stmts = append(stmts, stmt)
+			}
+			if err := recoverFrom(err); err != nil {
+				return nil, err
+			}
+			continue
 		}
 		stmts = append(stmts, stmt)
 	}
 
 	return &StmtBlock{
-		start: start,
-		Stmts: stmts,
+		start:  start,
+		Stmts:  stmts,
+		Broken: broken,
 	}, nil
 }
 
@@ -540,40 +556,38 @@ func newStmtVariable(parser SyntaxParser, start *Token) (*StmtVariable, error) {
 		return nil, err
 	}
 
-	tok, err := parser.ConsumeAny(TTIdentifier, TTUnderscore)
+	nameToken, err := parser.ConsumeAny(TTIdentifier, TTUnderscore)
 	if err != nil {
 		return nil, err
 	}
 	name := BlankName
-	if tok.Kind == TTIdentifier {
-		name = tok.Value.(string)
+	if nameToken.Kind == TTIdentifier {
+		name = nameToken.Value.(string)
 	}
 
+	variable := &StmtVariable{
+		start:     start,
+		name:      name,
+		nameToken: nameToken,
+		Type:      _type,
+	}
 	if tok, err := parser.ConsumeAny(TTEqual, TTSemiColon); err != nil {
-		return nil, err
+		return nil, keep(variable, err)
 	} else if tok.Kind == TTSemiColon {
-		return &StmtVariable{
-			start: start,
-			name:  name,
-			Type:  _type,
-		}, nil
+		return variable, nil
 	}
 
 	expr, err := newExpr(parser)
 	if err != nil {
-		return nil, err
+		return nil, keep(variable, err)
 	}
 
 	if _, err := parser.Consume(TTSemiColon); err != nil {
-		return nil, err
+		return nil, keep(variable, err)
 	}
 
-	return &StmtVariable{
-		start: start,
-		name:  name,
-		Type:  _type,
-		Expr:  expr,
-	}, nil
+	variable.Expr = expr
+	return variable, nil
 }
 
 // StmtKind implements the [Stmt] interface.
@@ -590,6 +604,11 @@ func (s *StmtVariable) Start() *Token {
 // var keyword the declaration opens with, which carries no name of its own.
 func (s *StmtVariable) Name() string {
 	return s.name
+}
+
+// NameToken returns the token the variable's name is written at.
+func (s *StmtVariable) NameToken() *Token {
+	return s.nameToken
 }
 
 // Accept implements the [Stmt] interface.

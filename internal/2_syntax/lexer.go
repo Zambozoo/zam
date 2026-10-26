@@ -14,6 +14,13 @@ type (
 		rr         runeReader
 		LineStarts []uint
 	}
+
+	// LexedToken is a token together with the offset, in runes, just past its
+	// last rune.
+	LexedToken struct {
+		*Token
+		End uint
+	}
 )
 
 var (
@@ -47,6 +54,30 @@ func (l *Lexer) newLine() {
 // Close closes the underlying file reader.
 func (l *Lexer) Close() {
 	l.rr.Close()
+}
+
+// Lex reads every token in r, each with where it ends. A token does not record
+// its own length, so this is how one is found again after the fact: by lexing
+// the source a second time. A lexing error ends the read, and the tokens before
+// it are returned with the error.
+func Lex(r io.ReadCloser) ([]LexedToken, error) {
+	lexer, err := NewLexer(newRuneReader(r))
+	if err != nil {
+		return nil, err
+	}
+	defer lexer.Close()
+
+	var tokens []LexedToken
+	for {
+		tok, err := lexer.Next()
+		if err != nil {
+			return tokens, err
+		}
+		if tok.Kind == TTEOF {
+			return tokens, nil
+		}
+		tokens = append(tokens, LexedToken{Token: tok, End: lexer.rr.Offset()})
+	}
 }
 
 func (l *Lexer) Next() (*Token, error) {

@@ -32,8 +32,12 @@ var (
 func buildRunHarness(t *testing.T) string {
 	t.Helper()
 	return buildHarness(t, "run_harness.c", "run",
-		"run.c", "thread.c", "vm.c", "native.c", "opcode.c")
+		"run.c", "thread.c", "vm.c", "gc.c", "native.c", "opcode.c")
 }
+
+// valueEntryBytes is how wide the mark entry a markable value standing on the
+// stack owns is: its kind and offset, then its type id.
+const valueEntryBytes = 4 * wordByteSize
 
 // pushI64 is the instruction a word is laid onto the stack by.
 func pushI64(value uint64) operation { return newUnaryOp(OpPushI64, value) }
@@ -2121,9 +2125,9 @@ func TestInstanceHeaderCConformance(t *testing.T) {
 				fmt.Sprintf("exitStatus=%d", test.want),
 				// The instance itself is what each of these leaves standing: it
 				// is a frame slot, and a frame slot exists for as long as its
-				// words do.
+				// words do, with the value entry naming it.
 				"operandCount=3",
-				"markByteCount=0",
+				fmt.Sprintf("markByteCount=%d", valueEntryBytes),
 			}, runImage(t, harness, "stop", test.operations))
 		})
 	}
@@ -2624,9 +2628,10 @@ func TestNewCConformance(t *testing.T) {
 		assert.Equal(t, []string{
 			"result=EXIT",
 			"exitStatus=0",
-			// The instance's three words, standing in a frame slot.
+			// The instance's three words, standing in a frame slot, and the
+			// value entry naming them.
 			"operandCount=3",
-			"markByteCount=0",
+			fmt.Sprintf("markByteCount=%d", valueEntryBytes),
 			// Nothing on the list, though a markable instance exists.
 			"heap.count=0",
 		}, runImage(t, harness, "heap", append(
@@ -2956,10 +2961,11 @@ func TestArrayInitializerCConformance(t *testing.T) {
 				// back with its return, both of its words with it.
 				fmt.Sprintf("operandCount=%d",
 					elementCount*stride/wordByteSize),
-				// The elements are values rather than references and own no
-				// entries, and neither of the routine's two words may own one:
-				// a frame location is not an address the collector can follow.
-				"markByteCount=0",
+				// The elements are values rather than references, so the run
+				// owns one value entry naming it, and neither of the routine's
+				// two words may own one: a frame location is not an address the
+				// collector can follow.
+				fmt.Sprintf("markByteCount=%d", valueEntryBytes),
 			}, runImage(t, harness, "stop",
 				append(append(body, loop...), OpReturnVoid), initializer))
 		})
@@ -3130,10 +3136,11 @@ func TestInlineMemberHeaderCConformance(t *testing.T) {
 			assert.Equal(t, []string{
 				"result=EXIT",
 				"exitStatus=0",
-				// The outer value's five words, standing in a frame slot. The
-				// store spends everything it pushed.
+				// The outer value's five words, standing in a frame slot with
+				// the value entry naming them. The store spends everything it
+				// pushed.
 				"operandCount=5",
-				"markByteCount=0",
+				fmt.Sprintf("markByteCount=%d", valueEntryBytes),
 
 				// The outer value is the root, and a root on the stack is the
 				// one markable value that is contained by nothing: its storage
@@ -3267,9 +3274,9 @@ func TestLoadRestampsRootCConformance(t *testing.T) {
 		// The pointer and the copy's five words. Nothing spends either: the
 		// pointer stands in its slot and the copy stands in the next.
 		"operandCount=6",
-		// The pointer's own entry, which OpNew gave it and nothing here takes.
-		// The copy is a value rather than a reference and owns none.
-		"markByteCount=8",
+		// The pointer's own entry, which OpNew gave it and nothing here takes,
+		// and the value entry the copy owns, a class standing on the stack.
+		fmt.Sprintf("markByteCount=%d", wordByteSize+valueEntryBytes),
 	}, runImage(t, harness, "stop", program))
 }
 
@@ -3322,9 +3329,10 @@ func TestArrayElementHeaderCConformance(t *testing.T) {
 		assert.Equal(t, append([]string{
 			"result=EXIT",
 			"exitStatus=0",
-			// Three elements of three words each, standing in a frame slot.
+			// Three elements of three words each, standing in a frame slot
+			// with one value entry naming the run.
 			fmt.Sprintf("operandCount=%d", elementCount*3),
-			"markByteCount=0",
+			fmt.Sprintf("markByteCount=%d", valueEntryBytes),
 			// The front element answers for the run.
 			"array.count=3",
 			// And is contained, its storage being the stack's rather than the
@@ -3395,7 +3403,7 @@ func TestArrayElementHeaderCConformance(t *testing.T) {
 			// The container's own header and the whole run behind it.
 			fmt.Sprintf("operandCount=%d",
 				fixtureClassHeader/wordByteSize+elementCount*3),
-			"markByteCount=0",
+			fmt.Sprintf("markByteCount=%d", valueEntryBytes),
 			// The front of the run lies one header into the container, the member
 			// offsets being net of it.
 			fmt.Sprintf("member.upvalue=%d", fixtureClassHeader),
@@ -3478,12 +3486,12 @@ func TestNewArrayCConformance(t *testing.T) {
 			'c', 0},
 
 		// Nothing packed is a null, which exits as a zero like any other word.
-		// The entry goes on all the same — this is a reference like any other,
-		// and OpExit takes the word without taking it.
+		// A run of ints is the program's own memory, so its null owns no entry
+		// any more than its address would have.
 		{"an empty array is a null",
 			program(pushTypeID(intShort),
 				[]operation{newUnaryOp(OpNewArray, 0), OpExit}),
-			0, 8},
+			0, 0},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(t, []string{
@@ -3499,18 +3507,15 @@ func TestNewArrayCConformance(t *testing.T) {
 		})
 	}
 
-	// The pointer owns an object entry and not an array one. A run of markable
-	// values behind one address is one address to the collector, whatever it
-	// leads to — the array kind is for a run of references standing side by side
-	// on the stack, which this is the opposite of.
-	t.Run("the pointer owns an object entry", func(t *testing.T) {
+	// The pointer owns no entry. A run of ints is the program's own memory,
+	// which the collector never follows, so the address leading to it is not
+	// one it has to visit.
+	t.Run("a pointer to the program's own memory owns no entry", func(t *testing.T) {
 		assert.Equal(t, []string{
 			"result=EXIT",
 			"exitStatus=9",
 			"operandCount=1",
-			"markByteCount=8",
-			"mark.kind=1",
-			fmt.Sprintf("mark.operand=%d", mainFirstLocalSlot),
+			"markByteCount=0",
 		}, runImage(t, harness, "mark",
 			program([]operation{pushI64(10), pushI64(20)},
 				pushTypeID(intShort),
@@ -4288,35 +4293,38 @@ func TestArrayValueCConformance(t *testing.T) {
 		operations []operation
 		want       int
 		operands   int
+		markBytes  int
 	}{
 		// The read side of the copy, element by element. The last two are the
 		// assertion: a run that collapsed to its front would leave them zero.
 		{"the first element crosses", program(copied,
-			read(destination)...), 10, 2 * count},
+			read(destination)...), 10, 2 * count, 0},
 		{"the middle element crosses", program(copied,
-			read(destination+1)...), 11, 2 * count},
+			read(destination+1)...), 11, 2 * count, 0},
 		{"the last element crosses", program(copied,
-			read(destination+2)...), 12, 2 * count},
+			read(destination+2)...), 12, 2 * count, 0},
 
 		// And the source, which a store that read its words from the wrong end
 		// of the stack would have disturbed.
 		{"the source run is left alone", program(copied,
-			read(source+2)...), 12, 2 * count},
+			read(source+2)...), 12, 2 * count, 0},
 
 		// A member location says how wide the run is, so a store through it
 		// moves all of it. The instance is the frame's, so its own words are
 		// what the elements are read back out of: the header, then the run.
 		{"a member location names the whole run", program(stored,
-			read(memberFirstElement+2)...), 9, memberWords},
+			read(memberFirstElement+2)...), 9, memberWords, valueEntryBytes},
 		{"a member run is not one element wide", program(stored,
-			read(memberFirstElement)...), 7, memberWords},
+			read(memberFirstElement)...), 7, memberWords, valueEntryBytes},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(t, []string{
 				"result=EXIT",
 				fmt.Sprintf("exitStatus=%d", test.want),
 				fmt.Sprintf("operandCount=%d", test.operands),
-				"markByteCount=0",
+				// The instance holding the run stands on the stack, which a
+				// value entry names.
+				fmt.Sprintf("markByteCount=%d", test.markBytes),
 			}, runImage(t, harness, "stop", test.operations))
 		})
 	}

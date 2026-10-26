@@ -60,4 +60,8 @@ _Noreturn void zam_die(ZamExit status, const char *format, ...);
             __LINE__, (what))
 
 void *zam_alloc(size_t byteCount);
+
+// zam_alloc_size is how many bytes the allocator actually set aside for a
+// block zam_alloc returned, which is what the heap is measured in.
+size_t zam_alloc_size(void *pointer);
 void *zam_realloc(void *pointer, size_t byteCount);

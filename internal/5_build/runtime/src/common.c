@@ -1,5 +1,11 @@
 #include "common.h"
 
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+#else
+#include <malloc.h>
+#endif
+
 _Noreturn void zam_die(ZamExit status, const char *format, ...) {
     va_list args;
     va_start(args, format);
@@ -15,6 +21,14 @@ void *zam_alloc(size_t byteCount) {
     if (pointer == NULL)
         zam_die(ZAMEXIT_OOM, "out of memory allocating %zu bytes\n", byteCount);
     return pointer;
+}
+
+size_t zam_alloc_size(void *pointer) {
+#if defined(__APPLE__)
+    return malloc_size(pointer);
+#else
+    return malloc_usable_size(pointer);
+#endif
 }
 
 void *zam_realloc(void *pointer, size_t byteCount) {

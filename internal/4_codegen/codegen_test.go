@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	base "github.com/zambozoo/zam/internal/0_base"
 )
 
@@ -176,7 +177,11 @@ func TestCalculateByteCounts(t *testing.T) {
 		// The generic static method registry opens with the entry count — zero
 		// here, since the fixture names no generics — so the whole section is
 		// that one word.
-		assert.Equal(t, nativesEnd+wordByteSize, bc.operationsByteOffset)
+		genericsEnd := nativesEnd + wordByteSize
+		assert.Equal(t, genericsEnd, bc.staticRootsByteOffset)
+		// The static root table opens with its entry count the same way, and
+		// the fixture lays out no statics for it to name.
+		assert.Equal(t, genericsEnd+wordByteSize, bc.operationsByteOffset)
 	})
 
 	t.Run("the map is indexed by type id", func(t *testing.T) {
@@ -254,4 +259,37 @@ func TestNativeTableIsWrittenInSlotOrder(t *testing.T) {
 	assert.Equal(t, uint64(0), v.nativeIndex("STD_MARK"))
 
 	assert.Equal(t, []stringLiteral{"STD_MARK", "STD_ALLOC"}, cr.nativeNames())
+}
+
+// TestValidateMainMethodRequiresAnEntry holds a program to having the method it
+// is entered through. Semantic validation no longer asks this, since a file
+// checked on its own needs no entry, so code generation is what refuses a
+// program without one.
+func TestValidateMainMethodRequiresAnEntry(t *testing.T) {
+	for name, test := range map[string]struct {
+		body     string
+		expected string
+	}{
+		"present": {body: mainMethod},
+		"missing": {
+			body:     `    static fun void() f = () { return; }`,
+			expected: "main method not found in main code declaration Main",
+		},
+		"wrong type": {
+			body:     `    static fun int() main = () { return 0; }`,
+			expected: "main method Main.main is of type",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			ast, _, _ := compileTypes(t, "namespace Main {\n"+test.body+"\n}\n")
+			err := validateMainMethod(ast)
+			if test.expected == "" {
+				assert.NoError(t, err)
+				return
+			}
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), test.expected)
+			assert.Contains(t, err.Error(), "Main.zam[1:1]")
+		})
+	}
 }

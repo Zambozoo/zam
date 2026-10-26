@@ -1,0 +1,52 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Zam",
+  "scopeName": "source.zam",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#chars" },
+    { "include": "#numbers" },
+    { "include": "#types" },
+    { "include": "#constants" },
+    { "include": "#keywords" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.zam", "match": "//.*$" },
+        { "name": "comment.block.zam", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.zam",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "include": "#escapes" }]
+    },
+    "chars": {
+      "name": "string.quoted.single.zam",
+      "match": "'(\\\\(?:[ntr0\\\\'\"]|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})|[^'\\\\])'"
+    },
+    "escapes": {
+      "name": "constant.character.escape.zam",
+      "match": "\\\\(?:[ntr0\\\\'\"]|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})"
+    },
+    "numbers": {
+      "name": "constant.numeric.zam",
+      "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:[eE]-?[0-9]+)?[uU]?\\b"
+    },
+    "types": {
+      "name": "storage.type.zam",
+      "match": "\\b(?:any|bool|byte|char|float|int|str|thread|uint|void)\\b"
+    },
+    "constants": {
+      "name": "constant.language.zam",
+      "match": "\\b(?:true|false|null)\\b"
+    },
+    "keywords": {
+      "name": "keyword.zam",
+      "match": "\\b(?:abstract|async|break|class|continue|delete|else|enum|for|free|fun|if|import|interface|label|lambda|mark|namespace|native|new|private|protected|public|return|static|struct|super|this|type|var|virtual|wait)\\b"
+    }
+  }
+}

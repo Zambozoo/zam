@@ -1,7 +1,9 @@
 package syntax
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	base "github.com/zambozoo/zam/internal/0_base"
@@ -26,6 +28,14 @@ type (
 		// the lexer that collected it is gone by the time anything downstream of
 		// parsing has an error to report about a node.
 		LineStarts []uint
+		// HasSyntaxErrors says the parse recovered from errors in the file, so
+		// what it failed to parse is missing from it. A file like this is only
+		// ever part of an AST handed back alongside those errors.
+		HasSyntaxErrors bool
+		// BrokenImports says an import of the file failed to parse or to
+		// resolve, so a name the file reaches through it cannot be resolved
+		// whether or not it was written correctly.
+		BrokenImports bool
 
 		// Imports maps each id to the imports written under it. The common case
 		// is one import per id, but a package name may hold several: a user who
@@ -65,6 +75,7 @@ func newFile(parser SyntaxParser, path *base.Path) (*File, error) {
 	}
 
 	imports := make(map[string][]*Import)
+	brokenImports := false
 	for {
 		tok, err := parser.Match(TTImport)
 		if err != nil {
@@ -73,9 +84,22 @@ func newFile(parser SyntaxParser, path *base.Path) (*File, error) {
 			break
 		}
 
+		recoverFrom := parser.Checkpoint()
 		importStmts, err := newImport(parser, tok)
 		if err != nil {
-			return nil, err
+			brokenImports = true
+			// An import that was read whole but names nothing has no rest of
+			// the statement to skip, and skipping to the next `;` would take
+			// the next import with it.
+			var unresolved *unresolvedImport
+			if errors.As(err, &unresolved) {
+				parser.ReportAt(unresolved.err, tok)
+				continue
+			}
+			if err := recoverFrom(err); err != nil {
+				return nil, err
+			}
+			continue
 		}
 
 		for _, importStmt := range importStmts {
@@ -88,13 +112,9 @@ func newFile(parser SyntaxParser, path *base.Path) (*File, error) {
 			// first place. A glob expands into unaliased imports under one
 			// id per file it matched, which the same rule covers.
 			if existing := imports[id]; len(existing) > 0 {
-				if importStmt.Alias != nil {
-					return nil, fmt.Errorf("duplicate import %q", id)
-				}
-				for _, prev := range existing {
-					if prev.Alias != nil {
-						return nil, fmt.Errorf("duplicate import %q", id)
-					}
+				if importStmt.Alias != nil || slices.ContainsFunc(existing, func(prev *Import) bool { return prev.Alias != nil }) {
+					parser.Report(fmt.Errorf("duplicate import %q", id))
+					continue
 				}
 			}
 			imports[id] = append(imports[id], importStmt)
@@ -102,10 +122,11 @@ func newFile(parser SyntaxParser, path *base.Path) (*File, error) {
 	}
 
 	f := File{
-		Path:    path,
-		Project: parser.Project(),
-		Start:   start,
-		Imports: imports,
+		Path:          path,
+		Project:       parser.Project(),
+		Start:         start,
+		Imports:       imports,
+		BrokenImports: brokenImports,
 	}
 	*parser.File() = &f
 
@@ -194,6 +215,26 @@ func newImport(parser SyntaxParser, start *Token) ([]*Import, error) {
 		return nil, err
 	}
 
+	imports, err := resolveImport(parser, start, pkg, alias, pathStr)
+	if err != nil {
+		return nil, &unresolvedImport{err: err}
+	}
+	return imports, nil
+}
+
+// unresolvedImport is an import statement read whole that names nothing that
+// can be imported.
+type unresolvedImport struct {
+	err error
+}
+
+// Error implements the [error] interface.
+func (u *unresolvedImport) Error() string {
+	return u.err.Error()
+}
+
+// resolveImport answers the imports a whole import statement names.
+func resolveImport(parser SyntaxParser, start *Token, pkg, alias *string, pathStr string) ([]*Import, error) {
 	// The std package is reachable like any other dependency, so pkg == "std"
 	// is a legitimate import now; what is still refused is naming a file or a
 	// different package under the alias `std`, since that would shadow the

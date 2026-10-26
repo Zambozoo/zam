@@ -48,6 +48,14 @@ typedef enum ZamMarkKind {
     ZAMMARK_ARRAY,
     // ZAMMARK_SCOPE is a lexical scope opened inside a function.
     ZAMMARK_SCOPE,
+    // ZAMMARK_VALUE is a value laid out inline on the operand stack that holds
+    // something the collector must visit: a class held by value, or a struct,
+    // enum or run with one inside it. Its type is what walking it needs.
+    ZAMMARK_VALUE,
+    // ZAMMARK_INTERIOR is a location inside a markable object, such as the
+    // address of one of its members, which keeps the object alive the way a
+    // pointer to it would. Its distance is how far back the object lies.
+    ZAMMARK_INTERIOR,
 } ZamMarkKind;
 
 // The kind byte is the first field of every entry, sharing its word with one
@@ -88,18 +96,20 @@ typedef struct ZamMarkObject {
 
 typedef struct ZamMarkArray {
     uint64_t kind : 8;
-    // operand is the operand stack offset of the pointer to the array.
+    // operand is the operand stack offset of the run's first word, or, where
+    // indirect is set, of the one word holding the address the run lies at.
     uint64_t operand : ZAMMARK_LOCATION_BITS;
     // element is the packed short id of what the array holds, and length is how
-    // many of them lie behind the pointer. Together they are the whole of what
-    // traversing the array needs.
+    // many of them there are. Together they are the whole of what traversing
+    // the array needs.
     //
     // The tail length of the long type id these come off is deliberately not
     // kept. A tail belongs to one instance of a tailed type, and what is walked
     // here is the run of elements, so the tail would be a word carried for
     // nothing on the second most common entry there is.
     uint64_t element : 32;
-    uint64_t spare : 32;
+    uint64_t indirect : 1;
+    uint64_t spare : 31;
     uint64_t length;
 } ZamMarkArray;
 
@@ -112,12 +122,31 @@ typedef struct ZamMarkScope {
     uint64_t frame;
 } ZamMarkScope;
 
+typedef struct ZamMarkValue {
+    uint64_t kind : 8;
+    // operand is the operand stack offset of the value's first word.
+    uint64_t operand : ZAMMARK_LOCATION_BITS;
+    // type is the value's type id as the wire writes one.
+    ZamTypeIDWords type;
+} ZamMarkValue;
+
+typedef struct ZamMarkInterior {
+    uint64_t kind : 8;
+    // operand is the operand stack offset of the location.
+    uint64_t operand : ZAMMARK_LOCATION_BITS;
+    // distance is how many bytes before the location the mark word of the
+    // object it lies inside begins.
+    uint64_t distance;
+} ZamMarkInterior;
+
 // Entries are stacked with nothing between them, so a width that stopped being
 // a multiple of a word would misalign every entry above it.
 _Static_assert(sizeof(ZamMarkFunction) == 3 * ZAMWORD_BYTES, "function entry");
 _Static_assert(sizeof(ZamMarkObject) == 1 * ZAMWORD_BYTES, "object entry");
 _Static_assert(sizeof(ZamMarkArray) == 3 * ZAMWORD_BYTES, "array entry");
 _Static_assert(sizeof(ZamMarkScope) == 2 * ZAMWORD_BYTES, "scope entry");
+_Static_assert(sizeof(ZamMarkValue) == 4 * ZAMWORD_BYTES, "value entry");
+_Static_assert(sizeof(ZamMarkInterior) == 2 * ZAMWORD_BYTES, "interior entry");
 
 // zam_mark_entry_bytes is how wide an entry of the given kind is, header
 // included. Walking the stack forward is this applied to each header in turn.
@@ -162,6 +191,22 @@ typedef struct ZamVisitedSet {
     uint64_t count;
     uint64_t capacity;
 } ZamVisitedSet;
+
+// Where a thread is with respect to a collection, which is what a collector
+// waits on before it may read every thread's stacks.
+typedef enum ZamThreadState {
+    // ZAMTHREAD_RUNNING is executing instructions, and is what a collector
+    // waits for a thread to stop doing. It is zero, which is what a thread
+    // starts as.
+    ZAMTHREAD_RUNNING,
+    // ZAMTHREAD_PARKED is stopped at a safepoint until a collection is over.
+    ZAMTHREAD_PARKED,
+    // ZAMTHREAD_SAFE is inside a call that may block, touching neither the
+    // heap nor its own stacks until it returns.
+    ZAMTHREAD_SAFE,
+    // ZAMTHREAD_EXITED has run its last instruction.
+    ZAMTHREAD_EXITED,
+} ZamThreadState;
 
 //ZamThread is one line of execution: its two stacks and where it is in the
 // program. The main thread is one of these like any other, which is what lets
@@ -228,6 +273,16 @@ struct ZamThread {
     // collection, which is what the collection after it is triggered by.
     uint64_t allocatedByteCount;
 
+    // state is guarded by the VM's collectionLock. gcBlockDepth is how many
+    // GC.Block calls this thread has made that no GC.Unblock has matched yet,
+    // and is read and written only by the thread itself.
+    ZamThreadState state;
+    uint64_t gcBlockDepth;
+
+    // joined is whether a join has reaped the system thread, which the
+    // collector otherwise does when it frees a finished thread.
+    bool joined;
+
     // next is the thread started after this one. The VM holds the head and
     // every thread is reachable from it, which is what the collector walks to
     // find every root.
@@ -242,8 +297,7 @@ struct ZamThread {
     // pendingSignalMask is written from the signal context, which is why it
     // is volatile sig_atomic_t rather than a plain uint. signalHandlers
     // holds the zam closure pointer the program handed in through
-    // Signal.Handle; the collector cannot yet see these, which matches the
-    // existing ZAMTODO on collection.
+    // Signal.Handle, and is a root of every collection.
     volatile sig_atomic_t pendingSignalMask;
     void *signalHandlers[ZAM_SIGNAL_MAX];
 };
@@ -286,6 +340,19 @@ void zam_thread_push_mark(ZamThread *thread, uint64_t operand);
 void zam_thread_push_array_mark(ZamThread *thread, ZamTypeID type,
                                 uint64_t operand);
 
+// zam_thread_push_indirect_array_mark is the array form for a run that lies
+// elsewhere, its address standing in the operand word.
+void zam_thread_push_indirect_array_mark(ZamThread *thread, ZamTypeID type,
+                                         uint64_t operand);
+
+// zam_thread_push_value_mark names a value laid out inline from the operand
+// word on, and zam_thread_push_interior_mark a location distance bytes past
+// the mark word of the object it lies in.
+void zam_thread_push_value_mark(ZamThread *thread, ZamTypeID type,
+                                uint64_t operand);
+void zam_thread_push_interior_mark(ZamThread *thread, uint64_t operand,
+                                   uint64_t distance);
+
 // zam_thread_pop_mark takes the entry the given operand word owns back off, if
 // it owns one, and answers whether it did. It is what OpPopWord and OpStore
 // spend a marked word through: the word goes, so the entry naming it has to go
@@ -303,6 +370,13 @@ void zam_thread_push_array_mark(ZamThread *thread, ZamTypeID type,
 // so what it crosses is what the current scope pushed and not the whole
 // program's history.
 bool zam_thread_pop_mark(ZamThread *thread, uint64_t operand);
+
+// zam_thread_pop_object_mark is zam_thread_pop_mark that also answers how far
+// into its object the word points: zero for a markable reference, and the
+// distance of an interior location. It is false, having popped nothing or an
+// entry of another kind, where the word reaches no object.
+bool zam_thread_pop_object_mark(ZamThread *thread, uint64_t operand,
+                                uint64_t *distance);
 
 // A location is an address, except where it names a slot on the operand stack.
 // The stack is reallocated as it grows, so an address into it stops meaning

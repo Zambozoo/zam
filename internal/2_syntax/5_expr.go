@@ -50,6 +50,8 @@ type (
 		Expr Expr
 		// Field is the field of the expression.
 		Field string
+		// FieldToken is the token Field is written at.
+		FieldToken *Token
 		// ComputedType is the type of the field, resolved by static semantic
 		// validation.
 		ComputedType Type
@@ -63,6 +65,8 @@ type (
 		Type *TypeFunction
 		// Parameters is the parameters of the lambda expression.
 		Parameters []string
+		// ParameterTokens are the tokens Parameters are written at.
+		ParameterTokens []*Token
 		// Body is the body of the lambda expression.
 		Body Stmt
 		// Captures are the variables the body names from outside itself, in the
@@ -128,6 +132,8 @@ type (
 
 		// Field is the static Field of the expression, if any.
 		Field string
+		// FieldToken is the token Field is written at, if any.
+		FieldToken *Token
 		// TypeArgs is the type arguments of the static field, if the
 		// selection was written as `[T,...].Name`. A nil list is a plain
 		// static selection; a non-nil list binds a generic static method's
@@ -545,8 +551,9 @@ func newExprPostfix(parser SyntaxParser) (Expr, error) {
 				return nil, err
 			}
 			expr = &ExprField{
-				Expr:  expr,
-				Field: field.Value.(string),
+				Expr:       expr,
+				Field:      field.Value.(string),
+				FieldToken: field,
 			}
 		case TTLeftBracket: // equivalent to *(arr + i)
 			index, err := newExpr(parser)
@@ -637,6 +644,7 @@ func newExprPrimary(parser SyntaxParser) (Expr, error) {
 		}
 
 		var field string
+		var fieldTok *Token
 		var typeArgs []Type
 		if lb, err := parser.Match(TTLeftBracket); err != nil {
 			return nil, err
@@ -649,7 +657,7 @@ func newExprPrimary(parser SyntaxParser) (Expr, error) {
 		if period, err := parser.Match(TTPeriod); err != nil {
 			return nil, err
 		} else if period != nil {
-			fieldTok, err := parser.Consume(TTIdentifier)
+			fieldTok, err = parser.Consume(TTIdentifier)
 			if err != nil {
 				return nil, err
 			}
@@ -659,10 +667,11 @@ func newExprPrimary(parser SyntaxParser) (Expr, error) {
 		}
 
 		expr = &ExprType{
-			start:    tok,
-			Type:     _type,
-			Field:    field,
-			TypeArgs: typeArgs,
+			start:      tok,
+			Type:       _type,
+			Field:      field,
+			FieldToken: fieldTok,
+			TypeArgs:   typeArgs,
 		}
 	case TTWait:
 		if _, err := parser.Consume(TTLeftParen); err != nil {
@@ -842,7 +851,7 @@ func newExprLambda(parser SyntaxParser, start *Token) (Expr, error) {
 		return nil, err
 	}
 
-	parameters, err := parseParameterNames(parser)
+	parameters, parameterTokens, err := parseParameterNames(parser)
 	if err != nil {
 		return nil, err
 	}
@@ -857,10 +866,11 @@ func newExprLambda(parser SyntaxParser, start *Token) (Expr, error) {
 	}
 
 	return &ExprLambda{
-		start:      start,
-		Type:       _type,
-		Parameters: parameters,
-		Body:       body,
+		start:           start,
+		Type:            _type,
+		Parameters:      parameters,
+		ParameterTokens: parameterTokens,
+		Body:            body,
 	}, nil
 }
 
@@ -947,38 +957,6 @@ func (e *ExprNAry) Accept(visitor ExprVisitor) error {
 // ResolvedType implements the [Expr] interface.
 func (e *ExprNAry) ResolvedType() Type {
 	return e.ComputedType
-}
-
-// NewStrCall returns the call of Str on what object points at, when object is a
-// pointer to an enum or struct that declares Str as a str(). Such a value is
-// laid out inline and carries no header to dispatch through, so a cast of its
-// pointer to str names the method rather than leaving it to the runtime.
-func NewStrCall(object Expr) (*ExprNAry, bool) {
-	w, ok := StripConst(object.ResolvedType()).(*TypeWrapped)
-	if !ok || w.Kind() != TypeKindPointer {
-		return nil, false
-	}
-	resolvable, ok := StripConst(w.Type).(TypeResolvable)
-	if !ok || resolvable.Decl() == nil {
-		return nil, false
-	}
-	decl := resolvable.Decl()
-	if decl.Kind() != KindEnum && decl.Kind() != KindStruct {
-		return nil, false
-	}
-	method, ok := decl.GetInstanceMethod("Str")
-	if !ok {
-		return nil, false
-	}
-	ft, ok := method.FieldType().(*TypeFunction)
-	if !ok || len(ft.ParameterTypes) != 0 || StripConst(ft.ReturnType).Kind() != TypeKindString {
-		return nil, false
-	}
-	return &ExprNAry{
-		kind:         ExprKindCall,
-		Exprs:        []Expr{&ExprField{Expr: object, Field: method.Name(), ComputedType: ft}},
-		ComputedType: ft.ReturnType,
-	}, true
 }
 
 // Start implements the [Expr] interface.

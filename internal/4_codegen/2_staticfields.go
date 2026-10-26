@@ -152,6 +152,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) layEnumValues(def *typeD
 	for _, value := range enumValues(d) {
 		*value.ValueIndex() = len(r.staticInstanceMaps)
 		r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
+		p.addStaticRoot(*value.ValueIndex(), primitive)
 		p.stampStaticHeaders(p.offset, primitive)
 		p.offset += size
 		def.valueCount++
@@ -217,9 +218,23 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitFieldMember(f *synt
 	p.offset = alignUp(p.offset, align)
 	*f.Index() = len(r.staticInstanceMaps)
 	r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
+	p.addStaticRoot(*f.Index(), f.FieldType())
 	p.stampStaticHeaders(p.offset, f.FieldType())
 	p.offset += size
 	return nil
+}
+
+// addStaticRoot records that the slot holds a value of t for the collector to
+// read it by. A type still open in a template names nothing the runtime could
+// walk, and a slot of one is left out.
+func (p *staticTypesandTypeDefinitionsPopulatorVisitor) addStaticRoot(slot int, t syntax.Type) {
+	if t.ContainsGenericArg() {
+		return
+	}
+	p.reader.staticRoots = append(p.reader.staticRoots, staticRoot{
+		slot: slot,
+		typ:  p.typeInstanceOf(t),
+	})
 }
 
 // stampStaticHeaders writes the headers the value in a static slot begins with,
@@ -390,6 +405,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitFieldMethod(f *synt
 			p.offset = alignUp(p.offset, wordByteSize)
 			*concrete.Index() = len(r.staticInstanceMaps)
 			r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
+			p.addStaticRoot(*concrete.Index(), concrete.FieldType())
 			p.offset += wordByteSize
 		}
 		return nil
@@ -397,6 +413,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitFieldMethod(f *synt
 	p.offset = alignUp(p.offset, wordByteSize)
 	*f.Index() = len(r.staticInstanceMaps)
 	r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
+	p.addStaticRoot(*f.Index(), f.FieldType())
 	p.offset += wordByteSize
 	return nil
 }
@@ -407,6 +424,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitFieldEnum(f *syntax
 	p.offset = alignUp(p.offset, align)
 	*f.Index() = len(r.staticInstanceMaps)
 	r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
+	p.addStaticRoot(*f.Index(), f.Type())
 	p.offset += size
 	return nil
 }

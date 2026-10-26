@@ -1,0 +1,75 @@
+{
+  "name": "zam",
+  "displayName": "Zam",
+  "description": "Zam language support: diagnostics and highlighting from the zam language server.",
+  "version": "0.0.1",
+  "publisher": "zambozoo",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Zambozoo/zam",
+    "directory": "editors/vscode"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "zam",
+        "aliases": [
+          "Zam"
+        ],
+        "extensions": [
+          ".zam"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "zam",
+        "scopeName": "source.zam",
+        "path": "./syntaxes/zam.tmLanguage.json"
+      }
+    ],
+    "configuration": {
+      "title": "Zam",
+      "properties": {
+        "zam.serverPath": {
+          "type": "string",
+          "default": "zam",
+          "description": "Path to the zam binary the language server is started from with `zam lsp`."
+        },
+        "zam.trace.server": {
+          "type": "string",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "default": "off",
+          "description": "Traces the communication between VS Code and the zam language server."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "cp ../../LICENSE LICENSE && vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.0.0",
+    "typescript": "^5.4.0"
+  }
+}

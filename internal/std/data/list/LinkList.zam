@@ -108,6 +108,12 @@ class LinkList[A] {
     fun void(A) AddFirst = (v) {
         var Node[A]* n = new(Node[A]);
         n.val = v;
+        if(this.len == 0U) {
+            this.head = n;
+            this.tail = n;
+            this.len++;
+            return;
+        }
         n.xor = this.head{uint};
         type(System.GC).Block();
         this.head.xor = this.head.xor ^ n{uint};
@@ -119,6 +125,12 @@ class LinkList[A] {
     fun void(A) AddLast = (v) {
         var Node[A]* n = new(Node[A]);
         n.val = v;
+        if(this.len == 0U) {
+            this.head = n;
+            this.tail = n;
+            this.len++;
+            return;
+        }
         n.xor = this.tail{uint};
         type(System.GC).Block();
         this.tail.xor = this.tail.xor ^ n{uint};

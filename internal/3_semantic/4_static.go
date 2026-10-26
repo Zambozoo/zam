@@ -62,6 +62,8 @@ type (
 	binding interface {
 		// bindingType is the type an expression naming the binding comes to.
 		bindingType() syntax.Type
+		// declaredAt is where what the binding names is declared.
+		declaredAt() syntax.Target
 	}
 
 	// node is anything an error can be reported at. Every kind of node carries
@@ -70,11 +72,17 @@ type (
 	node interface{ Start() *syntax.Token }
 
 	// localBinding is a parameter, a capture or a declared variable.
-	localBinding struct{ typ syntax.Type }
+	localBinding struct {
+		typ    syntax.Type
+		target syntax.Target
+	}
 
 	// staticBinding is a static of the declaration the name was written in or
 	// of one that declaration is nested inside.
-	staticBinding struct{ typ syntax.Type }
+	staticBinding struct {
+		typ    syntax.Type
+		target syntax.Target
+	}
 
 	// instanceBinding is a field of the declaration the name was written in,
 	// inherited ones among them. Only that declaration contributes these: an
@@ -87,12 +95,17 @@ type (
 	instanceBinding struct {
 		typ      syntax.Type
 		isMethod bool
+		target   syntax.Target
 	}
 )
 
 func (b localBinding) bindingType() syntax.Type    { return b.typ }
 func (b staticBinding) bindingType() syntax.Type   { return b.typ }
 func (b instanceBinding) bindingType() syntax.Type { return b.typ }
+
+func (b localBinding) declaredAt() syntax.Target    { return b.target }
+func (b staticBinding) declaredAt() syntax.Target   { return b.target }
+func (b instanceBinding) declaredAt() syntax.Target { return b.target }
 
 // validateStaticSemantics validates the static semantics of the AST.
 // This includes type checking, scope checking, access checking, and inheritance validation.
@@ -102,30 +115,6 @@ func validateStaticSemantics(ast *syntax.AST) []error {
 	}
 	for _, entry := range ast.CodeFiles.All() {
 		entry.Value.Decl.Accept(v)
-	}
-
-	// The arguments are the run of strings the program was invoked with, which
-	// is what a variadic says and a pointer only implies. The count still comes
-	// separately: a variadic conveys no length, so nothing else would say where
-	// the arguments stop.
-	mainType := &syntax.TypeFunction{
-		ReturnType: syntax.TypeVoid,
-		ParameterTypes: []syntax.Type{
-			syntax.TypeUint,
-			syntax.NewWrappedType(syntax.TypeKindVariadic, syntax.TypeString),
-		},
-	}
-
-	// This runs outside any visit, so it says for itself where it is looking: the
-	// main declaration, which is the one thing both complaints are about.
-	defer v.at(ast.MainCodeDecl)()
-	v.currentDecl = ast.MainCodeDecl
-
-	mainMethod, ok := ast.MainCodeDecl.GetStaticMethod(base.MainMethodName)
-	if !ok {
-		v.errf("main method not found in main code declaration %s", ast.MainCodeDecl.Name())
-	} else if !mainMethod.FieldType().Equals(mainType) {
-		v.errf("main method %s.%s is of type %q, not %q", ast.MainCodeDecl.Name(), base.MainMethodName, mainMethod.FieldType().String(), mainType.String())
 	}
 	return v.errs
 }
@@ -151,6 +140,7 @@ func (v *staticSemanticsValidatorVisitor) VisitImport(i *syntax.Import) error {
 func (v *staticSemanticsValidatorVisitor) visitDecl(d syntax.Decl) {
 	oldDecl := v.currentDecl
 	v.currentDecl = d
+	v.reference(d.NameToken(), syntax.TargetOf(d), nil)
 	v.variableScopes.Push(declStaticScope(d))
 	for _, field := range d.StaticFields() {
 		field.Accept(v)
@@ -176,7 +166,7 @@ func declStaticScope(d syntax.Decl) map[string]binding {
 			continue
 		}
 		if t, ok := staticFieldType(indexable); ok {
-			scope[name] = staticBinding{typ: t}
+			scope[name] = staticBinding{typ: t, target: syntax.TargetOf(field)}
 		}
 	}
 	return scope
@@ -190,7 +180,7 @@ func declInstanceScope(d syntax.Decl) map[string]binding {
 	for _, entry := range d.AllInstanceFields().All() {
 		if typeable, ok := entry.Value.(syntax.FieldTypeable); ok {
 			_, isMethod := entry.Value.(*syntax.FieldMethod)
-			scope[entry.Key] = instanceBinding{typ: typeable.FieldType(), isMethod: isMethod}
+			scope[entry.Key] = instanceBinding{typ: typeable.FieldType(), isMethod: isMethod, target: syntax.TargetOf(entry.Value)}
 		}
 	}
 	return scope
@@ -352,6 +342,7 @@ func (v *staticSemanticsValidatorVisitor) VisitDeclStruct(d *syntax.DeclStruct) 
 // checked against that primitive.
 func (v *staticSemanticsValidatorVisitor) VisitFieldEnum(f *syntax.FieldEnum) error {
 	defer v.at(f)()
+	v.reference(f.NameToken(), syntax.TargetOf(f), f.Type())
 	outerDecl := f.OuterDecl().(*syntax.DeclEnum)
 
 	if f.Value != nil {
@@ -395,6 +386,7 @@ func (v *staticSemanticsValidatorVisitor) VisitFieldEnum(f *syntax.FieldEnum) er
 
 func (v *staticSemanticsValidatorVisitor) VisitFieldMember(f *syntax.FieldMember) error {
 	defer v.at(f)()
+	v.reference(f.NameToken(), syntax.TargetOf(f), f.FieldType())
 	v.currentStaticField = staticField(f)
 	defer func() { v.currentStaticField = nil }()
 
@@ -417,6 +409,7 @@ func (v *staticSemanticsValidatorVisitor) VisitFieldMember(f *syntax.FieldMember
 
 func (v *staticSemanticsValidatorVisitor) VisitFieldMethod(f *syntax.FieldMethod) error {
 	defer v.at(f)()
+	v.reference(f.NameToken(), syntax.TargetOf(f), f.FieldType())
 	v.currentStaticField = staticField(f)
 	defer func() { v.currentStaticField = nil }()
 
@@ -427,7 +420,7 @@ func (v *staticSemanticsValidatorVisitor) VisitFieldMethod(f *syntax.FieldMethod
 		oldExpectedReturnType := v.expectedReturnType
 		v.expectedReturnType = ft.ReturnType
 		v.variableScopes.Push(declInstanceScope(f.OuterDecl()))
-		v.variableScopes.Push(parameterScope(f.Parameters, ft.ParameterTypes))
+		v.variableScopes.Push(v.parameterScope(f.OuterDecl().File(), f.Parameters, f.ParameterTokens, ft.ParameterTypes))
 		f.Body.Accept(v)
 		v.variableScopes.Pop()
 		v.variableScopes.Pop()
@@ -605,6 +598,12 @@ func terminates(s syntax.Stmt) bool {
 	case *syntax.StmtExpr:
 		return s.Kind() == syntax.StmtKindReturn
 	case *syntax.StmtBlock:
+		// A block that lost a statement to a syntax error may have lost the one
+		// that ended it, and saying it runs on would report what the syntax
+		// error already accounts for.
+		if s.Broken {
+			return true
+		}
 		// Whatever follows a statement that does not run on is unreachable, so
 		// a block runs on only if every statement in it does.
 		for _, stmt := range s.Stmts {
@@ -745,18 +744,33 @@ func (v *staticSemanticsValidatorVisitor) capture(name string, depth int) {
 
 // parameterScope binds a function's parameter names to the types its signature
 // declares them with, the two being of one length by the time the parser is
-// done with them. A parameter written as [syntax.BlankName] is left out of
-// the scope: the slot the caller pushed is still there, but no later name
-// resolves to it.
-func parameterScope(names []string, types []syntax.Type) map[string]binding {
+// done with them, and records each name as declared where it is written in
+// file. A parameter written as [syntax.BlankName] is left out of the scope: the
+// slot the caller pushed is still there, but no later name resolves to it.
+func (v *staticSemanticsValidatorVisitor) parameterScope(file *syntax.File, names []string, tokens []*syntax.Token, types []syntax.Type) map[string]binding {
 	scope := make(map[string]binding, len(names))
 	for i, name := range names {
 		if name == syntax.BlankName {
 			continue
 		}
-		scope[name] = localBinding{typ: syntax.ParameterBindingType(types[i])}
+		var target syntax.Target
+		if i < len(tokens) {
+			target = syntax.Target{File: file, Name: tokens[i]}
+		}
+		t := syntax.ParameterBindingType(types[i])
+		scope[name] = localBinding{typ: t, target: target}
+		v.ast.References.Add(file, target.Name, target, t)
 	}
 	return scope
+}
+
+// reference records that the name written at a token in the file being
+// validated refers to target, and comes to type t there.
+func (v *staticSemanticsValidatorVisitor) reference(name *syntax.Token, target syntax.Target, t syntax.Type) {
+	if v.currentDecl == nil {
+		return
+	}
+	v.ast.References.Add(v.currentDecl.File(), name, target, t)
 }
 
 // VisitStmtVariable implements [syntax.StmtVisitor]. Only the innermost scope is
@@ -772,7 +786,9 @@ func (v *staticSemanticsValidatorVisitor) VisitStmtVariable(s *syntax.StmtVariab
 		if _, ok := v.variableScopes.Peek()[name]; ok {
 			v.errf("variable %s already declared", name)
 		}
-		v.variableScopes.Peek()[name] = localBinding{typ: s.Type}
+		target := syntax.Target{File: v.currentDecl.File(), Name: s.NameToken(), Start: s.Start()}
+		v.variableScopes.Peek()[name] = localBinding{typ: s.Type, target: target}
+		v.reference(s.NameToken(), target, s.Type)
 	}
 
 	v.requireDeclarable(s.Type, "variable", name)
@@ -1046,6 +1062,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprField(e *syntax.ExprField) er
 
 	e.ComputedType = f.FieldType()
 	v.lastExprType = e.ComputedType
+	v.reference(e.FieldToken, syntax.TargetOf(f), e.ComputedType)
 	return nil
 }
 
@@ -1070,7 +1087,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprLambda(e *syntax.ExprLambda) 
 			depth:    v.variableScopes.Len(),
 			captured: map[string]struct{}{},
 		})
-		v.variableScopes.Push(parameterScope(e.Parameters, e.Type.ParameterTypes))
+		v.variableScopes.Push(v.parameterScope(v.currentDecl.File(), e.Parameters, e.ParameterTokens, e.Type.ParameterTypes))
 		e.Body.Accept(v)
 		if e.Type.ReturnType.Kind() != syntax.TypeKindVoid && !terminates(e.Body) {
 			v.errf("lambda can be left without returning a %s", e.Type.ReturnType.String())
@@ -1712,6 +1729,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprSymbol(e *syntax.ExprSymbol) 
 		if !ok {
 			return v.errf("variable %s not found", name)
 		}
+		v.reference(e.Start(), b.declaredAt(), b.bindingType())
 		// An instance field written on its own is written on the receiver, and a
 		// static field has none to be written on.
 		if _, isInstance := b.(instanceBinding); isInstance && v.currentStaticField != nil {
@@ -1787,6 +1805,8 @@ func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) erro
 	if !ok {
 		return v.errf("static field %s.%s not found", tr.Decl().Name(), e.Field)
 	}
+	fieldType, _ := staticFieldType(fi)
+	v.reference(e.FieldToken, syntax.TargetOf(fi), fieldType)
 
 	if len(e.TypeArgs) > 0 {
 		for _, arg := range e.TypeArgs {

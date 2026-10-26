@@ -32,5 +32,14 @@ type (
 		Peek() (*Token, error)
 		Project() *Project
 		UnexpectedToken(got TokenKind, want ...TokenKind) error
+		// Checkpoint marks where an element of a sequence begins and returns
+		// how to recover from an error raised while parsing it. The function
+		// answers nil when the sequence can go on.
+		Checkpoint() func(err error) error
+		// Report records an error at the current token without stopping the
+		// parse.
+		Report(err error)
+		// ReportAt records an error at a token without stopping the parse.
+		ReportAt(err error, tok *Token)
 	}
 )

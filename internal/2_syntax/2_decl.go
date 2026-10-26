@@ -150,6 +150,8 @@ type (
 		modifiers Modifier
 		// name is the name of the declaration.
 		name string
+		// nameToken is the token the name is written at.
+		nameToken *Token
 
 		// staticMethodCount is the number of static methods in the declaration.
 		staticMethodCount int
@@ -453,6 +455,11 @@ func (d *decl) Hash() uint64 {
 // Name implements the [Field] interface.
 func (d *decl) Name() string {
 	return d.name
+}
+
+// NameToken implements the [Field] interface.
+func (d *decl) NameToken() *Token {
+	return d.nameToken
 }
 
 // Modifiers implements the [Field] interface.
@@ -1038,6 +1045,7 @@ func newDeclAbstract(parser SyntaxParser, start *Token, modifiers Modifier) (*De
 				kind:           KindAbstract,
 				modifiers:      modifiers,
 				name:           name,
+				nameToken:      id,
 				staticFields:   base.NewStaticOrderedMap[string, Field](),
 				instanceFields: base.NewStaticOrderedMap[string, Field](),
 				innerDecls:     base.NewStaticOrderedMap[string, Decl](),
@@ -1099,13 +1107,22 @@ func newDeclAbstract(parser SyntaxParser, start *Token, modifiers Modifier) (*De
 			break
 		}
 
+		recoverFrom := parser.Checkpoint()
 		field, err := newField(parser, decl.isTailed, false)
 		if err != nil {
-			return nil, err
+			partial, isPartial := kept[Field](err)
+			if err := recoverFrom(err); err != nil {
+				return nil, err
+			}
+			if !isPartial {
+				continue
+			}
+			field = partial
 		}
 
 		if err := checkFieldCollision(decl.staticFields, decl.instanceFields, decl.innerDecls, field); err != nil {
-			return nil, err
+			parser.Report(err)
+			continue
 		}
 
 		if nested, ok := field.(Decl); ok {
@@ -1114,11 +1131,13 @@ func newDeclAbstract(parser SyntaxParser, start *Token, modifiers Modifier) (*De
 			decl.staticFields.Set(field.Name(), field)
 		} else {
 			if tailedField != nil && field.Kind() == FieldKindMember {
-				return nil, fmt.Errorf("tailed field %q is not the last instance member", tailedField.Name())
+				parser.Report(fmt.Errorf("tailed field %q is not the last instance member", tailedField.Name()))
+				continue
 			}
 			ft, ok := field.(FieldTypeable)
 			if !ok {
-				return nil, fmt.Errorf("instance field %q is not typeable", field.Name())
+				parser.Report(fmt.Errorf("instance field %q is not typeable", field.Name()))
+				continue
 			}
 			decl.instanceFields.Set(field.Name(), ft)
 			if (ft.FieldType().Kind() == TypeKindArray && ft.FieldType().(*TypeArray).Size == nil) ||
@@ -1251,6 +1270,7 @@ func newDeclClass(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclC
 				kind:           KindClass,
 				modifiers:      modifiers,
 				name:           name,
+				nameToken:      id,
 				staticFields:   base.NewStaticOrderedMap[string, Field](),
 				instanceFields: base.NewStaticOrderedMap[string, Field](),
 				innerDecls:     base.NewStaticOrderedMap[string, Decl](),
@@ -1312,13 +1332,22 @@ func newDeclClass(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclC
 			break
 		}
 
+		recoverFrom := parser.Checkpoint()
 		field, err := newField(parser, decl.isTailed, false)
 		if err != nil {
-			return nil, err
+			partial, isPartial := kept[Field](err)
+			if err := recoverFrom(err); err != nil {
+				return nil, err
+			}
+			if !isPartial {
+				continue
+			}
+			field = partial
 		}
 
 		if err := checkFieldCollision(decl.staticFields, decl.instanceFields, decl.innerDecls, field); err != nil {
-			return nil, err
+			parser.Report(err)
+			continue
 		}
 
 		if nested, ok := field.(Decl); ok {
@@ -1327,13 +1356,16 @@ func newDeclClass(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclC
 			decl.staticFields.Set(field.Name(), field)
 		} else {
 			if field.Modifiers().Has(ModifierVirtual) {
-				return nil, fmt.Errorf("virtual field %q is not allowed in class", field.Name())
+				parser.Report(fmt.Errorf("virtual field %q is not allowed in class", field.Name()))
+				continue
 			} else if tailedField != nil && field.Kind() == FieldKindMember {
-				return nil, fmt.Errorf("tailed field %q is not the last instance member", tailedField.Name())
+				parser.Report(fmt.Errorf("tailed field %q is not the last instance member", tailedField.Name()))
+				continue
 			}
 			ft, ok := field.(FieldTypeable)
 			if !ok {
-				return nil, fmt.Errorf("instance field %q is not typeable", field.Name())
+				parser.Report(fmt.Errorf("instance field %q is not typeable", field.Name()))
+				continue
 			}
 			decl.instanceFields.Set(field.Name(), ft)
 			if (ft.FieldType().Kind() == TypeKindArray && ft.FieldType().(*TypeArray).Size == nil) ||
@@ -1465,6 +1497,7 @@ func newDeclEnum(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclEn
 			kind:           KindEnum,
 			modifiers:      modifiers,
 			name:           name,
+			nameToken:      id,
 			staticFields:   base.NewStaticOrderedMap[string, Field](),
 			instanceFields: base.NewStaticOrderedMap[string, Field](),
 			innerDecls:     base.NewStaticOrderedMap[string, Decl](),
@@ -1496,20 +1529,31 @@ func newDeclEnum(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclEn
 			break
 		}
 
+		recoverFrom := parser.Checkpoint()
 		field, err := newFieldEnum(parser, decl)
+		if partial, ok := kept[*FieldEnum](err); ok {
+			field = partial
+		}
+		var tok *Token
+		if field != nil {
+			if _, staticIndex := decl.staticFields.Get(field.Name()); staticIndex >= 0 {
+				parser.Report(duplicateFieldError(field))
+			} else {
+				decl.staticFields.Set(field.Name(), field)
+			}
+		}
+		if err == nil {
+			tok, err = parser.ConsumeAny(TTComma, TTSemiColon)
+		}
 		if err != nil {
-			return nil, err
+			// Recovering leaves off past the `;` the values end at, or short
+			// of the `}` the enum ends at, so the values end here either way.
+			if err := recoverFrom(err); err != nil {
+				return nil, err
+			}
+			break
 		}
-
-		_, staticIndex := decl.staticFields.Get(field.Name())
-		if staticIndex >= 0 {
-			return nil, duplicateFieldError(field)
-		}
-		decl.staticFields.Set(field.Name(), field)
-
-		if tok, err := parser.ConsumeAny(TTComma, TTSemiColon); err != nil {
-			return nil, err
-		} else if tok.Kind == TTSemiColon {
+		if tok.Kind == TTSemiColon {
 			break
 		}
 	}
@@ -1521,13 +1565,22 @@ func newDeclEnum(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclEn
 			break
 		}
 
+		recoverFrom := parser.Checkpoint()
 		field, err := newField(parser, false, false)
 		if err != nil {
-			return nil, err
+			partial, isPartial := kept[Field](err)
+			if err := recoverFrom(err); err != nil {
+				return nil, err
+			}
+			if !isPartial {
+				continue
+			}
+			field = partial
 		}
 
 		if err := checkFieldCollision(decl.staticFields, decl.instanceFields, decl.innerDecls, field); err != nil {
-			return nil, err
+			parser.Report(err)
+			continue
 		}
 
 		if nested, ok := field.(Decl); ok {
@@ -1536,13 +1589,15 @@ func newDeclEnum(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclEn
 			decl.staticFields.Set(field.Name(), field)
 		} else {
 			if field.Modifiers().Has(ModifierVirtual) {
-				return nil, fmt.Errorf("virtual field %q is not allowed in enum", field.Name())
+				parser.Report(fmt.Errorf("virtual field %q is not allowed in enum", field.Name()))
+				continue
 			}
 			decl.instanceFields.Set(field.Name(), field)
 		}
 	}
 
 	*parser.Decl() = decl.outerDecl
+	decl.instanceFields = placeStrMethod(parser, decl, decl.instanceFields, decl.staticFields)
 	decl.orderFields()
 	return decl, nil
 }
@@ -1632,6 +1687,7 @@ func newDeclInterface(parser SyntaxParser, start *Token, modifiers Modifier) (*D
 				kind:           KindInterface,
 				modifiers:      modifiers,
 				name:           name,
+				nameToken:      id,
 				staticFields:   base.NewStaticOrderedMap[string, Field](),
 				instanceFields: base.NewStaticOrderedMap[string, Field](),
 				innerDecls:     base.NewStaticOrderedMap[string, Decl](),
@@ -1662,13 +1718,22 @@ func newDeclInterface(parser SyntaxParser, start *Token, modifiers Modifier) (*D
 			break
 		}
 
+		recoverFrom := parser.Checkpoint()
 		field, err := newField(parser, false, false)
 		if err != nil {
-			return nil, err
+			partial, isPartial := kept[Field](err)
+			if err := recoverFrom(err); err != nil {
+				return nil, err
+			}
+			if !isPartial {
+				continue
+			}
+			field = partial
 		}
 
 		if err := checkFieldCollision(decl.staticFields, decl.instanceFields, decl.innerDecls, field); err != nil {
-			return nil, err
+			parser.Report(err)
+			continue
 		}
 
 		if nested, ok := field.(Decl); ok {
@@ -1678,11 +1743,14 @@ func newDeclInterface(parser SyntaxParser, start *Token, modifiers Modifier) (*D
 		} else {
 			f, ok := field.(*FieldMethod)
 			if !ok {
-				return nil, fmt.Errorf("instance member %q is not allowed in interface", field.Name())
+				parser.Report(fmt.Errorf("instance member %q is not allowed in interface", field.Name()))
+				continue
 			} else if !field.Modifiers().Has(ModifierVirtual) {
-				return nil, fmt.Errorf("instance method %q must be virtual in interface", field.Name())
+				parser.Report(fmt.Errorf("instance method %q must be virtual in interface", field.Name()))
+				continue
 			} else if f.Modifiers().Has(ModifierProtected) {
-				return nil, fmt.Errorf("instance method %q cannot be protected in interface", field.Name())
+				parser.Report(fmt.Errorf("instance method %q cannot be protected in interface", field.Name()))
+				continue
 			}
 			decl.instanceFields.Set(field.Name(), f)
 		}
@@ -1778,6 +1846,7 @@ func newDeclNamespace(parser SyntaxParser, start *Token, modifiers Modifier) (*D
 			kind:           KindNamespace,
 			modifiers:      modifiers,
 			name:           name,
+			nameToken:      id,
 			staticFields:   base.NewStaticOrderedMap[string, Field](),
 			instanceFields: base.NewStaticOrderedMap[string, Field](),
 			innerDecls:     base.NewStaticOrderedMap[string, Decl](),
@@ -1796,13 +1865,22 @@ func newDeclNamespace(parser SyntaxParser, start *Token, modifiers Modifier) (*D
 			break
 		}
 
+		recoverFrom := parser.Checkpoint()
 		field, err := newField(parser, false, true)
 		if err != nil {
-			return nil, err
+			partial, isPartial := kept[Field](err)
+			if err := recoverFrom(err); err != nil {
+				return nil, err
+			}
+			if !isPartial {
+				continue
+			}
+			field = partial
 		}
 
 		if err := checkFieldCollision(decl.staticFields, decl.instanceFields, decl.innerDecls, field); err != nil {
-			return nil, err
+			parser.Report(err)
+			continue
 		}
 
 		if nested, ok := field.(Decl); ok {
@@ -1855,6 +1933,7 @@ func newDeclStruct(parser SyntaxParser, start *Token, modifiers Modifier) (*Decl
 				kind:           KindStruct,
 				modifiers:      modifiers,
 				name:           name,
+				nameToken:      id,
 				staticFields:   base.NewStaticOrderedMap[string, Field](),
 				instanceFields: base.NewStaticOrderedMap[string, Field](),
 				innerDecls:     base.NewStaticOrderedMap[string, Decl](),
@@ -1891,13 +1970,22 @@ func newDeclStruct(parser SyntaxParser, start *Token, modifiers Modifier) (*Decl
 			break
 		}
 
+		recoverFrom := parser.Checkpoint()
 		field, err := newField(parser, decl.isTailed, false)
 		if err != nil {
-			return nil, err
+			partial, isPartial := kept[Field](err)
+			if err := recoverFrom(err); err != nil {
+				return nil, err
+			}
+			if !isPartial {
+				continue
+			}
+			field = partial
 		}
 
 		if err := checkFieldCollision(decl.staticFields, decl.instanceFields, decl.innerDecls, field); err != nil {
-			return nil, err
+			parser.Report(err)
+			continue
 		}
 
 		if nested, ok := field.(Decl); ok {
@@ -1906,13 +1994,16 @@ func newDeclStruct(parser SyntaxParser, start *Token, modifiers Modifier) (*Decl
 			decl.staticFields.Set(field.Name(), field)
 		} else {
 			if field.Modifiers().Has(ModifierVirtual) {
-				return nil, fmt.Errorf("virtual field %q is not allowed in struct", field.Name())
+				parser.Report(fmt.Errorf("virtual field %q is not allowed in struct", field.Name()))
+				continue
 			} else if tailedField != nil && field.Kind() == FieldKindMember {
-				return nil, fmt.Errorf("tailed field %q is not the last instance member", tailedField.Name())
+				parser.Report(fmt.Errorf("tailed field %q is not the last instance member", tailedField.Name()))
+				continue
 			}
 			ft, ok := field.(FieldTypeable)
 			if !ok {
-				return nil, fmt.Errorf("instance field %q is not typeable", field.Name())
+				parser.Report(fmt.Errorf("instance field %q is not typeable", field.Name()))
+				continue
 			}
 			decl.instanceFields.Set(field.Name(), ft)
 			if (ft.FieldType().Kind() == TypeKindArray && ft.FieldType().(*TypeArray).Size == nil) ||
@@ -1927,6 +2018,7 @@ func newDeclStruct(parser SyntaxParser, start *Token, modifiers Modifier) (*Decl
 	}
 
 	*parser.Decl() = decl.outerDecl
+	decl.instanceFields = placeStrMethod(parser, decl, decl.instanceFields, decl.staticFields)
 	decl.orderFields()
 	return decl, nil
 }
@@ -2261,3 +2353,69 @@ func (c *DeclConcreteClass) ConcreteID() *uint16 { return &c.concreteID }
 
 // ConcreteID returns a pointer to the concrete interface's virtual generic id.
 func (i *DeclConcreteInterface) ConcreteID() *uint16 { return &i.concreteID }
+
+// StrMethodName is the method an enum or struct answers a string cast of a
+// pointer to it with. It is always the first of its instance methods, which is
+// where the runtime finds it without its name: a struct or enum descends from
+// nothing, so it has no inherited slot to hold it in the way an object does.
+const StrMethodName = "Str"
+
+// placeStrMethod answers an enum's or struct's instance fields with its Str
+// method first among them. A declaration that writes none is given one that
+// answers with the generic form a value of it is written out in, so that every
+// enum and struct has the method where the runtime looks for it. One that
+// writes a Str of any other kind than an instance str() is reported, and its
+// fields are left as they are, since nothing the runtime could call stands in
+// that place.
+func placeStrMethod(parser SyntaxParser, d Decl, fields *base.StaticOrderedMap[string, Field], statics *base.StaticOrderedMap[string, Field]) *base.StaticOrderedMap[string, Field] {
+	if static, i := statics.Get(StrMethodName); i >= 0 {
+		parser.ReportAt(fmt.Errorf("%s of %s must be an instance method of type str()", StrMethodName, d.Name()), static.NameToken())
+		return fields
+	}
+
+	str, i := fields.Get(StrMethodName)
+	if i < 0 {
+		str = defaultStrMethod(d)
+	} else if method, ok := str.(*FieldMethod); !ok || method.generics != nil || !isStrMethodType(method.fieldType) {
+		parser.ReportAt(fmt.Errorf("%s of %s must be an instance method of type str()", StrMethodName, d.Name()), str.NameToken())
+		return fields
+	}
+
+	placed := base.NewStaticOrderedMap[string, Field]()
+	placed.Set(StrMethodName, str)
+	for _, entry := range fields.All() {
+		if entry.Key != StrMethodName {
+			placed.Set(entry.Key, entry.Value)
+		}
+	}
+	return placed
+}
+
+// isStrMethodType reports whether t is str().
+func isStrMethodType(t Type) bool {
+	ft, ok := t.(*TypeFunction)
+	return ok && len(ft.ParameterTypes) == 0 && StripConst(ft.ReturnType).Kind() == TypeKindString
+}
+
+// defaultStrMethod is the Str an enum or struct is given when it writes none:
+// `fun str() Str = () { return (*this){any}{str}; }`. Boxed in an any, the value
+// is written out as a value is, by its type and where it lies, rather than by
+// its Str, which a pointer to it would be.
+func defaultStrMethod(d Decl) *FieldMethod {
+	at := d.NameToken()
+	this := &ExprSymbol{start: at, kind: ExprKindThis}
+	value := &ExprNAry{start: at, kind: ExprKindDereference, Exprs: []Expr{this}}
+	str := &ExprCast{Expr: &ExprCast{Expr: value, Type: TypeAny}, Type: TypeString}
+	return &FieldMethod{
+		field: field{
+			start:     at,
+			outerDecl: d,
+			name:      StrMethodName,
+		},
+		fieldType: &TypeFunction{outerDecl: d, ReturnType: TypeString},
+		Body: &StmtBlock{
+			start: at,
+			Stmts: []Stmt{&StmtExpr{start: at, kind: StmtKindReturn, Expr: str}},
+		},
+	}
+}

@@ -498,6 +498,12 @@ ZamMethodDefinition zam_type_method(const ZamImage *image, ZamTypeShort shortID,
 #define ZAMOBJECT_SLOT_MARK 4
 #define ZAMOBJECT_SLOT_DELETE 5
 
+// An enum or struct descends from nothing, so it has no inherited slot for its
+// Str; the compiler places Str first among its instance methods instead, and
+// gives one to every declaration that writes none. This mirrors StrMethodName
+// in internal/2_syntax/2_decl.go by hand.
+#define ZAMVALUE_SLOT_STR 0
+
 // zam_type_member_count is how many members zam_type_member will answer for,
 // which is what a walk of all of them needs and what reaching one by index does
 // not. The flattened run is what is counted, base members included, so this is

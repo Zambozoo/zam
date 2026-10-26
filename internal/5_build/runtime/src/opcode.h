@@ -127,7 +127,8 @@
     OP(OpAnyPayloadType, 0)                                                    \
     OP(OpAnyUnbox, 0)                                                          \
                                                                                \
-    OP(OpEnumValue, 0)
+    OP(OpEnumValue, 0)                                                         \
+    OP(OpMarkAs, 0)
 
 #define ZAMOPCODE_ENUM(name, operands) name,
 

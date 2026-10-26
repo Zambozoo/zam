@@ -36,6 +36,7 @@ typedef enum ZamHeaderWord {
     ZAMHEADER_STATIC_IMAGE_OFFSET,
     ZAMHEADER_NATIVES_OFFSET,
     ZAMHEADER_GENERIC_STATIC_METHODS_OFFSET,
+    ZAMHEADER_STATIC_ROOTS_OFFSET,
     ZAMHEADER_OPERATIONS_OFFSET,
 
     ZAMHEADER_WORDS,
@@ -146,6 +147,12 @@ typedef struct ZamImage {
     const uint8_t *genericStaticMethods;
     uint64_t genericStaticMethodCount;
 
+    // staticRoots is every static whose value may hold something the
+    // collector must visit, opening with how many follow: each is its slot
+    // and then the three words of its type id.
+    const ZamWord *staticRoots;
+    uint64_t staticRootCount;
+
     // operations is the program, and runs to the end of the file. Execution
     // begins at offset zero of it.
     const uint8_t *operations;
@@ -177,6 +184,15 @@ ZamTypeBucket zam_image_bucket_of(const ZamImage *image, uint16_t declID);
 
 // zam_image_static_offset is where the slot begins within the static region.
 uint64_t zam_image_static_offset(const ZamImage *image, uint64_t slot);
+
+// ZAMSTATIC_ROOT_WORDS is how wide one entry of the static root table is: the
+// slot and then the type id.
+#define ZAMSTATIC_ROOT_WORDS (1 + ZAMTYPE_ID_WORDS)
+
+// zam_image_static_root is the slot of the nth static root, and the type of
+// the value it holds.
+uint64_t zam_image_static_root(const ZamImage *image, uint64_t index,
+                               ZamTypeID *type);
 
 // zam_image_native_name is the C symbol the slot names, as a pointer into the
 // image and a length. It is not NUL-terminated: a name is written as a length

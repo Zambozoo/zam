@@ -188,11 +188,14 @@ const (
 	// settled when it was pushed, and the mark stack already says so.
 	//   (code) | [value] {markEntry?} -> [value]
 	OpPopMark
-	// OpMark spends a value and the id standing over it and hands the value to
-	// the collector to be traced. It says nothing about the mark stack, which is
-	// the distinction worth drawing against the two above it: those are about
-	// whether a word on the operand stack is a root the collector must start
-	// from, and this is about walking what a value already reaches.
+	// OpMark spends a value and the id standing over it and, while a collection
+	// runs the Mark it is written in, says the value is reachable: a reference
+	// is queued to be traced and a value laid out inline is walked where it
+	// lies. Outside a collection it only spends the value. It says nothing about
+	// the mark stack, which is the distinction worth drawing against the two
+	// above it: those are about whether a word on the operand stack is a root
+	// the collector must start from, and this is about walking what a value
+	// already reaches.
 	//
 	// The type id is what says how to walk it, the same way it says how to write
 	// a value out in OpCastToString: every type reaches what it reaches its own
@@ -237,8 +240,9 @@ const (
 	// This is the one location whose pointer owns a mark entry, and it owns one
 	// because the object word is spent making it: what was a reference to the
 	// allocation is now a pointer into the middle of it, and nothing else is left
-	// holding the allocation up.
-	//   (code, memberIndex) | [objAddr,objTypeID] {objMarkEntry?} -> [memberPointer,memberTypeID] {memberPointerMarkEntry?}
+	// holding the allocation up. The entry is an interior one, saying how far
+	// back the object lies, and is owed only where the object's word owned one.
+	//   (code, memberIndex) | [objAddr,objTypeID] {objMarkEntry?} -> [memberPointer,memberTypeID] {memberInteriorMarkEntry?}
 	//   ... or | [objWords...,objTypeID] {objMarkEntry?} -> [memberWords...,memberTypeID]
 	OpPushMember
 
@@ -327,6 +331,9 @@ const (
 	// expression, so the same instruction stands for one instance or a thousand,
 	// and only the runtime can count them. A type with nothing to initialize
 	// names no routine and is left as it was allocated.
+	//
+	// The reference owns a mark entry where the instances are classes, which
+	// are the collector's; any other run is the program's own memory.
 	//   (code) | [arraySize,tailLength,typeID] -> [value] {markEntry?}
 	OpNew
 	// OpNewArray allocates an array of the elements lying beneath its type id and
@@ -341,7 +348,7 @@ const (
 	// begin. OpNewThread is told words instead because a frame is a run of mixed
 	// types that no one width describes, which is the reason the distinction is
 	// worth drawing rather than a disagreement about it.
-	//   (code, elementCount) | [elements...,typeID] {elementMarkEntries?} -> [array] {markEntry}
+	//   (code, elementCount) | [elements...,typeID] {elementMarkEntries?} -> [array] {markEntry?}
 	OpNewArray
 
 	// OpNewThread allocates a thread of the given type, moves the frame lying
@@ -354,8 +361,9 @@ const (
 	// OpWaitThreadVoid waits for a thread to complete and returns void.
 	//   (code) | <threadList:i,...> [thread] -> <threadList:...>
 	OpWaitThreadVoid
-	// OpWaitThread waits for a thread to complete and returns its result.
-	//   (code) | <threadList:i,...> [thread,typeID] {threadMarkEntry} -> <threadList:...> [value] {valueMarkEntry?}
+	// OpWaitThread waits for a thread to complete and returns its result. The
+	// type id is the result's, which is what says how many words to read.
+	//   (code) | <threadList:i,...> [thread,resultTypeID] {threadMarkEntry} -> <threadList:...> [value] {valueMarkEntry?}
 	OpWaitThread
 
 	// OpStore stores a value at the pointer beneath it and leaves that location
@@ -382,8 +390,8 @@ const (
 	// what lies in the slot, not of the word pushed: the word is the slot's
 	// address, and what is pushed is half of the location a load reads through
 	// or a store writes through, the type words above it being pushed after.
-	// The id is what says whether that address owes a mark stack entry.
-	//   (code, staticIndex, typeID) | -> [staticPointer] {staticPointerMarkEntry?}
+	// The address owes no mark stack entry: a static is a root of its own.
+	//   (code, staticIndex, typeID) | -> [staticPointer]
 	OpPushStatic
 
 	// OpPushGenericStaticSlot is OpPushStatic for a generic static method that
@@ -399,7 +407,7 @@ const (
 	// walks. The result is both the slot pointer and the concrete function
 	// type id, so the caller treats it as a single-step replacement for
 	// OpPushStatic + emitPushTypeID.
-	//   (code, genericMethodID) | [typeArg0,...,typeArgN] {} -> [slot,fnType] {slotMarkEntry?}
+	//   (code, genericMethodID) | [typeArg0,...,typeArgN] {} -> [slot,fnType]
 	OpPushGenericStaticSlot
 
 	// OpPushStringLiteral pushes an interned string literal, which is a value and
@@ -463,8 +471,9 @@ const (
 	//   (code, methodIndex) | [obj,interfaceTypeID] {objMarkEntry} -> [methodPointer] {markableEntry}
 	OpPushInterfaceMethod
 
-	// OpPushNull pushes a null value onto the operand stack.
-	//   (code) | -> [null] {markableEntry}
+	// OpPushNull pushes the null of a type, which owns a mark entry where a
+	// value of the type would.
+	//   (code) | [type] -> [null] {markableEntry?}
 	OpPushNull
 	// The step operations move an lvalue by one of whatever it counts in, which
 	// the type id above it is what says: an integer steps by one, a float by
@@ -757,8 +766,17 @@ const (
 	// value but its first word is read, and the rest of it is spent. What is
 	// left is half of a location, as with [OpPushStatic], so a load through it
 	// reads the primitive.
-	//   (code) | [enumWords...,enumTypeID] {enumMarkEntries?} -> [staticPointer] {staticPointerMarkEntry}
+	//   (code) | [enumWords...,enumTypeID] {enumMarkEntries?} -> [staticPointer]
 	OpEnumValue
+
+	// OpMarkAs reads the word beneath its type id as that type, which is what a
+	// cast of one word to another is: the word is left as it stands, and the
+	// mark stack entry it owned is traded for the one a word of the new type
+	// owns. Whether a type is one the collector visits may be known only once a
+	// template is instantiated, which is why the runtime and not the compiler
+	// settles it.
+	//   (code) | [value,typeID] {markEntry?} -> [value] {markEntry?}
+	OpMarkAs
 )
 
 // ReceiverSlotClosure is the OpPushReceiverType operand that reads `this`
@@ -2793,7 +2811,7 @@ func (v *operationVisitor) emitWait(e *syntax.ExprNAry) error {
 		return err
 	}
 
-	v.emitPushTypeID(thread.ResolvedType())
+	v.emitPushTypeID(e.ResolvedType())
 	v.emit(OpWaitThread)
 	return nil
 }
@@ -3576,24 +3594,21 @@ func (v *operationVisitor) VisitExprCast(e *syntax.ExprCast) error {
 		return nil
 	}
 	if to.Kind() == syntax.TypeKindString {
-		if call, ok := syntax.NewStrCall(e.Expr); ok {
-			return call.Accept(v)
-		}
 		return v.emitStringCast(e.Expr, from)
+	}
+	// A null is the null of the type it is read as, which is what says whether
+	// the slot it lands in owns a mark entry. An any slot is held as a pointer
+	// to a heap box, so a null any is the zero word too, not a fresh box
+	// standing for a null payload: allocating one would make null{any} compare
+	// unequal to an uninitialized any, which no reader would expect.
+	if e.Expr.ResolvedType() == syntax.TypeNull {
+		v.emitPushNull(to)
+		return nil
 	}
 	// The any branches each want the other kind to be anything but any, so
 	// that casting an any to an any does not round-trip through a redundant
 	// box or an unbox that would have no payload type to settle itself with.
 	if to.Kind() == syntax.TypeKindAny && from.Kind() != syntax.TypeKindAny {
-		// null is the sentinel for "no reference" and an any slot is held as
-		// a pointer to a heap box, so casting null to any preserves the
-		// meaning: a null any is the zero word, not a fresh box standing for
-		// a null payload. Allocating here would make null{any} compare
-		// unequal to an uninitialized any, which no reader would expect.
-		if e.Expr.ResolvedType() == syntax.TypeNull {
-			v.emit(OpPushNull)
-			return nil
-		}
 		return v.emitBoxAny(e.Expr, from)
 	}
 	if from.Kind() == syntax.TypeKindAny && to.Kind() != syntax.TypeKindAny {
@@ -3692,13 +3707,15 @@ func (v *operationVisitor) emitWordCast(from, to syntax.Type) {
 	from, to = syntax.StripConst(from), syntax.StripConst(to)
 	fk, tk := from.Kind(), to.Kind()
 
-	// A collected reference read as something the collector is told nothing of
-	// stops being visited: the word stands as it is, and the mark stack entry it
-	// owned goes with the type that owned it. Whether the word has one at all is
-	// the runtime's to know, which is why a generic argument can be told this as
-	// safely as a pointer; a word that was never tracked has nothing to drop.
-	if untracked(to) && !untracked(from) {
-		v.emit(OpPopMark)
+	// A word read as another type is marked as that type: the entry it owned
+	// goes with the type that owned it, and the new type says whether it owns
+	// one. A number and a void* own none, saying nothing of what lies at the
+	// word, so a word read out of one of them is never taken into the
+	// collector's sight: a native's address is a void*, and what it is cast to
+	// is a C function rather than a closure.
+	if !numeric(fk) && !isVoidPointer(from) && !from.Equals(to) {
+		v.emitPushTypeID(to)
+		v.emit(OpMarkAs)
 	}
 
 	// A value read as a type it already has is left alone: an upcast is the same
@@ -3796,7 +3813,7 @@ func (v *operationVisitor) emitDowncast(object syntax.Expr, from, to syntax.Type
 
 	v.patch(failed)
 	v.emit(OpPopWord)
-	v.emit(OpPushNull)
+	v.emitPushNull(to)
 
 	v.patch(held)
 	return nil
@@ -3814,15 +3831,6 @@ func isDowncast(from, to syntax.Type) bool {
 		return false
 	}
 	return !from.IsSubtypeOf(to) && to.IsSubtypeOf(from)
-}
-
-// untracked reports whether a word of the given type is one the collector is
-// told nothing about: a number is not an address at all, and a void* is an
-// address with nothing said of what lies at it. Reading a value as one of these
-// is what takes it out of the collector's sight.
-func untracked(t syntax.Type) bool {
-	t = syntax.StripConst(t)
-	return numeric(t.Kind()) || isVoidPointer(t)
 }
 
 // isVoidPointer reports whether t is the void* type, which is any address at
@@ -3888,6 +3896,13 @@ func (v *operationVisitor) emitOrDefault(e syntax.Expr, fallback uint64) error {
 		return nil
 	}
 	return v.emitValue(e)
+}
+
+// emitPushNull pushes the null of t. A null read as no type in particular, as
+// one compared against is, is the null of void and owns no mark entry.
+func (v *operationVisitor) emitPushNull(t syntax.Type) {
+	v.emitPushTypeID(t)
+	v.emit(OpPushNull)
 }
 
 // emitPushTypeID pushes the three words of t's runtime type id. An open type has
@@ -4098,7 +4113,7 @@ func (v *operationVisitor) VisitExprSymbol(e *syntax.ExprSymbol) error {
 		}
 		v.emit(newUnaryOp(OpPushI64, value))
 	case syntax.ExprKindLiteralNull:
-		v.emit(OpPushNull)
+		v.emitPushNull(syntax.TypeVoid)
 
 	// A base subobject shares its address with the object, so super pushes the
 	// receiver too; the static type of the expression selects the members.

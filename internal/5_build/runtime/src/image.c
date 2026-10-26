@@ -93,6 +93,8 @@ static void parseAndValidate(ZamImage *image, const char *label) {
     image->genericStaticMethods = section(image,
                                           ZAMHEADER_GENERIC_STATIC_METHODS_OFFSET,
                                           "the generic static method registry");
+    image->staticRoots = (const ZamWord *)section(
+        image, ZAMHEADER_STATIC_ROOTS_OFFSET, "the static root table");
     image->operations =
         section(image, ZAMHEADER_OPERATIONS_OFFSET, "the operations");
 
@@ -103,7 +105,8 @@ static void parseAndValidate(ZamImage *image, const char *label) {
     if (image->staticImage < (const uint8_t *)image->staticSlots ||
         image->natives < image->staticImage ||
         image->genericStaticMethods < image->natives ||
-        image->operations < image->genericStaticMethods)
+        (const uint8_t *)image->staticRoots < image->genericStaticMethods ||
+        image->operations < (const uint8_t *)image->staticRoots)
         zam_die(ZAMEXIT_IMAGE, "%s has sections out of order\n", label);
 
     image->staticSlotCount =
@@ -123,6 +126,21 @@ static void parseAndValidate(ZamImage *image, const char *label) {
     // a run of concretes each as wide as the arity makes it — so the walk is
     // length-bounded rather than offset-bounded.
     image->genericStaticMethodCount = *(const ZamWord *)image->genericStaticMethods;
+
+    image->staticRootCount = image->staticRoots[0];
+    if ((const uint8_t *)(image->staticRoots + 1 +
+                          image->staticRootCount * ZAMSTATIC_ROOT_WORDS) >
+        image->operations)
+        zam_die(ZAMEXIT_IMAGE, "%s has a static root table past its end\n",
+                label);
+}
+
+uint64_t zam_image_static_root(const ZamImage *image, uint64_t index,
+                               ZamTypeID *type) {
+    const ZamWord *entry =
+        image->staticRoots + 1 + index * ZAMSTATIC_ROOT_WORDS;
+    *type = zam_type_id_read(entry + 1);
+    return entry[0];
 }
 
 void zam_image_open(ZamImage *image, const char *path) {
