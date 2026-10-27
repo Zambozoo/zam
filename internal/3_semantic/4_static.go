@@ -1618,6 +1618,12 @@ func (v *staticSemanticsValidatorVisitor) hasHome(e syntax.Expr) bool {
 	return false
 }
 
+// isInteger reports whether t is an int or a uint, const or not.
+func isInteger(t syntax.Type) bool {
+	t = syntax.StripConst(t)
+	return t.Equals(syntax.TypeInt) || t.Equals(syntax.TypeUint)
+}
+
 // numeric reports whether t is a number: an int, a uint, a float, a char, or a
 // byte — each a narrow or wide integer except the float. Const is seen through:
 // an operator reads a copy of the slot's value, which is a number if the slot
@@ -1698,7 +1704,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprNew(e *syntax.ExprNew) error 
 	}
 
 	if e.Size != nil {
-		if err := e.Size.Accept(v); err == nil && !v.lastExprType.Equals(syntax.TypeInt) && !v.lastExprType.Equals(syntax.TypeUint) {
+		if err := e.Size.Accept(v); err == nil && !isInteger(v.lastExprType) {
 			v.errf("size expression is not an integer")
 		}
 	}
@@ -1711,7 +1717,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprNew(e *syntax.ExprNew) error 
 			// stack. A second length here names nothing, so the two could
 			// disagree and only one of them would ever be allocated.
 			v.errf("tail length of %s is already part of the type", e.Type.String())
-		} else if err := e.Tail.Accept(v); err == nil && !v.lastExprType.Equals(syntax.TypeInt) && !v.lastExprType.Equals(syntax.TypeUint) {
+		} else if err := e.Tail.Accept(v); err == nil && !isInteger(v.lastExprType) {
 			v.errf("tail expression is not an integer")
 		}
 	}

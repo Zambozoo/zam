@@ -164,7 +164,7 @@ func TestLexer_Next(t *testing.T) {
 		newSingleTokenTestCase("TTNamespace", "namespace", TTNamespace, nil),
 		newSingleTokenTestCase("TTInt", "int", TTInt, nil),
 		newSingleTokenTestCase("TTUint", "uint", TTUint, nil),
-		newSingleTokenTestCase("TTFloat", "float", TTFloat, nil),
+		newSingleTokenTestCase("TTFloat", "flt", TTFloat, nil),
 		newSingleTokenTestCase("TTBool", "bool", TTBool, nil),
 		newSingleTokenTestCase("TTString", "str", TTString, nil),
 		newSingleTokenTestCase("TTStruct", "struct", TTStruct, nil),

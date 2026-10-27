@@ -43,6 +43,12 @@ const (
 	// OpModI64 pops two i64 operands and pushes their remainder.
 	//   (code) | [left, right] -> [left % right]
 	OpModI64
+	// OpDivU64 pops two u64 operands and pushes their quotient.
+	//   (code) | [left, right] -> [left / right]
+	OpDivU64
+	// OpModU64 pops two u64 operands and pushes their remainder.
+	//   (code) | [left, right] -> [left % right]
+	OpModU64
 
 	// OpNegI64 pops an i64 operand and pushes its negation.
 	//   (code) | [value] -> [-value]
@@ -90,6 +96,12 @@ const (
 	// OpCastF64ToI64 pops an f64 operand and pushes its int64 representation.
 	//   (code) | [value] -> [int64(value)]
 	OpCastF64ToI64
+	// OpCastU64ToF64 pops a u64 operand and pushes its float64 representation.
+	//   (code) | [value] -> [f64(value)]
+	OpCastU64ToF64
+	// OpCastF64ToU64 pops an f64 operand and pushes its uint64 representation.
+	//   (code) | [value] -> [uint64(value)]
+	OpCastF64ToU64
 
 	// OpAddF64 pops two f64 operands and pushes their sum.
 	//   (code) | [left, right] -> [left + right]
@@ -243,8 +255,12 @@ const (
 	// holding the allocation up. The entry is an interior one, saying how far
 	// back the object lies, and is owed only where the object's word owned one.
 	//   (code, memberIndex) | [objAddr,objTypeID] {objMarkEntry?} -> [memberPointer,memberTypeID] {memberInteriorMarkEntry?}
-	//   ... or | [objWords...,objTypeID] {objMarkEntry?} -> [memberWords...,memberTypeID]
 	OpPushMember
+	// OpPushMemberOfValue selects a member out of an inline value with no home,
+	// which stands on the stack as its words rather than as an address. The value
+	// is spent and the member's value is left in its place.
+	//   (code, memberIndex) | [objWords...,objTypeID] {objMarkEntries?} -> [memberWords...] {memberMarkEntries?}
+	OpPushMemberOfValue
 
 	// OpLoadTailMember is OpPushMember followed by OpLoad for the tail member
 	// of a tailed struct, folded into one instruction so the length is still
@@ -336,6 +352,12 @@ const (
 	// are the collector's; any other run is the program's own memory.
 	//   (code) | [arraySize,tailLength,typeID] -> [value] {markEntry?}
 	OpNew
+	// OpNewRun is OpNew for new with a count: an array, which is the program's
+	// memory whatever its elements are. An array of class instances is laid out
+	// as OpNew lays one but kept off the collector's heap, every element lying
+	// inside nothing, and free releases it.
+	//   (code) | [arraySize,tailLength,typeID] -> [value] {markEntry?}
+	OpNewRun
 	// OpNewArray allocates an array of the elements lying beneath its type id and
 	// pushes a reference to it. The elements are already in order, so the
 	// instruction is told only how many there are; the type id is what the
@@ -421,11 +443,10 @@ const (
 	// address itself, and the id is what mark stack ownership is decided by. One
 	// opcode reading its operand both ways is one a runtime cannot implement.
 	//
-	// The string owes no mark stack entry, which is what sets a literal apart
-	// from every other string on the stack: OpToString and the concatenations
-	// leave one the collector owns, while a literal lies in the static region
-	// and outlives every frame that names it.
-	//   (code, staticIndex) | -> [string]
+	// The string owns a mark stack entry like every other string. The collector
+	// skips static-region addresses, but a local a literal initializes may later
+	// hold an allocated string, and the entry is what roots it.
+	//   (code, staticIndex) | -> [string] {markEntry}
 	OpPushStringLiteral
 
 	// OpDelete runs the Delete override on the receiver under its type id. A
@@ -3355,7 +3376,8 @@ func (v *operationVisitor) emitPointerStride(pointee syntax.Type) {
 	}
 }
 
-// The operators each operand type supports. Integers do the whole set; floats
+// The operators each operand type supports. Integers do the whole set, a uint
+// dividing unsigned; floats
 // do the arithmetic apart from modulus, which steps in whole units, and none of
 // the bitwise work; a boolean is only ever one bit wide, so it has the bitwise
 // operators and nothing else; strings only concatenate; a pointer only steps
@@ -3385,6 +3407,10 @@ var (
 		syntax.ExprKindBinaryAND: OpAndI64,
 		syntax.ExprKindBinaryXOR: OpXorI64,
 	}
+	unsignedBinaryOpcodes = map[syntax.ExprKind]Opcode{
+		syntax.ExprKindDivide:  OpDivU64,
+		syntax.ExprKindModulus: OpModU64,
+	}
 	stringBinaryOpcodes = map[syntax.ExprKind]Opcode{
 		syntax.ExprKindAdd: OpConcatString,
 	}
@@ -3408,6 +3434,10 @@ func binaryOpcode(kind syntax.ExprKind, t syntax.Type) Opcode {
 		opcodes = stringBinaryOpcodes
 	case syntax.TypeKindPointer:
 		opcodes = pointerBinaryOpcodes
+	case syntax.TypeKindUint:
+		if opcode, ok := unsignedBinaryOpcodes[kind]; ok {
+			return opcode
+		}
 	}
 
 	if opcode, ok := opcodes[kind]; ok {
@@ -3458,8 +3488,8 @@ func (v *operationVisitor) VisitExprField(e *syntax.ExprField) error {
 // inline value that lies somewhere is emitted as where it lies.
 //
 // The fourth is an inline value no expression gave a home to. It has no address
-// to hand over, so its words are what is pushed and the member's words are what
-// comes back. Nothing is lost by that: a member of a temporary can only be read,
+// to hand over, so its words are what is pushed and OpPushMemberOfValue leaves
+// the member's words in their place. Nothing is lost by that: a member of a temporary can only be read,
 // because [operationVisitor.hasHome] refuses it as an assignment target for
 // exactly the reason it is emitted this way.
 func (v *operationVisitor) emitMemberSelection(object syntax.Expr, objectType syntax.Type, selection operation) error {
@@ -3477,6 +3507,9 @@ func (v *operationVisitor) emitMemberSelection(object syntax.Expr, objectType sy
 			return err
 		}
 		v.emitPushTypeID(objectType)
+		if unary, ok := selection.(*unaryOperation); ok && unary.opcode == OpPushMember && laidOutInline(objectType) {
+			selection = newUnaryOp(OpPushMemberOfValue, unary.operand)
+		}
 	}
 
 	v.emit(selection)
@@ -3741,7 +3774,7 @@ func (v *operationVisitor) emitWordCast(from, to syntax.Type) {
 	// word as it stands. Any other pairing of an address with a number is not
 	// the same word, and has no instruction that makes it one.
 	if !numeric(fk) || !numeric(tk) {
-		if (numeric(fk) && fk != syntax.TypeKindInt) || (numeric(tk) && tk != syntax.TypeKindInt) {
+		if (numeric(fk) && !isWholeWord(fk)) || (numeric(tk) && !isWholeWord(tk)) {
 			panic("unreachable")
 		}
 		return
@@ -3752,7 +3785,11 @@ func (v *operationVisitor) emitWordCast(from, to syntax.Type) {
 	// bool are small whole numbers, which is what an int already is, so all
 	// three enter it the same way.
 	if tk == syntax.TypeKindFloat {
-		v.emit(OpCastI64ToF64)
+		if fk == syntax.TypeKindUint {
+			v.emit(OpCastU64ToF64)
+		} else {
+			v.emit(OpCastI64ToF64)
+		}
 		return
 	}
 
@@ -3762,7 +3799,11 @@ func (v *operationVisitor) emitWordCast(from, to syntax.Type) {
 	// inside both widths, so it has nothing to lose. Widening to an int is
 	// nothing at all.
 	if fk == syntax.TypeKindFloat {
-		v.emit(OpCastF64ToI64)
+		if tk == syntax.TypeKindUint {
+			v.emit(OpCastF64ToU64)
+		} else {
+			v.emit(OpCastF64ToI64)
+		}
 	}
 	if fk != syntax.TypeKindBool {
 		v.emitNarrow(to)
@@ -3849,15 +3890,21 @@ const typeIDWords = 3
 const locationWords = 1 + typeIDWords
 
 // numeric reports whether a type is one of the primitives that is a single
-// operand word standing for a number — an i64 int, a u32 char, a u8 byte, a
-// bool that is 1 or 0, or an f64 float. Casting among these is arithmetic on
-// that word.
+// operand word standing for a number — an i64 int, a u64 uint, a u32 char, a u8
+// byte, a bool that is 1 or 0, or an f64 float. Casting among these is
+// arithmetic on that word.
 func numeric(k syntax.TypeKind) bool {
 	switch k {
-	case syntax.TypeKindInt, syntax.TypeKindChar, syntax.TypeKindByte, syntax.TypeKindBool, syntax.TypeKindFloat:
+	case syntax.TypeKindInt, syntax.TypeKindUint, syntax.TypeKindChar, syntax.TypeKindByte, syntax.TypeKindBool, syntax.TypeKindFloat:
 		return true
 	}
 	return false
+}
+
+// isWholeWord reports whether a numeric kind is an integer as wide as an
+// address, which is what lets the two be read as each other.
+func isWholeWord(k syntax.TypeKind) bool {
+	return k == syntax.TypeKindInt || k == syntax.TypeKindUint
 }
 
 // zeroComparison is how a value of the given kind is compared against zero. The
@@ -3884,7 +3931,11 @@ func (v *operationVisitor) VisitExprNew(e *syntax.ExprNew) error {
 	}
 
 	v.emitPushTypeID(e.Type)
-	v.emit(OpNew)
+	if e.Size != nil {
+		v.emit(OpNewRun)
+	} else {
+		v.emit(OpNew)
+	}
 	return nil
 }
 

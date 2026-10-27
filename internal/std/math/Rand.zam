@@ -1,6 +1,111 @@
+import "../lang/System.zam";
+
+// Rand draws from a per-thread generator seeded by the OS. It is not suitable
+// for cryptography.
 namespace Rand {
+    static var uint$ surrogateLo = 55296U;
+    static var uint$ surrogateHi = 57343U;
+    static var uint$ maxChar = 1114111U;
+
+    // Byte returns a uniformly random byte.
+    fun byte() Byte = () {
+        return (type(Rand).Uint() >> 56U){byte};
+    }
+
+    // ByteRange returns a uniformly random byte in [min, max].
+    fun byte(byte, byte) ByteRange = (min, max) {
+        return type(Rand).UintRange(min{uint}, max{uint}){byte};
+    }
+
+    // Char returns a uniformly random Unicode scalar value.
+    fun char() Char = () {
+        return type(Rand).CharRange(0U{char}, type(Rand).maxChar{char});
+    }
+
+    // CharRange returns a uniformly random Unicode scalar value in [min, max],
+    // never a surrogate.
+    fun char(char, char) CharRange = (min, max) {
+        var uint lo = min{uint};
+        var uint hi = max{uint};
+        if(lo > hi) {
+            type(System).Panic("Rand.CharRange: min is greater than max");
+        }
+        var uint start = lo;
+        if(start < type(Rand).surrogateLo) {
+            start = type(Rand).surrogateLo;
+        }
+        var uint end = hi;
+        if(end > type(Rand).surrogateHi) {
+            end = type(Rand).surrogateHi;
+        }
+        var uint gap = 0U;
+        if(start <= end) {
+            gap = end - start + 1U;
+        }
+        if(gap == hi - lo + 1U) {
+            type(System).Panic("Rand.CharRange: range holds only surrogates");
+        }
+        var uint c = type(Rand).UintRange(lo, hi - gap);
+        if(gap > 0U && c >= start) {
+            c = c + gap;
+        }
+        return c{char};
+    }
+
+    // Uint returns a uniformly random uint.
     fun uint() Uint = () {
-        // native call
-        return 0U;
+        var uint u;
+        native(STD_RAND_UINT){void(uint*)}(&u);
+        return u;
+    }
+
+    // UintRange returns a uniformly random uint in [min, max].
+    fun uint(uint, uint) UintRange = (min, max) {
+        if(min > max) {
+            type(System).Panic("Rand.UintRange: min is greater than max");
+        }
+        var uint span = max - min + 1U;
+        if(span == 0U) {
+            return type(Rand).Uint();
+        }
+        var uint threshold = (0U - span) % span;
+        var uint r = type(Rand).Uint();
+        for(; r < threshold;) {
+            r = type(Rand).Uint();
+        }
+        return min + r % span;
+    }
+
+    // Int returns a uniformly random int.
+    fun int() Int = () {
+        return type(Rand).Uint(){int};
+    }
+
+    // IntRange returns a uniformly random int in [min, max].
+    fun int(int, int) IntRange = (min, max) {
+        if(min > max) {
+            type(System).Panic("Rand.IntRange: min is greater than max");
+        }
+        return (min{uint} + type(Rand).UintRange(0U, max{uint} - min{uint})){int};
+    }
+
+    // Flt returns a uniformly random flt in [0, 1).
+    fun flt() Flt = () {
+        var flt f;
+        native(STD_RAND_FLT){void(flt*)}(&f);
+        return f;
+    }
+
+    // FltRange returns a uniformly random flt between min and max.
+    fun flt(flt, flt) FltRange = (min, max) {
+        if(min > max) {
+            type(System).Panic("Rand.FltRange: min is greater than max");
+        }
+        return min + (max - min) * type(Rand).Flt();
+    }
+
+    // Bool returns true or false with equal odds.
+    fun bool() Bool = () {
+        return (type(Rand).Uint() >> 63U) == 1U;
     }
 }

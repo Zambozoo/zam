@@ -1,0 +1,102 @@
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+import "HashTrieMap.zam";
+
+// Radix trie set of runs of A, kept as a HashTrieMap whose values are unused
+class HashTrieSet[A] {
+    var HashTrieMap[A, bool]* m;
+
+    static fun[A] HashTrieSet[A]*() New = () {
+        var HashTrieSet[A]* s = new(HashTrieSet[A]);
+        s.Init();
+        return s;
+    }
+
+    fun void() Init = () {
+        this.m = type(HashTrieMap)[A, bool].New();
+    }
+
+    fun uint() Len = () {
+        return this.m.Len();
+    }
+
+    fun bool(uint, A*) Contains = (len, key) {
+        return this.m.Contains(len, key);
+    }
+
+    // HasPrefix reports whether some key begins with the given run.
+    fun bool(uint, A*) HasPrefix = (len, key) {
+        return this.m.HasPrefix(len, key);
+    }
+
+    fun bool(uint, A*) Add = (len, key) {
+        return this.m.Put(len, key, true);
+    }
+
+    fun bool(uint, A*) Remove = (len, key) {
+        return this.m.Remove(len, key).second;
+    }
+
+    fun void() Clear = () {
+        this.m.Clear();
+    }
+
+    // Arr returns the keys, each a fresh copy, in no particular order.
+    fun Arr[Arr[A]*]*() Arr = () {
+        var Arr[Pair[Arr[A]*, bool]]* entries = this.m.Arr();
+        var Arr[A]** a = new(Arr[A]*, entries.Len());
+        var Arr[Arr[A]*]* out = type(Arr)[Arr[A]*].New(entries.Len(), a...);
+        for(var uint i = 0U; i < entries.Len(); i++) {
+            a[i] = entries.Get(i).first;
+        }
+        return out;
+    }
+
+    // Iter visits the keys as Arr does, as they stood when it was made.
+    fun Iter[A]*() Iter = () {
+        var Iter[A]* i = new(Iter[A]);
+        i.items = this.Arr();
+        i.i = 0U;
+        return i;
+    }
+
+    fun str() Str = () {
+        var Arr[Arr[A]*]* a = this.Arr();
+        var str s = "{";
+        var str spacer = "";
+        for(var uint i = 0U; i < a.Len(); i++) {
+            s = s + spacer + a.Get(i){str};
+            spacer = ", ";
+        }
+        return s + "}";
+    }
+
+    private class Iter[A] {
+        var Arr[Arr[A]*]* items;
+        var uint i;
+
+        fun Pair[Arr[A]*, bool]() Next = () {
+            var Pair[Arr[A]*, bool] p;
+            if(this.i >= this.items.Len()) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.items.Get(this.i);
+            p.second = true;
+            this.i++;
+            return p;
+        }
+
+        fun Pair[Arr[A]*, bool]() Prev = () {
+            var Pair[Arr[A]*, bool] p;
+            if(this.i == 0U) {
+                p.second = false;
+                return p;
+            }
+            this.i--;
+            p.first = this.items.Get(this.i);
+            p.second = true;
+            return p;
+        }
+    }
+}

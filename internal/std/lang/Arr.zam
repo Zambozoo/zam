@@ -1,5 +1,6 @@
 import "System.zam";
 
+// Collected array that owns the run it wraps
 class Arr[A] {
     var A* arr;
     var uint len;
@@ -37,6 +38,12 @@ class Arr[A] {
         var A old = this.arr[i];
         this.arr[i] = t;
         return old;
+    }
+
+    fun void() Delete = () {
+        free(this.arr);
+        this.arr = null;
+        this.len = 0U;
     }
 
     fun void() Mark = () {

@@ -38,7 +38,7 @@
     },
     "types": {
       "name": "storage.type.zam",
-      "match": "\\b(?:any|bool|byte|char|float|int|str|thread|uint|void)\\b"
+      "match": "\\b(?:any|bool|byte|char|flt|int|str|thread|uint|void)\\b"
     },
     "constants": {
       "name": "constant.language.zam",

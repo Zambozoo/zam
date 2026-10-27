@@ -1,2 +1,325 @@
-// Probabilistic tree-based priority deque
-class TreapPriorityQueue[A,B] {}
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+import "../../math/Rand.zam";
+import "../../lang/Struct.zam";
+
+// Probabilistic tree-based min max priority queue of values B ordered by
+// priorities A
+class TreapPriorityQueue[A, B] {
+    struct Node[A, B] {
+        var A key;
+        var B val;
+        var uint prio;
+        var Node[A, B]* left;
+        var Node[A, B]* right;
+    }
+
+    var uint len;
+    var Node[A, B]* root;
+
+    static fun[A, B] TreapPriorityQueue[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+        var TreapPriorityQueue[A, B]* t = new(TreapPriorityQueue[A, B]);
+        t.Init(len, args...);
+        return t;
+    }
+
+    fun void(uint, Pair[A, B]...) Init = (len, args) {
+        this.len = 0U;
+        this.root = null;
+        for(var uint i = 0U; i < len; i++) {
+            this.Add(args[i].first, args[i].second);
+        }
+    }
+
+    // rotateRight rotates the subtree in the link slot, writing its new root
+    // back into the slot. The node moved up is pinned until it is linked in.
+    private fun void(Node[A, B]**) rotateRight = (link) {
+        var Node[A, B]* n = *link;
+        var Node[A, B]* l = n.left;
+        var Struct[Node[A, B]*] pin;
+        pin.Init(l, type(TreapPriorityQueue)[A, B].markTree, null);
+        n.left = l.right;
+        l.right = n;
+        *link = l;
+        pin.s = null;
+    }
+
+    private fun void(Node[A, B]**) rotateLeft = (link) {
+        var Node[A, B]* n = *link;
+        var Node[A, B]* r = n.right;
+        var Struct[Node[A, B]*] pin;
+        pin.Init(r, type(TreapPriorityQueue)[A, B].markTree, null);
+        n.right = r.left;
+        r.left = n;
+        *link = r;
+        pin.s = null;
+    }
+
+    // insert places k by value in the link slot, equal ones going right, and
+    // rotates it up while its priority is below its parent's.
+    private fun void(Node[A, B]**, A, B) insert = (link, k, v) {
+        var Node[A, B]* n = *link;
+        if(n == null) {
+            var Node[A, B]* m = new(Node[A, B]);
+            m.key = k;
+            m.val = v;
+            m.prio = type(Rand).Uint();
+            *link = m;
+            return;
+        }
+        if(k < n.key) {
+            this.insert(&(n.left), k, v);
+            if(n.left.prio < n.prio) {
+                this.rotateRight(link);
+            }
+        } else {
+            this.insert(&(n.right), k, v);
+            if(n.right.prio < n.prio) {
+                this.rotateLeft(link);
+            }
+        }
+    }
+
+    // split moves the subtree at n into the slots l and r, those ordered before
+    // v to l and the rest to r. A node is written into its new slot before the
+    // link it is leaving is overwritten, so none is ever out of reach.
+    private fun void(Node[A, B]*, A, Node[A, B]**, Node[A, B]**) split = (n, v, l, r) {
+        if(n == null) {
+            *l = null;
+            *r = null;
+            return;
+        }
+        if(n.key < v) {
+            *l = n;
+            this.split(n.right, v, &(n.right), r);
+        } else {
+            *r = n;
+            this.split(n.left, v, l, &(n.left));
+        }
+    }
+
+    // union merges the subtree b into the subtree in the link slot, keeping the
+    // lower priority on top and splitting the other around it. Only the pieces
+    // not yet linked in are pinned, so pins never overlap.
+    private fun void(Node[A, B]**, Node[A, B]*) union = (link, b) {
+        if(b == null) {
+            return;
+        }
+        var Node[A, B]* a = *link;
+        if(a == null) {
+            *link = b;
+            return;
+        }
+        var Struct[Node[A, B]*] rest;
+        rest.Init(b, type(TreapPriorityQueue)[A, B].markTree, null);
+        if(b.prio < a.prio) {
+            rest.s = a;
+            *link = b;
+            a = b;
+            b = rest.s;
+        }
+        var Struct[Node[A, B]*] lo;
+        lo.Init(null, type(TreapPriorityQueue)[A, B].markTree, null);
+        var Struct[Node[A, B]*] hi;
+        hi.Init(null, type(TreapPriorityQueue)[A, B].markTree, null);
+        this.split(b, a.key, &(lo.s), &(hi.s));
+        rest.s = null;
+        this.union(&(a.left), lo.s);
+        lo.s = null;
+        this.union(&(a.right), hi.s);
+        hi.s = null;
+    }
+
+    // unlinkEnd splices out the leftmost node when first is true and the
+    // rightmost otherwise, which a single write of its one child does.
+    private fun void(bool) unlinkEnd = (first) {
+        var Node[A, B]** link = &(this.root);
+        for(;;) {
+            var Node[A, B]* n = *link;
+            if(first && n.left == null) {
+                *link = n.right;
+                free(n);
+                return;
+            }
+            if(!first && n.right == null) {
+                *link = n.left;
+                free(n);
+                return;
+            }
+            if(first) {
+                link = &(n.left);
+            } else {
+                link = &(n.right);
+            }
+        }
+    }
+
+    private fun Pair[A, B](Node[A, B]*) entry = (n) {
+        var Pair[A, B] p;
+        p.first = n.key;
+        p.second = n.val;
+        return p;
+    }
+
+    private fun uint(Node[A, B]*, Pair[A, B]*, uint) fill = (n, a, i) {
+        if(n == null) {
+            return i;
+        }
+        i = this.fill(n.left, a, i);
+        a[i].first = n.key;
+        a[i].second = n.val;
+        return this.fill(n.right, a, i + 1U);
+    }
+
+    private static fun[A, B] void(Node[A, B]*) markTree = (n) {
+        if(n == null) {
+            return;
+        }
+        mark(n.key);
+        mark(n.val);
+        type(TreapPriorityQueue)[A, B].markTree(n.left);
+        type(TreapPriorityQueue)[A, B].markTree(n.right);
+    }
+
+    private fun void(Node[A, B]*) freeAll = (n) {
+        if(n == null) {
+            return;
+        }
+        this.freeAll(n.left);
+        this.freeAll(n.right);
+        free(n);
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun void(A, B) Add = (k, v) {
+        this.insert(&(this.root), k, v);
+        this.len++;
+    }
+
+    fun Pair[A, B]() GetMin = () {
+        if(this.len == 0U) {
+            type(System).Panic("TreapPriorityQueue is empty");
+        }
+        var Node[A, B]* n = this.root;
+        for(; n.left != null;) {
+            n = n.left;
+        }
+        return this.entry(n);
+    }
+
+    fun Pair[A, B]() GetMax = () {
+        if(this.len == 0U) {
+            type(System).Panic("TreapPriorityQueue is empty");
+        }
+        var Node[A, B]* n = this.root;
+        for(; n.right != null;) {
+            n = n.right;
+        }
+        return this.entry(n);
+    }
+
+    fun Pair[A, B]() RemoveMin = () {
+        if(this.len == 0U) {
+            type(System).Panic("TreapPriorityQueue is empty");
+        }
+        var Pair[A, B] v = this.GetMin();
+        this.unlinkEnd(true);
+        this.len--;
+        return v;
+    }
+
+    fun Pair[A, B]() RemoveMax = () {
+        if(this.len == 0U) {
+            type(System).Panic("TreapPriorityQueue is empty");
+        }
+        var Pair[A, B] v = this.GetMax();
+        this.unlinkEnd(false);
+        this.len--;
+        return v;
+    }
+
+    // Merge moves every entry of other into this queue, leaving other empty.
+    fun void(TreapPriorityQueue[A, B]*) Merge = (other) {
+        if(other{void*} == this{void*}) {
+            type(System).Panic("TreapPriorityQueue merged with itself");
+        }
+        this.union(&(this.root), other.root);
+        this.len = this.len + other.len;
+        other.root = null;
+        other.len = 0U;
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+    }
+
+    // Arr returns the entries in ascending order of priority.
+    fun Arr[Pair[A, B]]*() Arr = () {
+        var Pair[A, B]* a = new(Pair[A, B], this.len);
+        this.fill(this.root, a, 0U);
+        return type(Arr)[Pair[A, B]].New(this.len, a...);
+    }
+
+    // Iter visits the entries in ascending order of priority, as they stood
+    // when it was made.
+    fun Iter[A, B]*() Iter = () {
+        var Iter[A, B]* i = new(Iter[A, B]);
+        i.items = this.Arr();
+        i.i = 0U;
+        return i;
+    }
+
+    fun str() Str = () {
+        var Arr[Pair[A, B]]* a = this.Arr();
+        var str s = "[";
+        var str spacer = "";
+        for(var uint i = 0U; i < a.Len(); i++) {
+            s = s + spacer + a.Get(i).first{str} + ": " + a.Get(i).second{str};
+            spacer = ", ";
+        }
+        return s + "]";
+    }
+
+    fun void() Delete = () {
+        this.freeAll(this.root);
+        this.root = null;
+        this.len = 0U;
+    }
+
+    fun void() Mark = () {
+        type(TreapPriorityQueue)[A, B].markTree(this.root);
+    }
+
+    private class Iter[A, B] {
+        var Arr[Pair[A, B]]* items;
+        var uint i;
+
+        fun Pair[Pair[A, B], bool]() Next = () {
+            var Pair[Pair[A, B], bool] p;
+            if(this.i >= this.items.Len()) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.items.Get(this.i);
+            p.second = true;
+            this.i++;
+            return p;
+        }
+
+        fun Pair[Pair[A, B], bool]() Prev = () {
+            var Pair[Pair[A, B], bool] p;
+            if(this.i == 0U) {
+                p.second = false;
+                return p;
+            }
+            this.i--;
+            p.first = this.items.Get(this.i);
+            p.second = true;
+            return p;
+        }
+    }
+}

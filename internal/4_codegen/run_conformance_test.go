@@ -990,6 +990,16 @@ func TestArithmeticCConformance(t *testing.T) {
 		{"an integer becomes a float and comes back", []operation{
 			pushI64(21), OpCastI64ToF64, pushFloat(2.0), OpMulF64,
 			OpCastF64ToI64, OpExit}, 42},
+		{"an unsigned integer past the signed range becomes a float", []operation{
+			pushI64(1 << 63), OpCastU64ToF64, pushFloat(1 << 63),
+			OpEqualF64, OpExit}, 1},
+		{"an unsigned quotient reads the sign bit as magnitude", []operation{
+			pushI64(1 << 63), pushI64(1 << 62), OpDivU64, OpExit}, 2},
+		{"an unsigned remainder reads the sign bit as magnitude", []operation{
+			pushI64(1<<63 + 5), pushI64(1 << 62), OpModU64, OpExit}, 5},
+		{"a float past the signed range becomes an unsigned integer", []operation{
+			pushFloat(1 << 63), OpCastF64ToU64, pushI64(1 << 63),
+			OpEqualI64, OpExit}, 1},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			assert.Equal(t, []string{
@@ -1190,19 +1200,17 @@ func TestPushStringLiteralCConformance(t *testing.T) {
 		})
 	}
 
-	// The one claim that cannot be read off an exit status: a literal owes the
-	// collector nothing. Every other string on the stack owns a mark entry, so
-	// this stops deliberately without spending the pointer — an entry, if the
-	// instruction left one, would be standing here to be counted.
-	t.Run("a literal owes no mark entry", func(t *testing.T) {
+	// The one claim that cannot be read off an exit status: a literal owns a
+	// mark entry like every other string, which is what roots whatever a slot it
+	// initialized later holds. This stops deliberately without spending the
+	// pointer, so the entry is standing here to be counted.
+	t.Run("a literal owns a mark entry", func(t *testing.T) {
 		assert.Equal(t, []string{
 			"result=EXIT",
 			"exitStatus=5",
-			// The literal, still standing and owning nothing.
 			"operandCount=1",
-			// Zero rather than the eight bytes an object entry occupies, which
-			// is what a literal would cost if it were marked like an allocation.
-			"markByteCount=0",
+			// The eight bytes an object entry occupies.
+			"markByteCount=8",
 		}, runImage(t, harness, "stop", append(literal(), pushI64(5), OpExit)))
 	})
 }

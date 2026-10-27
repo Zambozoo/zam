@@ -1,2 +1,309 @@
-// Associative array-based priority deque
-class ArrPriorityQueue[A,B] {}
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+
+// Array-based min max priority queue of values B ordered by priorities A
+class ArrPriorityQueue[A, B] {
+    static var uint$ minCap = 8U;
+
+    var A* arr;
+    var B* vals;
+    var uint len;
+    var uint cap;
+
+    static fun[A, B] ArrPriorityQueue[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+        var ArrPriorityQueue[A, B]* h = new(ArrPriorityQueue[A, B]);
+        h.Init(len, args...);
+        return h;
+    }
+
+    fun void(uint, Pair[A, B]...) Init = (len, args) {
+        this.cap = type(ArrPriorityQueue).minCap;
+        if(this.cap < len) {
+            this.cap = len;
+        }
+        this.arr = new(A, this.cap);
+        this.vals = new(B, this.cap);
+        this.len = 0U;
+        for(var uint i = 0U; i < len; i++) {
+            this.Add(args[i].first, args[i].second);
+        }
+    }
+
+    // minLevel reports whether slot i lies on a level ordered by minimum.
+    private fun bool(uint) minLevel = (i) {
+        var bool even = true;
+        for(var uint x = i + 1U; x > 1U; x = x >> 1U) {
+            even = !even;
+        }
+        return even;
+    }
+
+    // before reports whether slot i belongs above slot j on a level ordered
+    // by minimum when min is true, and by maximum otherwise.
+    private fun bool(uint, uint, bool) before = (i, j, min) {
+        if(min) {
+            return this.arr[i] < this.arr[j];
+        }
+        return this.arr[j] < this.arr[i];
+    }
+
+    private fun void(uint, uint) swap = (i, j) {
+        var A t = this.arr[i];
+        this.arr[i] = this.arr[j];
+        this.arr[j] = t;
+        var B u = this.vals[i];
+        this.vals[i] = this.vals[j];
+        this.vals[j] = u;
+    }
+
+    private fun Pair[A, B](uint) entry = (i) {
+        var Pair[A, B] p;
+        p.first = this.arr[i];
+        p.second = this.vals[i];
+        return p;
+    }
+
+    private fun void(uint, bool) bubbleUpAlong = (i, min) {
+        for(; i >= 3U;) {
+            var uint g = ((i - 1U) / 2U - 1U) / 2U;
+            if(!this.before(i, g, min)) {
+                return;
+            }
+            this.swap(i, g);
+            i = g;
+        }
+    }
+
+    private fun void(uint) bubbleUp = (i) {
+        if(i == 0U) {
+            return;
+        }
+        var uint p = (i - 1U) / 2U;
+        var bool min = this.minLevel(i);
+        if(this.before(p, i, min)) {
+            this.swap(i, p);
+            this.bubbleUpAlong(p, !min);
+        } else {
+            this.bubbleUpAlong(i, min);
+        }
+    }
+
+    private fun void(uint) trickleDown = (i) {
+        var bool min = this.minLevel(i);
+        for(;;) {
+            var uint first = 2U * i + 1U;
+            if(first >= this.len) {
+                return;
+            }
+            var uint m = first;
+            var bool grandchild = false;
+            for(var uint c = first; c <= first + 1U && c < this.len; c++) {
+                if(this.before(c, m, min)) {
+                    m = c;
+                }
+                for(var uint g = 2U * c + 1U; g <= 2U * c + 2U && g < this.len; g++) {
+                    if(this.before(g, m, min)) {
+                        m = g;
+                        grandchild = true;
+                    }
+                }
+                if(m == c) {
+                    grandchild = false;
+                }
+            }
+            if(!this.before(m, i, min)) {
+                return;
+            }
+            this.swap(m, i);
+            if(!grandchild) {
+                return;
+            }
+            var uint p = (m - 1U) / 2U;
+            if(this.before(p, m, min)) {
+                this.swap(m, p);
+            }
+            i = m;
+        }
+    }
+
+    // maxIndex returns the slot holding the maximum.
+    private fun uint() maxIndex = () {
+        if(this.len < 3U) {
+            return this.len - 1U;
+        }
+        if(this.arr[1] < this.arr[2]) {
+            return 2U;
+        }
+        return 1U;
+    }
+
+    private fun Pair[A, B](uint) removeAt = (i) {
+        var Pair[A, B] old = this.entry(i);
+        this.len--;
+        if(i < this.len) {
+            this.arr[i] = this.arr[this.len];
+            this.vals[i] = this.vals[this.len];
+            this.trickleDown(i);
+        }
+        return old;
+    }
+
+    // reserve grows the storage to hold at least n elements.
+    private fun void(uint) reserve = (n) {
+        if(n <= this.cap) {
+            return;
+        }
+        var A* old = this.arr;
+        var B* oldVals = this.vals;
+        if(this.cap == 0U) {
+            this.cap = type(ArrPriorityQueue).minCap;
+        }
+        for(; this.cap < n;) {
+            this.cap = this.cap * 2U;
+        }
+        this.arr = new(A, this.cap);
+        this.vals = new(B, this.cap);
+        for(var uint i = 0U; i < this.len; i++) {
+            this.arr[i] = old[i];
+            this.vals[i] = oldVals[i];
+        }
+        free(old);
+        free(oldVals);
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun void(A, B) Add = (k, v) {
+        this.reserve(this.len + 1U);
+        this.arr[this.len] = k;
+        this.vals[this.len] = v;
+        this.len++;
+        this.bubbleUp(this.len - 1U);
+    }
+
+    fun Pair[A, B]() GetMin = () {
+        if(this.len == 0U) {
+            type(System).Panic("ArrPriorityQueue is empty");
+        }
+        return this.entry(0U);
+    }
+
+    fun Pair[A, B]() GetMax = () {
+        if(this.len == 0U) {
+            type(System).Panic("ArrPriorityQueue is empty");
+        }
+        return this.entry(this.maxIndex());
+    }
+
+    fun Pair[A, B]() RemoveMin = () {
+        if(this.len == 0U) {
+            type(System).Panic("ArrPriorityQueue is empty");
+        }
+        return this.removeAt(0U);
+    }
+
+    fun Pair[A, B]() RemoveMax = () {
+        if(this.len == 0U) {
+            type(System).Panic("ArrPriorityQueue is empty");
+        }
+        return this.removeAt(this.maxIndex());
+    }
+
+    // Merge moves every entry of other into this queue, leaving other empty.
+    fun void(ArrPriorityQueue[A, B]*) Merge = (other) {
+        if(other{void*} == this{void*}) {
+            type(System).Panic("ArrPriorityQueue merged with itself");
+        }
+        this.reserve(this.len + other.len);
+        for(var uint i = 0U; i < other.len; i++) {
+            this.arr[this.len] = other.arr[i];
+            this.vals[this.len] = other.vals[i];
+            this.len++;
+        }
+        other.len = 0U;
+        for(var uint i = this.len / 2U; i > 0U; i--) {
+            this.trickleDown(i - 1U);
+        }
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+        this.Init(0U);
+    }
+
+    // Arr returns the entries in no particular order.
+    fun Arr[Pair[A, B]]*() Arr = () {
+        var Pair[A, B]* a = new(Pair[A, B], this.len);
+        for(var uint i = 0U; i < this.len; i++) {
+            a[i].first = this.arr[i];
+            a[i].second = this.vals[i];
+        }
+        return type(Arr)[Pair[A, B]].New(this.len, a...);
+    }
+
+    // Iter visits the entries in no particular order.
+    fun Iter[A, B]*() Iter = () {
+        var Iter[A, B]* i = new(Iter[A, B]);
+        i.h = this;
+        i.i = 0U;
+        return i;
+    }
+
+    fun str() Str = () {
+        var str s = "[";
+        var str spacer = "";
+        for(var uint i = 0U; i < this.len; i++) {
+            s = s + spacer + this.arr[i]{str} + ": " + this.vals[i]{str};
+            spacer = ", ";
+        }
+        return s + "]";
+    }
+
+    fun void() Delete = () {
+        free(this.arr);
+        free(this.vals);
+        this.arr = null;
+        this.vals = null;
+        this.len = 0U;
+        this.cap = 0U;
+    }
+
+    fun void() Mark = () {
+        for(var uint i = 0U; i < this.len; i++) {
+            mark(this.arr[i]);
+            mark(this.vals[i]);
+        }
+    }
+
+    private class Iter[A, B] {
+        var ArrPriorityQueue[A, B]* h;
+        var uint i;
+
+        fun Pair[Pair[A, B], bool]() Next = () {
+            var Pair[Pair[A, B], bool] p;
+            if(this.i >= this.h.len) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.h.entry(this.i);
+            p.second = true;
+            this.i++;
+            return p;
+        }
+
+        fun Pair[Pair[A, B], bool]() Prev = () {
+            var Pair[Pair[A, B], bool] p;
+            if(this.i == 0U) {
+                p.second = false;
+                return p;
+            }
+            this.i--;
+            p.first = this.h.entry(this.i);
+            p.second = true;
+            return p;
+        }
+    }
+}

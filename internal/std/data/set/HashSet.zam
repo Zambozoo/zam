@@ -1,1 +1,220 @@
-class HashSet[A] {}
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+
+// Open-addressed hash set with linear probing
+class HashSet[A] {
+    static var byte$ empty = 0{byte};
+    static var byte$ full = 1{byte};
+    static var byte$ removed = 2{byte};
+
+    static var uint$ minCap = 8U;
+    static var uint$ wordBits = 64U;
+    // fibonacci is 2^64 divided by the golden ratio, which spreads hashes over
+    // the high bits a slot index is taken from.
+    static var uint$ fibonacci = 11400714819323198485U;
+    // A rehash is due once more than loadNum/loadDen of the slots are used.
+    static var uint$ loadNum = 3U;
+    static var uint$ loadDen = 4U;
+
+    var A* vals;
+    var byte* states;
+    var uint cap;
+    var uint shift;
+    var uint len;
+    var uint used;
+
+    static fun[A] HashSet[A]*(uint, A...) New = (len, args) {
+        var HashSet[A]* s = new(HashSet[A]);
+        s.Init(len, args...);
+        return s;
+    }
+
+    fun void(uint, A...) Init = (len, args) {
+        this.alloc(type(HashSet).minCap);
+        for(var uint i = 0U; i < len; i++) {
+            this.Add(args[i]);
+        }
+    }
+
+    private fun void(uint) alloc = (cap) {
+        this.vals = new(A, cap);
+        this.states = new(byte, cap);
+        this.cap = cap;
+        this.shift = type(HashSet).wordBits;
+        for(var uint c = cap; c > 1U; c = c >> 1U) {
+            this.shift--;
+        }
+        this.len = 0U;
+        this.used = 0U;
+    }
+
+    private fun uint(A) home = (v) {
+        return ((#v){uint} * type(HashSet).fibonacci) >> this.shift;
+    }
+
+    private fun uint(uint) step = (i) {
+        return (i + 1U) & (this.cap - 1U);
+    }
+
+    // find returns the slot holding v, or cap when v is absent.
+    private fun uint(A) find = (v) {
+        for(var uint i = this.home(v); this.states[i] != type(HashSet).empty; i = this.step(i)) {
+            if(this.states[i] == type(HashSet).full && this.vals[i] == v) {
+                return i;
+            }
+        }
+        return this.cap;
+    }
+
+    private fun void() rehash = () {
+        var A* oldVals = this.vals;
+        var byte* oldStates = this.states;
+        var uint oldCap = this.cap;
+        var uint newCap = type(HashSet).minCap;
+        for(; newCap < (this.len + 1U) * 2U;) {
+            newCap = newCap * 2U;
+        }
+        this.alloc(newCap);
+        for(var uint i = 0U; i < oldCap; i++) {
+            if(oldStates[i] == type(HashSet).full) {
+                this.place(oldVals[i]);
+            }
+        }
+        free(oldVals);
+        free(oldStates);
+    }
+
+    private fun void(A) place = (v) {
+        var uint i = this.home(v);
+        for(; this.states[i] == type(HashSet).full;) {
+            i = this.step(i);
+        }
+        if(this.states[i] == type(HashSet).empty) {
+            this.used++;
+        }
+        this.states[i] = type(HashSet).full;
+        this.vals[i] = v;
+        this.len++;
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun bool(A) Contains = (v) {
+        return this.find(v) != this.cap;
+    }
+
+    fun bool(A) Add = (v) {
+        if(this.find(v) != this.cap) {
+            return false;
+        }
+        if((this.used + 1U) * type(HashSet).loadDen > this.cap * type(HashSet).loadNum) {
+            this.rehash();
+        }
+        this.place(v);
+        return true;
+    }
+
+    fun bool(A) Remove = (v) {
+        var uint i = this.find(v);
+        if(i == this.cap) {
+            return false;
+        }
+        this.states[i] = type(HashSet).removed;
+        this.len--;
+        return true;
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+        this.alloc(type(HashSet).minCap);
+    }
+
+    fun Arr[A]*() Arr = () {
+        var A* a = new(A, this.len);
+        var uint n = 0U;
+        for(var uint i = 0U; i < this.cap; i++) {
+            if(this.states[i] == type(HashSet).full) {
+                a[n] = this.vals[i];
+                n++;
+            }
+        }
+        return type(Arr)[A].New(this.len, a...);
+    }
+
+    fun Iter[A]*() Iter = () {
+        var Iter[A]* i = new(Iter[A]);
+        i.Init(this);
+        return i;
+    }
+
+    fun str() Str = () {
+        var str s = "{";
+        var str spacer = "";
+        for(var uint i = 0U; i < this.cap; i++) {
+            if(this.states[i] == type(HashSet).full) {
+                s = s + spacer + this.vals[i]{str};
+                spacer = ", ";
+            }
+        }
+        return s + "}";
+    }
+
+    fun void() Delete = () {
+        free(this.vals);
+        free(this.states);
+        this.vals = null;
+        this.states = null;
+        this.cap = 0U;
+        this.len = 0U;
+        this.used = 0U;
+    }
+
+    fun void() Mark = () {
+        for(var uint i = 0U; i < this.cap; i++) {
+            if(this.states[i] == type(HashSet).full) {
+                mark(this.vals[i]);
+            }
+        }
+    }
+
+    private class Iter[A] {
+        var HashSet[A]* s;
+        var uint i;
+
+        fun void(HashSet[A]*) Init = (s) {
+            this.s = s;
+            this.i = 0U;
+        }
+
+        fun Pair[A, bool]() Next = () {
+            var Pair[A, bool] p;
+            for(; this.i < this.s.cap; this.i++) {
+                if(this.s.states[this.i] == type(HashSet).full) {
+                    p.first = this.s.vals[this.i];
+                    p.second = true;
+                    this.i++;
+                    return p;
+                }
+            }
+            p.second = false;
+            return p;
+        }
+
+        fun Pair[A, bool]() Prev = () {
+            var Pair[A, bool] p;
+            for(; this.i > 0U;) {
+                this.i--;
+                if(this.s.states[this.i] == type(HashSet).full) {
+                    p.first = this.s.vals[this.i];
+                    p.second = true;
+                    return p;
+                }
+            }
+            p.second = false;
+            return p;
+        }
+    }
+}

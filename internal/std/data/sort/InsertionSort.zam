@@ -17,6 +17,6 @@ namespace InsertionSort {
     }
 
     fun[A] void(Arr[A]*) SortArr = (arr) {
-       type(InsertionSort)[A].Sort(arr.Len(), arr.Arr()...);
+        type(InsertionSort)[A].Sort(arr.Len(), arr.Arr()...);
     }
 }

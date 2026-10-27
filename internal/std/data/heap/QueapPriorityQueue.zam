@@ -1,2 +1,0 @@
-// Insersion-ordered tree-based priority deque
-class QueapPriorityQueue[A,B] {}

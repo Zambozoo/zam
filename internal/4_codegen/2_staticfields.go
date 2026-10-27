@@ -610,7 +610,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) fillMethods(dst []method
 func (p *typeResolver) internedTypeID(t syntax.Type) uint16 {
 	idx, at := p.typeIndices.Get(t)
 	if at < 0 {
-		panic("unreachable")
+		panic("type " + t.String() + " was never collected")
 	}
 	return reservedTypeIDCount + uint16(idx)
 }

@@ -1,2 +1,306 @@
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+import "../../math/Rand.zam";
+import "../../lang/Struct.zam";
+
 // Probabilistic tree-based min max heap
-class Treap[A] {}
+class Treap[A] {
+    struct Node[A] {
+        var A val;
+        var uint prio;
+        var Node[A]* left;
+        var Node[A]* right;
+    }
+
+    var uint len;
+    var Node[A]* root;
+
+    static fun[A] Treap[A]*(uint, A...) New = (len, args) {
+        var Treap[A]* t = new(Treap[A]);
+        t.Init(len, args...);
+        return t;
+    }
+
+    fun void(uint, A...) Init = (len, args) {
+        this.len = 0U;
+        this.root = null;
+        for(var uint i = 0U; i < len; i++) {
+            this.Add(args[i]);
+        }
+    }
+
+    // rotateRight rotates the subtree in the link slot, writing its new root
+    // back into the slot. The node moved up is pinned until it is linked in.
+    private fun void(Node[A]**) rotateRight = (link) {
+        var Node[A]* n = *link;
+        var Node[A]* l = n.left;
+        var Struct[Node[A]*] pin;
+        pin.Init(l, type(Treap)[A].markTree, null);
+        n.left = l.right;
+        l.right = n;
+        *link = l;
+        pin.s = null;
+    }
+
+    private fun void(Node[A]**) rotateLeft = (link) {
+        var Node[A]* n = *link;
+        var Node[A]* r = n.right;
+        var Struct[Node[A]*] pin;
+        pin.Init(r, type(Treap)[A].markTree, null);
+        n.right = r.left;
+        r.left = n;
+        *link = r;
+        pin.s = null;
+    }
+
+    // insert places k by value in the link slot, equal ones going right, and
+    // rotates it up while its priority is below its parent's.
+    private fun void(Node[A]**, A) insert = (link, k) {
+        var Node[A]* n = *link;
+        if(n == null) {
+            var Node[A]* m = new(Node[A]);
+            m.val = k;
+            m.prio = type(Rand).Uint();
+            *link = m;
+            return;
+        }
+        if(k < n.val) {
+            this.insert(&(n.left), k);
+            if(n.left.prio < n.prio) {
+                this.rotateRight(link);
+            }
+        } else {
+            this.insert(&(n.right), k);
+            if(n.right.prio < n.prio) {
+                this.rotateLeft(link);
+            }
+        }
+    }
+
+    // split moves the subtree at n into the slots l and r, those ordered before
+    // v to l and the rest to r. A node is written into its new slot before the
+    // link it is leaving is overwritten, so none is ever out of reach.
+    private fun void(Node[A]*, A, Node[A]**, Node[A]**) split = (n, v, l, r) {
+        if(n == null) {
+            *l = null;
+            *r = null;
+            return;
+        }
+        if(n.val < v) {
+            *l = n;
+            this.split(n.right, v, &(n.right), r);
+        } else {
+            *r = n;
+            this.split(n.left, v, l, &(n.left));
+        }
+    }
+
+    // union merges the subtree b into the subtree in the link slot, keeping the
+    // lower priority on top and splitting the other around it. Only the pieces
+    // not yet linked in are pinned, so pins never overlap.
+    private fun void(Node[A]**, Node[A]*) union = (link, b) {
+        if(b == null) {
+            return;
+        }
+        var Node[A]* a = *link;
+        if(a == null) {
+            *link = b;
+            return;
+        }
+        var Struct[Node[A]*] rest;
+        rest.Init(b, type(Treap)[A].markTree, null);
+        if(b.prio < a.prio) {
+            rest.s = a;
+            *link = b;
+            a = b;
+            b = rest.s;
+        }
+        var Struct[Node[A]*] lo;
+        lo.Init(null, type(Treap)[A].markTree, null);
+        var Struct[Node[A]*] hi;
+        hi.Init(null, type(Treap)[A].markTree, null);
+        this.split(b, a.val, &(lo.s), &(hi.s));
+        rest.s = null;
+        this.union(&(a.left), lo.s);
+        lo.s = null;
+        this.union(&(a.right), hi.s);
+        hi.s = null;
+    }
+
+    // unlinkEnd splices out the leftmost node when first is true and the
+    // rightmost otherwise, which a single write of its one child does.
+    private fun void(bool) unlinkEnd = (first) {
+        var Node[A]** link = &(this.root);
+        for(;;) {
+            var Node[A]* n = *link;
+            if(first && n.left == null) {
+                *link = n.right;
+                free(n);
+                return;
+            }
+            if(!first && n.right == null) {
+                *link = n.left;
+                free(n);
+                return;
+            }
+            if(first) {
+                link = &(n.left);
+            } else {
+                link = &(n.right);
+            }
+        }
+    }
+
+    private fun uint(Node[A]*, A*, uint) fill = (n, a, i) {
+        if(n == null) {
+            return i;
+        }
+        i = this.fill(n.left, a, i);
+        a[i] = n.val;
+        return this.fill(n.right, a, i + 1U);
+    }
+
+    private static fun[A] void(Node[A]*) markTree = (n) {
+        if(n == null) {
+            return;
+        }
+        mark(n.val);
+        type(Treap)[A].markTree(n.left);
+        type(Treap)[A].markTree(n.right);
+    }
+
+    private fun void(Node[A]*) freeAll = (n) {
+        if(n == null) {
+            return;
+        }
+        this.freeAll(n.left);
+        this.freeAll(n.right);
+        free(n);
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun void(A) Add = (v) {
+        this.insert(&(this.root), v);
+        this.len++;
+    }
+
+    fun A() GetMin = () {
+        if(this.len == 0U) {
+            type(System).Panic("Treap is empty");
+        }
+        var Node[A]* n = this.root;
+        for(; n.left != null;) {
+            n = n.left;
+        }
+        return n.val;
+    }
+
+    fun A() GetMax = () {
+        if(this.len == 0U) {
+            type(System).Panic("Treap is empty");
+        }
+        var Node[A]* n = this.root;
+        for(; n.right != null;) {
+            n = n.right;
+        }
+        return n.val;
+    }
+
+    fun A() RemoveMin = () {
+        if(this.len == 0U) {
+            type(System).Panic("Treap is empty");
+        }
+        var A v = this.GetMin();
+        this.unlinkEnd(true);
+        this.len--;
+        return v;
+    }
+
+    fun A() RemoveMax = () {
+        if(this.len == 0U) {
+            type(System).Panic("Treap is empty");
+        }
+        var A v = this.GetMax();
+        this.unlinkEnd(false);
+        this.len--;
+        return v;
+    }
+
+    // Merge moves every element of other into this heap, leaving other empty.
+    fun void(Treap[A]*) Merge = (other) {
+        if(other{void*} == this{void*}) {
+            type(System).Panic("Treap merged with itself");
+        }
+        this.union(&(this.root), other.root);
+        this.len = this.len + other.len;
+        other.root = null;
+        other.len = 0U;
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+    }
+
+    // Arr returns the elements in ascending order.
+    fun Arr[A]*() Arr = () {
+        var A* a = new(A, this.len);
+        this.fill(this.root, a, 0U);
+        return type(Arr)[A].New(this.len, a...);
+    }
+
+    // Iter visits the elements in ascending order, as they stood when it was
+    // made.
+    fun Iter[A]*() Iter = () {
+        var Iter[A]* i = new(Iter[A]);
+        i.items = this.Arr();
+        i.i = 0U;
+        return i;
+    }
+
+    fun str() Str = () {
+        return this.Arr(){str};
+    }
+
+    fun void() Delete = () {
+        this.freeAll(this.root);
+        this.root = null;
+        this.len = 0U;
+    }
+
+    fun void() Mark = () {
+        type(Treap)[A].markTree(this.root);
+    }
+
+    private class Iter[A] {
+        var Arr[A]* items;
+        var uint i;
+
+        fun Pair[A, bool]() Next = () {
+            var Pair[A, bool] p;
+            if(this.i >= this.items.Len()) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.items.Get(this.i);
+            p.second = true;
+            this.i++;
+            return p;
+        }
+
+        fun Pair[A, bool]() Prev = () {
+            var Pair[A, bool] p;
+            if(this.i == 0U) {
+                p.second = false;
+                return p;
+            }
+            this.i--;
+            p.first = this.items.Get(this.i);
+            p.second = true;
+            return p;
+        }
+    }
+}

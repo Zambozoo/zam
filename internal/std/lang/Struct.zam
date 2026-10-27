@@ -1,0 +1,34 @@
+// Struct makes a manually managed value visible to the collector. Marking it
+// runs markFun over the value, and deleting it runs deleteFun; either may be
+// null, as for a wrapper that only borrows the value.
+class Struct[A] {
+    var A s;
+    var void(A) markFun;
+    var void(A) deleteFun;
+
+    static fun[A] Struct[A]*(A, void(A), void(A)) New = (s, markFun, deleteFun) {
+        var Struct[A]* w = new(Struct[A]);
+        w.Init(s, markFun, deleteFun);
+        return w;
+    }
+
+    fun void(A, void(A), void(A)) Init = (s, markFun, deleteFun) {
+        this.s = s;
+        this.markFun = markFun;
+        this.deleteFun = deleteFun;
+    }
+
+    fun void() Mark = () {
+        mark(this.markFun);
+        mark(this.deleteFun);
+        if(this.markFun != null) {
+            this.markFun(this.s);
+        }
+    }
+
+    fun void() Delete = () {
+        if(this.deleteFun != null) {
+            this.deleteFun(this.s);
+        }
+    }
+}

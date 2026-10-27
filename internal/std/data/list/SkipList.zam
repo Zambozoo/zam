@@ -1,5 +1,6 @@
 import "../../lang/System.zam";
 import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
 import "../../math/Rand.zam";
 
 // Indexable skiplist
@@ -10,7 +11,7 @@ class SkipList[A] {
             var Node~[A]* n;
         }
         var A val;
-        var uint height;
+        var byte height;
         var Node~[A]* prev;
         var Tail[A][~] nexts;
 
@@ -27,27 +28,27 @@ class SkipList[A] {
                     i = i << j;
                 }
             }
-            
+
             return c;
         }
 
-        private static fun[A] Node~[A]*(uint, A) New = (maxHeight, val) {
+        private static fun[A] Node~[A]*(byte, A) New = (maxHeight, val) {
             var uint height = type(Node).clz(type(Rand).Uint()) + 1U;
-            if (maxHeight < height) {
-                height = maxHeight;
+            if (maxHeight{uint} < height) {
+                height = maxHeight{uint};
             }
             var Node~[A]* n = new(Node~[A], 1, height);
             n.val = val;
-            n.height = height;
+            n.height = height{byte};
             return n;
         }
     }
 
-    static var uint$ defaultHeight = 64U;
+    static var byte$ defaultHeight = 32{byte};
 
     var uint len;
-    var uint height;
-    var Node~[A]** nexts;
+    var byte height;
+    var Node.Tail[A]* heads;
     var Node~[A]* tail;
 
     static fun[A] SkipList[A]*(uint, A...) New = (len, args) {
@@ -58,42 +59,244 @@ class SkipList[A] {
         return this.InitWithHeight(type(SkipList).defaultHeight, len, args...);
     }
 
-    static fun[A] SkipList[A]*(uint, uint, A...) NewWithHeight = (height, len, args) {
+    static fun[A] SkipList[A]*(byte, uint, A...) NewWithHeight = (height, len, args) {
         var SkipList[A]* s = new(SkipList[A]);
         s.InitWithHeight(height, len, args...);
         return s;
     }
 
-    fun void(uint, uint, A...) InitWithHeight = (height, len, args) {
-        if (height == 0U) {
+    fun void(byte, uint, A...) InitWithHeight = (height, len, args) {
+        if (height == 0{byte}) {
             type(System).Panic("SkipList with 0 height");
         }
         this.len = len;
         this.height = height;
-        this.nexts = new(Node~[A]*, height);
-        
-        var Node.Tail[A]* prevs = new(Node.Tail[A], height);
+        this.heads = new(Node.Tail[A], height{uint});
+
+        var Node~[A]** prevs = new(Node~[A]*, height{uint});
+        var uint* poss = new(uint, height{uint});
+        var Node~[A]* last = null;
         for(var uint i = 0U; i < len; i++) {
             var Node~[A]* n = type(Node)[A].New(height, args[i]);
-            n.prev = prevs[0].n;
-            for(var uint j = 0U; j < n.height; j++) {
-                if(this.nexts[j] == null) {
-                    this.nexts[j] = n;
-                }
-                if(prevs[j].n != null) {
-                    prevs[j].n.nexts[j].n = n;
-                    prevs[j].n.nexts[j].dist = i - prevs[j].dist;
-                }
-                prevs[j].n = n;
-                prevs[j].dist = i;
+            n.prev = last;
+            for(var uint j = 0U; j < n.height{uint}; j++) {
+                this.link(prevs[j], j, n, i + 1U - poss[j]);
+                prevs[j] = n;
+                poss[j] = i + 1U;
+            }
+            last = n;
+        }
+        this.tail = last;
+        free(prevs);
+        free(poss);
+    }
+
+    private fun Node~[A]*(Node~[A]*, uint) nextOf = (n, j) {
+        if(n == null) {
+            return this.heads[j].n;
+        }
+        return n.nexts[j].n;
+    }
+
+    private fun uint(Node~[A]*, uint) distOf = (n, j) {
+        if(n == null) {
+            return this.heads[j].dist;
+        }
+        return n.nexts[j].dist;
+    }
+
+    private fun void(Node~[A]*, uint, Node~[A]*, uint) link = (n, j, next, dist) {
+        if(n == null) {
+            this.heads[j].n = next;
+            this.heads[j].dist = dist;
+            return;
+        }
+        n.nexts[j].n = next;
+        n.nexts[j].dist = dist;
+    }
+
+    private fun Node~[A]*(uint) node = (i) {
+        if(i >= this.len) {
+            type(System).Panic("SkipList out of bounds");
+        }
+        var uint target = i + 1U;
+        var uint pos = 0U;
+        var Node~[A]* cur = null;
+        for(var uint lvl = this.height{uint}; lvl > 0U && pos != target; lvl--) {
+            for(; this.nextOf(cur, lvl - 1U) != null && pos + this.distOf(cur, lvl - 1U) <= target;) {
+                pos = pos + this.distOf(cur, lvl - 1U);
+                cur = this.nextOf(cur, lvl - 1U);
             }
         }
-        this.tail = prevs[0].n;
-        free(prevs);
+        return cur;
+    }
+
+    // walk fills, for every level, the last node before position target and
+    // that node's position, with null and 0 standing for the head.
+    private fun void(uint, Node~[A]**, uint*) walk = (target, preds, poss) {
+        var uint pos = 0U;
+        var Node~[A]* cur = null;
+        for(var uint lvl = this.height{uint}; lvl > 0U; lvl--) {
+            for(; this.nextOf(cur, lvl - 1U) != null && pos + this.distOf(cur, lvl - 1U) < target;) {
+                pos = pos + this.distOf(cur, lvl - 1U);
+                cur = this.nextOf(cur, lvl - 1U);
+            }
+            preds[lvl - 1U] = cur;
+            poss[lvl - 1U] = pos;
+        }
     }
 
     fun uint() Len = () {
         return this.len;
+    }
+
+    fun void() Clear = () {
+        var byte height = this.height;
+        this.Delete();
+        this.InitWithHeight(height, 0U);
+    }
+
+    fun A() GetFirst = () {
+        if(this.len == 0U) {
+            type(System).Panic("SkipList out of bounds");
+        }
+        return this.heads[0].n.val;
+    }
+
+    fun A() GetLast = () {
+        if(this.len == 0U) {
+            type(System).Panic("SkipList out of bounds");
+        }
+        return this.tail.val;
+    }
+
+    fun A(uint) Get = (i) {
+        return this.node(i).val;
+    }
+
+    fun A(A) SetFirst = (v) {
+        if(this.len == 0U) {
+            type(System).Panic("SkipList out of bounds");
+        }
+        var Node~[A]* n = this.heads[0].n;
+        var A old = n.val;
+        n.val = v;
+        return old;
+    }
+
+    fun A(A) SetLast = (v) {
+        if(this.len == 0U) {
+            type(System).Panic("SkipList out of bounds");
+        }
+        var A old = this.tail.val;
+        this.tail.val = v;
+        return old;
+    }
+
+    fun A(uint, A) Set = (i, v) {
+        var Node~[A]* n = this.node(i);
+        var A old = n.val;
+        n.val = v;
+        return old;
+    }
+
+    fun void(A) AddFirst = (v) {
+        this.Add(0U, v);
+    }
+
+    fun void(A) AddLast = (v) {
+        this.Add(this.len, v);
+    }
+
+    fun void(uint, A) Add = (i, v) {
+        if(i > this.len) {
+            type(System).Panic("SkipList out of bounds");
+        }
+        var uint target = i + 1U;
+        var Node~[A]** preds = new(Node~[A]*, this.height{uint});
+        var uint* poss = new(uint, this.height{uint});
+        this.walk(target, preds, poss);
+
+        var Node~[A]* n = type(Node)[A].New(this.height, v);
+        for(var uint j = 0U; j < this.height{uint}; j++) {
+            var Node~[A]* next = this.nextOf(preds[j], j);
+            var uint dist = this.distOf(preds[j], j);
+            if(j < n.height{uint}) {
+                if(next != null) {
+                    n.nexts[j].n = next;
+                    n.nexts[j].dist = poss[j] + dist + 1U - target;
+                }
+                this.link(preds[j], j, n, target - poss[j]);
+            } else if(next != null) {
+                this.link(preds[j], j, next, dist + 1U);
+            }
+        }
+
+        n.prev = preds[0];
+        if(n.nexts[0].n == null) {
+            this.tail = n;
+        } else {
+            n.nexts[0].n.prev = n;
+        }
+        this.len++;
+        free(preds);
+        free(poss);
+    }
+
+    fun A() RemoveFirst = () {
+        if(this.len == 0U) {
+            type(System).Panic("SkipList out of bounds");
+        }
+        return this.Remove(0U);
+    }
+
+    fun A() RemoveLast = () {
+        if(this.len == 0U) {
+            type(System).Panic("SkipList out of bounds");
+        }
+        return this.Remove(this.len - 1U);
+    }
+
+    fun A(uint) Remove = (i) {
+        if(i >= this.len) {
+            type(System).Panic("SkipList out of bounds");
+        }
+        var Node~[A]** preds = new(Node~[A]*, this.height{uint});
+        var uint* poss = new(uint, this.height{uint});
+        this.walk(i + 1U, preds, poss);
+
+        var Node~[A]* n = this.nextOf(preds[0], 0U);
+        var A old = n.val;
+        for(var uint j = 0U; j < this.height{uint}; j++) {
+            var Node~[A]* next = this.nextOf(preds[j], j);
+            var uint dist = this.distOf(preds[j], j);
+            if(j < n.height{uint}) {
+                this.link(preds[j], j, n.nexts[j].n, dist + n.nexts[j].dist - 1U);
+            } else if(next != null) {
+                this.link(preds[j], j, next, dist - 1U);
+            }
+        }
+
+        if(n.nexts[0].n == null) {
+            this.tail = n.prev;
+        } else {
+            n.nexts[0].n.prev = n.prev;
+        }
+        this.len--;
+        free(n);
+        free(preds);
+        free(poss);
+        return old;
+    }
+
+    fun Arr[A]*() Arr = () {
+        var A* a = new(A, this.len);
+        var uint i = 0U;
+        for(var Node~[A]* n = this.heads[0].n; n != null; n = n.nexts[0].n) {
+            a[i] = n.val;
+            i++;
+        }
+        return type(Arr)[A].New(this.len, a...);
     }
 
     fun Iter[A]*() Iter = () {
@@ -105,7 +308,7 @@ class SkipList[A] {
     fun str() Str = () {
         var str s = "[";
         var str spacer = "";
-        for(var Node~[A]* n = this.nexts[0]; n != null; n = n.nexts[0].n) {
+        for(var Node~[A]* n = this.heads[0].n; n != null; n = n.nexts[0].n) {
             s = s + spacer + n.val{str};
             spacer = ", ";
         }
@@ -113,20 +316,26 @@ class SkipList[A] {
     }
 
     fun void() Delete = () {
-        for(var Node~[A]* n = this.nexts[0]; n != null;) {
+        if(this.heads == null) {
+            return;
+        }
+        for(var Node~[A]* n = this.heads[0].n; n != null;) {
             var Node~[A]* old = n;
             n = n.nexts[0].n;
             free(old);
         }
-        free(this.nexts);
+        free(this.heads);
 
         this.len = 0U;
-        this.nexts = null;
+        this.heads = null;
         this.tail = null;
     }
 
     fun void() Mark = () {
-        for(var Node~[A]* n = this.nexts[0]; n != null; n = n.nexts[0].n) {
+        if(this.heads == null) {
+            return;
+        }
+        for(var Node~[A]* n = this.heads[0].n; n != null; n = n.nexts[0].n) {
             mark(n.val);
         }
     }
@@ -141,20 +350,12 @@ class SkipList[A] {
 
         fun void(SkipList[A]*, uint) InitWithIndex = (l, i) {
             if(i > l.Len()) {
-                type(System).Panic("Arr out of bounds");
+                type(System).Panic("SkipList out of bounds");
             }
             this.l = l;
-            this.cur = l.nexts[0];
-            for(var uint remaining = i; this.cur != null && remaining > 0U;) {
-                for(var uint lvl = this.cur.height; lvl > 0U; lvl--) {
-                    if(this.cur.nexts[lvl - 1U].n != null && this.cur.nexts[lvl - 1U].dist <= remaining) {
-                        remaining = remaining - this.cur.nexts[lvl - 1U].dist;
-                        this.cur = this.cur.nexts[lvl - 1U].n;
-                        return;
-                    }
-                } else {
-                    return;
-                }
+            this.cur = null;
+            if(i < l.Len()) {
+                this.cur = l.node(i);
             }
         }
 

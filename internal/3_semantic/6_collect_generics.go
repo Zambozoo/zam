@@ -235,6 +235,13 @@ func (c *genericTypeCollector) VisitExprCast(e *syntax.ExprCast) error {
 func (c *genericTypeCollector) VisitExprField(e *syntax.ExprField) error {
 	e.Expr.Accept(c)
 	c.recordComputed(e.ComputedType)
+	// A method of an inline value with a home is called through the value's
+	// address, so the pointer to it is a type the call names too.
+	if t := e.Expr.ResolvedType(); t != nil && !syntax.ReachedThroughAddress(t) {
+		if _, ok := syntax.StripConst(t).(syntax.TypeResolvable); ok {
+			c.recordComputed(syntax.NewWrappedType(syntax.TypeKindPointer, t))
+		}
+	}
 	return nil
 }
 

@@ -1,1 +1,426 @@
-class TreeMap[A, B] {}
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+import "../../lang/Struct.zam";
+
+// Sorted left-leaning red-black tree map
+class TreeMap[A, B] {
+    struct Node[A, B] {
+        var A key;
+        var B val;
+        var bool red;
+        var Node[A, B]* left;
+        var Node[A, B]* right;
+    }
+
+    var uint len;
+    var Node[A, B]* root;
+    var bool changed;
+
+    static fun[A, B] TreeMap[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+        var TreeMap[A, B]* m = new(TreeMap[A, B]);
+        m.Init(len, args...);
+        return m;
+    }
+
+    fun void(uint, Pair[A, B]...) Init = (len, args) {
+        this.len = 0U;
+        this.root = null;
+        for(var uint i = 0U; i < len; i++) {
+            this.Put(args[i].first, args[i].second);
+        }
+    }
+
+    private fun bool(Node[A, B]*) isRed = (n) {
+        return n != null && n.red;
+    }
+
+    // rotateLeft rotates the subtree in the link slot, writing its new root
+    // back into the slot. The node moved up is pinned until it is linked in.
+    private fun void(Node[A, B]**) rotateLeft = (link) {
+        var Node[A, B]* h = *link;
+        var Node[A, B]* x = h.right;
+        var Struct[Node[A, B]*] pin;
+        pin.Init(x, type(TreeMap)[A, B].markTree, null);
+        h.right = x.left;
+        x.left = h;
+        x.red = h.red;
+        h.red = true;
+        *link = x;
+        pin.s = null;
+    }
+
+    private fun void(Node[A, B]**) rotateRight = (link) {
+        var Node[A, B]* h = *link;
+        var Node[A, B]* x = h.left;
+        var Struct[Node[A, B]*] pin;
+        pin.Init(x, type(TreeMap)[A, B].markTree, null);
+        h.left = x.right;
+        x.right = h;
+        x.red = h.red;
+        h.red = true;
+        *link = x;
+        pin.s = null;
+    }
+
+    private fun void(Node[A, B]*) flip = (h) {
+        h.red = !h.red;
+        h.left.red = !h.left.red;
+        h.right.red = !h.right.red;
+    }
+
+    // fixUp restores the left-leaning invariants on the way back up.
+    private fun void(Node[A, B]**) fixUp = (link) {
+        if(this.isRed((*link).right) && !this.isRed((*link).left)) {
+            this.rotateLeft(link);
+        }
+        if(this.isRed((*link).left) && this.isRed((*link).left.left)) {
+            this.rotateRight(link);
+        }
+        if(this.isRed((*link).left) && this.isRed((*link).right)) {
+            this.flip(*link);
+        }
+    }
+
+    private fun void(Node[A, B]**) moveRedLeft = (link) {
+        var Node[A, B]* h = *link;
+        this.flip(h);
+        if(this.isRed(h.right.left)) {
+            this.rotateRight(&(h.right));
+            this.rotateLeft(link);
+            this.flip(*link);
+        }
+    }
+
+    private fun void(Node[A, B]**) moveRedRight = (link) {
+        this.flip(*link);
+        if(this.isRed((*link).left.left)) {
+            this.rotateRight(link);
+            this.flip(*link);
+        }
+    }
+
+    private fun void(Node[A, B]**) eraseMin = (link) {
+        var Node[A, B]* h = *link;
+        if(h.left == null) {
+            *link = null;
+            free(h);
+            return;
+        }
+        if(!this.isRed(h.left) && !this.isRed(h.left.left)) {
+            this.moveRedLeft(link);
+        }
+        this.eraseMin(&((*link).left));
+        this.fixUp(link);
+    }
+
+    // erase removes k from the subtree in the link slot, which must hold it.
+    private fun void(Node[A, B]**, A) erase = (link, k) {
+        if(k < (*link).key) {
+            if(!this.isRed((*link).left) && !this.isRed((*link).left.left)) {
+                this.moveRedLeft(link);
+            }
+            this.erase(&((*link).left), k);
+            this.fixUp(link);
+            return;
+        }
+        if(this.isRed((*link).left)) {
+            this.rotateRight(link);
+        }
+        var Node[A, B]* h = *link;
+        if(!(h.key < k) && h.right == null) {
+            *link = null;
+            free(h);
+            return;
+        }
+        if(!this.isRed(h.right) && !this.isRed(h.right.left)) {
+            this.moveRedRight(link);
+        }
+        h = *link;
+        if(!(h.key < k)) {
+            var Node[A, B]* m = h.right;
+            for(; m.left != null;) {
+                m = m.left;
+            }
+            h.key = m.key;
+            h.val = m.val;
+            this.eraseMin(&(h.right));
+        } else {
+            this.erase(&(h.right), k);
+        }
+        this.fixUp(link);
+    }
+
+    private fun void(Node[A, B]**, A, B) insert = (link, k, v) {
+        var Node[A, B]* h = *link;
+        if(h == null) {
+            var Node[A, B]* m = new(Node[A, B]);
+            m.key = k;
+            m.val = v;
+            m.red = true;
+            this.changed = true;
+            *link = m;
+            return;
+        }
+        if(k < h.key) {
+            this.insert(&(h.left), k, v);
+        } else if(h.key < k) {
+            this.insert(&(h.right), k, v);
+        } else {
+            h.val = v;
+        }
+        this.fixUp(link);
+    }
+
+    private fun Node[A, B]*(A) find = (k) {
+        for(var Node[A, B]* n = this.root; n != null;) {
+            if(k < n.key) {
+                n = n.left;
+            } else if(n.key < k) {
+                n = n.right;
+            } else {
+                return n;
+            }
+        }
+        return null;
+    }
+
+    // after returns the node holding the least key greater than k.
+    private fun Node[A, B]*(A) after = (k) {
+        var Node[A, B]* best = null;
+        for(var Node[A, B]* n = this.root; n != null;) {
+            if(k < n.key) {
+                best = n;
+                n = n.left;
+            } else {
+                n = n.right;
+            }
+        }
+        return best;
+    }
+
+    // before returns the node holding the greatest key less than k.
+    private fun Node[A, B]*(A) before = (k) {
+        var Node[A, B]* best = null;
+        for(var Node[A, B]* n = this.root; n != null;) {
+            if(n.key < k) {
+                best = n;
+                n = n.right;
+            } else {
+                n = n.left;
+            }
+        }
+        return best;
+    }
+
+    private fun Node[A, B]*() first = () {
+        var Node[A, B]* n = this.root;
+        for(; n != null && n.left != null;) {
+            n = n.left;
+        }
+        return n;
+    }
+
+    private fun Node[A, B]*() last = () {
+        var Node[A, B]* n = this.root;
+        for(; n != null && n.right != null;) {
+            n = n.right;
+        }
+        return n;
+    }
+
+    private fun Pair[A, B](Node[A, B]*) entry = (n) {
+        var Pair[A, B] p;
+        p.first = n.key;
+        p.second = n.val;
+        return p;
+    }
+
+    private fun uint(Node[A, B]*, Pair[A, B]*, uint) fill = (n, a, i) {
+        if(n == null) {
+            return i;
+        }
+        i = this.fill(n.left, a, i);
+        a[i].first = n.key;
+        a[i].second = n.val;
+        return this.fill(n.right, a, i + 1U);
+    }
+
+    private fun str(Node[A, B]*, str) join = (n, s) {
+        if(n == null) {
+            return s;
+        }
+        s = this.join(n.left, s);
+        if(s != "{") {
+            s = s + ", ";
+        }
+        s = s + n.key{str} + ": " + n.val{str};
+        return this.join(n.right, s);
+    }
+
+    private static fun[A, B] void(Node[A, B]*) markTree = (n) {
+        if(n == null) {
+            return;
+        }
+        mark(n.key);
+        mark(n.val);
+        type(TreeMap)[A, B].markTree(n.left);
+        type(TreeMap)[A, B].markTree(n.right);
+    }
+
+    private fun void(Node[A, B]*) freeAll = (n) {
+        if(n == null) {
+            return;
+        }
+        this.freeAll(n.left);
+        this.freeAll(n.right);
+        free(n);
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun bool(A) Contains = (k) {
+        return this.find(k) != null;
+    }
+
+    fun Pair[B, bool](A) Get = (k) {
+        var Pair[B, bool] p;
+        var Node[A, B]* n = this.find(k);
+        if(n == null) {
+            p.second = false;
+            return p;
+        }
+        p.first = n.val;
+        p.second = true;
+        return p;
+    }
+
+    fun bool(A, B) Put = (k, v) {
+        this.changed = false;
+        this.insert(&(this.root), k, v);
+        this.root.red = false;
+        if(this.changed) {
+            this.len++;
+        }
+        return this.changed;
+    }
+
+    fun Pair[B, bool](A) Remove = (k) {
+        var Pair[B, bool] p;
+        var Node[A, B]* n = this.find(k);
+        if(n == null) {
+            p.second = false;
+            return p;
+        }
+        p.first = n.val;
+        p.second = true;
+        if(!this.isRed(this.root.left) && !this.isRed(this.root.right)) {
+            this.root.red = true;
+        }
+        this.erase(&(this.root), k);
+        if(this.root != null) {
+            this.root.red = false;
+        }
+        this.len--;
+        return p;
+    }
+
+    fun Pair[A, B]() GetFirst = () {
+        if(this.len == 0U) {
+            type(System).Panic("TreeMap is empty");
+        }
+        return this.entry(this.first());
+    }
+
+    fun Pair[A, B]() GetLast = () {
+        if(this.len == 0U) {
+            type(System).Panic("TreeMap is empty");
+        }
+        return this.entry(this.last());
+    }
+
+    private static fun[A, B] void(Node[A, B]*, void(B)) eachFrom = (n, f) {
+        if(n == null) {
+            return;
+        }
+        type(TreeMap)[A, B].eachFrom(n.left, f);
+        f(n.val);
+        type(TreeMap)[A, B].eachFrom(n.right, f);
+    }
+
+    // EachValue calls f with every value in key order. It allocates nothing,
+    // so a Mark can use it to reach values the map holds.
+    fun void(void(B)) EachValue = (f) {
+        type(TreeMap)[A, B].eachFrom(this.root, f);
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+    }
+
+    fun Arr[Pair[A, B]]*() Arr = () {
+        var Pair[A, B]* a = new(Pair[A, B], this.len);
+        this.fill(this.root, a, 0U);
+        return type(Arr)[Pair[A, B]].New(this.len, a...);
+    }
+
+    fun Iter[A, B]*() Iter = () {
+        var Iter[A, B]* i = new(Iter[A, B]);
+        i.Init(this);
+        return i;
+    }
+
+    fun str() Str = () {
+        return this.join(this.root, "{") + "}";
+    }
+
+    fun void() Delete = () {
+        this.freeAll(this.root);
+        this.root = null;
+        this.len = 0U;
+    }
+
+    fun void() Mark = () {
+        type(TreeMap)[A, B].markTree(this.root);
+    }
+
+    private class Iter[A, B] {
+        var TreeMap[A, B]* m;
+        var Node[A, B]* cur;
+
+        fun void(TreeMap[A, B]*) Init = (m) {
+            this.m = m;
+            this.cur = m.first();
+        }
+
+        fun Pair[Pair[A, B], bool]() Next = () {
+            var Pair[Pair[A, B], bool] p;
+            if(this.cur == null) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.m.entry(this.cur);
+            p.second = true;
+            this.cur = this.m.after(this.cur.key);
+            return p;
+        }
+
+        fun Pair[Pair[A, B], bool]() Prev = () {
+            var Pair[Pair[A, B], bool] p;
+            var Node[A, B]* prev = this.m.last();
+            if(this.cur != null) {
+                prev = this.m.before(this.cur.key);
+            }
+            if(prev == null) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.m.entry(prev);
+            p.second = true;
+            this.cur = prev;
+            return p;
+        }
+    }
+}

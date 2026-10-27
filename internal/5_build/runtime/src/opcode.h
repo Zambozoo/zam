@@ -27,6 +27,8 @@
     OP(OpMulI64, 0)                                                            \
     OP(OpDivI64, 0)                                                            \
     OP(OpModI64, 0)                                                            \
+    OP(OpDivU64, 0)                                                            \
+    OP(OpModU64, 0)                                                            \
                                                                                \
     OP(OpArithmeticNegationI64, 0)                                             \
     OP(OpBitwiseNegationI64, 0)                                                \
@@ -40,6 +42,8 @@
     OP(OpCastToString, 0)                                                      \
     OP(OpCastI64ToF64, 0)                                                      \
     OP(OpCastF64ToI64, 0)                                                      \
+    OP(OpCastU64ToF64, 0)                                                      \
+    OP(OpCastF64ToU64, 0)                                                      \
                                                                                \
     OP(OpAddF64, 0)                                                            \
     OP(OpSubF64, 0)                                                            \
@@ -71,6 +75,7 @@
     OP(OpPopScope, 0)                                                          \
                                                                                \
     OP(OpPushMember, 1)                                                        \
+    OP(OpPushMemberOfValue, 1)                                                 \
     OP(OpLoadTailMember, 1)                                                    \
     OP(OpPushMethod, 1)                                                        \
     OP(OpCallMethod, 1)                                                        \
@@ -79,6 +84,7 @@
     OP(OpCmp, 0)                                                               \
                                                                                \
     OP(OpNew, 0)                                                               \
+    OP(OpNewRun, 0)                                                            \
     OP(OpNewArray, 1)                                                          \
                                                                                \
     OP(OpNewThread, 1)                                                         \

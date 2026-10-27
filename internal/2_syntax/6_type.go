@@ -186,7 +186,7 @@ var (
 	// Integer type for whole numbers
 	TypeKindInt = newTypeKind("int")
 	// Float type for floating point numbers
-	TypeKindFloat = newTypeKind("float")
+	TypeKindFloat = newTypeKind("flt")
 	// String type for a sequence of characters
 	TypeKindString = newTypeKind("str")
 	// Type type for a type

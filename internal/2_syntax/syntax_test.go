@@ -451,7 +451,7 @@ func TestNewASTLocatesASyntaxError(t *testing.T) {
 // the primitive follows a colon, and every value is written with what it is
 // backed by.
 func TestNewASTParsesPrimitiveEnum(t *testing.T) {
-	for _, primitive := range []string{"bool", "char", "byte", "int", "uint", "float", "str"} {
+	for _, primitive := range []string{"bool", "char", "byte", "int", "uint", "flt", "str"} {
 		t.Run(primitive, func(t *testing.T) {
 			errs := parseEntry(t, `
 namespace Main {

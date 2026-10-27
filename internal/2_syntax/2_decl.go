@@ -2037,13 +2037,20 @@ func (d *DeclStruct) Accept(visitor FieldVisitor) error {
 // land with no slot of its own.
 func (s *DeclStruct) DeclType() Type {
 	if s.isTailed {
-		t := newGenericType(s).(*TypeGeneric)
-		t.Type = &TypeTailed{
+		t := newGenericType(s)
+		if g, ok := t.(*TypeGeneric); ok {
+			g.Type = &TypeTailed{
+				start:     s.Start(),
+				outerDecl: s,
+				Type:      g.Type.(*TypeReference),
+			}
+			return g
+		}
+		return &TypeTailed{
 			start:     s.Start(),
 			outerDecl: s,
-			Type:      t.Type.(*TypeReference),
+			Type:      t.(*TypeReference),
 		}
-		return t
 	}
 	return newGenericType(s)
 }
@@ -2336,6 +2343,11 @@ func (i *DeclConcreteInterface) Interfaces() iter.Seq[Type] {
 
 func (i *DeclConcreteInterface) InterfaceCount() int {
 	return i.allInterfaceCount()
+}
+
+// IsTailed implements the [DeclTailable] interface.
+func (d *DeclConcreteStruct) IsTailed() bool {
+	return d.DeclGeneric.(DeclTailable).IsTailed()
 }
 
 // TypeIndex returns a pointer to the concrete struct's own type definition

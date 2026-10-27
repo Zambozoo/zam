@@ -1,1 +1,261 @@
-class HashMap[A, B] {}
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+
+// Open-addressed hash map with linear probing
+class HashMap[A, B] {
+    static var byte$ empty = 0{byte};
+    static var byte$ full = 1{byte};
+    static var byte$ removed = 2{byte};
+
+    static var uint$ minCap = 8U;
+    static var uint$ wordBits = 64U;
+    // fibonacci is 2^64 divided by the golden ratio, which spreads hashes over
+    // the high bits a slot index is taken from.
+    static var uint$ fibonacci = 11400714819323198485U;
+    // A rehash is due once more than loadNum/loadDen of the slots are used.
+    static var uint$ loadNum = 3U;
+    static var uint$ loadDen = 4U;
+
+    var A* keys;
+    var B* vals;
+    var byte* states;
+    var uint cap;
+    var uint shift;
+    var uint len;
+    var uint used;
+
+    static fun[A, B] HashMap[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+        var HashMap[A, B]* m = new(HashMap[A, B]);
+        m.Init(len, args...);
+        return m;
+    }
+
+    fun void(uint, Pair[A, B]...) Init = (len, args) {
+        this.alloc(type(HashMap).minCap);
+        for(var uint i = 0U; i < len; i++) {
+            this.Put(args[i].first, args[i].second);
+        }
+    }
+
+    private fun void(uint) alloc = (cap) {
+        this.keys = new(A, cap);
+        this.vals = new(B, cap);
+        this.states = new(byte, cap);
+        this.cap = cap;
+        this.shift = type(HashMap).wordBits;
+        for(var uint c = cap; c > 1U; c = c >> 1U) {
+            this.shift--;
+        }
+        this.len = 0U;
+        this.used = 0U;
+    }
+
+    private fun uint(A) home = (k) {
+        return ((#k){uint} * type(HashMap).fibonacci) >> this.shift;
+    }
+
+    private fun uint(uint) step = (i) {
+        return (i + 1U) & (this.cap - 1U);
+    }
+
+    // find returns the slot holding k, or cap when k is absent.
+    private fun uint(A) find = (k) {
+        for(var uint i = this.home(k); this.states[i] != type(HashMap).empty; i = this.step(i)) {
+            if(this.states[i] == type(HashMap).full && this.keys[i] == k) {
+                return i;
+            }
+        }
+        return this.cap;
+    }
+
+    private fun void() rehash = () {
+        var A* oldKeys = this.keys;
+        var B* oldVals = this.vals;
+        var byte* oldStates = this.states;
+        var uint oldCap = this.cap;
+        var uint newCap = type(HashMap).minCap;
+        for(; newCap < (this.len + 1U) * 2U;) {
+            newCap = newCap * 2U;
+        }
+        this.alloc(newCap);
+        for(var uint i = 0U; i < oldCap; i++) {
+            if(oldStates[i] == type(HashMap).full) {
+                this.place(oldKeys[i], oldVals[i]);
+            }
+        }
+        free(oldKeys);
+        free(oldVals);
+        free(oldStates);
+    }
+
+    private fun void(A, B) place = (k, v) {
+        var uint i = this.home(k);
+        for(; this.states[i] == type(HashMap).full;) {
+            i = this.step(i);
+        }
+        if(this.states[i] == type(HashMap).empty) {
+            this.used++;
+        }
+        this.states[i] = type(HashMap).full;
+        this.keys[i] = k;
+        this.vals[i] = v;
+        this.len++;
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun bool(A) Contains = (k) {
+        return this.find(k) != this.cap;
+    }
+
+    fun Pair[B, bool](A) Get = (k) {
+        var Pair[B, bool] p;
+        var uint i = this.find(k);
+        if(i == this.cap) {
+            p.second = false;
+            return p;
+        }
+        p.first = this.vals[i];
+        p.second = true;
+        return p;
+    }
+
+    fun bool(A, B) Put = (k, v) {
+        var uint i = this.find(k);
+        if(i != this.cap) {
+            this.vals[i] = v;
+            return false;
+        }
+        if((this.used + 1U) * type(HashMap).loadDen > this.cap * type(HashMap).loadNum) {
+            this.rehash();
+        }
+        this.place(k, v);
+        return true;
+    }
+
+    fun Pair[B, bool](A) Remove = (k) {
+        var Pair[B, bool] p;
+        var uint i = this.find(k);
+        if(i == this.cap) {
+            p.second = false;
+            return p;
+        }
+        p.first = this.vals[i];
+        p.second = true;
+        this.states[i] = type(HashMap).removed;
+        this.len--;
+        return p;
+    }
+
+    // EachValue calls f with every value. It allocates nothing, so a Mark can
+    // use it to reach values the map holds.
+    fun void(void(B)) EachValue = (f) {
+        for(var uint i = 0U; i < this.cap; i++) {
+            if(this.states[i] == type(HashMap).full) {
+                f(this.vals[i]);
+            }
+        }
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+        this.alloc(type(HashMap).minCap);
+    }
+
+    fun Arr[Pair[A, B]]*() Arr = () {
+        var Pair[A, B]* a = new(Pair[A, B], this.len);
+        var uint n = 0U;
+        for(var uint i = 0U; i < this.cap; i++) {
+            if(this.states[i] == type(HashMap).full) {
+                a[n].first = this.keys[i];
+                a[n].second = this.vals[i];
+                n++;
+            }
+        }
+        return type(Arr)[Pair[A, B]].New(this.len, a...);
+    }
+
+    fun Iter[A, B]*() Iter = () {
+        var Iter[A, B]* i = new(Iter[A, B]);
+        i.Init(this);
+        return i;
+    }
+
+    fun str() Str = () {
+        var str s = "{";
+        var str spacer = "";
+        for(var uint i = 0U; i < this.cap; i++) {
+            if(this.states[i] == type(HashMap).full) {
+                s = s + spacer + this.keys[i]{str} + ": " + this.vals[i]{str};
+                spacer = ", ";
+            }
+        }
+        return s + "}";
+    }
+
+    fun void() Delete = () {
+        free(this.keys);
+        free(this.vals);
+        free(this.states);
+        this.keys = null;
+        this.vals = null;
+        this.states = null;
+        this.cap = 0U;
+        this.len = 0U;
+        this.used = 0U;
+    }
+
+    fun void() Mark = () {
+        for(var uint i = 0U; i < this.cap; i++) {
+            if(this.states[i] == type(HashMap).full) {
+                mark(this.keys[i]);
+                mark(this.vals[i]);
+            }
+        }
+    }
+
+    private class Iter[A, B] {
+        var HashMap[A, B]* m;
+        var uint i;
+
+        fun void(HashMap[A, B]*) Init = (m) {
+            this.m = m;
+            this.i = 0U;
+        }
+
+        private fun Pair[Pair[A, B], bool](uint) at = (i) {
+            var Pair[Pair[A, B], bool] p;
+            p.first.first = this.m.keys[i];
+            p.first.second = this.m.vals[i];
+            p.second = true;
+            return p;
+        }
+
+        fun Pair[Pair[A, B], bool]() Next = () {
+            for(; this.i < this.m.cap; this.i++) {
+                if(this.m.states[this.i] == type(HashMap).full) {
+                    this.i++;
+                    return this.at(this.i - 1U);
+                }
+            }
+            var Pair[Pair[A, B], bool] p;
+            p.second = false;
+            return p;
+        }
+
+        fun Pair[Pair[A, B], bool]() Prev = () {
+            for(; this.i > 0U;) {
+                this.i--;
+                if(this.m.states[this.i] == type(HashMap).full) {
+                    return this.at(this.i);
+                }
+            }
+            var Pair[Pair[A, B], bool] p;
+            p.second = false;
+            return p;
+        }
+    }
+}

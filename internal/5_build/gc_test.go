@@ -260,3 +260,119 @@ namespace Main {
 	assert.Empty(t, stdout)
 	assert.Empty(t, stderr)
 }
+
+// TestCollectionKeepsWhatALiteralLocalLaterHolds builds a string in a local
+// first given a literal, then collects. The local's slot has to root the
+// allocated strings stored into it afterwards.
+func TestCollectionKeepsWhatALiteralLocalLaterHolds(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    static fun str() churn = () {
+        var str t = "";
+        for(var int i = 0; i < 3000; i++) {
+            t = i{str} + "-churn";
+        }
+        return t;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var str s = "";
+        for(var int i = 0; i < 5; i++) {
+            s = s + i{str} + ",";
+        }
+        type(Main).churn();
+        type(File).StdOut.WriteStr(s + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "0,1,2,3,4,\n", stdout)
+}
+
+// TestCollectionKeepsARunOfInstances holds an array of class instances only
+// through an Arr. The array is the program's memory, which the collector never
+// frees, and Arr's Mark keeps what its elements hold.
+func TestCollectionKeepsARunOfInstances(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    static fun Arr[Pair[int, str]]*() build = () {
+        var Pair[int, str]* a = new(Pair[int, str], 100U);
+        for(var uint i = 0U; i < 100U; i++) {
+            a[i].first = i{int};
+            a[i].second = i{str} + "!";
+        }
+        return type(Arr)[Pair[int, str]].New(100U, a...);
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Arr[Pair[int, str]]* a = type(Main).build();
+        var str t = "";
+        for(var int i = 0; i < 3000; i++) {
+            t = i{str} + "-churn";
+        }
+        var int bad = 0;
+        for(var uint i = 0U; i < 100U; i++) {
+            if(a.Get(i).first != i{int} || a.Get(i).second != i{str} + "!") {
+                bad++;
+            }
+        }
+        type(File).StdOut.WriteStr(bad{str} + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "0\n", stdout)
+}
+
+// TestCollectionLeavesAnInstanceArrayAlone keeps an array of class instances
+// only in manual memory the collector never traces. The array is the
+// program's, so it survives every collection until it is freed.
+func TestCollectionLeavesAnInstanceArrayAlone(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    struct Holder {
+        var Pair[int, int]* run;
+    }
+
+    static fun Holder*() build = () {
+        var Holder* h = new(Holder);
+        h.run = new(Pair[int, int], 50U);
+        for(var uint i = 0U; i < 50U; i++) {
+            h.run[i].second = i{int} * 3;
+        }
+        return h;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Holder* h = type(Main).build();
+        var str t = "";
+        for(var int i = 0; i < 3000; i++) {
+            t = i{str} + "-churn";
+        }
+        var int bad = 0;
+        for(var uint i = 0U; i < 50U; i++) {
+            if(h.run[i].second != i{int} * 3) {
+                bad++;
+            }
+        }
+        free(h.run);
+        free(h);
+        type(File).StdOut.WriteStr(bad{str} + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "0\n", stdout)
+}

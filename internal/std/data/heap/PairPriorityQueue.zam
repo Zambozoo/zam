@@ -1,0 +1,397 @@
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+import "../../lang/Struct.zam";
+
+// Meldable min max priority queue of values B ordered by priorities A, as
+// twin pairing heaps sharing their nodes
+class PairPriorityQueue[A, B] {
+    static var uint$ minSide = 0U;
+    static var uint$ maxSide = 1U;
+
+    struct Node[A, B] {
+        // Link is a node's place in one of the two trees. prev is the left
+        // sibling, or the parent of a leftmost child.
+        struct Link[A, B] {
+            var Node[A, B]* child;
+            var Node[A, B]* next;
+            var Node[A, B]* prev;
+        }
+        var A key;
+        var B val;
+        var Link[A, B][2] links;
+    }
+
+    var uint len;
+    var Node[A, B]*[2] roots;
+
+    static fun[A, B] PairPriorityQueue[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+        var PairPriorityQueue[A, B]* h = new(PairPriorityQueue[A, B]);
+        h.Init(len, args...);
+        return h;
+    }
+
+    fun void(uint, Pair[A, B]...) Init = (len, args) {
+        this.len = 0U;
+        this.roots[0] = null;
+        this.roots[1] = null;
+        for(var uint i = 0U; i < len; i++) {
+            this.Add(args[i].first, args[i].second);
+        }
+    }
+
+    // before reports whether a belongs above b in the tree for side s.
+    private fun bool(Node[A, B]*, Node[A, B]*, uint) before = (a, b, s) {
+        if(s == type(PairPriorityQueue).minSide) {
+            return a.key < b.key;
+        }
+        return b.key < a.key;
+    }
+
+    // link makes the lesser of two detached roots a child of the other.
+    private fun Node[A, B]*(Node[A, B]*, Node[A, B]*, uint) link = (a, b, s) {
+        if(a == null) {
+            return b;
+        }
+        if(b == null) {
+            return a;
+        }
+        if(this.before(b, a, s)) {
+            var Node[A, B]* t = a;
+            a = b;
+            b = t;
+        }
+        var Node[A, B]* first = a.links[s].child;
+        b.links[s].prev = a;
+        b.links[s].next = first;
+        if(first != null) {
+            first.links[s].prev = b;
+        }
+        a.links[s].child = b;
+        return a;
+    }
+
+    // combine pairs the sibling list c left to right, then melds the pairs
+    // right to left into the slot out. On the min side, the one the collector
+    // walks, every list it holds is pinned by its head and every node in
+    // transit by itself.
+    private fun void(Node[A, B]*, uint, Node[A, B]**) combine = (c, s, out) {
+        var void(Node[A, B]*) chain = null;
+        var void(Node[A, B]*) tree = null;
+        if(s == type(PairPriorityQueue).minSide) {
+            chain = type(PairPriorityQueue)[A, B].markChain;
+            tree = type(PairPriorityQueue)[A, B].markFrom;
+        }
+        var Struct[Node[A, B]*] rest;
+        rest.Init(c, chain, null);
+        var Struct[Node[A, B]*] pairs;
+        pairs.Init(null, chain, null);
+        var Struct[Node[A, B]*] pa;
+        pa.Init(null, tree, null);
+        var Struct[Node[A, B]*] pb;
+        pb.Init(null, tree, null);
+        for(; rest.s != null;) {
+            var Node[A, B]* a = rest.s;
+            var Node[A, B]* b = a.links[s].next;
+            pa.s = a;
+            pb.s = b;
+            var Node[A, B]* after = null;
+            if(b != null) {
+                after = b.links[s].next;
+            }
+            rest.s = after;
+            if(b != null) {
+                b.links[s].next = null;
+                b.links[s].prev = null;
+            }
+            a.links[s].next = null;
+            a.links[s].prev = null;
+            var Node[A, B]* m = this.link(a, b, s);
+            m.links[s].next = pairs.s;
+            pairs.s = m;
+            pa.s = null;
+            pb.s = null;
+        }
+
+        *out = null;
+        for(; pairs.s != null;) {
+            var Node[A, B]* q = pairs.s;
+            pa.s = q;
+            pairs.s = q.links[s].next;
+            q.links[s].next = null;
+            *out = this.link(*out, q, s);
+            pa.s = null;
+        }
+    }
+
+    // unlink takes n out of the tree for side s, melding its children back in.
+    private fun void(Node[A, B]*, uint) unlink = (n, s) {
+        var void(Node[A, B]*) tree = null;
+        if(s == type(PairPriorityQueue).minSide) {
+            tree = type(PairPriorityQueue)[A, B].markFrom;
+        }
+        var Struct[Node[A, B]*] kids;
+        kids.Init(null, tree, null);
+        this.combine(n.links[s].child, s, &(kids.s));
+        n.links[s].child = null;
+        if(this.roots[s] == n) {
+            this.roots[s] = kids.s;
+            kids.s = null;
+            return;
+        }
+        var Node[A, B]* p = n.links[s].prev;
+        var Node[A, B]* next = n.links[s].next;
+        if(p.links[s].child == n) {
+            p.links[s].child = next;
+        } else {
+            p.links[s].next = next;
+        }
+        if(next != null) {
+            next.links[s].prev = p;
+        }
+        n.links[s].prev = null;
+        n.links[s].next = null;
+        this.roots[s] = this.link(this.roots[s], kids.s, s);
+        kids.s = null;
+    }
+
+    private fun Pair[A, B](Node[A, B]*) entry = (n) {
+        var Pair[A, B] p;
+        p.first = n.key;
+        p.second = n.val;
+        return p;
+    }
+
+    private fun Pair[A, B](uint) removeRoot = (s) {
+        var Node[A, B]* n = this.roots[s];
+        var Pair[A, B] v = this.entry(n);
+        this.unlink(n, s);
+        this.unlink(n, 1U - s);
+        free(n);
+        this.len--;
+        return v;
+    }
+
+    // markWalk marks the values of n and everything beneath it in the min
+    // tree, and of the siblings that follow n when siblings is true, with a
+    // stack of its own since a pairing tree can be as deep as it is large.
+    private static fun[A, B] void(Node[A, B]*, bool) markWalk = (n, siblings) {
+        if(n == null) {
+            return;
+        }
+        var uint cap = 16U;
+        var Node[A, B]** stack = new(Node[A, B]*, cap);
+        var uint top = 0U;
+        for(var Node[A, B]* c = n; c != null; c = c.links[0].next) {
+            if(top == cap) {
+                var Node[A, B]** grown = new(Node[A, B]*, cap * 2U);
+                for(var uint i = 0U; i < top; i++) {
+                    grown[i] = stack[i];
+                }
+                free(stack);
+                stack = grown;
+                cap = cap * 2U;
+            }
+            stack[top] = c;
+            top++;
+            if(!siblings) {
+                break;
+            }
+        }
+        for(; top > 0U;) {
+            top--;
+            var Node[A, B]* m = stack[top];
+            mark(m.key);
+            mark(m.val);
+            for(var Node[A, B]* c = m.links[0].child; c != null; c = c.links[0].next) {
+                if(top == cap) {
+                    var Node[A, B]** grown = new(Node[A, B]*, cap * 2U);
+                    for(var uint i = 0U; i < top; i++) {
+                        grown[i] = stack[i];
+                    }
+                    free(stack);
+                    stack = grown;
+                    cap = cap * 2U;
+                }
+                stack[top] = c;
+                top++;
+            }
+        }
+        free(stack);
+    }
+
+    // markFrom marks n and everything beneath it in the min tree.
+    private static fun[A, B] void(Node[A, B]*) markFrom = (n) {
+        type(PairPriorityQueue)[A, B].markWalk(n, false);
+    }
+
+    // markChain marks n, the siblings that follow it, and everything beneath
+    // them in the min tree.
+    private static fun[A, B] void(Node[A, B]*) markChain = (n) {
+        type(PairPriorityQueue)[A, B].markWalk(n, true);
+    }
+
+    // nodes returns every node, which the caller frees.
+    private fun Node[A, B]**() nodes = () {
+        var Node[A, B]** out = new(Node[A, B]*, this.len + 1U);
+        var Node[A, B]** stack = new(Node[A, B]*, this.len + 1U);
+        var uint count = 0U;
+        var uint top = 0U;
+        if(this.roots[0] != null) {
+            stack[0] = this.roots[0];
+            top = 1U;
+        }
+        for(; top > 0U;) {
+            top--;
+            var Node[A, B]* n = stack[top];
+            out[count] = n;
+            count++;
+            if(n.links[0].next != null) {
+                stack[top] = n.links[0].next;
+                top++;
+            }
+            if(n.links[0].child != null) {
+                stack[top] = n.links[0].child;
+                top++;
+            }
+        }
+        free(stack);
+        return out;
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun void(A, B) Add = (k, v) {
+        var Node[A, B]* n = new(Node[A, B]);
+        n.key = k;
+        n.val = v;
+        this.roots[0] = this.link(this.roots[0], n, 0U);
+        this.roots[1] = this.link(this.roots[1], n, 1U);
+        this.len++;
+    }
+
+    fun Pair[A, B]() GetMin = () {
+        if(this.len == 0U) {
+            type(System).Panic("PairPriorityQueue is empty");
+        }
+        return this.entry(this.roots[type(PairPriorityQueue).minSide]);
+    }
+
+    fun Pair[A, B]() GetMax = () {
+        if(this.len == 0U) {
+            type(System).Panic("PairPriorityQueue is empty");
+        }
+        return this.entry(this.roots[type(PairPriorityQueue).maxSide]);
+    }
+
+    fun Pair[A, B]() RemoveMin = () {
+        if(this.len == 0U) {
+            type(System).Panic("PairPriorityQueue is empty");
+        }
+        return this.removeRoot(type(PairPriorityQueue).minSide);
+    }
+
+    fun Pair[A, B]() RemoveMax = () {
+        if(this.len == 0U) {
+            type(System).Panic("PairPriorityQueue is empty");
+        }
+        return this.removeRoot(type(PairPriorityQueue).maxSide);
+    }
+
+    // Merge moves every entry of other into this queue, leaving other empty.
+    fun void(PairPriorityQueue[A, B]*) Merge = (other) {
+        if(other{void*} == this{void*}) {
+            type(System).Panic("PairPriorityQueue merged with itself");
+        }
+        this.roots[0] = this.link(this.roots[0], other.roots[0], 0U);
+        this.roots[1] = this.link(this.roots[1], other.roots[1], 1U);
+        this.len = this.len + other.len;
+        other.roots[0] = null;
+        other.roots[1] = null;
+        other.len = 0U;
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+    }
+
+    // Arr returns the entries in no particular order.
+    fun Arr[Pair[A, B]]*() Arr = () {
+        var Node[A, B]** ns = this.nodes();
+        var Pair[A, B]* a = new(Pair[A, B], this.len);
+        for(var uint i = 0U; i < this.len; i++) {
+            a[i].first = ns[i].key;
+            a[i].second = ns[i].val;
+        }
+        free(ns);
+        return type(Arr)[Pair[A, B]].New(this.len, a...);
+    }
+
+    // Iter visits the entries in no particular order, as they stood when it
+    // was made.
+    fun Iter[A, B]*() Iter = () {
+        var Iter[A, B]* i = new(Iter[A, B]);
+        i.items = this.Arr();
+        i.i = 0U;
+        return i;
+    }
+
+    fun str() Str = () {
+        var Arr[Pair[A, B]]* a = this.Arr();
+        var str s = "[";
+        var str spacer = "";
+        for(var uint i = 0U; i < a.Len(); i++) {
+            s = s + spacer + a.Get(i).first{str} + ": " + a.Get(i).second{str};
+            spacer = ", ";
+        }
+        return s + "]";
+    }
+
+    fun void() Delete = () {
+        var Node[A, B]** ns = this.nodes();
+        for(var uint i = 0U; i < this.len; i++) {
+            free(ns[i]);
+        }
+        free(ns);
+        this.roots[0] = null;
+        this.roots[1] = null;
+        this.len = 0U;
+    }
+
+    fun void() Mark = () {
+        if(this.roots[0] != null) {
+            type(PairPriorityQueue)[A, B].markFrom(this.roots[0]);
+        }
+    }
+
+    private class Iter[A, B] {
+        var Arr[Pair[A, B]]* items;
+        var uint i;
+
+        fun Pair[Pair[A, B], bool]() Next = () {
+            var Pair[Pair[A, B], bool] p;
+            if(this.i >= this.items.Len()) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.items.Get(this.i);
+            p.second = true;
+            this.i++;
+            return p;
+        }
+
+        fun Pair[Pair[A, B], bool]() Prev = () {
+            var Pair[Pair[A, B], bool] p;
+            if(this.i == 0U) {
+                p.second = false;
+                return p;
+            }
+            this.i--;
+            p.first = this.items.Get(this.i);
+            p.second = true;
+            return p;
+        }
+    }
+}

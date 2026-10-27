@@ -74,7 +74,7 @@ namespace Main {
 
     static fun void() f = () {
         var int i = type(Small).A{int};
-        var float x = type(Small).A{float};
+        var flt x = type(Small).A{flt};
         var bool b = type(Small).A{bool};
         return;
     }

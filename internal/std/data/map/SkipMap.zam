@@ -1,1 +1,282 @@
-class SkipMap[A, B] {}
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+import "../../math/Rand.zam";
+
+// Sorted skiplist map
+class SkipMap[A, B] {
+    struct Node~[A, B] {
+        struct Link[A, B] {
+            var Node~[A, B]* n;
+        }
+        var A key;
+        var B val;
+        var byte height;
+        var Node~[A, B]* prev;
+        var Link[A, B][~] nexts;
+    }
+
+    static var byte$ maxHeight = 32{byte};
+
+    var uint len;
+    var Node.Link[A, B]* heads;
+    var Node~[A, B]* tail;
+
+    static fun[A, B] SkipMap[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+        var SkipMap[A, B]* m = new(SkipMap[A, B]);
+        m.Init(len, args...);
+        return m;
+    }
+
+    fun void(uint, Pair[A, B]...) Init = (len, args) {
+        this.len = 0U;
+        this.heads = new(Node.Link[A, B], type(SkipMap).maxHeight{uint});
+        this.tail = null;
+        for(var uint i = 0U; i < len; i++) {
+            this.Put(args[i].first, args[i].second);
+        }
+    }
+
+    private fun Node~[A, B]*(Node~[A, B]*, uint) nextOf = (n, j) {
+        if(n == null) {
+            return this.heads[j].n;
+        }
+        return n.nexts[j].n;
+    }
+
+    private fun void(Node~[A, B]*, uint, Node~[A, B]*) link = (n, j, next) {
+        if(n == null) {
+            this.heads[j].n = next;
+            return;
+        }
+        n.nexts[j].n = next;
+    }
+
+    // walk fills, for every level, the last node holding a key less than k,
+    // with null standing for the head.
+    private fun void(A, Node~[A, B]**) walk = (k, preds) {
+        var Node~[A, B]* cur = null;
+        for(var uint lvl = type(SkipMap).maxHeight{uint}; lvl > 0U; lvl--) {
+            for(; this.nextOf(cur, lvl - 1U) != null && this.nextOf(cur, lvl - 1U).key < k;) {
+                cur = this.nextOf(cur, lvl - 1U);
+            }
+            preds[lvl - 1U] = cur;
+        }
+    }
+
+    // find returns the node holding k, or null.
+    private fun Node~[A, B]*(A) find = (k) {
+        var Node~[A, B]* cur = null;
+        for(var uint lvl = type(SkipMap).maxHeight{uint}; lvl > 0U; lvl--) {
+            for(; this.nextOf(cur, lvl - 1U) != null && this.nextOf(cur, lvl - 1U).key < k;) {
+                cur = this.nextOf(cur, lvl - 1U);
+            }
+        }
+        var Node~[A, B]* n = this.nextOf(cur, 0U);
+        if(n == null || k < n.key) {
+            return null;
+        }
+        return n;
+    }
+
+    private fun uint() randomHeight = () {
+        var uint h = 1U;
+        for(var uint r = type(Rand).Uint(); (r & 1U) == 1U && h < type(SkipMap).maxHeight{uint}; r = r >> 1U) {
+            h++;
+        }
+        return h;
+    }
+
+    private fun Pair[A, B](Node~[A, B]*) entry = (n) {
+        var Pair[A, B] p;
+        p.first = n.key;
+        p.second = n.val;
+        return p;
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun bool(A) Contains = (k) {
+        return this.find(k) != null;
+    }
+
+    fun Pair[B, bool](A) Get = (k) {
+        var Pair[B, bool] p;
+        var Node~[A, B]* n = this.find(k);
+        if(n == null) {
+            p.second = false;
+            return p;
+        }
+        p.first = n.val;
+        p.second = true;
+        return p;
+    }
+
+    fun bool(A, B) Put = (k, v) {
+        var Node~[A, B]** preds = new(Node~[A, B]*, type(SkipMap).maxHeight{uint});
+        this.walk(k, preds);
+        var Node~[A, B]* at = this.nextOf(preds[0], 0U);
+        if(at != null && !(k < at.key)) {
+            at.val = v;
+            free(preds);
+            return false;
+        }
+
+        var uint height = this.randomHeight();
+        var Node~[A, B]* n = new(Node~[A, B], 1, height);
+        n.key = k;
+        n.val = v;
+        n.height = height{byte};
+        for(var uint j = 0U; j < height; j++) {
+            n.nexts[j].n = this.nextOf(preds[j], j);
+            this.link(preds[j], j, n);
+        }
+        n.prev = preds[0];
+        if(n.nexts[0].n == null) {
+            this.tail = n;
+        } else {
+            n.nexts[0].n.prev = n;
+        }
+        this.len++;
+        free(preds);
+        return true;
+    }
+
+    fun Pair[B, bool](A) Remove = (k) {
+        var Pair[B, bool] p;
+        var Node~[A, B]** preds = new(Node~[A, B]*, type(SkipMap).maxHeight{uint});
+        this.walk(k, preds);
+        var Node~[A, B]* n = this.nextOf(preds[0], 0U);
+        if(n == null || k < n.key) {
+            free(preds);
+            p.second = false;
+            return p;
+        }
+
+        p.first = n.val;
+        p.second = true;
+        for(var uint j = 0U; j < n.height{uint}; j++) {
+            this.link(preds[j], j, n.nexts[j].n);
+        }
+        if(n.nexts[0].n == null) {
+            this.tail = n.prev;
+        } else {
+            n.nexts[0].n.prev = n.prev;
+        }
+        this.len--;
+        free(n);
+        free(preds);
+        return p;
+    }
+
+    fun Pair[A, B]() GetFirst = () {
+        if(this.len == 0U) {
+            type(System).Panic("SkipMap is empty");
+        }
+        return this.entry(this.heads[0].n);
+    }
+
+    fun Pair[A, B]() GetLast = () {
+        if(this.len == 0U) {
+            type(System).Panic("SkipMap is empty");
+        }
+        return this.entry(this.tail);
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+        this.Init(0U);
+    }
+
+    fun Arr[Pair[A, B]]*() Arr = () {
+        var Pair[A, B]* a = new(Pair[A, B], this.len);
+        var uint i = 0U;
+        for(var Node~[A, B]* n = this.heads[0].n; n != null; n = n.nexts[0].n) {
+            a[i].first = n.key;
+            a[i].second = n.val;
+            i++;
+        }
+        return type(Arr)[Pair[A, B]].New(this.len, a...);
+    }
+
+    fun Iter[A, B]*() Iter = () {
+        var Iter[A, B]* i = new(Iter[A, B]);
+        i.Init(this);
+        return i;
+    }
+
+    fun str() Str = () {
+        var str s = "{";
+        var str spacer = "";
+        for(var Node~[A, B]* n = this.heads[0].n; n != null; n = n.nexts[0].n) {
+            s = s + spacer + n.key{str} + ": " + n.val{str};
+            spacer = ", ";
+        }
+        return s + "}";
+    }
+
+    fun void() Delete = () {
+        if(this.heads == null) {
+            return;
+        }
+        for(var Node~[A, B]* n = this.heads[0].n; n != null;) {
+            var Node~[A, B]* old = n;
+            n = n.nexts[0].n;
+            free(old);
+        }
+        free(this.heads);
+        this.len = 0U;
+        this.heads = null;
+        this.tail = null;
+    }
+
+    fun void() Mark = () {
+        if(this.heads == null) {
+            return;
+        }
+        for(var Node~[A, B]* n = this.heads[0].n; n != null; n = n.nexts[0].n) {
+            mark(n.key);
+            mark(n.val);
+        }
+    }
+
+    private class Iter[A, B] {
+        var SkipMap[A, B]* m;
+        var Node~[A, B]* cur;
+
+        fun void(SkipMap[A, B]*) Init = (m) {
+            this.m = m;
+            this.cur = m.heads[0].n;
+        }
+
+        fun Pair[Pair[A, B], bool]() Next = () {
+            var Pair[Pair[A, B], bool] p;
+            if(this.cur == null) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.m.entry(this.cur);
+            p.second = true;
+            this.cur = this.cur.nexts[0].n;
+            return p;
+        }
+
+        fun Pair[Pair[A, B], bool]() Prev = () {
+            var Pair[Pair[A, B], bool] p;
+            var Node~[A, B]* prev = this.m.tail;
+            if(this.cur != null) {
+                prev = this.cur.prev;
+            }
+            if(prev == null) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.m.entry(prev);
+            p.second = true;
+            this.cur = prev;
+            return p;
+        }
+    }
+}

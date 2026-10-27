@@ -259,6 +259,13 @@ static ZamWord integerBinary(ZamThread *thread, ZamOpcode opcode) {
         return opcode == OpDivI64 ? (ZamWord)(left / right)
                                   : (ZamWord)(left % right);
 
+    case OpDivU64:
+    case OpModU64:
+        if (rightWord == 0)
+            zam_die(ZAMEXIT_PANIC, "divide by zero\n");
+        return opcode == OpDivU64 ? leftWord / rightWord
+                                  : leftWord % rightWord;
+
     case OpAndI64:
         return leftWord & rightWord;
     case OpOrI64:
@@ -2048,6 +2055,8 @@ static ZamResult step(ZamThread *thread) {
     case OpMulI64:
     case OpDivI64:
     case OpModI64:
+    case OpDivU64:
+    case OpModU64:
     case OpAndI64:
     case OpOrI64:
     case OpXorI64:
@@ -2074,6 +2083,16 @@ static ZamResult step(ZamThread *thread) {
     case OpCastF64ToI64:
         zam_thread_push(thread,
                         (ZamWord)(ZamInt)floatOf(zam_thread_pop(thread)));
+        return ZAMRESULT_CONTINUE;
+
+    case OpCastU64ToF64:
+        zam_thread_push(
+            thread, wordOfFloat((ZamFloat)(ZamUint)zam_thread_pop(thread)));
+        return ZAMRESULT_CONTINUE;
+
+    case OpCastF64ToU64:
+        zam_thread_push(thread,
+                        (ZamWord)(ZamUint)floatOf(zam_thread_pop(thread)));
         return ZAMRESULT_CONTINUE;
 
     case OpAddF64:
@@ -2490,6 +2509,21 @@ static ZamResult step(ZamThread *thread) {
         // and so is skipped the same way inlineValueBytes skips it and
         // valuesEqual's walk steps past it, which is what keeps equal values
         // in the same bucket.
+        //
+        // A string is equal to another by its bytes rather than its address,
+        // so its bytes are what it hashes over.
+        if (primitiveOf(image, type) == ZAMPRIMITIVE_STRING) {
+            ZamWord word = *valueAt(thread, 0, 1);
+            ZamWord hash = 0;
+            if (word != 0) {
+                const ZamString *s = zam_string_of((void *)(uintptr_t)word);
+                hash = fnv1a((const uint8_t *)s->bytes, s->length);
+            }
+            popValue(thread, image, type);
+            zam_thread_push(thread, hash);
+            return ZAMRESULT_CONTINUE;
+        }
+
         uint64_t words = valueWordsOf(image, type);
         const uint8_t *bytes = (const uint8_t *)valueAt(thread, 0, words);
         uint64_t byteCount = zam_type_bytes(image, type);
@@ -2644,11 +2678,8 @@ static ZamResult step(ZamThread *thread) {
         return ZAMRESULT_CONTINUE;
     }
 
-    // Only the form that arrives as an address is answered. The instruction is
-    // documented as leaving whichever of the two it was handed, but the same
-    // type id is pushed over an object either way, so which one it was is not
-    // in the operands to read — and the words form is a value with no home,
-    // which is the case a member of one is not an assignment target in.
+    // The object arrives as an address. A value with no home arrives as its
+    // words instead and is OpPushMemberOfValue's.
     case OpPushMember: {
         const ZamImage *image = &thread->vm->image;
        ZamTypeID objectType = pointeeOf(image, zam_thread_pop_type(thread));
@@ -2692,6 +2723,29 @@ static ZamResult step(ZamThread *thread) {
         // store, index — see one element here all the same, which is the
         // length the record has, so they are unaffected.
         zam_thread_push_type(thread, zam_member_type(member));
+        return ZAMRESULT_CONTINUE;
+    }
+
+    // The member is copied out before the value it lies in is spent, and pushed
+    // as a value of its own, owning whatever entries its type calls for.
+    case OpPushMemberOfValue: {
+        const ZamImage *image = &thread->vm->image;
+       ZamTypeID objectType = zam_thread_pop_type(thread);
+        uint64_t words = valueWordsOf(image, objectType);
+        const ZamMemberDefinition *member =
+            zam_type_member(image, objectType.shortID, operandAt(instruction, 0));
+       ZamTypeID memberType = zam_member_type(member);
+        uint64_t memberBytes = zam_type_bytes(image, memberType);
+
+        ZamWord object = (ZamWord)(uintptr_t)valueAt(thread, 0, words);
+        uint64_t offset =
+            memberHeaderBytes(thread, image, objectType, object) + member->offset;
+        uint8_t *copy = zam_alloc(memberBytes == 0 ? 1 : memberBytes);
+        memcpy(copy, (const uint8_t *)(uintptr_t)object + offset, memberBytes);
+
+        popValue(thread, image, objectType);
+        pushValueFrom(thread, image, memberType, (ZamWord)(uintptr_t)copy);
+        free(copy);
         return ZAMRESULT_CONTINUE;
     }
 
@@ -3004,8 +3058,14 @@ static ZamResult step(ZamThread *thread) {
     // collector owns. The shape of the allocation goes down first — how many
     // instances, and how long each one's tail — and the type id lands on top of
     // it, which is the order VisitExprNew pushes them in.
-    case OpNew: {
+    // OpNewRun is new with a count: an array, which is the program's memory
+    // whatever its elements are. An array of class instances is stamped
+    // element by element as lying inside nothing, so the collector leaves it
+    // alone and free releases it.
+    case OpNew:
+    case OpNewRun: {
         const ZamImage *image = &thread->vm->image;
+        bool manual = instruction.opcode == OpNewRun;
        ZamTypeID type = zam_thread_pop_type(thread);
         uint64_t tailLength = zam_thread_pop(thread);
         uint64_t arraySize = zam_thread_pop(thread);
@@ -3046,7 +3106,13 @@ static ZamResult step(ZamThread *thread) {
         uint64_t objectBytes = elementCount * elementBytes;
         void *object;
 
-        if (markable) {
+        if (markable && manual) {
+            object = zam_alloc(objectBytes);
+            memset(object, 0, objectBytes);
+            for (uint64_t index = 0; index < elementCount; index++)
+                stampContained(image, (uint8_t *)object + index * elementBytes,
+                               element, 0, 1);
+        } else if (markable) {
             // The tail length is the one header word the allocator is not told,
             // since it is the caller that knows which of the two places it came
             // from. Everything else the header holds is the kind and the id.
@@ -3325,6 +3391,18 @@ static ZamResult step(ZamThread *thread) {
         // a non-pointer id alone — which is the id that says a string carries
         // a header behind the pointer.
        ZamTypeID pointee = pointeeOf(image, type);
+        if (isMarkableInstance(image, pointee)) {
+            // An array of instances lies inside nothing and is the program's;
+            // a single instance is the collector's to sweep.
+           ZamMarkWord *mark = zam_mark_word_of((void *)(uintptr_t)pointer);
+            if (mark->contained) {
+                if (mark->upvalue != 0)
+                    zam_die(ZAMEXIT_PANIC,
+                            "freed an instance that lies inside another\n");
+                free((void *)(uintptr_t)pointer);
+                return ZAMRESULT_CONTINUE;
+            }
+        }
         if (isCollectedAllocation(image, pointee)) {
             bool typeIsPointer =
                 type.arrayLength == 0 &&
@@ -3855,13 +3933,13 @@ static ZamResult step(ZamThread *thread) {
     // follow and nothing is loaded through it. See OpPushStatic, which pushes the
     // same word out of the same slot numbering and means the other thing by it.
     //
-    // No mark entry, which is the one way a literal differs from every other
-    // string on the stack: the static region is never collected and outlives
-    // every frame that names one, so an entry would hand the collector an
-    // allocation it does not own.
+    // It owns a mark entry like every other string. The collector leaves a
+    // static-region address alone, but the slot a literal initializes may later
+    // hold an allocated string, and the entry is what roots it then.
     case OpPushStringLiteral:
         zam_thread_push(thread, (ZamWord)(uintptr_t)zam_vm_static(
                                     thread->vm, operandAt(instruction, 0)));
+        zam_thread_push_mark(thread, thread->operandCount - 1);
         return ZAMRESULT_CONTINUE;
 
     // A type id in and a type id out, which is the last step of pushing a type
@@ -3968,9 +4046,7 @@ static ZamResult step(ZamThread *thread) {
         memcpy(result->bytes, left->bytes, left->length);
         memcpy(result->bytes + left->length, right->bytes, right->length);
 
-        // Each operand goes with the entry it owned, if it owned one: a literal
-        // is handed no entry, the static region outliving every frame that names
-        // one, so the pop is asked rather than assumed. The result owns one
+        // Each operand goes with the entry it owned. The result owns one
         // outright — it is an allocation, and the word standing here is the only
         // thing that refers to it.
         popWord(thread);

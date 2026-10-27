@@ -6,6 +6,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -237,14 +238,57 @@ static void stdStrsByteLen(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
+// stdStrsToChars encodes a run of code points as a fresh UTF-8 str. A code
+// point past U+10FFFF or in the surrogate range has no encoding and panics.
 static void stdStrsToChars(ZamThread *thread) {
-    (void)thread;
-    ZAMTODO("STD_STRS_TO_CHARS: UTF-8 encode a code-point run");
+    const uint32_t *chars =
+        (const uint32_t *)zam_native_argument_pointer(thread, 0);
+    ZamInt count = (ZamInt)zam_native_argument(thread, 1);
+   ZamWord *strOut = (ZamWord *)zam_native_argument_pointer(thread, 2);
+    if (count < 0)
+        zam_native_panic(thread, "STD_STRS_TO_CHARS: negative length");
+
+    char *bytes = zam_alloc(count == 0 ? 1 : (size_t)count * 4);
+    uint64_t length = 0;
+    for (ZamInt i = 0; i < count; i++) {
+        uint32_t c = chars[i];
+        if (c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) {
+            free(bytes);
+            zam_native_panic(thread, "STD_STRS_TO_CHARS: invalid code point");
+        }
+        if (c < 0x80) {
+            bytes[length++] = (char)c;
+        } else if (c < 0x800) {
+            bytes[length++] = (char)(0xC0 | (c >> 6));
+            bytes[length++] = (char)(0x80 | (c & 0x3F));
+        } else if (c < 0x10000) {
+            bytes[length++] = (char)(0xE0 | (c >> 12));
+            bytes[length++] = (char)(0x80 | ((c >> 6) & 0x3F));
+            bytes[length++] = (char)(0x80 | (c & 0x3F));
+        } else {
+            bytes[length++] = (char)(0xF0 | (c >> 18));
+            bytes[length++] = (char)(0x80 | ((c >> 12) & 0x3F));
+            bytes[length++] = (char)(0x80 | ((c >> 6) & 0x3F));
+            bytes[length++] = (char)(0x80 | (c & 0x3F));
+        }
+    }
+    *strOut = zam_native_new_string(thread, bytes, length);
+    free(bytes);
+    zam_native_return_void(thread);
 }
 
+// stdStrsCharLen counts the code points of a str by its lead bytes, every byte
+// that is not a continuation byte beginning one.
 static void stdStrsCharLen(ZamThread *thread) {
-    (void)thread;
-    ZAMTODO("STD_STRS_CHAR_LEN: UTF-8 walk counting code points");
+    const ZamString *s =
+        zam_string_of((void *)(uintptr_t)zam_native_argument(thread, 0));
+   ZamInt *nOut = (ZamInt *)zam_native_argument_pointer(thread, 1);
+    ZamInt n = 0;
+    for (uint64_t i = 0; i < s->length; i++)
+        if (((unsigned char)s->bytes[i] & 0xC0) != 0x80)
+            n++;
+    *nOut = n;
+    zam_native_return_void(thread);
 }
 
 // stdArrsCopy moves a run of A elements from src to dst. The element type
@@ -312,6 +356,50 @@ static void stdSystemThreadID(ZamThread *thread) {
                                 ? sizeof tid
                                 : sizeof threadID);
     *out = (ZamWord)threadID;
+    zam_native_return_void(thread);
+}
+
+// randState is the calling thread's xoshiro256** state, seeded from the OS on
+// the thread's first draw so that no draw takes a lock.
+static _Thread_local uint64_t randState[4];
+static _Thread_local bool randSeeded;
+
+static uint64_t randRotl(uint64_t x, int k) {
+    return (x << k) | (x >> (64 - k));
+}
+
+static uint64_t randNext(ZamThread *thread) {
+    uint64_t *s = randState;
+    if (!randSeeded) {
+        if (getentropy(s, sizeof randState) != 0)
+            zam_native_panic(thread, "STD_RAND: no entropy available");
+        if ((s[0] | s[1] | s[2] | s[3]) == 0)
+            s[0] = 1;
+        randSeeded = true;
+    }
+    uint64_t result = randRotl(s[1] * 5, 7) * 9;
+    uint64_t t = s[1] << 17;
+    s[2] ^= s[0];
+    s[3] ^= s[1];
+    s[1] ^= s[2];
+    s[0] ^= s[3];
+    s[2] ^= t;
+    s[3] = randRotl(s[3], 45);
+    return result;
+}
+
+// stdRandUint writes a uniformly random uint.
+static void stdRandUint(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+    *out = (ZamWord)randNext(thread);
+    zam_native_return_void(thread);
+}
+
+// stdRandFlt writes a uniformly random flt in [0, 1), one of the 2^53 evenly
+// spaced values a double holds there.
+static void stdRandFlt(ZamThread *thread) {
+    double *out = (double *)zam_native_argument_pointer(thread, 0);
+    *out = (double)(randNext(thread) >> 11) * 0x1.0p-53;
     zam_native_return_void(thread);
 }
 
@@ -515,6 +603,8 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_SYSTEM_EXIT", stdSystemExit},
     {"STD_SYSTEM_PROCESS_ID", stdSystemProcessID},
     {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},
+    {"STD_RAND_UINT", stdRandUint},
+    {"STD_RAND_FLT", stdRandFlt},
     {"STD_SIGNAL_INIT", stdSignalInit},
     {"STD_SIGNAL_RAISE", stdSignalRaise},
     {"STD_SIGNAL_SEND", stdSignalSend},

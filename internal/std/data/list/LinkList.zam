@@ -47,7 +47,7 @@ class LinkList[A] {
         this.Delete();
     }
 
-    fun Node[A]*(uint) getNode = (i) {
+    private fun Node[A]*(uint) getNode = (i) {
         if(i >= this.len) {
             type(System).Panic("LinkList out of bounds");
         }
@@ -93,7 +93,7 @@ class LinkList[A] {
         if(this.len == 0U) {
             type(System).Panic("LinkList out of bounds");
         }
-        var A old = this.head.val;
+        var A old = this.tail.val;
         this.tail.val = v;
         return old;
     }
@@ -185,10 +185,6 @@ class LinkList[A] {
         }
 
         this.len--;
-        if(!(@oldHead.val <: type(void*))) {
-            // Only clean up raw values
-            delete(&(oldHead.val));
-        }
         free(oldHead);
         return old;
     }
@@ -212,10 +208,6 @@ class LinkList[A] {
         }
 
         this.len--;
-        if(!(@oldTail.val <: type(void*))) {
-            // Only clean up raw values
-            delete(&(oldTail.val));
-        }
         free(oldTail);
         return old;
     }
@@ -245,10 +237,6 @@ class LinkList[A] {
         type(System.GC).Unblock();
 
         this.len--;
-        if(!(@cur.val <: type(void*))) {
-            // Only clean up raw values
-            delete(&(cur.val));
-        }
         free(cur);
         return old;
     }

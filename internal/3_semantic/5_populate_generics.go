@@ -1,9 +1,7 @@
 package semantic
 
 import (
-	"sort"
-	"strings"
-
+	base "github.com/zambozoo/zam/internal/0_base"
 	syntax "github.com/zambozoo/zam/internal/2_syntax"
 )
 
@@ -64,46 +62,57 @@ type populateGenericDeclsVisitor struct {
 	// TypeGeneric.Decl() — which creates the concrete under the hood — so the
 	// isNew check that used to gate enqueueing fires too late and skipped
 	// every walk.
-	walked map[walkedKey]struct{}
+	walked map[walkedKey][]map[syntax.GenericArgKey]syntax.Type
 }
 
-// walkedKey identifies one (generic owner, bindings) pair for the walked set.
-// The owner answers for the decl or method the body belongs to; the bindings
-// are canonicalised to a signature that can key a map, since Go cannot key a
-// map by a map.
+// walkedKey buckets the walked set by owner and a hash of the bindings. Two
+// bindings that hash alike are told apart by [syntax.Type.Equals], since types
+// that print alike, such as two declarations' nested Node[int], are not the
+// same type.
 type walkedKey struct {
-	owner    any
-	bindings string
+	owner any
+	hash  uint64
 }
 
-// bindingsSignature is a stable canonical string for a bindings map. Pass
-// iteration is otherwise random, which would make two walks under the same
-// substitution key differently in walkedKey.
-func bindingsSignature(bindings map[syntax.GenericArgKey]syntax.Type) string {
-	keys := make([]syntax.GenericArgKey, 0, len(bindings))
-	for k := range bindings {
-		keys = append(keys, k)
+// bindingsHash is an order-independent hash of a bindings map.
+func bindingsHash(bindings map[syntax.GenericArgKey]syntax.Type) uint64 {
+	var h uint64
+	for k, t := range bindings {
+		h += base.Hash(base.FNV(k.Name), k.Owner.Hash(), t.Hash())
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Name != keys[j].Name {
-			return keys[i].Name < keys[j].Name
+	return h
+}
+
+func sameBindings(a, b map[syntax.GenericArgKey]syntax.Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, t := range a {
+		other, ok := b[k]
+		if !ok || !t.Equals(other) {
+			return false
 		}
-		return keys[i].Owner.Hash() < keys[j].Owner.Hash()
-	})
-	var sb strings.Builder
-	for _, k := range keys {
-		sb.WriteString(k.Name)
-		sb.WriteByte('=')
-		sb.WriteString(bindings[k].String())
-		sb.WriteByte(';')
 	}
-	return sb.String()
+	return true
+}
+
+// markWalked records that owner's body is walked under bindings, reporting
+// false if it already was.
+func (v *populateGenericDeclsVisitor) markWalked(owner any, bindings map[syntax.GenericArgKey]syntax.Type) bool {
+	key := walkedKey{owner: owner, hash: bindingsHash(bindings)}
+	for _, seen := range v.walked[key] {
+		if sameBindings(seen, bindings) {
+			return false
+		}
+	}
+	v.walked[key] = append(v.walked[key], bindings)
+	return true
 }
 
 func populateGenericDecls(ast *syntax.AST) {
 	v := &populateGenericDeclsVisitor{
 		ast:    ast,
-		walked: map[walkedKey]struct{}{},
+		walked: map[walkedKey][]map[syntax.GenericArgKey]syntax.Type{},
 	}
 
 	// Seed: walk all source decls with no binding. This materializes every
@@ -153,11 +162,9 @@ func (v *populateGenericDeclsVisitor) materialize(t *syntax.TypeGeneric) {
 		i++
 	}
 
-	key := walkedKey{owner: gd, bindings: bindingsSignature(bindings)}
-	if _, done := v.walked[key]; done {
+	if !v.markWalked(gd, bindings) {
 		return
 	}
-	v.walked[key] = struct{}{}
 	v.queue = append(v.queue, genericWork{decl: gd, bindings: bindings})
 }
 
@@ -408,11 +415,9 @@ func (v *populateGenericDeclsVisitor) materializeMethod(e *syntax.ExprType, type
 	// on the concrete only reports whether it existed, not whether the body
 	// has been seen under these bindings, and both are needed before the
 	// method's registry entry can be filled from its concretes.
-	key := walkedKey{owner: method, bindings: bindingsSignature(concrete.Bindings())}
-	if _, done := v.walked[key]; done {
+	if !v.markWalked(method, concrete.Bindings()) {
 		return
 	}
-	v.walked[key] = struct{}{}
 	v.queue = append(v.queue, genericWork{method: method, bindings: concrete.Bindings()})
 }
 

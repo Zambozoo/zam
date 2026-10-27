@@ -114,7 +114,7 @@ var (
 	TTElse      = newKeyword("else")
 	TTEnum      = newKeyword("enum")
 	TTFalse     = newKeyword("false")
-	TTFloat     = newKeyword("float")
+	TTFloat     = newKeyword("flt")
 	TTFor       = newKeyword("for")
 	TTFree      = newKeyword("free")
 	TTFun       = newKeyword("fun")

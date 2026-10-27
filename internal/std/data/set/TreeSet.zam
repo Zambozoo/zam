@@ -1,1 +1,373 @@
-class TreeSet[A] {}
+import "../../lang/System.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Arr.zam";
+import "../../lang/Struct.zam";
+
+// Sorted left-leaning red-black tree set
+class TreeSet[A] {
+    struct Node[A] {
+        var A val;
+        var bool red;
+        var Node[A]* left;
+        var Node[A]* right;
+    }
+
+    var uint len;
+    var Node[A]* root;
+    var bool changed;
+
+    static fun[A] TreeSet[A]*(uint, A...) New = (len, args) {
+        var TreeSet[A]* s = new(TreeSet[A]);
+        s.Init(len, args...);
+        return s;
+    }
+
+    fun void(uint, A...) Init = (len, args) {
+        this.len = 0U;
+        this.root = null;
+        for(var uint i = 0U; i < len; i++) {
+            this.Add(args[i]);
+        }
+    }
+
+    private fun bool(Node[A]*) isRed = (n) {
+        return n != null && n.red;
+    }
+
+    // rotateLeft rotates the subtree in the link slot, writing its new root
+    // back into the slot. The node moved up is pinned until it is linked in.
+    private fun void(Node[A]**) rotateLeft = (link) {
+        var Node[A]* h = *link;
+        var Node[A]* x = h.right;
+        var Struct[Node[A]*] pin;
+        pin.Init(x, type(TreeSet)[A].markTree, null);
+        h.right = x.left;
+        x.left = h;
+        x.red = h.red;
+        h.red = true;
+        *link = x;
+        pin.s = null;
+    }
+
+    private fun void(Node[A]**) rotateRight = (link) {
+        var Node[A]* h = *link;
+        var Node[A]* x = h.left;
+        var Struct[Node[A]*] pin;
+        pin.Init(x, type(TreeSet)[A].markTree, null);
+        h.left = x.right;
+        x.right = h;
+        x.red = h.red;
+        h.red = true;
+        *link = x;
+        pin.s = null;
+    }
+
+    private fun void(Node[A]*) flip = (h) {
+        h.red = !h.red;
+        h.left.red = !h.left.red;
+        h.right.red = !h.right.red;
+    }
+
+    // fixUp restores the left-leaning invariants on the way back up.
+    private fun void(Node[A]**) fixUp = (link) {
+        if(this.isRed((*link).right) && !this.isRed((*link).left)) {
+            this.rotateLeft(link);
+        }
+        if(this.isRed((*link).left) && this.isRed((*link).left.left)) {
+            this.rotateRight(link);
+        }
+        if(this.isRed((*link).left) && this.isRed((*link).right)) {
+            this.flip(*link);
+        }
+    }
+
+    private fun void(Node[A]**) moveRedLeft = (link) {
+        var Node[A]* h = *link;
+        this.flip(h);
+        if(this.isRed(h.right.left)) {
+            this.rotateRight(&(h.right));
+            this.rotateLeft(link);
+            this.flip(*link);
+        }
+    }
+
+    private fun void(Node[A]**) moveRedRight = (link) {
+        this.flip(*link);
+        if(this.isRed((*link).left.left)) {
+            this.rotateRight(link);
+            this.flip(*link);
+        }
+    }
+
+    private fun void(Node[A]**) eraseMin = (link) {
+        var Node[A]* h = *link;
+        if(h.left == null) {
+            *link = null;
+            free(h);
+            return;
+        }
+        if(!this.isRed(h.left) && !this.isRed(h.left.left)) {
+            this.moveRedLeft(link);
+        }
+        this.eraseMin(&((*link).left));
+        this.fixUp(link);
+    }
+
+    // erase removes k from the subtree in the link slot, which must hold it.
+    private fun void(Node[A]**, A) erase = (link, k) {
+        if(k < (*link).val) {
+            if(!this.isRed((*link).left) && !this.isRed((*link).left.left)) {
+                this.moveRedLeft(link);
+            }
+            this.erase(&((*link).left), k);
+            this.fixUp(link);
+            return;
+        }
+        if(this.isRed((*link).left)) {
+            this.rotateRight(link);
+        }
+        var Node[A]* h = *link;
+        if(!(h.val < k) && h.right == null) {
+            *link = null;
+            free(h);
+            return;
+        }
+        if(!this.isRed(h.right) && !this.isRed(h.right.left)) {
+            this.moveRedRight(link);
+        }
+        h = *link;
+        if(!(h.val < k)) {
+            var Node[A]* m = h.right;
+            for(; m.left != null;) {
+                m = m.left;
+            }
+            h.val = m.val;
+            this.eraseMin(&(h.right));
+        } else {
+            this.erase(&(h.right), k);
+        }
+        this.fixUp(link);
+    }
+
+    private fun void(Node[A]**, A) insert = (link, k) {
+        var Node[A]* h = *link;
+        if(h == null) {
+            var Node[A]* m = new(Node[A]);
+            m.val = k;
+            m.red = true;
+            this.changed = true;
+            *link = m;
+            return;
+        }
+        if(k < h.val) {
+            this.insert(&(h.left), k);
+        } else if(h.val < k) {
+            this.insert(&(h.right), k);
+        }
+        this.fixUp(link);
+    }
+
+    // after returns the node holding the least value greater than v.
+    private fun Node[A]*(A) after = (v) {
+        var Node[A]* best = null;
+        for(var Node[A]* n = this.root; n != null;) {
+            if(v < n.val) {
+                best = n;
+                n = n.left;
+            } else {
+                n = n.right;
+            }
+        }
+        return best;
+    }
+
+    // before returns the node holding the greatest value less than v.
+    private fun Node[A]*(A) before = (v) {
+        var Node[A]* best = null;
+        for(var Node[A]* n = this.root; n != null;) {
+            if(n.val < v) {
+                best = n;
+                n = n.right;
+            } else {
+                n = n.left;
+            }
+        }
+        return best;
+    }
+
+    private fun Node[A]*() first = () {
+        var Node[A]* n = this.root;
+        for(; n != null && n.left != null;) {
+            n = n.left;
+        }
+        return n;
+    }
+
+    private fun Node[A]*() last = () {
+        var Node[A]* n = this.root;
+        for(; n != null && n.right != null;) {
+            n = n.right;
+        }
+        return n;
+    }
+
+    private fun uint(Node[A]*, A*, uint) fill = (n, a, i) {
+        if(n == null) {
+            return i;
+        }
+        i = this.fill(n.left, a, i);
+        a[i] = n.val;
+        return this.fill(n.right, a, i + 1U);
+    }
+
+    private static fun[A] void(Node[A]*) markTree = (n) {
+        if(n == null) {
+            return;
+        }
+        mark(n.val);
+        type(TreeSet)[A].markTree(n.left);
+        type(TreeSet)[A].markTree(n.right);
+    }
+
+    private fun void(Node[A]*) freeAll = (n) {
+        if(n == null) {
+            return;
+        }
+        this.freeAll(n.left);
+        this.freeAll(n.right);
+        free(n);
+    }
+
+    fun uint() Len = () {
+        return this.len;
+    }
+
+    fun bool(A) Contains = (v) {
+        for(var Node[A]* n = this.root; n != null;) {
+            if(v < n.val) {
+                n = n.left;
+            } else if(n.val < v) {
+                n = n.right;
+            } else {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    fun bool(A) Add = (k) {
+        this.changed = false;
+        this.insert(&(this.root), k);
+        this.root.red = false;
+        if(this.changed) {
+            this.len++;
+        }
+        return this.changed;
+    }
+
+    fun bool(A) Remove = (k) {
+        if(!this.Contains(k)) {
+            return false;
+        }
+        if(!this.isRed(this.root.left) && !this.isRed(this.root.right)) {
+            this.root.red = true;
+        }
+        this.erase(&(this.root), k);
+        if(this.root != null) {
+            this.root.red = false;
+        }
+        this.len--;
+        return true;
+    }
+
+    fun A() GetFirst = () {
+        if(this.len == 0U) {
+            type(System).Panic("TreeSet is empty");
+        }
+        return this.first().val;
+    }
+
+    fun A() GetLast = () {
+        if(this.len == 0U) {
+            type(System).Panic("TreeSet is empty");
+        }
+        return this.last().val;
+    }
+
+    fun void() Clear = () {
+        this.Delete();
+    }
+
+    fun Arr[A]*() Arr = () {
+        var A* a = new(A, this.len);
+        this.fill(this.root, a, 0U);
+        return type(Arr)[A].New(this.len, a...);
+    }
+
+    fun Iter[A]*() Iter = () {
+        var Iter[A]* i = new(Iter[A]);
+        i.Init(this);
+        return i;
+    }
+
+    fun str() Str = () {
+        var A* a = new(A, this.len);
+        this.fill(this.root, a, 0U);
+        var str s = "{";
+        var str spacer = "";
+        for(var uint i = 0U; i < this.len; i++) {
+            s = s + spacer + a[i]{str};
+            spacer = ", ";
+        }
+        free(a);
+        return s + "}";
+    }
+
+    fun void() Delete = () {
+        this.freeAll(this.root);
+        this.root = null;
+        this.len = 0U;
+    }
+
+    fun void() Mark = () {
+        type(TreeSet)[A].markTree(this.root);
+    }
+
+    private class Iter[A] {
+        var TreeSet[A]* s;
+        var Node[A]* cur;
+
+        fun void(TreeSet[A]*) Init = (s) {
+            this.s = s;
+            this.cur = s.first();
+        }
+
+        fun Pair[A, bool]() Next = () {
+            var Pair[A, bool] p;
+            if(this.cur == null) {
+                p.second = false;
+                return p;
+            }
+            p.first = this.cur.val;
+            p.second = true;
+            this.cur = this.s.after(this.cur.val);
+            return p;
+        }
+
+        fun Pair[A, bool]() Prev = () {
+            var Pair[A, bool] p;
+            var Node[A]* prev = this.s.last();
+            if(this.cur != null) {
+                prev = this.s.before(this.cur.val);
+            }
+            if(prev == null) {
+                p.second = false;
+                return p;
+            }
+            p.first = prev.val;
+            p.second = true;
+            this.cur = prev;
+            return p;
+        }
+    }
+}
