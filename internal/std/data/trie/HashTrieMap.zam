@@ -132,7 +132,8 @@ class HashTrieMap[A, B] {
     }
 
     // mergeDown replaces n, which holds no value and one child, with that
-    // child under the child's edge extended by n's.
+    // child under the child's edge extended by n's. A detached node's child
+    // map is left to the collector, which may already have reclaimed it.
     private fun void(Node[A, B]*, Node[A, B]*) mergeDown = (parent, n) {
         var Node[A, B]* c = n.children.Arr().Get(0U).second;
         var uint total = n.edgeLen + c.edgeLen;
@@ -148,7 +149,6 @@ class HashTrieMap[A, B] {
         c.edgeLen = total;
         free(old);
         this.setChild(parent, joined[0], c);
-        n.children.Delete();
         free(n.edge);
         free(n);
     }
@@ -288,9 +288,6 @@ class HashTrieMap[A, B] {
         if(this.childCount(n) == 0U) {
             parent.children.Remove(n.edge[0]);
             free(n.edge);
-            if(n.children != null) {
-                n.children.Delete();
-            }
             free(n);
             n = parent;
             parent = grand;
@@ -337,12 +334,17 @@ class HashTrieMap[A, B] {
         return s + "}";
     }
 
+    // Delete detaches the trie and frees it with collection blocked: the child
+    // maps are collected objects only the detached nodes still name.
     fun void() Delete = () {
-        if(this.root != null) {
-            type(HashTrieMap)[A, B].freeTree(this.root);
-        }
+        var Node[A, B]* n = this.root;
         this.root = null;
         this.len = 0U;
+        if(n != null) {
+            type(System.GC).Block();
+            type(HashTrieMap)[A, B].freeTree(n);
+            type(System.GC).Unblock();
+        }
     }
 
     fun void() Mark = () {

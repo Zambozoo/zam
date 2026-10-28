@@ -69,21 +69,41 @@ class HashMap[A, B] {
         return this.cap;
     }
 
+    // rehash moves every entry into fresh arrays, which are filled while the
+    // old ones are still the map's, so the collector reaches every entry
+    // throughout, and installed once they are full.
     private fun void() rehash = () {
-        var A* oldKeys = this.keys;
-        var B* oldVals = this.vals;
-        var byte* oldStates = this.states;
-        var uint oldCap = this.cap;
         var uint newCap = type(HashMap).minCap;
         for(; newCap < (this.len + 1U) * 2U;) {
             newCap = newCap * 2U;
         }
-        this.alloc(newCap);
-        for(var uint i = 0U; i < oldCap; i++) {
-            if(oldStates[i] == type(HashMap).full) {
-                this.place(oldKeys[i], oldVals[i]);
+        var uint shift = type(HashMap).wordBits;
+        for(var uint c = newCap; c > 1U; c = c >> 1U) {
+            shift--;
+        }
+        var A* keys = new(A, newCap);
+        var B* vals = new(B, newCap);
+        var byte* states = new(byte, newCap);
+        for(var uint i = 0U; i < this.cap; i++) {
+            if(this.states[i] == type(HashMap).full) {
+                var uint j = ((#this.keys[i]){uint} * type(HashMap).fibonacci) >> shift;
+                for(; states[j] == type(HashMap).full;) {
+                    j = (j + 1U) & (newCap - 1U);
+                }
+                keys[j] = this.keys[i];
+                vals[j] = this.vals[i];
+                states[j] = type(HashMap).full;
             }
         }
+        var A* oldKeys = this.keys;
+        var B* oldVals = this.vals;
+        var byte* oldStates = this.states;
+        this.keys = keys;
+        this.vals = vals;
+        this.states = states;
+        this.cap = newCap;
+        this.shift = shift;
+        this.used = this.len;
         free(oldKeys);
         free(oldVals);
         free(oldStates);

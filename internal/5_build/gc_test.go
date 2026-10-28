@@ -376,3 +376,35 @@ namespace Main {
 	require.Zero(t, status, stderr)
 	assert.Equal(t, "0\n", stdout)
 }
+
+// TestCollectionDuringRehash grows a string-keyed set and map while
+// collections run, which a rehash has to survive with every element reachable.
+func TestCollectionDuringRehash(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+import std("data/set/*");
+import std("data/map/*");
+
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        var HashSet[str]* s = type(HashSet)[str].New(0U);
+        var HashMap[str, int]* m = type(HashMap)[str, int].New(0U);
+        for(var int i = 0; i < 400; i++) {
+            s.Add(i{str} + "k");
+            m.Put(i{str} + "k", i);
+        }
+        var int bad = 0;
+        for(var int i = 0; i < 400; i++) {
+            if(!s.Contains(i{str} + "k") || m.Get(i{str} + "k").first != i) {
+                bad++;
+            }
+        }
+        type(File).StdOut.WriteStr(bad{str} + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "0\n", stdout)
+}

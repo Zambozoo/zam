@@ -284,10 +284,13 @@ class TreapPriorityQueue[A, B] {
         return s + "]";
     }
 
+    // Delete detaches the tree before freeing it, so a collection while it is
+    // being freed finds nothing to walk.
     fun void() Delete = () {
-        this.freeAll(this.root);
+        var Node[A, B]* n = this.root;
         this.root = null;
         this.len = 0U;
+        this.freeAll(n);
     }
 
     fun void() Mark = () {

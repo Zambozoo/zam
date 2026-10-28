@@ -119,3 +119,78 @@ namespace Main {
 	require.Zero(t, status, stderr)
 	assert.Equal(t, "true\n", stdout)
 }
+
+// TestOpenWidthFrames lays a template's frame with slots whose width its
+// instantiation decides, ahead of slots it reads afterwards.
+func TestOpenWidthFrames(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    class G[B] {
+        var B v;
+
+        fun int(B, int) F = (b, n) {
+            var Pair[B, bool] out;
+            out.first = b;
+            var G[B]* self = this;
+            var int total = 0;
+            for(var int i = 0; i < n; i++) {
+                total = total + i;
+            }
+            this.v = out.first;
+            return total;
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Pair[int, int] p;
+        p.first = 1;
+        p.second = 2;
+        var G[bool]* gb = new(G[bool]);
+        var G[Pair[int, int]]* gp = new(G[Pair[int, int]]);
+        var G[int]* gi = new(G[int]);
+        type(File).StdOut.WriteStr(gb.F(true, 4){str} + " " + gp.F(p, 5){str} + " " + gi.F(3, 6){str} + " " + gp.v.second{str} + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "6 10 15 2\n", stdout)
+}
+
+// TestGenericStructMethods calls a generic struct's methods under
+// instantiations of different widths, each with a body of its own.
+func TestGenericStructMethods(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    struct Box[A] {
+        var A v;
+        var int n;
+
+        fun str() Show = () {
+            var A copy = this.v;
+            return copy{str} + "/" + this.n{str};
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Box[bool] b;
+        b.v = true;
+        b.n = 7;
+        var Box[str] s;
+        s.v = "hi";
+        s.n = 9;
+        var str none;
+        type(File).StdOut.WriteStr(b.Show() + " " + s.Show() + " " + (none == "x"){str} + (none == none){str} + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "true/7 hi/9 falsetrue\n", stdout)
+}

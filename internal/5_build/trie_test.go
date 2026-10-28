@@ -7,14 +7,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestTriesAgree runs random puts, removes and lookups against both trie maps
-// and a string-keyed reference map, then checks entries, order, prefixes and
-// the sets built on them.
+// TestTriesAgree runs random operations against both trie maps and both trie
+// sets and string-keyed references, then checks entries, order and prefixes.
 func TestTriesAgree(t *testing.T) {
 	t.Parallel()
 	binary := compile(t, `import std("lang/*");
 import std("io/local/*");
 import std("data/map/*");
+import std("data/set/*");
 import std("data/trie/*");
 
 namespace Main {
@@ -85,9 +85,50 @@ namespace Main {
         return ok;
     }
 
+    interface TrieSet[A] {
+        virtual fun uint() Len;
+        virtual fun bool(uint, A*) Add;
+        virtual fun bool(uint, A*) Contains;
+        virtual fun bool(uint, A*) Remove;
+        virtual fun Arr[Arr[A]*]*() Arr;
+    }
+
+    static fun bool(TrieSet[char]*) runSet = (t) {
+        var HashSet[str]* ref = type(HashSet)[str].New(0U);
+        var char* k = new(char, 8U);
+        var bool ok = true;
+        var uint x = 23U;
+        for(var int i = 0; i < 4000; i++) {
+            x = x * 6364136223846793005U + 1442695040888963407U;
+            var uint r = x >> 33U;
+            var uint n = r % 6U;
+            for(var uint j = 0U; j < n; j++) {
+                k[j] = (97 + ((r >> (3U + 2U * j)) % 3U){int}){char};
+            }
+            var str s = type(Strs).ToChars(k, n{int});
+            var uint op = (r >> 27U) % 3U;
+            if(op == 0U) {
+                ok = ok && t.Add(n, k) == ref.Add(s);
+            } else if(op == 1U) {
+                ok = ok && t.Remove(n, k) == ref.Remove(s);
+            } else {
+                ok = ok && t.Contains(n, k) == ref.Contains(s);
+            }
+            ok = ok && t.Len() == ref.Len();
+        }
+        var Arr[Arr[char]*]* keys = t.Arr();
+        ok = ok && keys.Len() == ref.Len();
+        for(var uint i = 0U; i < keys.Len(); i++) {
+            ok = ok && ref.Contains(type(Main).text(keys.Get(i)));
+        }
+        return ok;
+    }
+
     fun void(uint, str...) main = (argC, argV) {
         var str out = type(Main).run(type(HashTrieMap)[char, int].New(), false){str} + " ";
-        out = out + type(Main).run(type(TreeTrieMap)[char, int].New(), true){str} + "\n";
+        out = out + type(Main).run(type(TreeTrieMap)[char, int].New(), true){str} + " ";
+        out = out + type(Main).runSet(type(HashTrieSet)[char].New()){str} + " ";
+        out = out + type(Main).runSet(type(TreeTrieSet)[char].New()){str} + "\n";
 
         var char* k = new(char, 3U);
         k[0] = 'b';
@@ -108,5 +149,5 @@ namespace Main {
 `)
 	stdout, stderr, status := run(t, binary)
 	require.Zero(t, status, stderr)
-	assert.Equal(t, "true true\n{[a], [b], [b, a], [b, a, d]} true false false 4\n", stdout)
+	assert.Equal(t, "true true true true\n{[a], [b], [b, a], [b, a, d]} true false false 4\n", stdout)
 }

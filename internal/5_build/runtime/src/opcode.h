@@ -79,6 +79,7 @@
     OP(OpLoadTailMember, 1)                                                    \
     OP(OpPushMethod, 1)                                                        \
     OP(OpCallMethod, 1)                                                        \
+    OP(OpCallMethodOpen, 2)                                                    \
                                                                                \
     OP(OpEq, 0)                                                                \
     OP(OpCmp, 0)                                                               \
@@ -88,6 +89,7 @@
     OP(OpNewArray, 1)                                                          \
                                                                                \
     OP(OpNewThread, 1)                                                         \
+    OP(OpNewThreadOpen, 2)                                                     \
     OP(OpWaitThreadVoid, 0)                                                    \
     OP(OpWaitThread, 0)                                                        \
                                                                                \
@@ -121,6 +123,7 @@
                                                                                \
     OP(OpNewLambda, 2)                                                         \
     OP(OpPushVariable, 1)                                                      \
+    OP(OpPushVariableOpen, 2)                                                  \
     OP(OpDereference, 0)                                                       \
     OP(OpDefaultValue, 0)                                                      \
     OP(OpPushReceiver, 0)                                                      \

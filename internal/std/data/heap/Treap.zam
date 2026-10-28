@@ -265,10 +265,13 @@ class Treap[A] {
         return this.Arr(){str};
     }
 
+    // Delete detaches the tree before freeing it, so a collection while it is
+    // being freed finds nothing to walk.
     fun void() Delete = () {
-        this.freeAll(this.root);
+        var Node[A]* n = this.root;
         this.root = null;
         this.len = 0U;
+        this.freeAll(n);
     }
 
     fun void() Mark = () {

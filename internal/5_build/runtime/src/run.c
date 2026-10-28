@@ -1073,6 +1073,10 @@ static ZamResult equalValues(ZamThread *thread, ZamTypeID leftType,
                 *equal = true;
                 return ZAMRESULT_CONTINUE;
             }
+            if (left == 0 || right == 0) {
+                *equal = false;
+                return ZAMRESULT_CONTINUE;
+            }
 
             const ZamString *l = zam_string_of((void *)(uintptr_t)left);
             const ZamString *r = zam_string_of((void *)(uintptr_t)right);
@@ -1308,6 +1312,8 @@ static ZamInt valuesOrder(const ZamThread *thread, const ZamImage *image,
         case ZAMPRIMITIVE_STRING: {
             if (*left == *right)
                 return 0;
+            if (*left == 0 || *right == 0)
+                return *left == 0 ? -1 : 1;
             const ZamString *l = zam_string_of((void *)(uintptr_t)*left);
             const ZamString *r = zam_string_of((void *)(uintptr_t)*right);
             uint64_t shared = l->length < r->length ? l->length : r->length;
@@ -1999,6 +2005,16 @@ static ZamInstruction fetch(ZamThread *thread) {
 // instruction rather than after it, so that a jump can simply write it: an
 // instruction that sets where to go next would otherwise have that overwritten
 // by the advance.
+// openWords pops the type ids of a frame's open-width slots and returns how many
+// words they come to, which is what the compiler could not count.
+static uint64_t openWords(ZamThread *thread, uint64_t count) {
+    const ZamImage *image = &thread->vm->image;
+    uint64_t words = 0;
+    for (uint64_t i = 0; i < count; i++)
+        words += valueWordsOf(image, zam_thread_pop_type(thread));
+    return words;
+}
+
 static ZamResult step(ZamThread *thread) {
    ZamInstruction instruction = fetch(thread);
     thread->instructionOffset += instruction.byteCount;
@@ -2902,8 +2918,13 @@ static ZamResult step(ZamThread *thread) {
     //
     // What the body wanted out of the slot it asks OpPushReceiver for instead,
     // that being the one step whose length the kind decides.
-    case OpCallMethod: {
+    // OpCallMethodOpen's frame holds arguments an instantiation decides the
+    // width of, their type ids standing above it.
+    case OpCallMethod:
+    case OpCallMethodOpen: {
         uint64_t frameWords = operandAt(instruction, 0);
+        if (instruction.opcode == OpCallMethodOpen)
+            frameWords += openWords(thread, operandAt(instruction, 1));
         if (frameWords == 0 || frameWords > thread->operandCount)
             zam_die(ZAMEXIT_PANIC,
                     "a frame of %llu words under a stack of %llu\n",
@@ -3539,8 +3560,11 @@ static ZamResult step(ZamThread *thread) {
     // frame is unread: a return from the top of a spawned thread leaves the
     // run loop with ZAMRESULT_RETURNED rather than continuing, which
     // OpReturn is what checks and this is what sets up.
-    case OpNewThread: {
+    case OpNewThread:
+    case OpNewThreadOpen: {
         uint64_t frameWords = operandAt(instruction, 0);
+        if (instruction.opcode == OpNewThreadOpen)
+            frameWords += openWords(thread, operandAt(instruction, 1));
        ZamTypeID threadType = zam_thread_pop_type(thread);
         if (frameWords == 0 || frameWords > thread->operandCount)
             zam_die(ZAMEXIT_PANIC,
@@ -3884,6 +3908,17 @@ static ZamResult step(ZamThread *thread) {
     //
     // The pointer owns no mark entry, the slot's own contents having been given
     // one when they were pushed.
+    // A slot past slots an instantiation decides the width of, whose type ids
+    // stand on the stack.
+    case OpPushVariableOpen: {
+        uint64_t words =
+            operandAt(instruction, 0) + openWords(thread, operandAt(instruction, 1));
+        zam_thread_push(thread,
+                        zam_frame_location((zam_thread_frame_base(thread) + words) *
+                                           ZAMWORD_BYTES));
+        return ZAMRESULT_CONTINUE;
+    }
+
     case OpPushVariable:
         zam_thread_push(thread,
                         zam_frame_location((zam_thread_frame_base(thread) +

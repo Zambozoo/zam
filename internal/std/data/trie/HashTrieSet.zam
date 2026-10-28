@@ -1,54 +1,292 @@
+import "../../lang/System.zam";
 import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
-import "HashTrieMap.zam";
+import "../../lang/Struct.zam";
+import "../list/ArrList.zam";
+import "../map/HashMap.zam";
 
-// Radix trie set of runs of A, kept as a HashTrieMap whose values are unused
+// Radix trie set of runs of A, each node keeping its children in a hash map
+// keyed by the first element of their edges
 class HashTrieSet[A] {
-    var HashTrieMap[A, bool]* m;
+    struct Node[A] {
+        var A* edge;
+        var uint edgeLen;
+        var bool end;
+        var HashMap[A, Node[A]*]* children;
+    }
+
+    var uint len;
+    var Node[A]* root;
 
     static fun[A] HashTrieSet[A]*() New = () {
-        var HashTrieSet[A]* s = new(HashTrieSet[A]);
-        s.Init();
-        return s;
+        var HashTrieSet[A]* t = new(HashTrieSet[A]);
+        t.Init();
+        return t;
     }
 
     fun void() Init = () {
-        this.m = type(HashTrieMap)[A, bool].New();
+        this.len = 0U;
+        this.root = new(Node[A]);
+    }
+
+    // markTree marks everything the subtree at n holds: edges and the child
+    // maps, which nothing but the nodes refers to.
+    private static fun[A] void(Node[A]*) markTree = (n) {
+        if(n == null) {
+            return;
+        }
+        for(var uint i = 0U; i < n.edgeLen; i++) {
+            mark(n.edge[i]);
+        }
+        if(n.children != null) {
+            mark(n.children);
+            n.children.EachValue(type(HashTrieSet)[A].markTree);
+        }
+    }
+
+    private static fun[A] void(Node[A]*) freeTree = (n) {
+        if(n.children != null) {
+            n.children.EachValue(type(HashTrieSet)[A].freeTree);
+            n.children.Delete();
+        }
+        free(n.edge);
+        free(n);
+    }
+
+    private fun A*(A*, uint, uint) copyRun = (key, start, n) {
+        if(n == 0U) {
+            return null;
+        }
+        var A* a = new(A, n);
+        for(var uint i = 0U; i < n; i++) {
+            a[i] = key[start + i];
+        }
+        return a;
+    }
+
+    private fun Node[A]*(A*, uint, uint) newNode = (key, start, n) {
+        var Node[A]* m = new(Node[A]);
+        m.edge = this.copyRun(key, start, n);
+        m.edgeLen = n;
+        return m;
+    }
+
+    private fun Node[A]*(Node[A]*, A) childFor = (n, a) {
+        if(n.children == null) {
+            return null;
+        }
+        var Pair[Node[A]*, bool] p = n.children.Get(a);
+        if(!p.second) {
+            return null;
+        }
+        return p.first;
+    }
+
+    private fun void(Node[A]*, A, Node[A]*) setChild = (n, a, c) {
+        if(n.children == null) {
+            n.children = type(HashMap)[A, Node[A]*].New(0U);
+        }
+        n.children.Put(a, c);
+    }
+
+    private fun uint(Node[A]*) childCount = (n) {
+        if(n.children == null) {
+            return 0U;
+        }
+        return n.children.Len();
+    }
+
+    // common counts how many of n's edge elements match key from i.
+    private fun uint(Node[A]*, uint, A*, uint) common = (n, len, key, i) {
+        var uint p = 0U;
+        for(; p < n.edgeLen && i + p < len && n.edge[p] == key[i + p];) {
+            p++;
+        }
+        return p;
+    }
+
+    // locate walks key and returns the node it ends at, or null. With prefix,
+    // a key that ends partway along an edge ends at the node below it.
+    private fun Node[A]*(uint, A*, bool) locate = (len, key, prefix) {
+        var Node[A]* n = this.root;
+        for(var uint i = 0U; i < len;) {
+            var Node[A]* c = this.childFor(n, key[i]);
+            if(c == null) {
+                return null;
+            }
+            var uint p = this.common(c, len, key, i);
+            if(p < c.edgeLen) {
+                if(prefix && i + p == len) {
+                    return c;
+                }
+                return null;
+            }
+            n = c;
+            i = i + p;
+        }
+        return n;
+    }
+
+    // mergeDown replaces n, which ends no key and has one child, with that
+    // child under the child's edge extended by n's. A detached node's child
+    // map is left to the collector, which may already have reclaimed it.
+    private fun void(Node[A]*, Node[A]*) mergeDown = (parent, n) {
+        var Node[A]* c = n.children.Arr().Get(0U).second;
+        var uint total = n.edgeLen + c.edgeLen;
+        var A* joined = new(A, total);
+        for(var uint i = 0U; i < n.edgeLen; i++) {
+            joined[i] = n.edge[i];
+        }
+        for(var uint i = 0U; i < c.edgeLen; i++) {
+            joined[n.edgeLen + i] = c.edge[i];
+        }
+        var A* old = c.edge;
+        c.edge = joined;
+        c.edgeLen = total;
+        free(old);
+        this.setChild(parent, joined[0], c);
+        free(n.edge);
+        free(n);
+    }
+
+    // collect appends the keys of the subtree at n to out from index i, the
+    // key so far standing in buf, and returns the index after the last.
+    private fun uint(Node[A]*, ArrList[A]*, Arr[A]**, uint) collect = (n, buf, out, i) {
+        for(var uint j = 0U; j < n.edgeLen; j++) {
+            buf.AddLast(n.edge[j]);
+        }
+        if(n.end) {
+            out[i] = buf.Arr();
+            i++;
+        }
+        if(n.children != null) {
+            var Arr[Pair[A, Node[A]*]]* kids = n.children.Arr();
+            for(var uint j = 0U; j < kids.Len(); j++) {
+                i = this.collect(kids.Get(j).second, buf, out, i);
+            }
+        }
+        for(var uint j = 0U; j < n.edgeLen; j++) {
+            buf.RemoveLast();
+        }
+        return i;
     }
 
     fun uint() Len = () {
-        return this.m.Len();
+        return this.len;
     }
 
     fun bool(uint, A*) Contains = (len, key) {
-        return this.m.Contains(len, key);
+        var Node[A]* n = this.locate(len, key, false);
+        return n != null && n.end;
     }
 
     // HasPrefix reports whether some key begins with the given run.
     fun bool(uint, A*) HasPrefix = (len, key) {
-        return this.m.HasPrefix(len, key);
+        if(len == 0U) {
+            return this.len > 0U;
+        }
+        return this.locate(len, key, true) != null;
     }
 
+    // Add adds key, reporting whether it is new. A new node and a node split
+    // off an edge are pinned until they are linked in.
     fun bool(uint, A*) Add = (len, key) {
-        return this.m.Put(len, key, true);
+        var Node[A]* n = this.root;
+        var uint i = 0U;
+        for(;;) {
+            if(i == len) {
+                var bool added = !n.end;
+                n.end = true;
+                if(added) {
+                    this.len++;
+                }
+                return added;
+            }
+            var Node[A]* c = this.childFor(n, key[i]);
+            if(c == null) {
+                var Node[A]* leaf = this.newNode(key, i, len - i);
+                var Struct[Node[A]*] pin;
+                pin.Init(leaf, type(HashTrieSet)[A].markTree, null);
+                leaf.end = true;
+                this.setChild(n, key[i], leaf);
+                pin.s = null;
+                this.len++;
+                return true;
+            }
+            var uint p = this.common(c, len, key, i);
+            if(p < c.edgeLen) {
+                var Node[A]* mid = this.newNode(c.edge, 0U, p);
+                var Struct[Node[A]*] pin;
+                pin.Init(mid, type(HashTrieSet)[A].markTree, null);
+                var A* rest = this.copyRun(c.edge, p, c.edgeLen - p);
+                this.setChild(mid, rest[0], c);
+                var A* old = c.edge;
+                c.edge = rest;
+                c.edgeLen = c.edgeLen - p;
+                free(old);
+                this.setChild(n, key[i], mid);
+                pin.s = null;
+                c = mid;
+            }
+            n = c;
+            i = i + p;
+        }
     }
 
     fun bool(uint, A*) Remove = (len, key) {
-        return this.m.Remove(len, key).second;
+        var Node[A]* grand = null;
+        var Node[A]* parent = null;
+        var Node[A]* n = this.root;
+        for(var uint i = 0U; i < len;) {
+            var Node[A]* c = this.childFor(n, key[i]);
+            if(c == null) {
+                return false;
+            }
+            var uint p = this.common(c, len, key, i);
+            if(p < c.edgeLen) {
+                return false;
+            }
+            grand = parent;
+            parent = n;
+            n = c;
+            i = i + p;
+        }
+        if(!n.end) {
+            return false;
+        }
+        n.end = false;
+        this.len--;
+        if(n == this.root) {
+            return true;
+        }
+
+        if(this.childCount(n) == 0U) {
+            parent.children.Remove(n.edge[0]);
+            free(n.edge);
+            free(n);
+            n = parent;
+            parent = grand;
+            if(n == this.root || n.end) {
+                return true;
+            }
+        }
+        if(this.childCount(n) == 1U && !n.end) {
+            this.mergeDown(parent, n);
+        }
+        return true;
     }
 
     fun void() Clear = () {
-        this.m.Clear();
+        this.Delete();
+        this.Init();
     }
 
     // Arr returns the keys, each a fresh copy, in no particular order.
     fun Arr[Arr[A]*]*() Arr = () {
-        var Arr[Pair[Arr[A]*, bool]]* entries = this.m.Arr();
-        var Arr[A]** a = new(Arr[A]*, entries.Len());
-        var Arr[Arr[A]*]* out = type(Arr)[Arr[A]*].New(entries.Len(), a...);
-        for(var uint i = 0U; i < entries.Len(); i++) {
-            a[i] = entries.Get(i).first;
-        }
+        var Arr[A]** a = new(Arr[A]*, this.len);
+        var Arr[Arr[A]*]* out = type(Arr)[Arr[A]*].New(this.len, a...);
+        var ArrList[A]* buf = type(ArrList)[A].New(0U);
+        this.collect(this.root, buf, a, 0U);
         return out;
     }
 
@@ -69,6 +307,23 @@ class HashTrieSet[A] {
             spacer = ", ";
         }
         return s + "}";
+    }
+
+    // Delete detaches the trie and frees it with collection blocked: the child
+    // maps are collected objects only the detached nodes still name.
+    fun void() Delete = () {
+        var Node[A]* n = this.root;
+        this.root = null;
+        this.len = 0U;
+        if(n != null) {
+            type(System.GC).Block();
+            type(HashTrieSet)[A].freeTree(n);
+            type(System.GC).Unblock();
+        }
+    }
+
+    fun void() Mark = () {
+        type(HashTrieSet)[A].markTree(this.root);
     }
 
     private class Iter[A] {

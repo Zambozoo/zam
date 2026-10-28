@@ -312,6 +312,11 @@ const (
 	// out of that frame and leaves through it.
 	//   (code, frameWords) | <oldFunScope:i> [closure,args...] {closureMarkEntry,argMarkEntries?} -> <newFunScope:closure.instruction> {newFunScope, ..., oldFunScope}
 	OpCallMethod
+	// OpCallMethodOpen is OpCallMethod for a frame holding arguments whose width
+	// an instantiation decides: their type ids stand above the frame, and their
+	// widths are added to the fixed words the first operand counts.
+	//   (code, fixedWords, openCount) | [closure,args...,typeID...] -> as OpCallMethod
+	OpCallMethodOpen
 
 	// OpEq pops two values, each with its own type id above it, and pushes whether they
 	// are equal. What equality comes to is the type's to say, which is what it
@@ -380,6 +385,10 @@ const (
 	// what says where it begins.
 	//   (code, frameWords) | <threadList:i> [closure,args...,typeID] {closureMarkEntry,argMarkEntries?} -> <threadList:i,j> [thread] {markEntry}
 	OpNewThread
+	// OpNewThreadOpen is OpNewThread for a frame holding arguments whose width
+	// an instantiation decides: their type ids stand above the thread's.
+	//   (code, fixedWords, openCount) | [closure,args...,typeID,typeID...] -> as OpNewThread
+	OpNewThreadOpen
 	// OpWaitThreadVoid waits for a thread to complete and returns void.
 	//   (code) | <threadList:i,...> [thread] -> <threadList:...>
 	OpWaitThreadVoid
@@ -647,6 +656,12 @@ const (
 	// already.
 	//   (code,offset) | -> [variablePointer]
 	OpPushVariable
+	// OpPushVariableOpen pushes a pointer to a frame slot that lies past slots
+	// whose width an instantiation decides. The first operand counts the words of
+	// the fixed-width slots before it, and the second how many type ids stand on
+	// the stack, one for each open-width slot before it, whose widths are added.
+	//   (code, fixedWords, openCount) | [typeID...] -> [frameLocation]
+	OpPushVariableOpen
 
 	// OpDereference dereferences a pointer.
 	//   (code) | [pointer,typeID] {pointerMarkEntry?} -> [value] {valueMarkEntry?}
@@ -863,6 +878,9 @@ type (
 	localBinding struct {
 		offset uint64
 		typ    syntax.Type
+		// open is the types of the open-width slots ahead of this one, whose
+		// widths the runtime adds to offset.
+		open []syntax.Type
 	}
 
 	// staticBinding is a static of the declaration the name was written in or of
@@ -889,6 +907,7 @@ type (
 		outer      *variableScope
 		variables  map[string]binding
 		baseOffset uint64
+		baseOpen   int
 	}
 
 	// loopContext is one enclosing loop's unpatched jumps, and the number of
@@ -949,8 +968,15 @@ type (
 		// by a call and so has no closure to reach through. Every other body gets
 		// its receiver out of the closure, which is what OpPushReceiver is for.
 		receiverInFrame bool
-		// nextVariableOffset is the stack slot the next declared variable takes.
+		// nextVariableOffset is the stack slot the next declared variable takes,
+		// past the open-width slots in openSlots.
 		nextVariableOffset uint64
+		// openSlots is the types of the frame's slots whose width depends on an
+		// instantiation, in the order they were declared.
+		openSlots []syntax.Type
+		// structMethodInstructions is where each instance method of each
+		// generic struct concrete begins, keyed by the concrete's type index.
+		structMethodInstructions map[int][]uint64
 		// byteOffset is where the next emitted operation lands in the
 		// operations region, which is what a jump targets.
 		byteOffset int
@@ -1114,6 +1140,7 @@ func (v *operationVisitor) pushScopeOf(bindings map[string]binding) {
 		outer:      v.scopes.Peek(),
 		variables:  bindings,
 		baseOffset: v.nextVariableOffset,
+		baseOpen:   len(v.openSlots),
 	})
 }
 
@@ -1121,6 +1148,7 @@ func (v *operationVisitor) pushScopeOf(bindings map[string]binding) {
 func (v *operationVisitor) popScope() {
 	scope, _ := v.scopes.Pop()
 	v.nextVariableOffset = scope.baseOffset
+	v.openSlots = v.openSlots[:scope.baseOpen]
 }
 
 // declareVariable binds name to the next free stack slot in the innermost scope,
@@ -1133,12 +1161,68 @@ func (v *operationVisitor) popScope() {
 // nothing will look it up, and leaving it out is what lets two `_` in one
 // scope share the scope without colliding on the one name.
 func (v *operationVisitor) declareVariable(name string, typ syntax.Type) uint64 {
+	typ = v.groundType(typ)
 	offset := v.nextVariableOffset
 	if name != syntax.BlankName {
-		v.scopes.Peek().variables[name] = localBinding{offset: offset, typ: typ}
+		open := v.openSlots[:len(v.openSlots):len(v.openSlots)]
+		v.scopes.Peek().variables[name] = localBinding{offset: offset, typ: typ, open: open}
+	}
+	v.reserveSlot(typ)
+	return offset
+}
+
+// reserveSlot takes room in the frame for a slot of the given type: words of
+// its own where its width is fixed, or a place in openSlots where an
+// instantiation decides it.
+func (v *operationVisitor) reserveSlot(typ syntax.Type) {
+	if openWidth(typ) {
+		v.openSlots = append(v.openSlots, typ)
+		return
 	}
 	v.nextVariableOffset += stackWords(typ)
-	return offset
+}
+
+// groundType applies the bindings of the body being emitted, which is every
+// binding a generic struct's or generic static method's body has.
+func (v *operationVisitor) groundType(t syntax.Type) syntax.Type {
+	if v.methodBindings != nil {
+		return t.Map(v.methodBindings)
+	}
+	return t
+}
+
+// openWidth reports whether a value of t is as wide as an instantiation
+// decides: a generic argument, or a type laid out inline that mentions one. A
+// reference is one word whatever it refers to.
+func openWidth(t syntax.Type) bool {
+	t = syntax.StripConst(t)
+	if !t.ContainsGenericArg() {
+		return false
+	}
+	switch tt := t.(type) {
+	case *syntax.TypeGenericArg:
+		return true
+	case *syntax.TypeArray:
+		return true
+	case *syntax.TypeWrapped, *syntax.TypeFunction:
+		return false
+	case syntax.TypeResolvable:
+		return laidOutInline(tt)
+	}
+	return false
+}
+
+// emitPushSlot pushes the location of a frame slot, adding the widths of the
+// open-width slots ahead of it when there are any.
+func (v *operationVisitor) emitPushSlot(b localBinding) {
+	if len(b.open) == 0 {
+		v.emit(newUnaryOp(OpPushVariable, b.offset))
+		return
+	}
+	for _, t := range b.open {
+		v.emitPushTypeID(t)
+	}
+	v.emit(newBinaryOp(OpPushVariableOpen, b.offset, uint64(len(b.open))))
 }
 
 // lookupBinding resolves name to what it stands for, searching innermost outward
@@ -1257,7 +1341,7 @@ func (v *operationVisitor) declareParameters(names []string, types []syntax.Type
 	for i, t := range types {
 		t = syntax.ParameterBindingType(t)
 		if i >= len(names) {
-			v.nextVariableOffset += stackWords(t)
+			v.reserveSlot(v.groundType(t))
 			continue
 		}
 		v.declareVariable(names[i], t)
@@ -1297,7 +1381,7 @@ func (b instanceBinding) selection() operation {
 // off the receiver.
 func (v *operationVisitor) emitPushLocal(name string) {
 	local := v.lookupLocal(name)
-	v.emit(newUnaryOp(OpPushVariable, local.offset))
+	v.emitPushSlot(local)
 	v.emitPushTypeID(local.typ)
 }
 
@@ -1329,7 +1413,7 @@ func (v *operationVisitor) emitPushReceiver() {
 func (v *operationVisitor) emitPushName(name string) {
 	switch b := v.lookupBinding(name).(type) {
 	case localBinding:
-		v.emit(newUnaryOp(OpPushVariable, b.offset))
+		v.emitPushSlot(b)
 		v.emitPushTypeID(b.typ)
 	case staticBinding:
 		v.emitPushStatic(b.field, b.typ)
@@ -1386,7 +1470,57 @@ func (v *operationVisitor) visitDecl(d syntax.Decl) error {
 	return nil
 }
 
-func (v *operationVisitor) VisitDeclStruct(d *syntax.DeclStruct) error       { return v.visitDecl(d) }
+// VisitDeclStruct emits a struct's bodies. A generic struct's instance methods
+// are emitted once per concrete, under that concrete's bindings: a struct
+// carries no header a shared body could read its instantiation off, so every
+// size and type id in the body has to be settled where it is emitted.
+func (v *operationVisitor) VisitDeclStruct(d *syntax.DeclStruct) error {
+	if d.Generics() == nil {
+		return v.visitDecl(d)
+	}
+	for _, f := range d.StaticFields() {
+		if err := f.Accept(v); err != nil {
+			return err
+		}
+	}
+	for child := range d.Decls() {
+		if err := child.Accept(v); err != nil {
+			return err
+		}
+	}
+	if v.structMethodInstructions == nil {
+		v.structMethodInstructions = map[int][]uint64{}
+	}
+	for _, entry := range d.Concretes().All() {
+		concrete, ok := entry.Value.(*syntax.DeclConcreteStruct)
+		if !ok {
+			continue
+		}
+		tg, ok := entry.Key.(*syntax.TypeGeneric)
+		if !ok || tg.ContainsGenericArg() {
+			continue
+		}
+		bindings := make(map[syntax.GenericArgKey]syntax.Type, d.Generics().Len())
+		i := 0
+		for _, g := range d.Generics().All() {
+			bindings[g.Key] = tg.ParameterTypes[i]
+			i++
+		}
+
+		cells := make([]uint64, instanceFieldCount[*syntax.FieldMethod](d))
+		outer := v.methodBindings
+		v.methodBindings = bindings
+		for _, m := range d.InstanceMethods() {
+			if err := v.emitMethodBody(m, m.FieldType().Map(bindings), &cells[*m.Index()]); err != nil {
+				v.methodBindings = outer
+				return err
+			}
+		}
+		v.methodBindings = outer
+		v.structMethodInstructions[*concrete.TypeIndex()] = cells
+	}
+	return nil
+}
 func (v *operationVisitor) VisitDeclEnum(d *syntax.DeclEnum) error           { return v.visitDecl(d) }
 func (v *operationVisitor) VisitDeclClass(d *syntax.DeclClass) error         { return v.visitDecl(d) }
 func (v *operationVisitor) VisitDeclAbstract(d *syntax.DeclAbstract) error   { return v.visitDecl(d) }
@@ -1819,6 +1953,7 @@ func (v *operationVisitor) emitMethodBody(f *syntax.FieldMethod, methodType synt
 	v.inMain = f == v.mainMethod
 	v.receiverInFrame = false
 	v.nextVariableOffset = 0
+	v.openSlots = nil
 
 	instance := !f.Modifiers().Has(syntax.ModifierStatic)
 	defer v.popScopes(v.pushDeclScopes(f.OuterDecl(), instance))
@@ -1981,6 +2116,7 @@ func (v *operationVisitor) emitInstanceInitializer(d syntax.Decl) error {
 	v.inMain = false
 	v.receiverInFrame = true
 	v.nextVariableOffset = 0
+	v.openSlots = nil
 	defer v.popScopes(v.pushDeclScopes(d, true))
 
 	v.pushScope()
@@ -2093,18 +2229,19 @@ func (v *operationVisitor) recordMethodInstructions() {
 
 // recordDeclMethodInstructions fills one declaration's table and those of the
 // declarations nested inside it. A generic class or abstract is one definition
-// holding every instantiation, and a generic struct is one definition apiece,
-// but a method's body is emitted once for the template either way, so every
-// concrete of a struct names the same offsets — the same fanning out
-// recordInitializer does for the initializer.
+// holding every instantiation, whose method bodies are shared. A generic
+// struct is one definition apiece, each naming the bodies emitted for it.
 func (v *operationVisitor) recordDeclMethodInstructions(d syntax.Decl) {
 	r := v.reader
 	switch d := d.(type) {
 	case *syntax.DeclStruct:
 		if d.Generics() != nil {
 			for _, entry := range d.Concretes().All() {
-				def := r.genericStructDefinitions[*entry.Value.TypeIndex()].(*typeDefinitionStruct)
-				fillMethodDefinitionInstructions(def.instanceMethods, d)
+				index := *entry.Value.TypeIndex()
+				def := r.genericStructDefinitions[index].(*typeDefinitionStruct)
+				for i, instruction := range v.structMethodInstructions[index] {
+					def.instanceMethods[i].instruction = instruction
+				}
 			}
 			break
 		}
@@ -2726,10 +2863,10 @@ func (v *operationVisitor) emitValueAs(e syntax.Expr, target syntax.Type) error 
 // The width returned is in words rather than in arguments, because an argument
 // is not a word: a struct, class or enum lies on the stack inline and spans as
 // many slots as its layout does. Words are what say where the frame begins.
-func (v *operationVisitor) emitCallFrame(e *syntax.ExprNAry) (uint64, error) {
+func (v *operationVisitor) emitCallFrame(e *syntax.ExprNAry) (callFrame, error) {
 	callee := e.Exprs[0]
 	if err := v.emitValue(callee); err != nil {
-		return 0, err
+		return callFrame{}, err
 	}
 
 	parameters := callee.ResolvedType().(*syntax.TypeFunction).ParameterTypes
@@ -2742,22 +2879,53 @@ func (v *operationVisitor) emitCallFrame(e *syntax.ExprNAry) (uint64, error) {
 	arguments := e.Exprs[1:]
 	for i, argument := range arguments[:fixed] {
 		if err := v.emitValueAs(argument, parameters[i]); err != nil {
-			return 0, err
+			return callFrame{}, err
 		}
 	}
 
 	if element != nil {
 		packed := arguments[fixed:]
 		if err := v.emitVariadicPayload(packed, element); err != nil {
-			return 0, err
+			return callFrame{}, err
 		}
 	}
 
-	frameWords := uint64(1)
+	return v.frameShape(parameters)
+}
+
+// frameShape is how a call frame over the given parameters is measured: the
+// words of the closure and the fixed-width arguments, and the types of the
+// arguments whose width an instantiation decides.
+func (v *operationVisitor) frameShape(parameters []syntax.Type) (callFrame, error) {
+	frame := callFrame{words: 1}
 	for _, parameter := range parameters {
-		frameWords += stackWords(parameter)
+		parameter = v.groundType(parameter)
+		if openWidth(parameter) {
+			frame.open = append(frame.open, parameter)
+			continue
+		}
+		frame.words += stackWords(parameter)
 	}
-	return frameWords, nil
+	return frame, nil
+}
+
+// callFrame is the measure [operationVisitor.frameShape] gives a call frame.
+type callFrame struct {
+	words uint64
+	open  []syntax.Type
+}
+
+// emitFrameCall emits a call over a frame of the given shape, pushing the type
+// ids of its open-width arguments for the open opcode where it has any.
+func (v *operationVisitor) emitFrameCall(fixed, open Opcode, frame callFrame) {
+	if len(frame.open) == 0 {
+		v.emit(newUnaryOp(fixed, frame.words))
+		return
+	}
+	for _, t := range frame.open {
+		v.emitPushTypeID(t)
+	}
+	v.emit(newBinaryOp(open, frame.words, uint64(len(frame.open))))
 }
 
 // emitCall runs a call on the stack it was written on. A call through a native
@@ -2766,16 +2934,21 @@ func (v *operationVisitor) emitCallFrame(e *syntax.ExprNAry) (uint64, error) {
 // reads a closure out of slot 0, which a bare native address is not. Everything
 // above the base is the same shape either way.
 func (v *operationVisitor) emitCall(e *syntax.ExprNAry) error {
-	frameWords, err := v.emitCallFrame(e)
+	frame, err := v.emitCallFrame(e)
 	if err != nil {
 		return err
 	}
 
-	opcode := OpCallMethod
 	if isNativeCallee(e.Exprs[0]) {
-		opcode = OpCallNative
+		// A native's signature is C's, which has no width an instantiation
+		// decides.
+		if len(frame.open) != 0 {
+			panic("unreachable")
+		}
+		v.emit(newUnaryOp(OpCallNative, frame.words))
+		return nil
 	}
-	v.emit(newUnaryOp(opcode, frameWords))
+	v.emitFrameCall(OpCallMethod, OpCallMethodOpen, frame)
 	return nil
 }
 
@@ -2803,13 +2976,13 @@ func isNativeCallee(e syntax.Expr) bool {
 // rather than staying on the stack the call was written on. The call is left
 // unemitted as a call, so its own visit never happens.
 func (v *operationVisitor) emitAsync(e *syntax.ExprNAry) error {
-	frameWords, err := v.emitCallFrame(e.Exprs[0].(*syntax.ExprNAry))
+	frame, err := v.emitCallFrame(e.Exprs[0].(*syntax.ExprNAry))
 	if err != nil {
 		return err
 	}
 
 	v.emitPushTypeID(e.ResolvedType())
-	v.emit(newUnaryOp(OpNewThread, frameWords))
+	v.emitFrameCall(OpNewThread, OpNewThreadOpen, frame)
 	return nil
 }
 
@@ -4077,12 +4250,12 @@ func (v *operationVisitor) lambdaCaptures(e *syntax.ExprLambda) []capturedVariab
 // which is what lets a generic argument in the body be read off the receiver,
 // as it is anywhere else.
 func (v *operationVisitor) emitLambdaBody(e *syntax.ExprLambda, captures []capturedVariable, receiver syntax.Type) error {
-	outerScopes, outerOffset := v.scopes, v.nextVariableOffset
+	outerScopes, outerOffset, outerOpen := v.scopes, v.nextVariableOffset, v.openSlots
 	outerLoops, outerLabel := v.loops, v.pendingLabel
 	outerReturnType, outerInMain := v.returnType, v.inMain
 	outerReceiverInFrame := v.receiverInFrame
 	defer func() {
-		v.scopes, v.nextVariableOffset = outerScopes, outerOffset
+		v.scopes, v.nextVariableOffset, v.openSlots = outerScopes, outerOffset, outerOpen
 		v.loops, v.pendingLabel = outerLoops, outerLabel
 		v.returnType, v.inMain = outerReturnType, outerInMain
 		v.receiverInFrame = outerReceiverInFrame
@@ -4096,6 +4269,7 @@ func (v *operationVisitor) emitLambdaBody(e *syntax.ExprLambda, captures []captu
 	v.receiverInFrame = false
 
 	v.nextVariableOffset = 0
+	v.openSlots = nil
 	defer v.popScopes(v.pushDeclScopes(v.currentDecl, receiver != nil))
 
 	v.pushScope()

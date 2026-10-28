@@ -67,20 +67,37 @@ class HashSet[A] {
         return this.cap;
     }
 
+    // rehash moves every element into fresh arrays, which are filled while the
+    // old ones are still the set's, so the collector reaches every element
+    // throughout, and installed once they are full.
     private fun void() rehash = () {
-        var A* oldVals = this.vals;
-        var byte* oldStates = this.states;
-        var uint oldCap = this.cap;
         var uint newCap = type(HashSet).minCap;
         for(; newCap < (this.len + 1U) * 2U;) {
             newCap = newCap * 2U;
         }
-        this.alloc(newCap);
-        for(var uint i = 0U; i < oldCap; i++) {
-            if(oldStates[i] == type(HashSet).full) {
-                this.place(oldVals[i]);
+        var uint shift = type(HashSet).wordBits;
+        for(var uint c = newCap; c > 1U; c = c >> 1U) {
+            shift--;
+        }
+        var A* vals = new(A, newCap);
+        var byte* states = new(byte, newCap);
+        for(var uint i = 0U; i < this.cap; i++) {
+            if(this.states[i] == type(HashSet).full) {
+                var uint j = ((#this.vals[i]){uint} * type(HashSet).fibonacci) >> shift;
+                for(; states[j] == type(HashSet).full;) {
+                    j = (j + 1U) & (newCap - 1U);
+                }
+                vals[j] = this.vals[i];
+                states[j] = type(HashSet).full;
             }
         }
+        var A* oldVals = this.vals;
+        var byte* oldStates = this.states;
+        this.vals = vals;
+        this.states = states;
+        this.cap = newCap;
+        this.shift = shift;
+        this.used = this.len;
         free(oldVals);
         free(oldStates);
     }
