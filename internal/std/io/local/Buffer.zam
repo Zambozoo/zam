@@ -1,1 +1,194 @@
-class Buffer {}
+import "../../lang/Arrs.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/Strs.zam";
+import "../../lang/System.zam";
+
+// Growable in-memory run of bytes, written at the back and read from the
+// front. It is a Stream whose end is wherever its unread bytes run out.
+public class Buffer {
+    var byte* buf;
+    var uint cap;
+    var uint start;
+    var uint end;
+
+    public static fun Buffer*() New = () {
+        var Buffer* b = new(Buffer);
+        b.Init();
+        return b;
+    }
+
+    public fun void() Init = () {
+        this.buf = null;
+        this.cap = 0U;
+        this.start = 0U;
+        this.end = 0U;
+    }
+
+    // Len is the number of unread bytes.
+    public fun uint() Len = () {
+        return this.end - this.start;
+    }
+
+    // Get returns unread byte i.
+    public fun byte(uint) Get = (i) {
+        if(i >= this.Len()) {
+            type(System).Panic("Buffer index out of range");
+        }
+        return this.buf[this.start + i];
+    }
+
+    // Reserve makes room to write n more bytes without growing.
+    public fun void(uint) Reserve = (n) {
+        var uint len = this.Len();
+        if(this.end + n <= this.cap) {
+            return;
+        }
+        if(len + n <= this.cap && this.start >= len) {
+            type(Arrs)[byte].Copy(len, this.buf + this.start, this.buf);
+        } else {
+            var uint grown = this.cap * 2U;
+            if(grown < len + n) {
+                grown = len + n;
+            }
+            if(grown < 64U) {
+                grown = 64U;
+            }
+            var byte* b = new(byte, grown);
+            if(len > 0U) {
+                type(Arrs)[byte].Copy(len, this.buf + this.start, b);
+            }
+            free(this.buf);
+            this.buf = b;
+            this.cap = grown;
+        }
+        this.start = 0U;
+        this.end = len;
+    }
+
+    // Write appends n bytes from b, all of them.
+    public fun Pair[int, Err*](byte*, int) Write = (b, n) {
+        var Pair[int, Err*] p;
+        p.first = n;
+        p.second = null;
+        if(n <= 0) {
+            p.first = 0;
+            return p;
+        }
+        this.Reserve(n{uint});
+        type(Arrs)[byte].Copy(n{uint}, b, this.buf + this.end);
+        this.end = this.end + n{uint};
+        return p;
+    }
+
+    public fun void(str) WriteStr = (s) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(s);
+        this.Write(p.first, p.second);
+    }
+
+    public fun void(byte) WriteByte = (c) {
+        this.Reserve(1U);
+        this.buf[this.end] = c;
+        this.end++;
+    }
+
+    // Read moves up to n unread bytes into b, returning how many it moved.
+    public fun Pair[int, Err*](byte*, int) Read = (b, n) {
+        var Pair[int, Err*] p;
+        p.second = null;
+        var uint m = 0U;
+        if(n > 0) {
+            m = n{uint};
+        }
+        if(m > this.Len()) {
+            m = this.Len();
+        }
+        if(m > 0U) {
+            type(Arrs)[byte].Copy(m, this.buf + this.start, b);
+        }
+        this.start = this.start + m;
+        p.first = m{int};
+        return p;
+    }
+
+    // ReadByte reads one byte, and false when there is none.
+    public fun Pair[byte, bool]() ReadByte = () {
+        var Pair[byte, bool] p;
+        p.second = this.Len() > 0U;
+        if(p.second) {
+            p.first = this.buf[this.start];
+            this.start++;
+        }
+        return p;
+    }
+
+    // ReadStr reads up to n bytes as a str.
+    public fun str(uint) ReadStr = (n) {
+        if(n > this.Len()) {
+            n = this.Len();
+        }
+        if(n == 0U) {
+            return "";
+        }
+        var str s = type(Strs).FromBytes(&(this.buf[this.start]), n{int});
+        this.start = this.start + n;
+        return s;
+    }
+
+    // ReadLine reads up to the next newline, which it consumes but leaves out
+    // along with a carriage return before it, or else the rest. It reports
+    // false when nothing is left.
+    public fun Pair[str, bool]() ReadLine = () {
+        var Pair[str, bool] p;
+        p.first = "";
+        p.second = this.Len() > 0U;
+        if(!p.second) {
+            return p;
+        }
+        var uint n = 0U;
+        for(; this.start + n < this.end && this.buf[this.start + n]{int} != 10;) {
+            n++;
+        }
+        var bool newline = this.start + n < this.end;
+        var uint keep = n;
+        if(keep > 0U && this.buf[this.start + keep - 1U]{int} == 13) {
+            keep--;
+        }
+        p.first = this.ReadStr(keep);
+        this.start = this.start + n - keep;
+        if(newline) {
+            this.start++;
+        }
+        return p;
+    }
+
+    // Str returns the unread bytes without reading them.
+    public fun str() Str = () {
+        if(this.Len() == 0U) {
+            return "";
+        }
+        return type(Strs).FromBytes(&(this.buf[this.start]), this.Len(){int});
+    }
+
+    // Reset drops every unread byte, keeping the room they took.
+    public fun void() Reset = () {
+        this.start = 0U;
+        this.end = 0U;
+    }
+
+    // Close does nothing; a Buffer is never closed.
+    public fun Err*() Close = () {
+        return null;
+    }
+
+    public fun void() Delete = () {
+        free(this.buf);
+        this.buf = null;
+        this.cap = 0U;
+        this.start = 0U;
+        this.end = 0U;
+    }
+
+    public fun void() Mark = () {
+    }
+}

@@ -1,1 +1,309 @@
-class Matrix {}
+import "../lang/System.zam";
+import "../lang/Obj.zam";
+import "../lang/Pair.zam";
+import "Math.zam";
+import "Hash.zam";
+import "Vector.zam";
+
+// Matrix of flts laid out row by row, with dimensions set when it is made
+public class Matrix {
+    var uint rows;
+    var uint cols;
+    var flt* arr;
+
+    // New takes the rows * cols values in args, row by row, as its own.
+    public static fun Matrix*(uint, uint, flt...) New = (rows, cols, args) {
+        var Matrix* m = new(Matrix);
+        m.Init(rows, cols, args...);
+        return m;
+    }
+
+    public static fun Matrix*(uint, uint) Zero = (rows, cols) {
+        var flt* a = new(flt, rows * cols);
+        for(var uint i = 0U; i < rows * cols; i++) {
+            a[i] = 0.0;
+        }
+        return type(Matrix).New(rows, cols, a...);
+    }
+
+    public static fun Matrix*(uint) Identity = (n) {
+        var Matrix* m = type(Matrix).Zero(n, n);
+        for(var uint i = 0U; i < n; i++) {
+            m.arr[i * n + i] = 1.0;
+        }
+        return m;
+    }
+
+    public fun void(uint, uint, flt...) Init = (rows, cols, args) {
+        this.rows = rows;
+        this.cols = cols;
+        this.arr = args;
+    }
+
+    private fun void(Matrix*) checkSame = (o) {
+        if(o.rows != this.rows || o.cols != this.cols) {
+            type(System).Panic("Matrix dimensions differ");
+        }
+    }
+
+    private fun void(uint, uint) checkIndex = (r, c) {
+        if(r >= this.rows || c >= this.cols) {
+            type(System).Panic("Matrix index out of range");
+        }
+    }
+
+    private fun void() checkSquare = () {
+        if(this.rows != this.cols) {
+            type(System).Panic("Matrix is not square");
+        }
+    }
+
+    public fun uint() Rows = () {
+        return this.rows;
+    }
+
+    public fun uint() Cols = () {
+        return this.cols;
+    }
+
+    public fun flt(uint, uint) Get = (r, c) {
+        this.checkIndex(r, c);
+        return this.arr[r * this.cols + c];
+    }
+
+    public fun void(uint, uint, flt) Set = (r, c, x) {
+        this.checkIndex(r, c);
+        this.arr[r * this.cols + c] = x;
+    }
+
+    public fun Matrix*() Copy = () {
+        var Matrix* m = type(Matrix).Zero(this.rows, this.cols);
+        for(var uint i = 0U; i < this.rows * this.cols; i++) {
+            m.arr[i] = this.arr[i];
+        }
+        return m;
+    }
+
+    public fun Vector*(uint) Row = (r) {
+        this.checkIndex(r, 0U);
+        var Vector* v = type(Vector).Zero(this.cols);
+        for(var uint c = 0U; c < this.cols; c++) {
+            v.Set(c, this.arr[r * this.cols + c]);
+        }
+        return v;
+    }
+
+    public fun Vector*(uint) Col = (c) {
+        this.checkIndex(0U, c);
+        var Vector* v = type(Vector).Zero(this.rows);
+        for(var uint r = 0U; r < this.rows; r++) {
+            v.Set(r, this.arr[r * this.cols + c]);
+        }
+        return v;
+    }
+
+    public fun Matrix*(Matrix*) Add = (o) {
+        this.checkSame(o);
+        var Matrix* m = type(Matrix).Zero(this.rows, this.cols);
+        for(var uint i = 0U; i < this.rows * this.cols; i++) {
+            m.arr[i] = this.arr[i] + o.arr[i];
+        }
+        return m;
+    }
+
+    public fun Matrix*(Matrix*) Sub = (o) {
+        this.checkSame(o);
+        var Matrix* m = type(Matrix).Zero(this.rows, this.cols);
+        for(var uint i = 0U; i < this.rows * this.cols; i++) {
+            m.arr[i] = this.arr[i] - o.arr[i];
+        }
+        return m;
+    }
+
+    public fun Matrix*(flt) Scale = (k) {
+        var Matrix* m = type(Matrix).Zero(this.rows, this.cols);
+        for(var uint i = 0U; i < this.rows * this.cols; i++) {
+            m.arr[i] = this.arr[i] * k;
+        }
+        return m;
+    }
+
+    public fun Matrix*(Matrix*) Mul = (o) {
+        if(this.cols != o.rows) {
+            type(System).Panic("Matrix dimensions do not chain");
+        }
+        var Matrix* m = type(Matrix).Zero(this.rows, o.cols);
+        for(var uint r = 0U; r < this.rows; r++) {
+            for(var uint k = 0U; k < this.cols; k++) {
+                var flt a = this.arr[r * this.cols + k];
+                for(var uint c = 0U; c < o.cols; c++) {
+                    m.arr[r * o.cols + c] = m.arr[r * o.cols + c] + a * o.arr[k * o.cols + c];
+                }
+            }
+        }
+        return m;
+    }
+
+    // MulVector returns this matrix times the column vector v.
+    public fun Vector*(Vector*) MulVector = (v) {
+        if(this.cols != v.Len()) {
+            type(System).Panic("Matrix and Vector dimensions do not chain");
+        }
+        var Vector* out = type(Vector).Zero(this.rows);
+        for(var uint r = 0U; r < this.rows; r++) {
+            var flt s = 0.0;
+            for(var uint c = 0U; c < this.cols; c++) {
+                s = s + this.arr[r * this.cols + c] * v.Get(c);
+            }
+            out.Set(r, s);
+        }
+        return out;
+    }
+
+    public fun Matrix*() Transpose = () {
+        var Matrix* m = type(Matrix).Zero(this.cols, this.rows);
+        for(var uint r = 0U; r < this.rows; r++) {
+            for(var uint c = 0U; c < this.cols; c++) {
+                m.arr[c * this.rows + r] = this.arr[r * this.cols + c];
+            }
+        }
+        return m;
+    }
+
+    // pivot finds the row at or below col holding the largest magnitude in
+    // col.
+    private fun uint(uint) pivot = (col) {
+        var uint best = col;
+        for(var uint r = col + 1U; r < this.rows; r++) {
+            if(type(Math).Abs(this.arr[r * this.cols + col]) > type(Math).Abs(this.arr[best * this.cols + col])) {
+                best = r;
+            }
+        }
+        return best;
+    }
+
+    private fun void(uint, uint) swapRows = (a, b) {
+        if(a == b) {
+            return;
+        }
+        for(var uint c = 0U; c < this.cols; c++) {
+            var flt t = this.arr[a * this.cols + c];
+            this.arr[a * this.cols + c] = this.arr[b * this.cols + c];
+            this.arr[b * this.cols + c] = t;
+        }
+    }
+
+    // Determinant returns the determinant by elimination with partial
+    // pivoting.
+    public fun flt() Determinant = () {
+        this.checkSquare();
+        var Matrix* m = this.Copy();
+        var uint n = this.rows;
+        var flt det = 1.0;
+        for(var uint col = 0U; col < n; col++) {
+            var uint p = m.pivot(col);
+            if(m.arr[p * n + col] == 0.0) {
+                return 0.0;
+            }
+            if(p != col) {
+                m.swapRows(p, col);
+                det = -det;
+            }
+            var flt d = m.arr[col * n + col];
+            det = det * d;
+            for(var uint r = col + 1U; r < n; r++) {
+                var flt f = m.arr[r * n + col] / d;
+                for(var uint c = col; c < n; c++) {
+                    m.arr[r * n + c] = m.arr[r * n + c] - f * m.arr[col * n + c];
+                }
+            }
+        }
+        return det;
+    }
+
+    // Inverse returns the inverse by Gauss-Jordan elimination, and false when
+    // the matrix is singular.
+    public fun Pair[Matrix*, bool]() Inverse = () {
+        this.checkSquare();
+        var Pair[Matrix*, bool] out;
+        var uint n = this.rows;
+        var Matrix* m = this.Copy();
+        var Matrix* inv = type(Matrix).Identity(n);
+        for(var uint col = 0U; col < n; col++) {
+            var uint p = m.pivot(col);
+            if(m.arr[p * n + col] == 0.0) {
+                out.first = null;
+                out.second = false;
+                return out;
+            }
+            m.swapRows(p, col);
+            inv.swapRows(p, col);
+            var flt d = m.arr[col * n + col];
+            for(var uint c = 0U; c < n; c++) {
+                m.arr[col * n + c] = m.arr[col * n + c] / d;
+                inv.arr[col * n + c] = inv.arr[col * n + c] / d;
+            }
+            for(var uint r = 0U; r < n; r++) {
+                if(r != col) {
+                    var flt f = m.arr[r * n + col];
+                    for(var uint c = 0U; c < n; c++) {
+                        m.arr[r * n + c] = m.arr[r * n + c] - f * m.arr[col * n + c];
+                        inv.arr[r * n + c] = inv.arr[r * n + c] - f * inv.arr[col * n + c];
+                    }
+                }
+            }
+        }
+        out.first = inv;
+        out.second = true;
+        return out;
+    }
+
+    public fun bool(Obj*) Eq = (o) {
+        var Matrix* m = o{Matrix*};
+        if(m.rows != this.rows || m.cols != this.cols) {
+            return false;
+        }
+        for(var uint i = 0U; i < this.rows * this.cols; i++) {
+            if(this.arr[i] != m.arr[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    public fun int() Hash = () {
+        var uint h = type(Hash).Combine(type(Hash).Int(this.rows{int}), type(Hash).Int(this.cols{int}));
+        for(var uint i = 0U; i < this.rows * this.cols; i++) {
+            h = type(Hash).Combine(h, type(Hash).Flt(this.arr[i]));
+        }
+        return h{int};
+    }
+
+    public fun str() Str = () {
+        var str s = "[";
+        for(var uint r = 0U; r < this.rows; r++) {
+            if(r > 0U) {
+                s = s + ", ";
+            }
+            s = s + "[";
+            for(var uint c = 0U; c < this.cols; c++) {
+                if(c > 0U) {
+                    s = s + ", ";
+                }
+                s = s + this.arr[r * this.cols + c]{str};
+            }
+            s = s + "]";
+        }
+        return s + "]";
+    }
+
+    public fun void() Delete = () {
+        free(this.arr);
+        this.arr = null;
+        this.rows = 0U;
+        this.cols = 0U;
+    }
+
+    public fun void() Mark = () {
+    }
+}

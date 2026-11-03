@@ -73,12 +73,12 @@ func TestOutlineListsWhatAClassInherits(t *testing.T) {
 		"    fun str() Name\n"+
 		"\n"+
 		"    // from Obj\n"+
-		"    fun bool(Obj*) Eq\n"+
-		"    fun int(Obj*) Cmp\n"+
-		"    fun int() Hash\n"+
-		"    fun str() Str\n"+
-		"    fun void() Mark\n"+
-		"    fun void() Delete\n"+
+		"    public fun bool(Obj*) Eq\n"+
+		"    public fun int(Obj*) Cmp\n"+
+		"    public fun int() Hash\n"+
+		"    public fun str() Str\n"+
+		"    public fun void() Mark\n"+
+		"    public fun void() Delete\n"+
 		"}", outlineOf(t, files, "Square.zam", func(f *syntax.File) *syntax.Token { return f.Decl.NameToken() }))
 }
 

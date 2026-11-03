@@ -339,6 +339,30 @@ void zam_thread_push_function(ZamThread *thread, uint64_t returnInstruction,
     thread->functionEntry = pushEntry(thread, &entry, sizeof entry);
 }
 
+void zam_thread_push_direct_function(ZamThread *thread, uint64_t returnInstruction,
+                                     uint64_t operandPop, ZamTypeShort receiverType) {
+   ZamMarkFunction entry = {
+        .kind = ZAMMARK_FUNCTION,
+        .previous = thread->functionEntry,
+        .returnInstruction = returnInstruction,
+        .operandPop = operandPop,
+        .receiverType = receiverType,
+        .direct = 1,
+    };
+    thread->functionEntry = pushEntry(thread, &entry, sizeof entry);
+}
+
+bool zam_thread_frame_direct(const ZamThread *thread, ZamTypeID *receiverType) {
+    if (thread->functionEntry == ZAMMARK_NONE)
+        return false;
+   ZamMarkFunction entry;
+    readEntry(thread, thread->functionEntry, &entry, sizeof entry);
+    if (!entry.direct)
+        return false;
+    *receiverType = (ZamTypeID){.shortID = (ZamTypeShort)entry.receiverType};
+    return true;
+}
+
 ZamMarkFunction zam_thread_pop_function(ZamThread *thread) {
     uint64_t offset = thread->functionEntry;
     if (offset == ZAMMARK_NONE)

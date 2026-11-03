@@ -1,1 +1,50 @@
-class Latch {}
+import "Mutex.zam";
+import "Cond.zam";
+
+// Count that waiters block on until it reaches zero, and which then stays open
+public class Latch {
+    var Mutex* m;
+    var Cond* c;
+    var uint count;
+
+    public static fun Latch*(uint) New = (count) {
+        var Latch* l = new(Latch);
+        l.Init(count);
+        return l;
+    }
+
+    public fun void(uint) Init = (count) {
+        this.m = type(Mutex).New();
+        this.c = type(Cond).New(this.m);
+        this.count = count;
+    }
+
+    // CountDown takes one from the count, releasing every waiter when it
+    // reaches zero. At zero it does nothing.
+    public fun void() CountDown = () {
+        this.m.Lock();
+        if(this.count > 0U) {
+            this.count--;
+            if(this.count == 0U) {
+                this.c.Broadcast();
+            }
+        }
+        this.m.Unlock();
+    }
+
+    public fun uint() Count = () {
+        this.m.Lock();
+        var uint n = this.count;
+        this.m.Unlock();
+        return n;
+    }
+
+    // Wait returns once the count is zero.
+    public fun void() Wait = () {
+        this.m.Lock();
+        for(; this.count > 0U;) {
+            this.c.Wait();
+        }
+        this.m.Unlock();
+    }
+}

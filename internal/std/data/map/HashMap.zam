@@ -3,7 +3,7 @@ import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 
 // Open-addressed hash map with linear probing
-class HashMap[A, B] {
+public class HashMap[A, B] {
     static var byte$ empty = 0{byte};
     static var byte$ full = 1{byte};
     static var byte$ removed = 2{byte};
@@ -25,13 +25,13 @@ class HashMap[A, B] {
     var uint len;
     var uint used;
 
-    static fun[A, B] HashMap[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+    public static fun[A, B] HashMap[A, B]*(uint, Pair[A, B]...) New = (len, args) {
         var HashMap[A, B]* m = new(HashMap[A, B]);
         m.Init(len, args...);
         return m;
     }
 
-    fun void(uint, Pair[A, B]...) Init = (len, args) {
+    public fun void(uint, Pair[A, B]...) Init = (len, args) {
         this.alloc(type(HashMap).minCap);
         for(var uint i = 0U; i < len; i++) {
             this.Put(args[i].first, args[i].second);
@@ -123,15 +123,15 @@ class HashMap[A, B] {
         this.len++;
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun bool(A) Contains = (k) {
+    public fun bool(A) Contains = (k) {
         return this.find(k) != this.cap;
     }
 
-    fun Pair[B, bool](A) Get = (k) {
+    public fun Pair[B, bool](A) Get = (k) {
         var Pair[B, bool] p;
         var uint i = this.find(k);
         if(i == this.cap) {
@@ -143,7 +143,7 @@ class HashMap[A, B] {
         return p;
     }
 
-    fun bool(A, B) Put = (k, v) {
+    public fun bool(A, B) Put = (k, v) {
         var uint i = this.find(k);
         if(i != this.cap) {
             this.vals[i] = v;
@@ -156,7 +156,7 @@ class HashMap[A, B] {
         return true;
     }
 
-    fun Pair[B, bool](A) Remove = (k) {
+    public fun Pair[B, bool](A) Remove = (k) {
         var Pair[B, bool] p;
         var uint i = this.find(k);
         if(i == this.cap) {
@@ -172,7 +172,7 @@ class HashMap[A, B] {
 
     // EachValue calls f with every value. It allocates nothing, so a Mark can
     // use it to reach values the map holds.
-    fun void(void(B)) EachValue = (f) {
+    public fun void(void(B)) EachValue = (f) {
         for(var uint i = 0U; i < this.cap; i++) {
             if(this.states[i] == type(HashMap).full) {
                 f(this.vals[i]);
@@ -180,12 +180,12 @@ class HashMap[A, B] {
         }
     }
 
-    fun void() Clear = () {
+    public fun void() Clear = () {
         this.Delete();
         this.alloc(type(HashMap).minCap);
     }
 
-    fun Arr[Pair[A, B]]*() Arr = () {
+    public fun Arr[Pair[A, B]]*() Arr = () {
         var Pair[A, B]* a = new(Pair[A, B], this.len);
         var uint n = 0U;
         for(var uint i = 0U; i < this.cap; i++) {
@@ -198,13 +198,13 @@ class HashMap[A, B] {
         return type(Arr)[Pair[A, B]].New(this.len, a...);
     }
 
-    fun Iter[A, B]*() Iter = () {
+    public fun Iter[A, B]*() Iter = () {
         var Iter[A, B]* i = new(Iter[A, B]);
         i.Init(this);
         return i;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         var str s = "{";
         var str spacer = "";
         for(var uint i = 0U; i < this.cap; i++) {
@@ -216,7 +216,7 @@ class HashMap[A, B] {
         return s + "}";
     }
 
-    fun void() Delete = () {
+    public fun void() Delete = () {
         free(this.keys);
         free(this.vals);
         free(this.states);
@@ -228,7 +228,10 @@ class HashMap[A, B] {
         this.used = 0U;
     }
 
-    fun void() Mark = () {
+    public fun void() Mark = () {
+        if(!type(System.GC).Markable(@{A}) && !type(System.GC).Markable(@{B})) {
+            return;
+        }
         for(var uint i = 0U; i < this.cap; i++) {
             if(this.states[i] == type(HashMap).full) {
                 mark(this.keys[i]);
@@ -241,7 +244,7 @@ class HashMap[A, B] {
         var HashMap[A, B]* m;
         var uint i;
 
-        fun void(HashMap[A, B]*) Init = (m) {
+        public fun void(HashMap[A, B]*) Init = (m) {
             this.m = m;
             this.i = 0U;
         }
@@ -254,7 +257,7 @@ class HashMap[A, B] {
             return p;
         }
 
-        fun Pair[Pair[A, B], bool]() Next = () {
+        public fun Pair[Pair[A, B], bool]() Next = () {
             for(; this.i < this.m.cap; this.i++) {
                 if(this.m.states[this.i] == type(HashMap).full) {
                     this.i++;
@@ -266,7 +269,7 @@ class HashMap[A, B] {
             return p;
         }
 
-        fun Pair[Pair[A, B], bool]() Prev = () {
+        public fun Pair[Pair[A, B], bool]() Prev = () {
             for(; this.i > 0U;) {
                 this.i--;
                 if(this.m.states[this.i] == type(HashMap).full) {

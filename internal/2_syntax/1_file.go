@@ -130,7 +130,13 @@ func newFile(parser SyntaxParser, path *base.Path) (*File, error) {
 	}
 	*parser.File() = &f
 
-	if f.Decl, err = newDecl(parser, ModifierPublic); err != nil {
+	modifiers, err := newModifiers(parser)
+	if err != nil {
+		return nil, err
+	} else if modifiers&^ModifierPublic != 0 {
+		return nil, fmt.Errorf("a top-level declaration can only be public")
+	}
+	if f.Decl, err = newDecl(parser, modifiers); err != nil {
 		return nil, err
 	}
 

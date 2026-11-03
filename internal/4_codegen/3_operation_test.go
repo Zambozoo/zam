@@ -730,3 +730,87 @@ namespace Main {
 	assert.Less(t, lastLambda, firstDefault,
 		"a static method's closure was built after the enum value that calls it")
 }
+
+// countBinaryOp returns how many times a binary opcode appears.
+func countBinaryOp(ops []operation, op Opcode) int {
+	count := 0
+	for _, laid := range ops {
+		if binary, ok := laid.(*binaryOperation); ok && binary.opcode == op {
+			count++
+		}
+	}
+	return count
+}
+
+// TestCallMethodDirectEmitsNoClosure pins the calling convention for a method
+// selected off a receiver that already has a home: OpCallMethodDirect puts the
+// receiver's address in slot 0 and never builds a method closure. A homeless
+// receiver still needs the closure path, which the companion case covers.
+func TestCallMethodDirectEmitsNoClosure(t *testing.T) {
+	direct := compileOperations(t, `
+namespace Main {
+`+mainMethod+`
+    class Box {
+        var int v;
+
+        fun int() get = () {
+            return this.v;
+        }
+    }
+
+    static fun int(Box*) throughPointer = (b) {
+        return b.get();
+    }
+}
+`)
+	assert.NotZero(t, countBinaryOp(direct.operations, OpCallMethodDirect),
+		"a method called on an addressable receiver should use OpCallMethodDirect")
+	assert.Zero(t, countUnaryOp(direct.operations, OpPushMethod),
+		"a direct call should not build a method closure with OpPushMethod")
+
+	homeless := compileOperations(t, `
+namespace Main {
+`+mainMethod+`
+    struct Point {
+        var int x;
+
+        fun int() get = () {
+            return this.x;
+        }
+    }
+
+    static fun Point() make = () {
+        var Point p;
+        p.x = 1;
+        return p;
+    }
+
+    static fun int() f = () {
+        return type(Main).make().get();
+    }
+}
+`)
+	assert.Zero(t, countBinaryOp(homeless.operations, OpCallMethodDirect),
+		"a homeless receiver still needs a value method closure")
+	assert.NotZero(t, countUnaryOp(homeless.operations, OpPushMethod),
+		"a homeless receiver's call should still emit OpPushMethod")
+}
+
+// TestNullReadAsStrIsTheZeroWord pins that a null landing in a str is the null
+// str, not the text a null pointer casts to, so that it compares equal to null.
+func TestNullReadAsStrIsTheZeroWord(t *testing.T) {
+	reader := compileOperations(t, `
+namespace Main {
+`+mainMethod+`
+    static fun str(str) same = (s) {
+        return s;
+    }
+
+    static fun str() f = () {
+        var str s = null;
+        return type(Main).same(null);
+    }
+}
+`)
+	assert.False(t, containsOpcode(reader.operations, OpCastToString))
+}

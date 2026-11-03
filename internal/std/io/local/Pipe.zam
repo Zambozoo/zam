@@ -1,1 +1,53 @@
-class Pipe {}
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "File.zam";
+
+// One-way channel of bytes: what is written to Writer is read from Reader.
+// Reading blocks until bytes arrive or every writer is closed.
+public class Pipe {
+    var File* reader;
+    var File* writer;
+
+    public static fun Pair[Pipe*, Err*]() New = () {
+        var Pair[Pipe*, Err*] out;
+        var int r = -1;
+        var int w = -1;
+        var str errStr;
+        native(STD_PIPE_INIT){void(int*, int*, str*)}(&r, &w, &errStr);
+        if(errStr != null) {
+            out.first = null;
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        var Pipe* p = new(Pipe);
+        p.reader = type(File).FromFD(r);
+        p.writer = type(File).FromFD(w);
+        out.first = p;
+        out.second = null;
+        return out;
+    }
+
+    public fun File*() Reader = () {
+        return this.reader;
+    }
+
+    public fun File*() Writer = () {
+        return this.writer;
+    }
+
+    // Close closes whichever ends are still open, reporting the first error.
+    public fun Err*() Close = () {
+        var Err* e = null;
+        if(this.reader.FD() >= 0) {
+            e = this.reader.Close();
+        }
+        if(this.writer.FD() >= 0) {
+            var Err* w = this.writer.Close();
+            if(e == null) {
+                e = w;
+            }
+        }
+        return e;
+    }
+}

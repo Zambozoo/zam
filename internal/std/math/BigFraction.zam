@@ -1,1 +1,96 @@
-class BigFraction {}
+import "../lang/System.zam";
+import "../lang/Obj.zam";
+import "Hash.zam";
+import "BigInt.zam";
+
+// Immutable arbitrary-precision rational number, kept in lowest terms with a
+// positive denominator
+public class BigFraction {
+    var BigInt* num;
+    var BigInt* den;
+
+    // Of returns num / den in lowest terms.
+    public static fun BigFraction*(BigInt*, BigInt*) Of = (num, den) {
+        if(den.IsZero()) {
+            type(System).Panic("BigFraction with a zero denominator");
+        }
+        if(den.Sign() < 0) {
+            num = num.Neg();
+            den = den.Neg();
+        }
+        var BigInt* g = num.Gcd(den);
+        var BigFraction* f = new(BigFraction);
+        f.num = num.Div(g);
+        f.den = den.Div(g);
+        return f;
+    }
+
+    public static fun BigFraction*(int, int) FromInts = (num, den) {
+        return type(BigFraction).Of(type(BigInt).FromInt(num), type(BigInt).FromInt(den));
+    }
+
+    public fun BigInt*() Num = () {
+        return this.num;
+    }
+
+    public fun BigInt*() Den = () {
+        return this.den;
+    }
+
+    public fun BigFraction*(BigFraction*) Add = (o) {
+        return type(BigFraction).Of(this.num.Mul(o.den).Add(o.num.Mul(this.den)), this.den.Mul(o.den));
+    }
+
+    public fun BigFraction*(BigFraction*) Sub = (o) {
+        return type(BigFraction).Of(this.num.Mul(o.den).Sub(o.num.Mul(this.den)), this.den.Mul(o.den));
+    }
+
+    public fun BigFraction*(BigFraction*) Mul = (o) {
+        return type(BigFraction).Of(this.num.Mul(o.num), this.den.Mul(o.den));
+    }
+
+    public fun BigFraction*(BigFraction*) Div = (o) {
+        return type(BigFraction).Of(this.num.Mul(o.den), this.den.Mul(o.num));
+    }
+
+    public fun BigFraction*() Neg = () {
+        var BigFraction* f = new(BigFraction);
+        f.num = this.num.Neg();
+        f.den = this.den;
+        return f;
+    }
+
+    // Inv returns the reciprocal.
+    public fun BigFraction*() Inv = () {
+        return type(BigFraction).Of(this.den, this.num);
+    }
+
+    public fun int() Sign = () {
+        return this.num.Sign();
+    }
+
+    public fun flt() ToFlt = () {
+        return this.num.ToFlt() / this.den.ToFlt();
+    }
+
+    public fun bool(Obj*) Eq = (o) {
+        var BigFraction* f = o{BigFraction*};
+        return this.num == f.num && this.den == f.den;
+    }
+
+    public fun int(Obj*) Cmp = (o) {
+        var BigFraction* f = o{BigFraction*};
+        return this.num.Mul(f.den).Cmp(f.num.Mul(this.den));
+    }
+
+    public fun int() Hash = () {
+        return type(Hash).Combine(this.num.Hash(){uint}, this.den.Hash(){uint}){int};
+    }
+
+    public fun str() Str = () {
+        if(this.den == type(BigInt).FromUint(1U)) {
+            return this.num.Str();
+        }
+        return this.num.Str() + "/" + this.den.Str();
+    }
+}

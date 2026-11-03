@@ -147,6 +147,18 @@ func (p *Path) Base() string {
 	return path.Base(p.Outer)
 }
 
+// Dir names the directory the path's file sits in, which is the package its
+// declarations belong to.
+func (p *Path) Dir() string {
+	switch {
+	case IsStdPath(p):
+		return stdScheme + path.Dir(StdName(p))
+	case p.InZip():
+		return p.Outer + zipDelimiter + path.Dir(p.Inner)
+	}
+	return path.Dir(filepath.ToSlash(p.Outer))
+}
+
 // Hash returns the hash of the path.
 func (p *Path) Hash() uint64 {
 	if p.Inner == "" {

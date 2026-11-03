@@ -1,3 +1,91 @@
-namespace Trig {
-    
+import "Consts.zam";
+
+public namespace Trig {
+    public static fun flt(flt) Sin = (x) {
+        var flt r;
+        native(STD_MATH_SIN){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Cos = (x) {
+        var flt r;
+        native(STD_MATH_COS){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Tan = (x) {
+        var flt r;
+        native(STD_MATH_TAN){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Asin = (x) {
+        var flt r;
+        native(STD_MATH_ASIN){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Acos = (x) {
+        var flt r;
+        native(STD_MATH_ACOS){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Atan = (x) {
+        var flt r;
+        native(STD_MATH_ATAN){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    // Atan2 returns the angle of the point (x, y) from the positive x axis,
+    // in [-Pi, Pi].
+    public static fun flt(flt, flt) Atan2 = (y, x) {
+        var flt r;
+        native(STD_MATH_ATAN2){void(flt, flt, flt*)}(y, x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Sinh = (x) {
+        var flt r;
+        native(STD_MATH_SINH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Cosh = (x) {
+        var flt r;
+        native(STD_MATH_COSH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Tanh = (x) {
+        var flt r;
+        native(STD_MATH_TANH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Asinh = (x) {
+        var flt r;
+        native(STD_MATH_ASINH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Acosh = (x) {
+        var flt r;
+        native(STD_MATH_ACOSH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Atanh = (x) {
+        var flt r;
+        native(STD_MATH_ATANH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) ToRadians = (degrees) {
+        return degrees * type(Constants).Pi / 180.0;
+    }
+
+    public static fun flt(flt) ToDegrees = (radians) {
+        return radians * 180.0 / type(Constants).Pi;
+    }
 }

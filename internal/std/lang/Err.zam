@@ -1,3 +1,3 @@
-interface Err {
+public interface Err {
     virtual fun str() Err;
 }

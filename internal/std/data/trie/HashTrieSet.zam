@@ -7,7 +7,7 @@ import "../map/HashMap.zam";
 
 // Radix trie set of runs of A, each node keeping its children in a hash map
 // keyed by the first element of their edges
-class HashTrieSet[A] {
+public class HashTrieSet[A] {
     struct Node[A] {
         var A* edge;
         var uint edgeLen;
@@ -18,13 +18,13 @@ class HashTrieSet[A] {
     var uint len;
     var Node[A]* root;
 
-    static fun[A] HashTrieSet[A]*() New = () {
+    public static fun[A] HashTrieSet[A]*() New = () {
         var HashTrieSet[A]* t = new(HashTrieSet[A]);
         t.Init();
         return t;
     }
 
-    fun void() Init = () {
+    public fun void() Init = () {
         this.len = 0U;
         this.root = new(Node[A]);
     }
@@ -171,17 +171,17 @@ class HashTrieSet[A] {
         return i;
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun bool(uint, A*) Contains = (len, key) {
+    public fun bool(uint, A*) Contains = (len, key) {
         var Node[A]* n = this.locate(len, key, false);
         return n != null && n.end;
     }
 
     // HasPrefix reports whether some key begins with the given run.
-    fun bool(uint, A*) HasPrefix = (len, key) {
+    public fun bool(uint, A*) HasPrefix = (len, key) {
         if(len == 0U) {
             return this.len > 0U;
         }
@@ -190,7 +190,7 @@ class HashTrieSet[A] {
 
     // Add adds key, reporting whether it is new. A new node and a node split
     // off an edge are pinned until they are linked in.
-    fun bool(uint, A*) Add = (len, key) {
+    public fun bool(uint, A*) Add = (len, key) {
         var Node[A]* n = this.root;
         var uint i = 0U;
         for(;;) {
@@ -233,7 +233,7 @@ class HashTrieSet[A] {
         }
     }
 
-    fun bool(uint, A*) Remove = (len, key) {
+    public fun bool(uint, A*) Remove = (len, key) {
         var Node[A]* grand = null;
         var Node[A]* parent = null;
         var Node[A]* n = this.root;
@@ -276,13 +276,13 @@ class HashTrieSet[A] {
         return true;
     }
 
-    fun void() Clear = () {
+    public fun void() Clear = () {
         this.Delete();
         this.Init();
     }
 
     // Arr returns the keys, each a fresh copy, in no particular order.
-    fun Arr[Arr[A]*]*() Arr = () {
+    public fun Arr[Arr[A]*]*() Arr = () {
         var Arr[A]** a = new(Arr[A]*, this.len);
         var Arr[Arr[A]*]* out = type(Arr)[Arr[A]*].New(this.len, a...);
         var ArrList[A]* buf = type(ArrList)[A].New(0U);
@@ -291,14 +291,14 @@ class HashTrieSet[A] {
     }
 
     // Iter visits the keys as Arr does, as they stood when it was made.
-    fun Iter[A]*() Iter = () {
+    public fun Iter[A]*() Iter = () {
         var Iter[A]* i = new(Iter[A]);
         i.items = this.Arr();
         i.i = 0U;
         return i;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         var Arr[Arr[A]*]* a = this.Arr();
         var str s = "{";
         var str spacer = "";
@@ -311,7 +311,7 @@ class HashTrieSet[A] {
 
     // Delete detaches the trie and frees it with collection blocked: the child
     // maps are collected objects only the detached nodes still name.
-    fun void() Delete = () {
+    public fun void() Delete = () {
         var Node[A]* n = this.root;
         this.root = null;
         this.len = 0U;
@@ -322,7 +322,7 @@ class HashTrieSet[A] {
         }
     }
 
-    fun void() Mark = () {
+    public fun void() Mark = () {
         type(HashTrieSet)[A].markTree(this.root);
     }
 
@@ -330,7 +330,7 @@ class HashTrieSet[A] {
         var Arr[Arr[A]*]* items;
         var uint i;
 
-        fun Pair[Arr[A]*, bool]() Next = () {
+        public fun Pair[Arr[A]*, bool]() Next = () {
             var Pair[Arr[A]*, bool] p;
             if(this.i >= this.items.Len()) {
                 p.second = false;
@@ -342,7 +342,7 @@ class HashTrieSet[A] {
             return p;
         }
 
-        fun Pair[Arr[A]*, bool]() Prev = () {
+        public fun Pair[Arr[A]*, bool]() Prev = () {
             var Pair[Arr[A]*, bool] p;
             if(this.i == 0U) {
                 p.second = false;

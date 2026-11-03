@@ -1,1 +1,43 @@
-namespace Poly1305 {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../Subtle.zam";
+
+// Poly1305 one-time authenticator (RFC 8439). A key must never be used twice.
+public namespace Poly1305 {
+    public var uint$ KeySize = 32U;
+    public var uint$ Size = 16U;
+
+    // Sum returns the tag of n bytes at b under a key of keyLen bytes.
+    public static fun Pair[Arr[byte]*, Err*](byte*, uint, byte*, uint) Sum = (key, keyLen, b, n) {
+        var Pair[Arr[byte]*, Err*] out;
+        out.first = null;
+        out.second = null;
+        var uint h = 0U;
+        var int size = 0;
+        var int block = 0;
+        var str errStr;
+        native(STD_POLY1305_NEW){void(byte*, int, uint*, int*, int*, str*)}(key, keyLen{int}, &h, &size, &block, &errStr);
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        native(STD_MAC_WRITE){void(uint, byte*, int)}(h, b, n{int});
+        var byte* tag = new(byte, size{uint});
+        native(STD_MAC_SUM){void(uint, byte*)}(h, tag);
+        native(STD_MAC_FREE){void(uint)}(h);
+        out.first = type(Arr)[byte].New(size{uint}, tag...);
+        return out;
+    }
+
+    // Verify reports whether the tagLen bytes at tag are the tag of n bytes at
+    // b under a key of keyLen bytes.
+    public static fun bool(byte*, uint, byte*, uint, byte*, uint) Verify = (key, keyLen, b, n, tag, tagLen) {
+        var Pair[Arr[byte]*, Err*] sum = type(Poly1305).Sum(key, keyLen, b, n);
+        if(sum.second != null || tagLen != type(Poly1305).Size) {
+            return false;
+        }
+        return type(Subtle).Equal(sum.first.Arr(), tag, tagLen);
+    }
+}

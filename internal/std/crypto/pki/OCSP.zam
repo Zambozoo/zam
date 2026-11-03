@@ -1,2 +1,130 @@
-// Online Certificate Status Protocol
-namespace OCSP {}
+import "../../io/web/HTTP.zam";
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "../../lang/time/Duration.zam";
+import "../../lang/time/Time.zam";
+import "../asymmetric/Key.zam";
+import "X509.zam";
+
+// Online Certificate Status Protocol (RFC 6960): asking a certificate's
+// issuer whether it still stands, and answering as one
+public namespace OCSP {
+    public enum Status : int {
+        Good(0),
+        Revoked(1),
+        Unknown(2);
+    }
+
+    // Result is what a responder said of a certificate, to the second.
+    // revokedAt holds only for a Revoked status, and nextUpdate only when
+    // hasNextUpdate is set.
+    public class Result {
+        public var OCSP.Status status;
+        public var Time revokedAt;
+        public var Time thisUpdate;
+        public var Time nextUpdate;
+        public var bool hasNextUpdate;
+    }
+
+    static fun OCSP.Status(int) statusOf = (s) {
+        if(s == type(OCSP.Status).Good{int}) {
+            return type(OCSP.Status).Good;
+        } else if(s == type(OCSP.Status).Revoked{int}) {
+            return type(OCSP.Status).Revoked;
+        }
+        return type(OCSP.Status).Unknown;
+    }
+
+    // Request asks after cert, issued by issuer, in DER.
+    public static fun Pair[Arr[byte]*, Err*](X509*, X509*) Request = (cert, issuer) {
+        var uint h = 0U;
+        var int n = 0;
+        var str errStr;
+        native(STD_OCSP_REQUEST){void(uint, uint, uint*, int*, str*)}(cert.handle, issuer.handle, &h, &n, &errStr);
+        return type(X509).take(h, n, errStr);
+    }
+
+    // Check reads n bytes of DER response at b about cert, which must be
+    // signed by issuer or a responder it delegated to and be current.
+    public static fun Pair[OCSP.Result*, Err*](X509*, X509*, byte*, uint) Check = (cert, issuer, b, n) {
+        var Pair[OCSP.Result*, Err*] out;
+        out.first = null;
+        out.second = null;
+        var int status = 0;
+        var int revokedAt = 0;
+        var int thisUpdate = 0;
+        var int nextUpdate = 0;
+        var bool hasNextUpdate = false;
+        var str errStr;
+        native(STD_OCSP_CHECK){void(uint, uint, byte*, int, int*, int*, int*, int*, bool*, str*)}(cert.handle, issuer.handle, b, n{int}, &status, &revokedAt, &thisUpdate, &nextUpdate, &hasNextUpdate, &errStr);
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        var OCSP.Result* r = new(OCSP.Result);
+        r.status = type(OCSP).statusOf(status);
+        r.revokedAt = type(Time).FromUnix(revokedAt, 0);
+        r.thisUpdate = type(Time).FromUnix(thisUpdate, 0);
+        r.nextUpdate = type(Time).FromUnix(nextUpdate, 0);
+        r.hasNextUpdate = hasNextUpdate;
+        out.first = r;
+        return out;
+    }
+
+    // Query asks the responder cert names after cert, issued by issuer.
+    public static fun Pair[OCSP.Result*, Err*](X509*, X509*) Query = (cert, issuer) {
+        var Pair[OCSP.Result*, Err*] out;
+        out.first = null;
+        if(cert.OCSPURL() == "") {
+            out.second = type(StrErr).New("the certificate names no OCSP responder");
+            return out;
+        }
+        var Pair[Arr[byte]*, Err*] req = type(OCSP).Request(cert, issuer);
+        out.second = req.second;
+        if(req.second != null) {
+            return out;
+        }
+        var HTTP.Request* r = type(HTTP.Request).New("POST", cert.OCSPURL());
+        r.headers.Set("Content-Type", "application/ocsp-request");
+        r.SetBody(type(Strs).FromBytes(req.first.Arr(), req.first.Len(){int}));
+        var Pair[HTTP.Response*, Err*] resp = type(HTTP).Do(r);
+        out.second = resp.second;
+        if(resp.second != null) {
+            return out;
+        }
+        if(resp.first.status != 200U) {
+            out.second = type(StrErr).New("the OCSP responder answered " + resp.first.status{str});
+            return out;
+        }
+        var Pair[str, Err*] body = resp.first.ReadBody();
+        out.second = body.second;
+        if(body.second != null) {
+            return out;
+        }
+        var Pair[byte*, int] b = type(Strs).ToBytes(body.first);
+        return type(OCSP).Check(cert, issuer, b.first, b.second{uint});
+    }
+
+    // Respond answers n bytes of DER request at b as issuer, signing with
+    // issuerKey and giving every certificate asked after status, revoked at
+    // revokedAt if it is Revoked, to hold for validFor.
+    public static fun Pair[Arr[byte]*, Err*](byte*, uint, X509*, Key*, OCSP.Status, Time, Duration) Respond = (b, n, issuer, issuerKey, status, revokedAt, validFor) {
+        var Pair[Arr[byte]*, Err*] der = issuerKey.DER();
+        if(der.second != null) {
+            return der;
+        }
+        if(!issuerKey.IsPrivate()) {
+            der.first = null;
+            der.second = type(StrErr).New("answering OCSP needs the issuer's private key");
+            return der;
+        }
+        var uint h = 0U;
+        var int len = 0;
+        var str errStr;
+        native(STD_OCSP_RESPOND){void(byte*, int, uint, byte*, int, int, int, int, uint*, int*, str*)}(b, n{int}, issuer.handle, der.first.Arr(), der.first.Len(){int}, status{int}, revokedAt.Unix(), validFor.InMilliseconds() / 1000, &h, &len, &errStr);
+        return type(X509).take(h, len, errStr);
+    }
+}

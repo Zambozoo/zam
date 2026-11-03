@@ -1,0 +1,22 @@
+import "../lang/Pair.zam";
+import "../lang/Strs.zam";
+
+// Comparisons that take time independent of the secrets compared
+public namespace Subtle {
+    // Equal reports whether the n bytes at a and b are equal.
+    public static fun bool(byte*, byte*, uint) Equal = (a, b, n) {
+        var bool out = false;
+        native(STD_CRYPTO_EQUAL){void(byte*, byte*, int, bool*)}(a, b, n{int}, &out);
+        return out;
+    }
+
+    // EqualStr reports whether a and b are equal, leaking only their lengths.
+    public static fun bool(str, str) EqualStr = (a, b) {
+        var Pair[byte*, int] x = type(Strs).ToBytes(a);
+        var Pair[byte*, int] y = type(Strs).ToBytes(b);
+        if(x.second != y.second) {
+            return false;
+        }
+        return type(Subtle).Equal(x.first, y.first, x.second{uint});
+    }
+}

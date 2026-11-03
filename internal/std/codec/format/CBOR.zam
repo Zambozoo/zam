@@ -1,1 +1,281 @@
-namespace CBOR {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Obj.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+
+// CBOR (RFC 8949) value over libcbor, which owns the tree. A value reached
+// through another shares its item. Arrays and maps made by NewArray and
+// NewMap grow; those parsed from bytes are fixed in size, though members
+// may be replaced. Encode writes every container and string in definite form.
+public class CBOR {
+    public enum Kind : int {
+        Null(0),
+        Undefined(1),
+        Bool(2),
+        Int(3),
+        Flt(4),
+        Bytes(5),
+        String(6),
+        Array(7),
+        Map(8),
+        Tag(9),
+        Simple(10);
+    }
+
+    var uint handle;
+
+    private static fun CBOR*(uint) wrap = (h) {
+        var CBOR* c = new(CBOR);
+        c.handle = h;
+        return c;
+    }
+
+    // take copies a run the native left in a buffer.
+    private static fun Arr[byte]*(uint, int) take = (h, n) {
+        var byte* b = new(byte, n{uint});
+        native(STD_CODEC_TAKE){void(uint, byte*)}(h, b);
+        return type(Arr)[byte].New(n{uint}, b...);
+    }
+
+    // Parse decodes exactly one item from n bytes at b.
+    public static fun Pair[CBOR*, Err*](byte*, uint) Parse = (b, n) {
+        var Pair[CBOR*, Err*] out;
+        var uint h = 0U;
+        var str errStr;
+        native(STD_CBOR_PARSE){void(byte*, int, uint*, str*)}(b, n{int}, &h, &errStr);
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+        } else {
+            out.first = type(CBOR).wrap(h);
+        }
+        return out;
+    }
+
+    public static fun CBOR*() Null = () {
+        var uint h;
+        native(STD_CBOR_NEW_NULL){void(uint*)}(&h);
+        return type(CBOR).wrap(h);
+    }
+
+    public static fun CBOR*(bool) NewBool = (b) {
+        var uint h;
+        native(STD_CBOR_NEW_BOOL){void(bool, uint*)}(b, &h);
+        return type(CBOR).wrap(h);
+    }
+
+    public static fun CBOR*(int) NewInt = (i) {
+        var uint h;
+        native(STD_CBOR_NEW_INT){void(int, uint*)}(i, &h);
+        return type(CBOR).wrap(h);
+    }
+
+    // NewFlt makes a double-precision float.
+    public static fun CBOR*(flt) NewFlt = (f) {
+        var uint h;
+        native(STD_CBOR_NEW_FLT){void(flt, uint*)}(f, &h);
+        return type(CBOR).wrap(h);
+    }
+
+    public static fun CBOR*(str) NewStr = (s) {
+        var uint h;
+        native(STD_CBOR_NEW_STR){void(str, uint*)}(s, &h);
+        return type(CBOR).wrap(h);
+    }
+
+    public static fun CBOR*(byte*, uint) NewBytes = (b, n) {
+        var uint h;
+        native(STD_CBOR_NEW_BYTES){void(byte*, int, uint*)}(b, n{int}, &h);
+        return type(CBOR).wrap(h);
+    }
+
+    public static fun CBOR*() NewArray = () {
+        var uint h;
+        native(STD_CBOR_NEW_ARRAY){void(uint*)}(&h);
+        return type(CBOR).wrap(h);
+    }
+
+    public static fun CBOR*() NewMap = () {
+        var uint h;
+        native(STD_CBOR_NEW_MAP){void(uint*)}(&h);
+        return type(CBOR).wrap(h);
+    }
+
+    // NewTag tags v with the tag number t.
+    public static fun CBOR*(uint, CBOR*) NewTag = (t, v) {
+        var uint h;
+        native(STD_CBOR_NEW_TAG){void(uint, uint, uint*)}(t, v.handle, &h);
+        return type(CBOR).wrap(h);
+    }
+
+    public fun CBOR.Kind() Kind = () {
+        var int k;
+        native(STD_CBOR_KIND){void(uint, int*)}(this.handle, &k);
+        if(k == 1) {
+            return type(CBOR.Kind).Undefined;
+        }
+        if(k == 2) {
+            return type(CBOR.Kind).Bool;
+        }
+        if(k == 3) {
+            return type(CBOR.Kind).Int;
+        }
+        if(k == 4) {
+            return type(CBOR.Kind).Flt;
+        }
+        if(k == 5) {
+            return type(CBOR.Kind).Bytes;
+        }
+        if(k == 6) {
+            return type(CBOR.Kind).String;
+        }
+        if(k == 7) {
+            return type(CBOR.Kind).Array;
+        }
+        if(k == 8) {
+            return type(CBOR.Kind).Map;
+        }
+        if(k == 9) {
+            return type(CBOR.Kind).Tag;
+        }
+        if(k == 10) {
+            return type(CBOR.Kind).Simple;
+        }
+        return type(CBOR.Kind).Null;
+    }
+
+    public fun bool() AsBool = () {
+        var bool b;
+        native(STD_CBOR_BOOL){void(uint, bool*)}(this.handle, &b);
+        return b;
+    }
+
+    // AsInt reads a number, truncating a flt toward zero, and panics on an
+    // integer that does not fit an int.
+    public fun int() AsInt = () {
+        var int i;
+        native(STD_CBOR_INT){void(uint, int*)}(this.handle, &i);
+        return i;
+    }
+
+    public fun flt() AsFlt = () {
+        var flt f;
+        native(STD_CBOR_FLT){void(uint, flt*)}(this.handle, &f);
+        return f;
+    }
+
+    public fun str() AsStr = () {
+        var str s;
+        native(STD_CBOR_STR){void(uint, str*)}(this.handle, &s);
+        return s;
+    }
+
+    // AsBytes returns the contents of a byte string or a string.
+    public fun Arr[byte]*() AsBytes = () {
+        var uint h;
+        var int n;
+        native(STD_CBOR_BYTES){void(uint, uint*, int*)}(this.handle, &h, &n);
+        return type(CBOR).take(h, n);
+    }
+
+    // Len counts an array's items or a map's pairs.
+    public fun uint() Len = () {
+        var int n;
+        native(STD_CBOR_LEN){void(uint, int*)}(this.handle, &n);
+        return n{uint};
+    }
+
+    public fun CBOR*(uint) At = (i) {
+        var uint h;
+        native(STD_CBOR_AT){void(uint, int, uint*)}(this.handle, i{int}, &h);
+        return type(CBOR).wrap(h);
+    }
+
+    // KeyAt returns the key of map pair i, whatever its kind.
+    public fun CBOR*(uint) KeyAt = (i) {
+        var uint h;
+        native(STD_CBOR_PAIR){void(uint, int, bool, uint*)}(this.handle, i{int}, false, &h);
+        return type(CBOR).wrap(h);
+    }
+
+    // ValueAt returns the value of map pair i.
+    public fun CBOR*(uint) ValueAt = (i) {
+        var uint h;
+        native(STD_CBOR_PAIR){void(uint, int, bool, uint*)}(this.handle, i{int}, true, &h);
+        return type(CBOR).wrap(h);
+    }
+
+    // Get returns a map's value for a string key, and false when it has none.
+    public fun Pair[CBOR*, bool](str) Get = (key) {
+        var Pair[CBOR*, bool] out;
+        var uint h;
+        native(STD_CBOR_GET){void(uint, str, uint*, bool*)}(this.handle, key, &h, &(out.second));
+        out.first = null;
+        if(out.second) {
+            out.first = type(CBOR).wrap(h);
+        }
+        return out;
+    }
+
+    // Keys returns a map's string keys in order, a key of another kind
+    // reading as empty.
+    public fun Arr[str]*() Keys = () {
+        var str joined;
+        native(STD_CBOR_KEYS){void(uint, str*)}(this.handle, &joined);
+        if(this.Len() == 0U) {
+            return type(Arr)[str].New(0U, new(str, 0U)...);
+        }
+        return type(Strs).Split(joined, 0{byte});
+    }
+
+    // Tag returns a tag's number and the item it tags.
+    public fun Pair[uint, CBOR*]() Tag = () {
+        var Pair[uint, CBOR*] out;
+        var int t;
+        var uint h;
+        native(STD_CBOR_TAG){void(uint, int*, uint*)}(this.handle, &t, &h);
+        out.first = t{uint};
+        out.second = type(CBOR).wrap(h);
+        return out;
+    }
+
+    public fun void(CBOR*) Append = (v) {
+        native(STD_CBOR_APPEND){void(uint, uint)}(this.handle, v.handle);
+    }
+
+    // Set replaces a map's value for a string key, or adds the pair.
+    public fun void(str, CBOR*) Set = (key, v) {
+        native(STD_CBOR_SET){void(uint, str, uint)}(this.handle, key, v.handle);
+    }
+
+    public fun Arr[byte]*() Encode = () {
+        var uint h;
+        var int n;
+        native(STD_CBOR_ENCODE){void(uint, uint*, int*)}(this.handle, &h, &n);
+        return type(CBOR).take(h, n);
+    }
+
+    // Str writes RFC 8949 diagnostic notation.
+    public fun str() Str = () {
+        var str s;
+        native(STD_CBOR_DIAGNOSE){void(uint, str*)}(this.handle, &s);
+        return s;
+    }
+
+    public fun bool(Obj*) Eq = (o) {
+        var bool eq;
+        native(STD_CBOR_EQUAL){void(uint, uint, bool*)}(this.handle, o{CBOR*}.handle, &eq);
+        return eq;
+    }
+
+    public fun void() Delete = () {
+        native(STD_CBOR_RELEASE){void(uint)}(this.handle);
+        this.handle = 0U;
+    }
+
+    public fun void() Mark = () {
+    }
+}

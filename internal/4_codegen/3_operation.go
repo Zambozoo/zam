@@ -317,6 +317,21 @@ const (
 	// widths are added to the fixed words the first operand counts.
 	//   (code, fixedWords, openCount) | [closure,args...,typeID...] -> as OpCallMethod
 	OpCallMethodOpen
+	// OpCallMethodDirect calls a method of a receiver that already has a home,
+	// without building a closure: slot 0 of the frame holds the receiver's
+	// address, and the type id above the frame is what the method index is
+	// resolved against — virtually for an abstract, and through the class's
+	// dispatch table for an interface, the same way OpPushMethod settles it.
+	// The body reads `this` out of that slot rather than out of a closure.
+	//   (code, methodIndex, frameWords) | <oldFunScope:i> [receiver,args...,receiverTypeID] {receiverMarkEntry?,argMarkEntries?} -> <newFunScope:method.instruction> {newFunScope, ..., oldFunScope}
+	OpCallMethodDirect
+	// OpCallMethodDirectOpen is OpCallMethodDirect for a frame holding arguments
+	// whose width an instantiation decides. The open type ids stand above the
+	// receiver's, and are spent first so the receiver's id is what remains for
+	// the resolution — the same stacking OpNewThreadOpen uses for its thread
+	// type id.
+	//   (code, methodIndex, fixedWords, openCount) | [receiver,args...,receiverTypeID,openTypeID...] -> as OpCallMethodDirect
+	OpCallMethodDirectOpen
 
 	// OpEq pops two values, each with its own type id above it, and pushes whether they
 	// are equal. What equality comes to is the type's to say, which is what it
@@ -738,9 +753,15 @@ const (
 	// supertype it was named by, and so is the one that resolves a generic
 	// argument its template left open.
 	//
+	// The second operand is the type id of the generic declaration whose body
+	// is running, or [NoReceiverTemplate]. A receiver of a subclass is not an
+	// instantiation of that declaration, so its id is replaced with the
+	// instantiation of it the receiver descends from, which is what the body's
+	// open types are enumerated against.
+	//
 	// Three words are pushed, as every type id is, and none owns a mark entry: a
 	// type id is three plain words wherever it comes from.
-	//   (code, slot) | -> [typeID]
+	//   (code, slot, template) | -> [typeID]
 	OpPushReceiverType
 
 	// OpBoxAny packs a value and its three-word type id into a fresh any object,
@@ -821,6 +842,10 @@ const (
 // words into the frame and never fills a whole word.
 const ReceiverSlotClosure uint64 = math.MaxUint64
 
+// NoReceiverTemplate is the OpPushReceiverType template operand that leaves
+// the receiver's id as it is. No type id fills a whole word.
+const NoReceiverTemplate uint64 = math.MaxUint64
+
 type (
 	// operation is an interface for all operations.
 	operation interface {
@@ -846,6 +871,18 @@ type (
 		first uint64
 		// second is the second immediate operand.
 		second uint64
+	}
+
+	// ternaryOperation is an operation with three immediate operands.
+	ternaryOperation struct {
+		// opcode is the opcode of the ternary operation.
+		opcode Opcode
+		// first is the first immediate operand.
+		first uint64
+		// second is the second immediate operand.
+		second uint64
+		// third is the third immediate operand.
+		third uint64
 	}
 
 	// jumpOperation is an operation that jumps to a target offset.
@@ -1059,6 +1096,32 @@ func (o *binaryOperation) Read(buf []byte) (int, error) {
 	buf[0] = byte(o.opcode)
 	binary.LittleEndian.PutUint64(buf[1:], o.first)
 	binary.LittleEndian.PutUint64(buf[1+wordByteSize:], o.second)
+	return o.ByteCount(), nil
+}
+
+func newTernaryOp(opcode Opcode, first, second, third uint64) *ternaryOperation {
+	return &ternaryOperation{
+		opcode: opcode,
+		first:  first,
+		second: second,
+		third:  third,
+	}
+}
+
+// ByteCount implements the [byteCountable] interface.
+func (o *ternaryOperation) ByteCount() int {
+	return 1 + 3*wordByteSize
+}
+
+// Read implements the [byteCountable] interface.
+func (o *ternaryOperation) Read(buf []byte) (int, error) {
+	if len(buf) < o.ByteCount() {
+		return 0, io.ErrShortBuffer
+	}
+	buf[0] = byte(o.opcode)
+	binary.LittleEndian.PutUint64(buf[1:], o.first)
+	binary.LittleEndian.PutUint64(buf[1+wordByteSize:], o.second)
+	binary.LittleEndian.PutUint64(buf[1+2*wordByteSize:], o.third)
 	return o.ByteCount(), nil
 }
 
@@ -2933,7 +2996,17 @@ func (v *operationVisitor) emitFrameCall(fixed, open Opcode, frame callFrame) {
 // behind any number of signature casts — and gets its own opcode: OpCallMethod
 // reads a closure out of slot 0, which a bare native address is not. Everything
 // above the base is the same shape either way.
+//
+// A method selected off a receiver that already has a home is a third shape:
+// there is no closure to build, so OpCallMethodDirect puts the receiver's
+// address in slot 0 and resolves the method from the type above the frame. A
+// homeless receiver, a method value standing alone, and every other callee
+// still go through a closure.
 func (v *operationVisitor) emitCall(e *syntax.ExprNAry) error {
+	if object, method, ok := v.directMethodCallee(e.Exprs[0]); ok {
+		return v.emitDirectMethodCall(e, object, method)
+	}
+
 	frame, err := v.emitCallFrame(e)
 	if err != nil {
 		return err
@@ -2950,6 +3023,120 @@ func (v *operationVisitor) emitCall(e *syntax.ExprNAry) error {
 	}
 	v.emitFrameCall(OpCallMethod, OpCallMethodOpen, frame)
 	return nil
+}
+
+// directMethodCallee reports whether a call's callee is an instance method
+// selected off a receiver that already lies somewhere — the case
+// OpCallMethodDirect is for. A homeless value still needs a closure to become
+// its home, and a method reached as a value rather than as a selection is
+// already a closure.
+func (v *operationVisitor) directMethodCallee(callee syntax.Expr) (syntax.Expr, *syntax.FieldMethod, bool) {
+	switch c := callee.(type) {
+	case *syntax.ExprField:
+		_, field := selectedField(c)
+		method, ok := field.(*syntax.FieldMethod)
+		if !ok || !v.hasHome(c.Expr) {
+			return nil, nil, false
+		}
+		return c.Expr, method, true
+	case *syntax.ExprSymbol:
+		if c.Kind() != syntax.ExprKindIdentifier {
+			return nil, nil, false
+		}
+		b, ok := v.lookupBinding(c.Start().Value.(string)).(instanceBinding)
+		if !ok {
+			return nil, nil, false
+		}
+		method, ok := b.field.(*syntax.FieldMethod)
+		if !ok {
+			return nil, nil, false
+		}
+		// An unqualified instance method is `this.method`, and `this` always
+		// has a home — the address the frame was entered with. A nil object
+		// is how emitDirectReceiver names that case: ExprSymbol's fields are
+		// unexported, so there is no synthetic `this` to hand over.
+		return nil, method, true
+	}
+	return nil, nil, false
+}
+
+// emitDirectMethodCall lays a direct-call frame: the receiver's address in
+// slot 0, the arguments above it, and the receiver's type id above the frame
+// for OpCallMethodDirect to resolve the method against.
+func (v *operationVisitor) emitDirectMethodCall(e *syntax.ExprNAry, object syntax.Expr, method *syntax.FieldMethod) error {
+	receiverType, err := v.emitDirectReceiver(object)
+	if err != nil {
+		return err
+	}
+
+	parameters := method.FieldType().(*syntax.TypeFunction).ParameterTypes
+	element := variadicElement(parameters)
+	fixed := len(parameters)
+	if element != nil {
+		fixed--
+	}
+
+	arguments := e.Exprs[1:]
+	for i, argument := range arguments[:fixed] {
+		if err := v.emitValueAs(argument, parameters[i]); err != nil {
+			return err
+		}
+	}
+	if element != nil {
+		if err := v.emitVariadicPayload(arguments[fixed:], element); err != nil {
+			return err
+		}
+	}
+
+	frame, err := v.frameShape(parameters)
+	if err != nil {
+		return err
+	}
+
+	// The receiver type sits beneath any open-width argument types, matching
+	// OpNewThreadOpen: openWords spends the open ids first and what remains is
+	// the id the call itself is told.
+	v.emitPushTypeID(receiverType)
+	index := uint64(*method.Index())
+	if len(frame.open) == 0 {
+		v.emit(newBinaryOp(OpCallMethodDirect, index, frame.words))
+		return nil
+	}
+	for _, t := range frame.open {
+		v.emitPushTypeID(t)
+	}
+	v.emit(newTernaryOp(OpCallMethodDirectOpen, index, frame.words, uint64(len(frame.open))))
+	return nil
+}
+
+// emitDirectReceiver pushes the one-word address a direct call keeps in slot 0,
+// and returns the type id that must stand above the frame for the call to
+// resolve the method against — the same type OpPushMethod would have been
+// handed. A nil object is an unqualified call on `this`.
+func (v *operationVisitor) emitDirectReceiver(object syntax.Expr) (syntax.Type, error) {
+	if object == nil {
+		// `this` is already a location that loads to the receiver's address.
+		// Loading it leaves the one word OpCallMethodDirect wants, under the
+		// pointer type the body bound `this` as.
+		v.emitPushReceiver()
+		v.emit(OpLoad)
+		return v.lookupLocal(thisVariableName).typ, nil
+	}
+	objectType := object.ResolvedType()
+	if syntax.ReachedThroughAddress(objectType) {
+		if err := v.emitValue(object); err != nil {
+			return nil, err
+		}
+		return objectType, nil
+	}
+	if err := object.Accept(v); err != nil {
+		return nil, err
+	}
+	if !v.addressable(object) {
+		panic("unreachable")
+	}
+	v.emit(OpAddressOf)
+	return syntax.NewWrappedType(syntax.TypeKindPointer, objectType), nil
 }
 
 // isNativeCallee reports whether a call's callee is an [syntax.ExprNative], seen
@@ -3799,17 +3986,18 @@ func (v *operationVisitor) VisitExprCast(e *syntax.ExprCast) error {
 		v.emitWordCast(primitive, to)
 		return nil
 	}
-	if to.Kind() == syntax.TypeKindString {
-		return v.emitStringCast(e.Expr, from)
-	}
 	// A null is the null of the type it is read as, which is what says whether
 	// the slot it lands in owns a mark entry. An any slot is held as a pointer
 	// to a heap box, so a null any is the zero word too, not a fresh box
 	// standing for a null payload: allocating one would make null{any} compare
-	// unequal to an uninitialized any, which no reader would expect.
+	// unequal to an uninitialized any, which no reader would expect. A null str
+	// is likewise the zero word rather than the text of a null pointer.
 	if e.Expr.ResolvedType() == syntax.TypeNull {
 		v.emitPushNull(to)
 		return nil
+	}
+	if to.Kind() == syntax.TypeKindString {
+		return v.emitStringCast(e.Expr, from)
 	}
 	// The any branches each want the other kind to be anything but any, so
 	// that casting an any to an any does not round-trip through a redundant
@@ -4016,10 +4204,17 @@ func (v *operationVisitor) emitDowncast(object syntax.Expr, from, to syntax.Type
 	// needs no mark stack entry of its own. Copying it before the type id goes
 	// down is what leaves the value itself beneath the test, for the test to
 	// keep or to discard.
+	//
+	// OpTypeOf answers for a pointer with the type of the instance it lands
+	// on, so a pointer target is tested by what it points to.
 	v.emit(newUnaryOp(OpDupWord, 0))
 	v.emitPushTypeID(from)
 	v.emit(OpTypeOf)
-	v.emitPushTypeID(to)
+	target := syntax.StripConst(to)
+	if w, ok := target.(*syntax.TypeWrapped); ok && w.Kind() == syntax.TypeKindPointer {
+		target = w.Type
+	}
+	v.emitPushTypeID(target)
 	v.emit(OpIsSubtypeOf)
 
 	failed := v.emitJump(OpJumpIfFalse)
@@ -4166,8 +4361,25 @@ func (v *operationVisitor) emitPushTypeID(t syntax.Type) {
 	if v.receiverInFrame {
 		slot = v.lookupLocal(thisVariableName).offset
 	}
-	v.emit(newUnaryOp(OpPushReceiverType, slot))
+	v.emit(newBinaryOp(OpPushReceiverType, slot, v.receiverTemplate()))
 	v.emit(newUnaryOp(OpPushGenericArgType, v.genericTypeIndexInReceiver(t)))
+}
+
+// receiverTemplate is the type id of the generic class or abstract whose body
+// is being emitted, or [NoReceiverTemplate] when there is none to resolve a
+// receiver up to.
+func (v *operationVisitor) receiverTemplate() uint64 {
+	switch d := v.currentDecl.(type) {
+	case *syntax.DeclClass:
+		if d.Generics() != nil {
+			return uint64(v.declTypeID(d, *d.TypeIndex()))
+		}
+	case *syntax.DeclAbstract:
+		if d.Generics() != nil {
+			return uint64(v.declTypeID(d, *d.TypeIndex()))
+		}
+	}
+	return NoReceiverTemplate
 }
 
 // genericTypeIndexInReceiver returns t's position in the current receiver
@@ -4371,23 +4583,29 @@ func (v *operationVisitor) VisitExprType(e *syntax.ExprType) error {
 		return nil
 	}
 
-	if concrete := e.Concrete; concrete != nil {
-		fieldType := concrete.FieldType()
-		v.emitPushStaticSlot(*concrete.Index(), fieldType)
-		v.emitPushTypeID(fieldType)
-		return nil
-	}
-
 	field := selectedStatic(e)
 
 	// A generic static method named with type arguments the compile-time pass
 	// did not resolve to one concrete falls into runtime dispatch: the
 	// arguments contain an open generic — a class-level T whose binding comes
 	// from the receiver — so the slot has to be chosen while that binding is
-	// in hand. The register-and-emit helper handles the whole sequence and
-	// leaves the stack in the same shape OpPushStatic + emitPushTypeID would.
+	// in hand. Check this before e.Concrete: populate may have materialized
+	// every reachable concrete through this shared open site without the site
+	// itself being ground, and a stamped Concrete would pin every receiver to
+	// one of them.
 	if method, ok := field.(*syntax.FieldMethod); ok && method.Generics() != nil && len(e.TypeArgs) > 0 {
-		v.emitPushGenericStaticMethod(method, e.TypeArgs)
+		for _, ta := range e.TypeArgs {
+			if ta.ContainsGenericArg() {
+				v.emitPushGenericStaticMethod(method, e.TypeArgs)
+				return nil
+			}
+		}
+	}
+
+	if concrete := e.Concrete; concrete != nil {
+		fieldType := concrete.FieldType()
+		v.emitPushStaticSlot(*concrete.Index(), fieldType)
+		v.emitPushTypeID(fieldType)
 		return nil
 	}
 

@@ -1,2 +1,75 @@
-// Public-Key Cryptography Standards
-namespace PKCS12 {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../asymmetric/Key.zam";
+import "X509.zam";
+
+// Public-Key Cryptography Standards #12: a private key, its certificate and
+// the chain above it, bundled under a password
+public namespace PKCS12 {
+    // Bundle is what a PKCS #12 file holds. Any part may be absent: key and
+    // cert as null, chain as empty.
+    public class Bundle {
+        public var Key* key;
+        public var X509* cert;
+        public var Arr[X509*]* chain;
+    }
+
+    // Parse opens n bytes at b under password.
+    public static fun Pair[PKCS12.Bundle*, Err*](byte*, uint, str) Parse = (b, n, password) {
+        var Pair[PKCS12.Bundle*, Err*] out;
+        out.first = null;
+        out.second = null;
+        var uint keyH = 0U;
+        var int keyN = 0;
+        var uint cert = 0U;
+        var uint list = 0U;
+        var int count = 0;
+        var str errStr;
+        native(STD_PKCS12_PARSE){void(byte*, int, str, uint*, int*, uint*, uint*, int*, str*)}(b, n{int}, password, &keyH, &keyN, &cert, &list, &count, &errStr);
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        var PKCS12.Bundle* bundle = new(PKCS12.Bundle);
+        bundle.chain = type(X509).list(list, count);
+        bundle.key = null;
+        bundle.cert = null;
+        if(cert != 0U) {
+            bundle.cert = type(X509).of(cert);
+        }
+        var Arr[byte]* der = type(X509).take(keyH, keyN, null).first;
+        if(der.Len() > 0U) {
+            var Pair[Key*, Err*] key = type(Key).ParseDER(der.Arr(), der.Len());
+            if(key.second != null) {
+                out.second = key.second;
+                return out;
+            }
+            bundle.key = key.first;
+        }
+        out.first = bundle;
+        return out;
+    }
+
+    // Create bundles key, its certificate and a chain, which may be null,
+    // under password and a friendly name, which may be "".
+    public static fun Pair[Arr[byte]*, Err*](Key*, X509*, Arr[X509*]*, str, str) Create = (key, cert, chain, password, name) {
+        var Pair[Arr[byte]*, Err*] der = key.DER();
+        if(der.second != null) {
+            return der;
+        }
+        if(!key.IsPrivate()) {
+            der.first = null;
+            der.second = type(StrErr).New("a PKCS #12 bundle needs a private key");
+            return der;
+        }
+        var uint* handles = type(X509).handles(chain);
+        var uint h = 0U;
+        var int n = 0;
+        var str errStr;
+        native(STD_PKCS12_CREATE){void(byte*, int, uint, uint*, int, str, str, uint*, int*, str*)}(der.first.Arr(), der.first.Len(){int}, cert.handle, handles, type(X509).count(chain){int}, password, name, &h, &n, &errStr);
+        free(handles);
+        return type(X509).take(h, n, errStr);
+    }
+}

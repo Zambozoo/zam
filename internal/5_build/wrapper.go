@@ -135,7 +135,7 @@ const uint64_t zamProjectNativeTableCount = 0;
 		fmt.Fprintf(w, "    {%q, %s},\n", name, name)
 	}
 	fmt.Fprint(w, "};\n")
-	fmt.Fprintf(w, "const uint64_t zamProjectNativeTableCount = sizeof(ZamProjectNativeTable) / sizeof(ZamProjectNativeTable[0]);\n\n")
+	fmt.Fprintf(w, "const uint64_t zamProjectNativeTableCount = sizeof(zamProjectNativeTable) / sizeof(zamProjectNativeTable[0]);\n\n")
 }
 
 func writeMain(w *bufio.Writer) {

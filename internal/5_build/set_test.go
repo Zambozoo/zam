@@ -108,9 +108,24 @@ namespace Main {
         return ok;
     }
 
+    // Tree mirrors TreeSet[int]'s layout, which keeps it to itself.
+    class Tree {
+        var uint len;
+        var Node* root;
+        var bool changed;
+    }
+
+    // Node mirrors TreeSet.Node[int].
+    struct Node {
+        var int val;
+        var bool red;
+        var Node* left;
+        var Node* right;
+    }
+
     // blackHeight returns the black height of a left-leaning red-black
     // subtree, or -1 if it breaks an invariant.
-    static fun int(TreeSet.Node[int]*) blackHeight = (n) {
+    static fun int(Node*) blackHeight = (n) {
         if(n == null) {
             return 0;
         }
@@ -133,6 +148,7 @@ namespace Main {
 
     static fun bool() balanced = () {
         var TreeSet[int]* t = type(TreeSet)[int].New(0U);
+        var Tree* tree = t{void*}{Tree*};
         var bool ok = true;
         var uint x = 9U;
         for(var int i = 0; i < 3000; i++) {
@@ -145,10 +161,10 @@ namespace Main {
                 t.Remove(v);
             }
             if(i % 100 == 0) {
-                ok = ok && type(Main).blackHeight(t.root) >= 0;
+                ok = ok && type(Main).blackHeight(tree.root) >= 0;
             }
         }
-        return ok && type(Main).blackHeight(t.root) >= 0 && (t.root == null || !t.root.red);
+        return ok && type(Main).blackHeight(tree.root) >= 0 && (tree.root == null || !tree.root.red);
     }
 
     fun void(uint, str...) main = (argC, argV) {

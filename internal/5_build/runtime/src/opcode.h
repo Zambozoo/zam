@@ -80,6 +80,8 @@
     OP(OpPushMethod, 1)                                                        \
     OP(OpCallMethod, 1)                                                        \
     OP(OpCallMethodOpen, 2)                                                    \
+    OP(OpCallMethodDirect, 2)                                                  \
+    OP(OpCallMethodDirectOpen, 3)                                              \
                                                                                \
     OP(OpEq, 0)                                                                \
     OP(OpCmp, 0)                                                               \
@@ -130,7 +132,7 @@
                                                                                \
     OP(OpCallNative, 1)                                                        \
                                                                                \
-    OP(OpPushReceiverType, 1)                                                  \
+    OP(OpPushReceiverType, 2)                                                  \
                                                                                \
     OP(OpBoxAny, 0)                                                            \
     OP(OpAnyPayloadType, 0)                                                    \

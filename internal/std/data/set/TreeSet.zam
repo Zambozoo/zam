@@ -4,7 +4,7 @@ import "../../lang/Arr.zam";
 import "../../lang/Struct.zam";
 
 // Sorted left-leaning red-black tree set
-class TreeSet[A] {
+public class TreeSet[A] {
     struct Node[A] {
         var A val;
         var bool red;
@@ -16,13 +16,13 @@ class TreeSet[A] {
     var Node[A]* root;
     var bool changed;
 
-    static fun[A] TreeSet[A]*(uint, A...) New = (len, args) {
+    public static fun[A] TreeSet[A]*(uint, A...) New = (len, args) {
         var TreeSet[A]* s = new(TreeSet[A]);
         s.Init(len, args...);
         return s;
     }
 
-    fun void(uint, A...) Init = (len, args) {
+    public fun void(uint, A...) Init = (len, args) {
         this.len = 0U;
         this.root = null;
         for(var uint i = 0U; i < len; i++) {
@@ -238,11 +238,11 @@ class TreeSet[A] {
         free(n);
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun bool(A) Contains = (v) {
+    public fun bool(A) Contains = (v) {
         for(var Node[A]* n = this.root; n != null;) {
             if(v < n.val) {
                 n = n.left;
@@ -255,7 +255,7 @@ class TreeSet[A] {
         return false;
     }
 
-    fun bool(A) Add = (k) {
+    public fun bool(A) Add = (k) {
         this.changed = false;
         this.insert(&(this.root), k);
         this.root.red = false;
@@ -265,7 +265,7 @@ class TreeSet[A] {
         return this.changed;
     }
 
-    fun bool(A) Remove = (k) {
+    public fun bool(A) Remove = (k) {
         if(!this.Contains(k)) {
             return false;
         }
@@ -280,37 +280,37 @@ class TreeSet[A] {
         return true;
     }
 
-    fun A() GetFirst = () {
+    public fun A() GetFirst = () {
         if(this.len == 0U) {
             type(System).Panic("TreeSet is empty");
         }
         return this.first().val;
     }
 
-    fun A() GetLast = () {
+    public fun A() GetLast = () {
         if(this.len == 0U) {
             type(System).Panic("TreeSet is empty");
         }
         return this.last().val;
     }
 
-    fun void() Clear = () {
+    public fun void() Clear = () {
         this.Delete();
     }
 
-    fun Arr[A]*() Arr = () {
+    public fun Arr[A]*() Arr = () {
         var A* a = new(A, this.len);
         this.fill(this.root, a, 0U);
         return type(Arr)[A].New(this.len, a...);
     }
 
-    fun Iter[A]*() Iter = () {
+    public fun Iter[A]*() Iter = () {
         var Iter[A]* i = new(Iter[A]);
         i.Init(this);
         return i;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         var A* a = new(A, this.len);
         this.fill(this.root, a, 0U);
         var str s = "{";
@@ -325,14 +325,17 @@ class TreeSet[A] {
 
     // Delete detaches the tree before freeing it, so a collection while it is
     // being freed finds nothing to walk.
-    fun void() Delete = () {
+    public fun void() Delete = () {
         var Node[A]* n = this.root;
         this.root = null;
         this.len = 0U;
         this.freeAll(n);
     }
 
-    fun void() Mark = () {
+    public fun void() Mark = () {
+        if(!type(System.GC).Markable(@{A})) {
+            return;
+        }
         type(TreeSet)[A].markTree(this.root);
     }
 
@@ -340,12 +343,12 @@ class TreeSet[A] {
         var TreeSet[A]* s;
         var Node[A]* cur;
 
-        fun void(TreeSet[A]*) Init = (s) {
+        public fun void(TreeSet[A]*) Init = (s) {
             this.s = s;
             this.cur = s.first();
         }
 
-        fun Pair[A, bool]() Next = () {
+        public fun Pair[A, bool]() Next = () {
             var Pair[A, bool] p;
             if(this.cur == null) {
                 p.second = false;
@@ -357,7 +360,7 @@ class TreeSet[A] {
             return p;
         }
 
-        fun Pair[A, bool]() Prev = () {
+        public fun Pair[A, bool]() Prev = () {
             var Pair[A, bool] p;
             var Node[A]* prev = this.s.last();
             if(this.cur != null) {

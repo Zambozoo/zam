@@ -1,1 +1,229 @@
-namespace JSON {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Obj.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+
+// JSON value over json-c, which owns the tree. A value reached through
+// another shares its node, so a change through either shows through both.
+// Objects keep their keys in insertion order.
+public class JSON {
+    public enum Kind : int {
+        Null(0),
+        Bool(1),
+        Int(2),
+        Flt(3),
+        String(4),
+        Array(5),
+        Object(6);
+    }
+
+    var uint handle;
+
+    private static fun JSON*(uint) wrap = (h) {
+        var JSON* j = new(JSON);
+        j.handle = h;
+        return j;
+    }
+
+    // handleOf answers the handle of j, a null pointer standing for JSON null.
+    private static fun uint(JSON*) handleOf = (j) {
+        if(j == null) {
+            return 0U;
+        }
+        return j.handle;
+    }
+
+    // Parse reads one JSON document, which may be surrounded by whitespace.
+    public static fun Pair[JSON*, Err*](str) Parse = (s) {
+        var Pair[JSON*, Err*] out;
+        var uint h = 0U;
+        var str errStr;
+        native(STD_JSON_PARSE){void(str, uint*, str*)}(s, &h, &errStr);
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+        } else {
+            out.first = type(JSON).wrap(h);
+        }
+        return out;
+    }
+
+    public static fun JSON*() Null = () {
+        return type(JSON).wrap(0U);
+    }
+
+    public static fun JSON*(bool) NewBool = (b) {
+        var uint h;
+        native(STD_JSON_NEW_BOOL){void(bool, uint*)}(b, &h);
+        return type(JSON).wrap(h);
+    }
+
+    public static fun JSON*(int) NewInt = (i) {
+        var uint h;
+        native(STD_JSON_NEW_INT){void(int, uint*)}(i, &h);
+        return type(JSON).wrap(h);
+    }
+
+    public static fun JSON*(flt) NewFlt = (f) {
+        var uint h;
+        native(STD_JSON_NEW_FLT){void(flt, uint*)}(f, &h);
+        return type(JSON).wrap(h);
+    }
+
+    public static fun JSON*(str) NewStr = (s) {
+        var uint h;
+        native(STD_JSON_NEW_STR){void(str, uint*)}(s, &h);
+        return type(JSON).wrap(h);
+    }
+
+    public static fun JSON*() NewArray = () {
+        var uint h;
+        native(STD_JSON_NEW_ARRAY){void(uint*)}(&h);
+        return type(JSON).wrap(h);
+    }
+
+    public static fun JSON*() NewObject = () {
+        var uint h;
+        native(STD_JSON_NEW_OBJECT){void(uint*)}(&h);
+        return type(JSON).wrap(h);
+    }
+
+    private fun int() kind = () {
+        var int k;
+        native(STD_JSON_KIND){void(uint, int*)}(this.handle, &k);
+        return k;
+    }
+
+    public fun JSON.Kind() Kind = () {
+        var int k = this.kind();
+        if(k == 1) {
+            return type(JSON.Kind).Bool;
+        }
+        if(k == 2) {
+            return type(JSON.Kind).Int;
+        }
+        if(k == 3) {
+            return type(JSON.Kind).Flt;
+        }
+        if(k == 4) {
+            return type(JSON.Kind).String;
+        }
+        if(k == 5) {
+            return type(JSON.Kind).Array;
+        }
+        if(k == 6) {
+            return type(JSON.Kind).Object;
+        }
+        return type(JSON.Kind).Null;
+    }
+
+    public fun bool() IsNull = () {
+        return this.handle == 0U;
+    }
+
+    public fun bool() AsBool = () {
+        var bool b;
+        native(STD_JSON_BOOL){void(uint, bool*)}(this.handle, &b);
+        return b;
+    }
+
+    // AsInt reads a number, truncating a flt toward zero.
+    public fun int() AsInt = () {
+        var int i;
+        native(STD_JSON_INT){void(uint, int*)}(this.handle, &i);
+        return i;
+    }
+
+    public fun flt() AsFlt = () {
+        var flt f;
+        native(STD_JSON_FLT){void(uint, flt*)}(this.handle, &f);
+        return f;
+    }
+
+    public fun str() AsStr = () {
+        var str s;
+        native(STD_JSON_STR){void(uint, str*)}(this.handle, &s);
+        return s;
+    }
+
+    // Len counts an array's elements or an object's members.
+    public fun uint() Len = () {
+        var int n;
+        native(STD_JSON_LEN){void(uint, int*)}(this.handle, &n);
+        return n{uint};
+    }
+
+    public fun JSON*(uint) At = (i) {
+        var uint h;
+        native(STD_JSON_AT){void(uint, int, uint*)}(this.handle, i{int}, &h);
+        return type(JSON).wrap(h);
+    }
+
+    // Get returns an object's member, and false when it has none by key.
+    public fun Pair[JSON*, bool](str) Get = (key) {
+        var Pair[JSON*, bool] out;
+        var uint h;
+        native(STD_JSON_GET){void(uint, str, uint*, bool*)}(this.handle, key, &h, &(out.second));
+        out.first = null;
+        if(out.second) {
+            out.first = type(JSON).wrap(h);
+        }
+        return out;
+    }
+
+    // Keys returns an object's keys in insertion order.
+    public fun Arr[str]*() Keys = () {
+        var str joined;
+        native(STD_JSON_KEYS){void(uint, str*)}(this.handle, &joined);
+        if(this.Len() == 0U) {
+            return type(Arr)[str].New(0U, new(str, 0U)...);
+        }
+        return type(Strs).Split(joined, 0{byte});
+    }
+
+    // Set adds or replaces an object's member, a null value standing for
+    // JSON null.
+    public fun void(str, JSON*) Set = (key, v) {
+        native(STD_JSON_SET){void(uint, str, uint)}(this.handle, key, type(JSON).handleOf(v));
+    }
+
+    public fun void(str) Remove = (key) {
+        native(STD_JSON_REMOVE){void(uint, str)}(this.handle, key);
+    }
+
+    public fun void(JSON*) Append = (v) {
+        native(STD_JSON_APPEND){void(uint, uint)}(this.handle, type(JSON).handleOf(v));
+    }
+
+    public fun void(uint, JSON*) SetAt = (i, v) {
+        native(STD_JSON_SET_AT){void(uint, int, uint)}(this.handle, i{int}, type(JSON).handleOf(v));
+    }
+
+    // Encode writes the value as JSON text, indented when pretty.
+    public fun str(bool) Encode = (pretty) {
+        var str s;
+        native(STD_JSON_ENCODE){void(uint, bool, str*)}(this.handle, pretty, &s);
+        return s;
+    }
+
+    public fun str() Str = () {
+        return this.Encode(false);
+    }
+
+    public fun bool(Obj*) Eq = (o) {
+        var bool eq;
+        native(STD_JSON_EQUAL){void(uint, uint, bool*)}(this.handle, o{JSON*}.handle, &eq);
+        return eq;
+    }
+
+    public fun void() Delete = () {
+        native(STD_JSON_RELEASE){void(uint)}(this.handle);
+        this.handle = 0U;
+    }
+
+    public fun void() Mark = () {
+    }
+}

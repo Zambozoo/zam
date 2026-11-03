@@ -1,1 +1,16 @@
-namespace TAR {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "Archive.zam";
+
+// Tar archives, written in POSIX pax form and read in any tar form,
+// compressed by gzip, bzip2, xz, zstd or lz4 or not at all
+public namespace TAR {
+    public static fun Pair[Arr[Archive.Entry*]*, Err*](byte*, uint) Read = (b, n) {
+        return type(Archive).Read(b, n, type(Archive.Format).Tar);
+    }
+
+    public static fun Pair[Arr[byte]*, Err*](Arr[Archive.Entry*]*) Write = (entries) {
+        return type(Archive).Write(entries, type(Archive.Format).Tar);
+    }
+}

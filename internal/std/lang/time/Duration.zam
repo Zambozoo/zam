@@ -1,1 +1,152 @@
-class Duration {}
+// Duration is a signed span of time, counted in nanoseconds, so about 292
+// years either way at most.
+public struct Duration {
+    var int ns;
+
+    public static fun Duration(int) Nanoseconds = (n) {
+        var Duration d;
+        d.ns = n;
+        return d;
+    }
+
+    public static fun Duration(int) Microseconds = (n) {
+        return type(Duration).Nanoseconds(n * 1000);
+    }
+
+    public static fun Duration(int) Milliseconds = (n) {
+        return type(Duration).Nanoseconds(n * 1000000);
+    }
+
+    public static fun Duration(int) Seconds = (n) {
+        return type(Duration).Nanoseconds(n * 1000000000);
+    }
+
+    public static fun Duration(int) Minutes = (n) {
+        return type(Duration).Nanoseconds(n * 60000000000);
+    }
+
+    public static fun Duration(int) Hours = (n) {
+        return type(Duration).Nanoseconds(n * 3600000000000);
+    }
+
+    public fun int() InNanoseconds = () {
+        return this.ns;
+    }
+
+    // InMicroseconds is the whole microseconds in d, truncated toward zero.
+    public fun int() InMicroseconds = () {
+        return this.ns / 1000;
+    }
+
+    // InMilliseconds is the whole milliseconds in d, truncated toward zero.
+    public fun int() InMilliseconds = () {
+        return this.ns / 1000000;
+    }
+
+    public fun flt() InSeconds = () {
+        return this.ns{flt} / 1000000000.0;
+    }
+
+    public fun flt() InMinutes = () {
+        return this.ns{flt} / 60000000000.0;
+    }
+
+    public fun flt() InHours = () {
+        return this.ns{flt} / 3600000000000.0;
+    }
+
+    public fun Duration(Duration) Add = (o) {
+        return type(Duration).Nanoseconds(this.ns + o.ns);
+    }
+
+    public fun Duration(Duration) Sub = (o) {
+        return type(Duration).Nanoseconds(this.ns - o.ns);
+    }
+
+    public fun Duration(int) Mul = (n) {
+        return type(Duration).Nanoseconds(this.ns * n);
+    }
+
+    public fun Duration(int) Div = (n) {
+        return type(Duration).Nanoseconds(this.ns / n);
+    }
+
+    public fun Duration() Abs = () {
+        if(this.ns < 0) {
+            return type(Duration).Nanoseconds(-this.ns);
+        }
+        return *this;
+    }
+
+    // Cmp is -1, 0 or 1 as d is shorter than, as long as or longer than o.
+    public fun int(Duration) Cmp = (o) {
+        if(this.ns < o.ns) {
+            return -1;
+        } else if(this.ns > o.ns) {
+            return 1;
+        }
+        return 0;
+    }
+
+    // fraction writes v, a count of 10^-digits units, as a decimal with its
+    // trailing zeros dropped.
+    static fun str(uint, uint) fraction = (v, digits) {
+        var uint scale = 1U;
+        for(var uint i = 0U; i < digits; i++) {
+            scale = scale * 10U;
+        }
+        var str s = (v / scale){str};
+        var uint frac = v % scale;
+        if(frac == 0U) {
+            return s;
+        }
+        var str tail = "";
+        var bool significant = false;
+        for(var uint i = 0U; i < digits; i++) {
+            var uint digit = frac % 10U;
+            frac = frac / 10U;
+            if(digit != 0U) {
+                significant = true;
+            }
+            if(significant) {
+                tail = digit{str} + tail;
+            }
+        }
+        return s + "." + tail;
+    }
+
+    // Str writes d as hours, minutes and seconds, such as 1h2m3.5s, or in
+    // the largest of ms, µs and ns under a second, such as 1.5ms.
+    public fun str() Str = () {
+        if(this.ns == 0) {
+            return "0s";
+        }
+        var str sign = "";
+        var uint u = this.ns{uint};
+        if(this.ns < 0) {
+            sign = "-";
+            u = (0U - u);
+        }
+        if(u < 1000U) {
+            return sign + u{str} + "ns";
+        }
+        if(u < 1000000U) {
+            return sign + type(Duration).fraction(u, 3U) + "µs";
+        }
+        if(u < 1000000000U) {
+            return sign + type(Duration).fraction(u, 6U) + "ms";
+        }
+        var uint hours = u / 3600000000000U;
+        u = u % 3600000000000U;
+        var uint minutes = u / 60000000000U;
+        u = u % 60000000000U;
+        var str s = type(Duration).fraction(u, 9U) + "s";
+        if(hours > 0U) {
+            return sign + hours{str} + "h" + minutes{str} + "m" + s;
+        }
+        if(minutes > 0U) {
+            return sign + minutes{str} + "m" + s;
+        }
+        return sign + s;
+    }
+}

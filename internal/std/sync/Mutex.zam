@@ -1,9 +1,38 @@
-class Mutex {
-    fun void() Lock = () {
-        // TODO
+import "../lang/Objs.zam";
+
+// Mutual exclusion lock. Only the thread holding it may unlock it, and a
+// thread locking it while holding it panics.
+public class Mutex {
+    var uint handle;
+
+    public static fun Mutex*() New = () {
+        var Mutex* m = new(Mutex);
+        m.Init();
+        return m;
     }
-    
-    fun void Unlock = () {
-        // TODO
+
+    public fun void() Init = () {
+        native(STD_MUTEX_INIT){void(uint*)}(&(this.handle));
+    }
+
+    public fun void() Lock = () {
+        native(STD_MUTEX_LOCK){void(uint)}(this.handle);
+    }
+
+    // TryLock takes the lock if it is free, reporting whether it did.
+    public fun bool() TryLock = () {
+        var bool ok;
+        native(STD_MUTEX_TRY_LOCK){void(uint, bool*)}(this.handle, &ok);
+        return ok;
+    }
+
+    public fun void() Unlock = () {
+        native(STD_MUTEX_UNLOCK){void(uint)}(this.handle);
+    }
+
+    public fun void() Delete = () {
+        native(STD_MUTEX_DELETE){void(uint)}(this.handle);
+        this.handle = 0U;
+        type(Objs).Delete(this);
     }
 }

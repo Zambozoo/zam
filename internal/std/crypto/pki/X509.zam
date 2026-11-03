@@ -1,1 +1,333 @@
-namespace X509 {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "../../lang/time/Duration.zam";
+import "../../lang/time/Time.zam";
+import "../asymmetric/Key.zam";
+import "../hash/Digest.zam";
+
+// X509 is an X.509 certificate. Certificates are read from PEM, one or a
+// chain, or DER, and issued from a Template, self-signed or by an issuer.
+public class X509 {
+    // Template is what a certificate is issued with. Certificates hold their
+    // times to the second.
+    public class Template {
+        public var str commonName;
+        public var str organization;
+        public var Arr[str]* dnsNames;
+        // ocspURL is the OCSP responder the certificate names, or "".
+        public var str ocspURL;
+        public var Time notBefore;
+        public var Time notAfter;
+        public var bool isCA;
+
+        // New returns a template for commonName naming no DNS names, valid
+        // for a year from issue.
+        public static fun X509.Template*(str) New = (commonName) {
+            var X509.Template* t = new(X509.Template);
+            t.commonName = commonName;
+            t.organization = "";
+            t.dnsNames = type(Arr)[str].New(0U, new(str, 1U)...);
+            t.ocspURL = "";
+            t.notBefore = type(Time).Now();
+            t.notAfter = t.notBefore.Add(type(Duration).Hours(24 * 365));
+            t.isCA = false;
+            return t;
+        }
+    }
+
+    var uint handle;
+    var str subject;
+    var str issuer;
+    var str serial;
+    var Time notBefore;
+    var Time notAfter;
+    var bool isCA;
+    var Arr[str]* dnsNames;
+    var str ocspURL;
+
+    // of wraps the certificate handle h, reading its fields.
+    static fun X509*(uint) of = (h) {
+        var X509* c = new(X509);
+        c.handle = h;
+        var str names;
+        var int notBefore = 0;
+        var int notAfter = 0;
+        native(STD_X509_INFO){void(uint, str*, str*, str*, int*, int*, bool*, str*, str*)}(h, &(c.subject), &(c.issuer), &(c.serial), &notBefore, &notAfter, &(c.isCA), &names, &(c.ocspURL));
+        c.notBefore = type(Time).FromUnix(notBefore, 0);
+        c.notAfter = type(Time).FromUnix(notAfter, 0);
+        if(names == "") {
+            c.dnsNames = type(Arr)[str].New(0U, new(str, 1U)...);
+        } else {
+            c.dnsNames = type(Strs).Split(names, '\n'{byte});
+        }
+        return c;
+    }
+
+    // list takes the count certificate handles a native left at list.
+    static fun Arr[X509*]*(uint, int) list = (list, count) {
+        var uint n = count{uint};
+        var uint* handles = new(uint, n + 1U);
+        native(STD_PKI_TAKE){void(uint, uint*, int)}(list, handles, count);
+        var Arr[X509*]* out = type(Arr)[X509*].New(n, new(X509*, n + 1U)...);
+        for(var uint i = 0U; i < n; i++) {
+            out.Set(i, type(X509).of(handles[i]));
+        }
+        free(handles);
+        return out;
+    }
+
+    // handles lays out the handles of certs, which may be null, for a native.
+    static fun uint*(Arr[X509*]*) handles = (certs) {
+        var uint n = 0U;
+        if(certs != null) {
+            n = certs.Len();
+        }
+        var uint* out = new(uint, n + 1U);
+        for(var uint i = 0U; i < n; i++) {
+            out[i] = certs.Get(i).handle;
+        }
+        return out;
+    }
+
+    static fun uint(Arr[X509*]*) count = (certs) {
+        if(certs == null) {
+            return 0U;
+        }
+        return certs.Len();
+    }
+
+    static fun str(Arr[str]*) lines = (names) {
+        var str out = "";
+        if(names == null) {
+            return out;
+        }
+        for(var uint i = 0U; i < names.Len(); i++) {
+            if(i > 0U) {
+                out = out + "\n";
+            }
+            out = out + names.Get(i);
+        }
+        return out;
+    }
+
+    static fun Pair[Arr[X509*]*, Err*](byte*, uint, bool) decode = (b, n, pem) {
+        var Pair[Arr[X509*]*, Err*] out;
+        out.first = null;
+        out.second = null;
+        var uint list = 0U;
+        var int count = 0;
+        var str errStr;
+        native(STD_X509_DECODE){void(byte*, int, bool, uint*, int*, str*)}(b, n{int}, pem, &list, &count, &errStr);
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        out.first = type(X509).list(list, count);
+        return out;
+    }
+
+    static fun Pair[X509*, Err*](Pair[Arr[X509*]*, Err*]) first = (p) {
+        var Pair[X509*, Err*] out;
+        out.first = null;
+        out.second = p.second;
+        if(p.second == null) {
+            out.first = p.first.Get(0U);
+        }
+        return out;
+    }
+
+    // ParsePEM reads the first certificate in PEM.
+    public static fun Pair[X509*, Err*](str) ParsePEM = (s) {
+        return type(X509).first(type(X509).ParsePEMChain(s));
+    }
+
+    // ParsePEMChain reads every certificate in PEM, in order.
+    public static fun Pair[Arr[X509*]*, Err*](str) ParsePEMChain = (s) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(s);
+        return type(X509).decode(p.first, p.second{uint}, true);
+    }
+
+    // ParseDER reads a certificate from n bytes of DER at b.
+    public static fun Pair[X509*, Err*](byte*, uint) ParseDER = (b, n) {
+        return type(X509).first(type(X509).decode(b, n, false));
+    }
+
+    static fun Pair[X509*, Err*](X509.Template*, Key*, X509*, Key*) issue = (t, subject, issuer, issuerKey) {
+        var Pair[X509*, Err*] out;
+        out.first = null;
+        var Pair[Arr[byte]*, Err*] subjectDer = subject.DER();
+        var Pair[Arr[byte]*, Err*] issuerDer = issuerKey.DER();
+        out.second = subjectDer.second;
+        if(out.second == null) {
+            out.second = issuerDer.second;
+        }
+        if(out.second == null && !issuerKey.IsPrivate()) {
+            out.second = type(StrErr).New("issuing a certificate needs the issuer's private key");
+        }
+        if(out.second != null) {
+            return out;
+        }
+        var uint issuerHandle = 0U;
+        if(issuer != null) {
+            issuerHandle = issuer.handle;
+        }
+        var uint h = 0U;
+        var str errStr;
+        native(STD_X509_CREATE){void(byte*, int, uint, byte*, int, str, str, str, str, int, int, bool, uint*, str*)}(subjectDer.first.Arr(), subjectDer.first.Len(){int}, issuerHandle, issuerDer.first.Arr(), issuerDer.first.Len(){int}, t.commonName, t.organization, type(X509).lines(t.dnsNames), t.ocspURL, t.notBefore.Unix(), t.notAfter.Unix(), t.isCA, &h, &errStr);
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        out.first = type(X509).of(h);
+        return out;
+    }
+
+    // SelfSign issues a certificate from t for key, signed by key itself.
+    public static fun Pair[X509*, Err*](X509.Template*, Key*) SelfSign = (t, key) {
+        return type(X509).issue(t, key, null, key);
+    }
+
+    // Sign issues a certificate from t for subject's public key, signed by
+    // issuerKey as issuer.
+    public static fun Pair[X509*, Err*](X509.Template*, Key*, X509*, Key*) Sign = (t, subject, issuer, issuerKey) {
+        return type(X509).issue(t, subject, issuer, issuerKey);
+    }
+
+    // Request makes a certificate signing request in DER for key, naming
+    // commonName and dnsNames, which may be null.
+    public static fun Pair[Arr[byte]*, Err*](Key*, str, Arr[str]*) Request = (key, commonName, dnsNames) {
+        var Pair[Arr[byte]*, Err*] der = key.DER();
+        if(der.second != null) {
+            return der;
+        }
+        if(!key.IsPrivate()) {
+            der.first = null;
+            der.second = type(StrErr).New("a certificate request needs a private key");
+            return der;
+        }
+        var uint h = 0U;
+        var int n = 0;
+        var str errStr;
+        native(STD_X509_REQUEST){void(byte*, int, str, str, uint*, int*, str*)}(der.first.Arr(), der.first.Len(){int}, commonName, type(X509).lines(dnsNames), &h, &n, &errStr);
+        return type(X509).take(h, n, errStr);
+    }
+
+    // take copies n bytes out of the buffer a native left them in.
+    static fun Pair[Arr[byte]*, Err*](uint, int, str) take = (h, n, errStr) {
+        var Pair[Arr[byte]*, Err*] out;
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        var byte* b = new(byte, n{uint} + 1U);
+        native(STD_CODEC_TAKE){void(uint, byte*)}(h, b);
+        out.first = type(Arr)[byte].New(n{uint}, b...);
+        return out;
+    }
+
+    fun Pair[Arr[byte]*, Err*](bool) encode = (pem) {
+        var uint h = 0U;
+        var int n = 0;
+        var str errStr;
+        native(STD_X509_ENCODE){void(uint, bool, uint*, int*, str*)}(this.handle, pem, &h, &n, &errStr);
+        return type(X509).take(h, n, errStr);
+    }
+
+    public fun str() PEM = () {
+        var Arr[byte]* b = this.encode(true).first;
+        return type(Strs).FromBytes(b.Arr(), b.Len(){int});
+    }
+
+    public fun Arr[byte]*() DER = () {
+        return this.encode(false).first;
+    }
+
+    // Subject is the subject's name, in RFC 2253 form.
+    public fun str() Subject = () {
+        return this.subject;
+    }
+
+    // Issuer is the issuer's name, in RFC 2253 form.
+    public fun str() Issuer = () {
+        return this.issuer;
+    }
+
+    // Serial is the serial number in upper-case hex.
+    public fun str() Serial = () {
+        return this.serial;
+    }
+
+    // NotBefore is when the certificate becomes valid.
+    public fun Time() NotBefore = () {
+        return this.notBefore;
+    }
+
+    // NotAfter is when the certificate stops being valid.
+    public fun Time() NotAfter = () {
+        return this.notAfter;
+    }
+
+    public fun bool() IsCA = () {
+        return this.isCA;
+    }
+
+    public fun Arr[str]*() DNSNames = () {
+        return this.dnsNames;
+    }
+
+    // OCSPURL is the OCSP responder the certificate names, or "".
+    public fun str() OCSPURL = () {
+        return this.ocspURL;
+    }
+
+    public fun Pair[Key*, Err*]() PublicKey = () {
+        var uint h = 0U;
+        var int n = 0;
+        var str errStr;
+        native(STD_X509_PUBLIC_KEY){void(uint, uint*, int*, str*)}(this.handle, &h, &n, &errStr);
+        var Pair[Arr[byte]*, Err*] der = type(X509).take(h, n, errStr);
+        if(der.second != null) {
+            var Pair[Key*, Err*] out;
+            out.first = null;
+            out.second = der.second;
+            return out;
+        }
+        return type(Key).ParseDER(der.first.Arr(), der.first.Len());
+    }
+
+    // Fingerprint is the digest of the certificate's DER.
+    public fun Arr[byte]*(Digest.Kind) Fingerprint = (kind) {
+        var Digest* d = type(Digest).New(kind, 0U).first;
+        var Arr[byte]* der = this.DER();
+        d.Write(der.Arr(), der.Len());
+        var Arr[byte]* sum = d.Sum();
+        d.Delete();
+        return sum;
+    }
+
+    // Verify checks the certificate chains to one of roots through
+    // intermediates, which may be null, names host unless it is "", and is
+    // valid at the time at.
+    public fun Err*(Arr[X509*]*, Arr[X509*]*, str, Time) Verify = (roots, intermediates, host, at) {
+        var uint* r = type(X509).handles(roots);
+        var uint* i = type(X509).handles(intermediates);
+        var str errStr;
+        native(STD_X509_VERIFY){void(uint, uint*, int, uint*, int, str, int, str*)}(this.handle, r, type(X509).count(roots){int}, i, type(X509).count(intermediates){int}, host, at.Unix(), &errStr);
+        free(r);
+        free(i);
+        if(errStr != null) {
+            return type(StrErr).New(errStr);
+        }
+        return null;
+    }
+
+    public fun void() Delete = () {
+        native(STD_X509_FREE){void(uint)}(this.handle);
+        this.handle = 0U;
+    }
+}

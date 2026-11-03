@@ -1,1 +1,44 @@
-namespace Rand {}
+import "../lang/Arr.zam";
+import "../lang/System.zam";
+
+// Rand draws from the system's cryptographically secure generator.
+public namespace Rand {
+    // Read fills n bytes at b.
+    public static fun void(byte*, uint) Read = (b, n) {
+        native(STD_CRYPTO_RAND){void(byte*, int)}(b, n{int});
+    }
+
+    // Bytes returns n random bytes.
+    public static fun Arr[byte]*(uint) Bytes = (n) {
+        var byte* b = new(byte, n);
+        type(Rand).Read(b, n);
+        return type(Arr)[byte].New(n, b...);
+    }
+
+    // Uint returns a uniformly random uint.
+    public static fun uint() Uint = () {
+        var uint u = 0U;
+        var byte* b = new(byte, 8U);
+        type(Rand).Read(b, 8U);
+        for(var uint i = 0U; i < 8U; i++) {
+            u = (u << 8U) | b[i]{uint};
+        }
+        free(b);
+        return u;
+    }
+
+    // UintN returns a uniformly random uint in [0, n). It panics if n is 0.
+    public static fun uint(uint) UintN = (n) {
+        if(n == 0U) {
+            type(System).Panic("Rand.UintN: n is 0");
+        }
+        var uint limit = (-1){uint} - (-1){uint} % n;
+        for(;;) {
+            var uint u = type(Rand).Uint();
+            if(u < limit) {
+                return u % n;
+            }
+        }
+        return 0U;
+    }
+}

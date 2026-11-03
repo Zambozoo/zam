@@ -1,3 +1,75 @@
-namespace Uints {
-    var uint$ Max = 18446744073709551615U;
+// Limits of uint and operations on its bits
+public namespace Uints {
+    public var uint$ Max = 18446744073709551615U;
+
+    // Ones counts the set bits of x.
+    public static fun uint(uint) Ones = (x) {
+        var uint n;
+        native(STD_BITS_ONES){void(uint, uint*)}(x, &n);
+        return n;
+    }
+
+    // LeadingZeros counts the zero bits above the highest set bit of x, 64
+    // for zero.
+    public static fun uint(uint) LeadingZeros = (x) {
+        var uint n;
+        native(STD_BITS_LEADING_ZEROS){void(uint, uint*)}(x, &n);
+        return n;
+    }
+
+    // TrailingZeros counts the zero bits below the lowest set bit of x, 64
+    // for zero.
+    public static fun uint(uint) TrailingZeros = (x) {
+        var uint n;
+        native(STD_BITS_TRAILING_ZEROS){void(uint, uint*)}(x, &n);
+        return n;
+    }
+
+    // Len is the number of bits needed to hold x, 0 for zero.
+    public static fun uint(uint) Len = (x) {
+        return 64U - type(Uints).LeadingZeros(x);
+    }
+
+    public static fun uint(uint, uint) RotateLeft = (x, k) {
+        k = k % 64U;
+        if(k == 0U) {
+            return x;
+        }
+        return (x << k) | (x >> (64U - k));
+    }
+
+    public static fun uint(uint, uint) RotateRight = (x, k) {
+        return type(Uints).RotateLeft(x, 64U - k % 64U);
+    }
+
+    public static fun uint(uint) ReverseBytes = (x) {
+        var uint r;
+        native(STD_BITS_REVERSE_BYTES){void(uint, uint*)}(x, &r);
+        return r;
+    }
+
+    // Reverse returns x with its bits in reverse order.
+    public static fun uint(uint) Reverse = (x) {
+        x = ((x >> 1U) & 6148914691236517205U) | ((x & 6148914691236517205U) << 1U);
+        x = ((x >> 2U) & 3689348814741910323U) | ((x & 3689348814741910323U) << 2U);
+        x = ((x >> 4U) & 1085102592571150095U) | ((x & 1085102592571150095U) << 4U);
+        return type(Uints).ReverseBytes(x);
+    }
+
+    public static fun bool(uint) IsPowerOfTwo = (x) {
+        return x != 0U && (x & (x - 1U)) == 0U;
+    }
+
+    // NextPowerOfTwo returns the least power of two not below x, 1 for zero
+    // and 0 when it does not fit.
+    public static fun uint(uint) NextPowerOfTwo = (x) {
+        if(x <= 1U) {
+            return 1U;
+        }
+        var uint n = type(Uints).Len(x - 1U);
+        if(n == 64U) {
+            return 0U;
+        }
+        return 1U << n;
+    }
 }

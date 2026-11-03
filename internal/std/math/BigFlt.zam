@@ -1,1 +1,888 @@
-class BigFlt {}
+import "../lang/Uints.zam";
+import "../lang/Flts.zam";
+import "../lang/System.zam";
+import "../lang/Obj.zam";
+import "../lang/Pair.zam";
+import "../lang/Strs.zam";
+import "Hash.zam";
+import "Math.zam";
+import "BigInt.zam";
+
+// Immutable arbitrary-precision binary floating-point number. The value is
+// mant * 2^exp under its sign, mant holding at most prec bits and no trailing
+// zero bits. A result takes the larger precision of its operands. Arithmetic,
+// Sqrt and conversions round half to even; the transcendental functions are
+// accurate to within one unit in the last place.
+public class BigFlt {
+    var bool neg;
+    var BigInt* mant;
+    var int exp;
+    var uint prec;
+
+    // make rounds neg * mant * 2^exp to prec bits. sticky says the exact value
+    // lies just above mant, by less than any bit mant holds.
+    private static fun BigFlt*(bool, BigInt*, int, uint, bool) make = (neg, mant, exp, prec, sticky) {
+        if(prec == 0U) {
+            type(System).Panic("BigFlt precision must be positive");
+        }
+        var BigFlt* f = new(BigFlt);
+        f.prec = prec;
+        if(mant.IsZero()) {
+            f.neg = false;
+            f.mant = mant;
+            f.exp = 0;
+            return f;
+        }
+        var uint n = mant.BitLen();
+        if(n > prec) {
+            var uint shift = n - prec;
+            var BigInt* q = mant.Shr(shift);
+            var BigInt* rem = mant.Sub(q.Shl(shift));
+            var int c = rem.Cmp(type(BigInt).FromUint(1U).Shl(shift - 1U));
+            if(c == 0 && sticky) {
+                c = 1;
+            }
+            if(c > 0 || (c == 0 && q.Bit(0U))) {
+                q = q.Add(type(BigInt).FromUint(1U));
+            }
+            mant = q;
+            exp = exp + shift{int};
+        }
+        var uint tz = mant.TrailingZeros();
+        f.neg = neg;
+        f.mant = mant.Shr(tz);
+        f.exp = exp + tz{int};
+        return f;
+    }
+
+    public static fun BigFlt*(uint) Zero = (prec) {
+        return type(BigFlt).make(false, type(BigInt).FromUint(0U), 0, prec, false);
+    }
+
+    public static fun BigFlt*(BigInt*, uint) FromBigInt = (b, prec) {
+        return type(BigFlt).make(b.Sign() < 0, b.Abs(), 0, prec, false);
+    }
+
+    public static fun BigFlt*(int, uint) FromInt = (i, prec) {
+        return type(BigFlt).FromBigInt(type(BigInt).FromInt(i), prec);
+    }
+
+    public static fun BigFlt*(flt, uint) FromFlt = (x, prec) {
+        var uint u = type(Flts).ToBits(x);
+        var uint e = (u >> 52U) & 2047U;
+        var uint frac = u & 4503599627370495U;
+        if(e == 2047U) {
+            type(System).Panic("BigFlt from an infinite or NaN flt");
+        }
+        var int exp = -1074;
+        if(e != 0U) {
+            frac = frac | 4503599627370496U;
+            exp = e{int} - 1075;
+        }
+        return type(BigFlt).make((u >> 63U) == 1U, type(BigInt).FromUint(frac), exp, prec, false);
+    }
+
+    // divide returns neg * a / b rounded to prec bits, for magnitudes a and b.
+    private static fun BigFlt*(bool, BigInt*, BigInt*, int, uint) divide = (neg, a, b, exp, prec) {
+        var int k = (prec + 3U + b.BitLen()){int} - a.BitLen(){int};
+        if(k < 0) {
+            k = 0;
+        }
+        var Pair[BigInt*, BigInt*] d = a.Shl(k{uint}).DivMod(b);
+        return type(BigFlt).make(neg, d.first, exp - k, prec, !d.second.IsZero());
+    }
+
+    private static fun bool(int) isDigit = (c) {
+        return c >= '0'{int} && c <= '9'{int};
+    }
+
+    // Parse reads an optional sign, decimal digits with an optional point,
+    // and an optional exponent led by e or E, rounding to prec bits. It
+    // reports false for anything else.
+    public static fun Pair[BigFlt*, bool](str, uint) Parse = (s, prec) {
+        var Pair[BigFlt*, bool] out;
+        out.first = null;
+        out.second = false;
+        var Pair[byte*, int] p = type(Strs).ToBytes(s);
+        var byte* b = p.first;
+        var uint n = p.second{uint};
+        var uint i = 0U;
+        var bool neg = false;
+        if(i < n && (b[i]{int} == '-'{int} || b[i]{int} == '+'{int})) {
+            neg = b[i]{int} == '-'{int};
+            i++;
+        }
+        var byte* digits = new(byte, n + 1U);
+        var uint count = 0U;
+        var int fracDigits = 0;
+        var bool dot = false;
+        for(; i < n; i++) {
+            var int c = b[i]{int};
+            if(type(BigFlt).isDigit(c)) {
+                digits[count] = b[i];
+                count++;
+                if(dot) {
+                    fracDigits++;
+                }
+            } else if(c == '.'{int} && !dot) {
+                dot = true;
+            } else if(c == 'e'{int} || c == 'E'{int}) {
+                break;
+            } else {
+                free(digits);
+                return out;
+            }
+        }
+        var int e10 = 0;
+        if(i < n) {
+            i++;
+            var bool eneg = false;
+            if(i < n && (b[i]{int} == '-'{int} || b[i]{int} == '+'{int})) {
+                eneg = b[i]{int} == '-'{int};
+                i++;
+            }
+            if(i == n) {
+                free(digits);
+                return out;
+            }
+            for(; i < n; i++) {
+                var int c = b[i]{int};
+                if(!type(BigFlt).isDigit(c) || e10 > 100000000) {
+                    free(digits);
+                    return out;
+                }
+                e10 = e10 * 10 + c - '0'{int};
+            }
+            if(eneg) {
+                e10 = -e10;
+            }
+        }
+        if(count == 0U) {
+            free(digits);
+            return out;
+        }
+        var BigInt* d = type(BigInt).Parse(type(Strs).FromBytes(digits, count{int})).first;
+        free(digits);
+        e10 = e10 - fracDigits;
+        var BigInt* ten = type(BigInt).FromUint(10U);
+        if(e10 >= 0) {
+            out.first = type(BigFlt).make(neg, d.Mul(ten.Pow(e10{uint})), 0, prec, false);
+        } else if(d.IsZero()) {
+            out.first = type(BigFlt).Zero(prec);
+        } else {
+            out.first = type(BigFlt).divide(neg, d, ten.Pow((-e10){uint}), 0, prec);
+        }
+        out.second = true;
+        return out;
+    }
+
+    // top is the exponent of the bit just above the highest set one, so that
+    // a nonzero magnitude lies in [2^(top-1), 2^top).
+    private fun int() top = () {
+        return this.exp + this.mant.BitLen(){int};
+    }
+
+    public fun uint() Prec = () {
+        return this.prec;
+    }
+
+    // WithPrec returns this rounded to prec bits.
+    public fun BigFlt*(uint) WithPrec = (prec) {
+        return type(BigFlt).make(this.neg, this.mant, this.exp, prec, false);
+    }
+
+    public fun int() Sign = () {
+        if(this.mant.IsZero()) {
+            return 0;
+        }
+        if(this.neg) {
+            return -1;
+        }
+        return 1;
+    }
+
+    public fun bool() IsZero = () {
+        return this.mant.IsZero();
+    }
+
+    public fun bool() IsInt = () {
+        return this.exp >= 0 || this.mant.IsZero();
+    }
+
+    public fun BigFlt*() Neg = () {
+        return type(BigFlt).make(!this.neg, this.mant, this.exp, this.prec, false);
+    }
+
+    public fun BigFlt*() Abs = () {
+        return type(BigFlt).make(false, this.mant, this.exp, this.prec, false);
+    }
+
+    // addSigned returns this plus o with o's sign taken as oneg. An operand
+    // too small to reach the rounding position contributes only which side
+    // of the other it lies on.
+    private fun BigFlt*(BigFlt*, bool) addSigned = (o, oneg) {
+        var uint p = type(Math).MaxUint(this.prec, o.prec);
+        if(o.IsZero()) {
+            return this.WithPrec(p);
+        }
+        if(this.IsZero()) {
+            return type(BigFlt).make(oneg, o.mant, o.exp, p, false);
+        }
+        var BigFlt* a = this;
+        var bool aneg = this.neg;
+        var BigFlt* b = o;
+        var bool bneg = oneg;
+        if(o.top() > this.top()) {
+            a = o;
+            aneg = oneg;
+            b = this;
+            bneg = this.neg;
+        }
+        if(a.top() - b.top() > (p + 3U){int}) {
+            var int shift = (p + 3U){int} - a.mant.BitLen(){int};
+            if(shift < 0) {
+                shift = 0;
+            }
+            var BigInt* m = a.mant.Shl(shift{uint});
+            if(aneg != bneg) {
+                m = m.Sub(type(BigInt).FromUint(1U));
+            }
+            return type(BigFlt).make(aneg, m, a.exp - shift, p, true);
+        }
+        var int e = a.exp;
+        if(b.exp < e) {
+            e = b.exp;
+        }
+        var BigInt* ma = a.mant.Shl((a.exp - e){uint});
+        var BigInt* mb = b.mant.Shl((b.exp - e){uint});
+        if(aneg == bneg) {
+            return type(BigFlt).make(aneg, ma.Add(mb), e, p, false);
+        }
+        var int c = ma.Cmp(mb);
+        if(c == 0) {
+            return type(BigFlt).Zero(p);
+        }
+        if(c > 0) {
+            return type(BigFlt).make(aneg, ma.Sub(mb), e, p, false);
+        }
+        return type(BigFlt).make(bneg, mb.Sub(ma), e, p, false);
+    }
+
+    public fun BigFlt*(BigFlt*) Add = (o) {
+        return this.addSigned(o, o.neg);
+    }
+
+    public fun BigFlt*(BigFlt*) Sub = (o) {
+        return this.addSigned(o, !o.neg);
+    }
+
+    public fun BigFlt*(BigFlt*) Mul = (o) {
+        var uint p = type(Math).MaxUint(this.prec, o.prec);
+        return type(BigFlt).make(this.neg != o.neg, this.mant.Mul(o.mant), this.exp + o.exp, p, false);
+    }
+
+    public fun BigFlt*(BigFlt*) Div = (o) {
+        if(o.IsZero()) {
+            type(System).Panic("BigFlt division by zero");
+        }
+        var uint p = type(Math).MaxUint(this.prec, o.prec);
+        if(this.IsZero()) {
+            return type(BigFlt).Zero(p);
+        }
+        return type(BigFlt).divide(this.neg != o.neg, this.mant, o.mant, this.exp - o.exp, p);
+    }
+
+    public fun BigFlt*() Sqrt = () {
+        if(this.neg && !this.IsZero()) {
+            type(System).Panic("BigFlt square root of a negative number");
+        }
+        if(this.IsZero()) {
+            return this;
+        }
+        var int s = (2U * this.prec + 6U){int} - this.mant.BitLen(){int};
+        if(s < 0) {
+            s = 0;
+        }
+        if((this.exp - s) % 2 != 0) {
+            s++;
+        }
+        var BigInt* n = this.mant.Shl(s{uint});
+        var BigInt* r = n.Sqrt();
+        return type(BigFlt).make(false, r, (this.exp - s) / 2, this.prec, !(r.Mul(r) == n));
+    }
+
+    // Trunc rounds toward zero to a whole number.
+    public fun BigFlt*() Trunc = () {
+        if(this.IsInt()) {
+            return this;
+        }
+        return type(BigFlt).make(this.neg, this.mant.Shr((-this.exp){uint}), 0, this.prec, false);
+    }
+
+    public fun BigFlt*() Floor = () {
+        if(this.IsInt()) {
+            return this;
+        }
+        var BigInt* q = this.mant.Shr((-this.exp){uint});
+        if(this.neg) {
+            q = q.Add(type(BigInt).FromUint(1U));
+        }
+        return type(BigFlt).make(this.neg, q, 0, this.prec, false);
+    }
+
+    public fun BigFlt*() Ceil = () {
+        if(this.IsInt()) {
+            return this;
+        }
+        var BigInt* q = this.mant.Shr((-this.exp){uint});
+        if(!this.neg) {
+            q = q.Add(type(BigInt).FromUint(1U));
+        }
+        return type(BigFlt).make(this.neg, q, 0, this.prec, false);
+    }
+
+    // Round rounds to the nearest whole number, halves away from zero.
+    public fun BigFlt*() Round = () {
+        if(this.IsInt()) {
+            return this;
+        }
+        var BigInt* twice = this.mant.Shr((-this.exp - 1){uint});
+        return type(BigFlt).make(this.neg, twice.Add(type(BigInt).FromUint(1U)).Shr(1U), 0, this.prec, false);
+    }
+
+    // ToBigInt returns this truncated toward zero.
+    public fun BigInt*() ToBigInt = () {
+        var BigInt* m = this.mant;
+        if(this.exp >= 0) {
+            m = m.Shl(this.exp{uint});
+        } else {
+            m = m.Shr((-this.exp){uint});
+        }
+        if(this.neg) {
+            return m.Neg();
+        }
+        return m;
+    }
+
+    // ToFlt returns the nearest flt, give or take the last bit of a
+    // subnormal.
+    public fun flt() ToFlt = () {
+        if(this.IsZero()) {
+            return 0.0;
+        }
+        var BigFlt* r = this.WithPrec(53U);
+        var int half = r.exp / 2;
+        var flt f = r.mant.ToFlt() * type(Math).Pow(2.0, half{flt}) * type(Math).Pow(2.0, (r.exp - half){flt});
+        if(r.neg) {
+            return -f;
+        }
+        return f;
+    }
+
+    // one is 1 at w fraction bits.
+    private static fun BigInt*(uint) one = (w) {
+        return type(BigInt).FromUint(1U).Shl(w);
+    }
+
+    // toFixed returns x at w fraction bits, truncated.
+    private static fun BigInt*(BigFlt*, uint) toFixed = (x, w) {
+        var int s = x.exp + w{int};
+        var BigInt* m = x.mant;
+        if(s >= 0) {
+            m = m.Shl(s{uint});
+        } else {
+            m = m.Shr((-s){uint});
+        }
+        if(x.neg) {
+            return m.Neg();
+        }
+        return m;
+    }
+
+    private static fun BigFlt*(BigInt*, uint, uint) fromFixed = (r, w, prec) {
+        return type(BigFlt).make(r.Sign() < 0, r.Abs(), -(w{int}), prec, false);
+    }
+
+    // enough reports whether r, a fixed-point result, holds prec bits with
+    // guard bits to spare.
+    private static fun bool(BigInt*, uint) enough = (r, prec) {
+        return r.Abs().BitLen() >= prec + 32U;
+    }
+
+    // widen returns the working precision to retry a fixed-point result at,
+    // or 0 once retrying would no longer be reasonable.
+    private static fun uint(BigInt*, uint, uint) widen = (r, w, prec) {
+        if(w > 64U * prec + 100000U) {
+            return 0U;
+        }
+        if(r.IsZero()) {
+            return w * 2U;
+        }
+        return w + prec + 64U - r.Abs().BitLen();
+    }
+
+    private static fun BigInt*(uint) small = (n) {
+        return type(BigInt).FromUint(n);
+    }
+
+    // atanInv returns atan(1/n) at w fraction bits.
+    private static fun BigInt*(uint, uint) atanInv = (n, w) {
+        var BigInt* term = type(BigFlt).one(w).Div(type(BigFlt).small(n));
+        var BigInt* sum = term;
+        var BigInt* nn = type(BigFlt).small(n * n);
+        for(var uint k = 1U; ; k++) {
+            term = term.Div(nn);
+            var BigInt* t = term.Div(type(BigFlt).small(2U * k + 1U));
+            if(t.IsZero()) {
+                break;
+            }
+            if((k & 1U) == 1U) {
+                sum = sum.Sub(t);
+            } else {
+                sum = sum.Add(t);
+            }
+        }
+        return sum;
+    }
+
+    // piFixed returns Pi at w fraction bits, by Machin's formula.
+    private static fun BigInt*(uint) piFixed = (w) {
+        var uint g = w + 8U;
+        var BigInt* a = type(BigFlt).atanInv(5U, g).Mul(type(BigFlt).small(16U));
+        var BigInt* b = type(BigFlt).atanInv(239U, g).Mul(type(BigFlt).small(4U));
+        return a.Sub(b).Shr(8U);
+    }
+
+    // ln2Fixed returns ln 2 at w fraction bits, as 2 atanh(1/3).
+    private static fun BigInt*(uint) ln2Fixed = (w) {
+        var uint g = w + 8U;
+        var BigInt* term = type(BigFlt).one(g).Div(type(BigFlt).small(3U));
+        var BigInt* sum = term;
+        for(var uint k = 1U; ; k++) {
+            term = term.Div(type(BigFlt).small(9U));
+            var BigInt* t = term.Div(type(BigFlt).small(2U * k + 1U));
+            if(t.IsZero()) {
+                break;
+            }
+            sum = sum.Add(t);
+        }
+        return sum.Shl(1U).Shr(8U);
+    }
+
+    public static fun BigFlt*(uint) Pi = (prec) {
+        return type(BigFlt).fromFixed(type(BigFlt).piFixed(prec + 16U), prec + 16U, prec);
+    }
+
+    public static fun BigFlt*(uint) Ln2 = (prec) {
+        return type(BigFlt).fromFixed(type(BigFlt).ln2Fixed(prec + 16U), prec + 16U, prec);
+    }
+
+    public static fun BigFlt*(uint) E = (prec) {
+        return type(BigFlt).FromInt(1, prec).Exp();
+    }
+
+    // Exp returns e to this, reducing by multiples of ln 2 and halving 16
+    // times before summing the series.
+    public fun BigFlt*() Exp = () {
+        var uint p = this.prec;
+        if(this.IsZero()) {
+            return type(BigFlt).FromInt(1, p);
+        }
+        var int t = this.top();
+        if(t > 40) {
+            type(System).Panic("BigFlt.Exp argument out of range");
+        }
+        var uint kbits = 2U;
+        if(t > 0) {
+            kbits = kbits + t{uint};
+        }
+        var uint w = p + 64U + kbits;
+        var BigInt* x = type(BigFlt).toFixed(this, w);
+        var BigInt* ln2 = type(BigFlt).ln2Fixed(w + kbits);
+        var BigInt* k = x.Div(ln2.Shr(kbits));
+        var BigInt* r = x.Sub(k.Mul(ln2).Shr(kbits));
+
+        var uint w2 = w + 16U;
+        var BigInt* sum = type(BigFlt).one(w2);
+        var BigInt* term = sum;
+        for(var uint i = 1U; ; i++) {
+            term = term.Mul(r).Shr(w2).Div(type(BigFlt).small(i));
+            if(term.IsZero()) {
+                break;
+            }
+            sum = sum.Add(term);
+        }
+        for(var int i = 0; i < 16; i++) {
+            sum = sum.Mul(sum).Shr(w2);
+        }
+        return type(BigFlt).make(false, sum, k.ToInt().first - w2{int}, p, false);
+    }
+
+    // logFixed returns the natural logarithm of x at w fraction bits, as
+    // n ln 2 + 2 atanh((f - 1) / (f + 1)) for x = f 2^n with f near one.
+    private static fun BigInt*(BigFlt*, uint) logFixed = (x, w) {
+        var int n = x.top();
+        var BigInt* one = type(BigFlt).one(w);
+        var int s = w{int} - x.mant.BitLen(){int};
+        var BigInt* f = x.mant;
+        if(s >= 0) {
+            f = f.Shl(s{uint});
+        } else {
+            f = f.Shr((-s){uint});
+        }
+        if(f.Mul(f).Shl(1U).Cmp(one.Mul(one)) < 0) {
+            f = f.Shl(1U);
+            n--;
+        }
+        var BigInt* z = f.Sub(one).Shl(w).Div(f.Add(one));
+        var BigInt* zz = z.Mul(z).Shr(w);
+        var BigInt* term = z;
+        var BigInt* sum = z;
+        for(var uint k = 1U; ; k++) {
+            term = term.Mul(zz).Shr(w);
+            var BigInt* t = term.Div(type(BigFlt).small(2U * k + 1U));
+            if(t.IsZero()) {
+                break;
+            }
+            sum = sum.Add(t);
+        }
+        return sum.Shl(1U).Add(type(BigInt).FromInt(n).Mul(type(BigFlt).ln2Fixed(w)));
+    }
+
+    // Log returns the natural logarithm of this, which must be positive.
+    public fun BigFlt*() Log = () {
+        if(this.Sign() <= 0) {
+            type(System).Panic("BigFlt logarithm of a number not above zero");
+        }
+        var uint p = this.prec;
+        if(this.exp == 0 && this.mant.BitLen() == 1U) {
+            return type(BigFlt).Zero(p);
+        }
+        var int n = this.top();
+        if(n < 0) {
+            n = -n;
+        }
+        var uint w = p + 64U + type(Uints).Len(n{uint});
+        var BigInt* r = type(BigFlt).logFixed(this, w);
+        for(; !type(BigFlt).enough(r, p);) {
+            var uint next = type(BigFlt).widen(r, w, p);
+            if(next == 0U) {
+                break;
+            }
+            w = next;
+            r = type(BigFlt).logFixed(this, w);
+        }
+        return type(BigFlt).fromFixed(r, w, p);
+    }
+
+    // Pow returns this to y. A whole y is taken by repeated squaring, and any
+    // other as exp(y log this), which needs this to be positive.
+    public fun BigFlt*(BigFlt*) Pow = (y) {
+        var uint p = type(Math).MaxUint(this.prec, y.prec);
+        if(y.IsZero()) {
+            return type(BigFlt).FromInt(1, p);
+        }
+        if(this.IsZero()) {
+            if(y.neg) {
+                type(System).Panic("BigFlt zero to a negative power");
+            }
+            return type(BigFlt).Zero(p);
+        }
+        if(y.IsInt() && y.top() <= 40) {
+            var uint e = y.Abs().ToBigInt().ToInt().first{uint};
+            var uint q = p + type(Uints).Len(e) + 16U;
+            var BigFlt* r = type(BigFlt).FromInt(1, q);
+            var BigFlt* b = this.WithPrec(q);
+            for(; e > 0U; e = e >> 1U) {
+                if((e & 1U) == 1U) {
+                    r = r.Mul(b);
+                }
+                if(e > 1U) {
+                    b = b.Mul(b);
+                }
+            }
+            if(y.neg) {
+                r = type(BigFlt).FromInt(1, q).Div(r);
+            }
+            return r.WithPrec(p);
+        }
+        if(this.neg) {
+            type(System).Panic("BigFlt negative number to a non-whole power");
+        }
+        var uint q = p + 64U;
+        var BigFlt* t = this.WithPrec(q).Log().Mul(y.WithPrec(q));
+        var int extra = t.top();
+        if(extra > 0) {
+            q = q + extra{uint};
+            t = this.WithPrec(q).Log().Mul(y.WithPrec(q));
+        }
+        return t.Exp().WithPrec(p);
+    }
+
+    // trigFixed returns the sine of x at w fraction bits, or the cosine when
+    // cos is true, reducing x by multiples of Pi / 2 first.
+    private static fun BigInt*(BigFlt*, uint, bool) trigFixed = (x, w, cos) {
+        var uint wp = w + 8U;
+        if(x.top() > 0) {
+            wp = wp + x.top(){uint};
+        }
+        var BigInt* xf = type(BigFlt).toFixed(x, wp);
+        var BigInt* halfPi = type(BigFlt).piFixed(wp).Shr(1U);
+        var BigInt* k = xf.Div(halfPi);
+        var BigInt* r = xf.Sub(k.Mul(halfPi)).Shr(wp - w);
+        var int quarter = k.Mod(type(BigFlt).small(4U)).ToInt().first;
+        if(quarter < 0) {
+            quarter = quarter + 4;
+        }
+        if(cos) {
+            quarter = (quarter + 1) % 4;
+        }
+
+        var BigInt* one = type(BigFlt).one(w);
+        var BigInt* rr = r.Mul(r).Shr(w);
+        var BigInt* sum = r;
+        var uint first = 2U;
+        if(quarter % 2 == 1) {
+            sum = one;
+            first = 1U;
+        }
+        var BigInt* term = sum;
+        for(var uint i = first; ; i = i + 2U) {
+            term = term.Mul(rr).Shr(w).Div(type(BigFlt).small(i * (i + 1U))).Neg();
+            if(term.IsZero()) {
+                break;
+            }
+            sum = sum.Add(term);
+        }
+        if(quarter >= 2) {
+            return sum.Neg();
+        }
+        return sum;
+    }
+
+    private fun BigFlt*(bool) trig = (cos) {
+        var uint p = this.prec;
+        var uint w = p + 64U;
+        var BigInt* r = type(BigFlt).trigFixed(this, w, cos);
+        for(; !type(BigFlt).enough(r, p);) {
+            var uint next = type(BigFlt).widen(r, w, p);
+            if(next == 0U) {
+                break;
+            }
+            w = next;
+            r = type(BigFlt).trigFixed(this, w, cos);
+        }
+        return type(BigFlt).fromFixed(r, w, p);
+    }
+
+    public fun BigFlt*() Sin = () {
+        if(this.IsZero()) {
+            return this;
+        }
+        return this.trig(false);
+    }
+
+    public fun BigFlt*() Cos = () {
+        return this.trig(true);
+    }
+
+    public fun BigFlt*() Tan = () {
+        var uint q = this.prec + 32U;
+        var BigFlt* x = this.WithPrec(q);
+        return x.Sin().Div(x.Cos()).WithPrec(this.prec);
+    }
+
+    // atanFixed returns the arctangent of x at w fraction bits, halving the
+    // angle four times before summing the series.
+    private static fun BigInt*(BigFlt*, uint) atanFixed = (x, w) {
+        var BigInt* one = type(BigFlt).one(w);
+        var BigInt* a = type(BigFlt).toFixed(x, w).Abs();
+        var bool flip = a.Cmp(one) > 0;
+        if(flip) {
+            a = one.Shl(w).Div(a);
+        }
+        for(var int i = 0; i < 4; i++) {
+            var BigInt* s = one.Mul(one).Add(a.Mul(a)).Sqrt();
+            a = a.Shl(w).Div(one.Add(s));
+        }
+        var BigInt* aa = a.Mul(a).Shr(w);
+        var BigInt* term = a;
+        var BigInt* sum = a;
+        for(var uint k = 1U; ; k++) {
+            term = term.Mul(aa).Shr(w).Neg();
+            var BigInt* t = term.Div(type(BigFlt).small(2U * k + 1U));
+            if(t.IsZero()) {
+                break;
+            }
+            sum = sum.Add(t);
+        }
+        sum = sum.Shl(4U);
+        if(flip) {
+            sum = type(BigFlt).piFixed(w).Shr(1U).Sub(sum);
+        }
+        if(x.neg) {
+            return sum.Neg();
+        }
+        return sum;
+    }
+
+    public fun BigFlt*() Atan = () {
+        if(this.IsZero()) {
+            return this;
+        }
+        var uint p = this.prec;
+        var uint w = p + 64U;
+        var BigInt* r = type(BigFlt).atanFixed(this, w);
+        for(; !type(BigFlt).enough(r, p);) {
+            var uint next = type(BigFlt).widen(r, w, p);
+            if(next == 0U) {
+                break;
+            }
+            w = next;
+            r = type(BigFlt).atanFixed(this, w);
+        }
+        return type(BigFlt).fromFixed(r, w, p);
+    }
+
+    public fun bool(Obj*) Eq = (o) {
+        var BigFlt* f = o{BigFlt*};
+        return this.neg == f.neg && this.exp == f.exp && this.mant == f.mant;
+    }
+
+    public fun int(Obj*) Cmp = (o) {
+        var BigFlt* f = o{BigFlt*};
+        var int sa = this.Sign();
+        var int sb = f.Sign();
+        if(sa != sb) {
+            if(sa < sb) {
+                return -1;
+            }
+            return 1;
+        }
+        if(sa == 0) {
+            return 0;
+        }
+        var int c = 0;
+        if(this.top() != f.top()) {
+            c = 1;
+            if(this.top() < f.top()) {
+                c = -1;
+            }
+        } else {
+            var int e = this.exp;
+            if(f.exp < e) {
+                e = f.exp;
+            }
+            c = this.mant.Shl((this.exp - e){uint}).Cmp(f.mant.Shl((f.exp - e){uint}));
+        }
+        return c * sa;
+    }
+
+    public fun int() Hash = () {
+        var uint h = type(Hash).Combine(type(Hash).Int(this.Sign()), type(Hash).Int(this.exp));
+        return type(Hash).Combine(h, this.mant.Hash(){uint}){int};
+    }
+
+    // slice returns bytes [from, to) of b as a str.
+    private static fun str(byte*, uint, uint) slice = (b, from, to) {
+        var byte* out = new(byte, to - from + 1U);
+        for(var uint i = from; i < to; i++) {
+            out[i - from] = b[i];
+        }
+        var str s = type(Strs).FromBytes(out, (to - from){int});
+        free(out);
+        return s;
+    }
+
+    private static fun str(int) zeros = (n) {
+        var str s = "";
+        for(var int i = 0; i < n; i++) {
+            s = s + "0";
+        }
+        return s;
+    }
+
+    // Text returns the value rounded to the given number of significant
+    // decimal digits, trailing zeros dropped, in positional notation for a
+    // decimal exponent in [-5, digits) and in scientific notation otherwise.
+    public fun str(uint) Text = (digits) {
+        if(digits == 0U) {
+            digits = 1U;
+        }
+        if(this.IsZero()) {
+            return "0";
+        }
+        var BigInt* ten = type(BigFlt).small(10U);
+        var BigInt* lo = ten.Pow(digits - 1U);
+        var BigInt* hi = ten.Pow(digits);
+        var int scaled = (this.top() - 1) * 30103;
+        var int e10 = scaled / 100000;
+        if(scaled < 0 && scaled % 100000 != 0) {
+            e10--;
+        }
+        var BigInt* q = null;
+        for(;;) {
+            var int k = digits{int} - 1 - e10;
+            var BigInt* num = this.mant;
+            var BigInt* den = type(BigFlt).small(1U);
+            if(this.exp >= 0) {
+                num = num.Shl(this.exp{uint});
+            } else {
+                den = den.Shl((-this.exp){uint});
+            }
+            if(k >= 0) {
+                num = num.Mul(ten.Pow(k{uint}));
+            } else {
+                den = den.Mul(ten.Pow((-k){uint}));
+            }
+            var Pair[BigInt*, BigInt*] d = num.DivMod(den);
+            q = d.first;
+            var int c = d.second.Shl(1U).Cmp(den);
+            if(c > 0 || (c == 0 && q.Bit(0U))) {
+                q = q.Add(type(BigFlt).small(1U));
+            }
+            if(q.Cmp(hi) >= 0) {
+                e10++;
+            } else if(q.Cmp(lo) < 0) {
+                e10--;
+            } else {
+                break;
+            }
+        }
+
+        var str text = q.Str();
+        var Pair[byte*, int] p = type(Strs).ToBytes(text);
+        var byte* b = p.first;
+        var uint len = digits;
+        for(; len > 1U && b[len - 1U]{int} == '0'{int};) {
+            len--;
+        }
+        var str s = "";
+        if(this.neg) {
+            s = "-";
+        }
+        if(e10 < -5 || e10 >= digits{int}) {
+            s = s + type(BigFlt).slice(b, 0U, 1U);
+            if(len > 1U) {
+                s = s + "." + type(BigFlt).slice(b, 1U, len);
+            }
+            if(e10 < 0) {
+                return s + "e-" + (-e10){str};
+            }
+            return s + "e+" + e10{str};
+        }
+        if(e10 < 0) {
+            return s + "0." + type(BigFlt).zeros(-e10 - 1) + type(BigFlt).slice(b, 0U, len);
+        }
+        var uint whole = (e10 + 1){uint};
+        if(len <= whole) {
+            return s + type(BigFlt).slice(b, 0U, len) + type(BigFlt).zeros((whole - len){int});
+        }
+        return s + type(BigFlt).slice(b, 0U, whole) + "." + type(BigFlt).slice(b, whole, len);
+    }
+
+    // Str returns as many significant decimal digits as the precision holds.
+    public fun str() Str = () {
+        return this.Text(this.prec * 30103U / 100000U + 1U);
+    }
+}

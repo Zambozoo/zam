@@ -1,1 +1,85 @@
-namespace UDP {}
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "IP.zam";
+import "Socket.zam";
+
+// UDP datagrams, over IPv4 and IPv6
+public namespace UDP {
+    // One datagram received: how many bytes it held and who sent it
+    public struct Packet {
+        public var uint len;
+        public var IP ip;
+        public var uint port;
+    }
+
+    // Conn sends and receives datagrams. A Conn made by Dial also reads and
+    // writes its one peer as a Socket.
+    public class Conn <: Socket* {
+        public static fun UDP.Conn*(int) Of = (fd) {
+            var UDP.Conn* c = new(UDP.Conn);
+            c.InitFD(fd);
+            return c;
+        }
+
+        // SendTo sends n bytes at b as one datagram to ip and port.
+        public fun Pair[uint, Err*](byte*, uint, IP, uint) SendTo = (b, n, ip, port) {
+            var Pair[uint, Err*] out;
+            var int sent;
+            var str errStr;
+            native(STD_UDP_SEND_TO){void(int, byte*, int, str, int, int*, str*)}(this.FD(), b, n{int}, ip.Str(), port{int}, &sent, &errStr);
+            out.first = sent{uint};
+            out.second = null;
+            if(errStr != null) {
+                out.second = type(StrErr).New(errStr);
+            }
+            return out;
+        }
+
+        // RecvFrom waits for one datagram, keeping as much of it as fits in n
+        // bytes at b.
+        public fun Pair[UDP.Packet, Err*](byte*, uint) RecvFrom = (b, n) {
+            var Pair[UDP.Packet, Err*] out;
+            var int got;
+            var str text;
+            var int port;
+            var str errStr;
+            native(STD_UDP_RECV_FROM){void(int, byte*, int, int*, str*, int*, str*)}(this.FD(), b, n{int}, &got, &text, &port, &errStr);
+            var Pair[Pair[IP, uint], Err*] from = type(Socket).addrOf(text, port, errStr);
+            out.first.len = got{uint};
+            out.first.ip = from.first.first;
+            out.first.port = from.first.second;
+            out.second = from.second;
+            return out;
+        }
+    }
+
+    private static fun Pair[UDP.Conn*, Err*](int, str, str) conn = (fd, where, errStr) {
+        var Pair[UDP.Conn*, Err*] out;
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(where + ": " + errStr);
+        } else {
+            out.first = type(UDP.Conn).Of(fd);
+        }
+        return out;
+    }
+
+    // Bind receives datagrams sent to host and port. An empty host binds every
+    // local address, and port 0 lets the system choose one.
+    public static fun Pair[UDP.Conn*, Err*](str, uint) Bind = (host, port) {
+        var int fd = -1;
+        var str errStr;
+        native(STD_UDP_BIND){void(str, int, int*, str*)}(host, port{int}, &fd, &errStr);
+        return type(UDP).conn(fd, host + ":" + port{str}, errStr);
+    }
+
+    // Dial makes a Conn whose reads and writes go to and from one peer.
+    public static fun Pair[UDP.Conn*, Err*](str, uint) Dial = (host, port) {
+        var int fd = -1;
+        var str errStr;
+        native(STD_UDP_DIAL){void(str, int, int*, str*)}(host, port{int}, &fd, &errStr);
+        return type(UDP).conn(fd, host + ":" + port{str}, errStr);
+    }
+}

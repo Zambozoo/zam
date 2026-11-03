@@ -5,7 +5,7 @@ import "../../math/Rand.zam";
 import "../../lang/Struct.zam";
 
 // Probabilistic tree-based min max heap
-class Treap[A] {
+public class Treap[A] {
     struct Node[A] {
         var A val;
         var uint prio;
@@ -16,13 +16,13 @@ class Treap[A] {
     var uint len;
     var Node[A]* root;
 
-    static fun[A] Treap[A]*(uint, A...) New = (len, args) {
+    public static fun[A] Treap[A]*(uint, A...) New = (len, args) {
         var Treap[A]* t = new(Treap[A]);
         t.Init(len, args...);
         return t;
     }
 
-    fun void(uint, A...) Init = (len, args) {
+    public fun void(uint, A...) Init = (len, args) {
         this.len = 0U;
         this.root = null;
         for(var uint i = 0U; i < len; i++) {
@@ -179,16 +179,16 @@ class Treap[A] {
         free(n);
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun void(A) Add = (v) {
+    public fun void(A) Add = (v) {
         this.insert(&(this.root), v);
         this.len++;
     }
 
-    fun A() GetMin = () {
+    public fun A() GetMin = () {
         if(this.len == 0U) {
             type(System).Panic("Treap is empty");
         }
@@ -199,7 +199,7 @@ class Treap[A] {
         return n.val;
     }
 
-    fun A() GetMax = () {
+    public fun A() GetMax = () {
         if(this.len == 0U) {
             type(System).Panic("Treap is empty");
         }
@@ -210,7 +210,7 @@ class Treap[A] {
         return n.val;
     }
 
-    fun A() RemoveMin = () {
+    public fun A() RemoveMin = () {
         if(this.len == 0U) {
             type(System).Panic("Treap is empty");
         }
@@ -220,7 +220,7 @@ class Treap[A] {
         return v;
     }
 
-    fun A() RemoveMax = () {
+    public fun A() RemoveMax = () {
         if(this.len == 0U) {
             type(System).Panic("Treap is empty");
         }
@@ -231,7 +231,7 @@ class Treap[A] {
     }
 
     // Merge moves every element of other into this heap, leaving other empty.
-    fun void(Treap[A]*) Merge = (other) {
+    public fun void(Treap[A]*) Merge = (other) {
         if(other{void*} == this{void*}) {
             type(System).Panic("Treap merged with itself");
         }
@@ -241,12 +241,12 @@ class Treap[A] {
         other.len = 0U;
     }
 
-    fun void() Clear = () {
+    public fun void() Clear = () {
         this.Delete();
     }
 
     // Arr returns the elements in ascending order.
-    fun Arr[A]*() Arr = () {
+    public fun Arr[A]*() Arr = () {
         var A* a = new(A, this.len);
         this.fill(this.root, a, 0U);
         return type(Arr)[A].New(this.len, a...);
@@ -254,27 +254,30 @@ class Treap[A] {
 
     // Iter visits the elements in ascending order, as they stood when it was
     // made.
-    fun Iter[A]*() Iter = () {
+    public fun Iter[A]*() Iter = () {
         var Iter[A]* i = new(Iter[A]);
         i.items = this.Arr();
         i.i = 0U;
         return i;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         return this.Arr(){str};
     }
 
     // Delete detaches the tree before freeing it, so a collection while it is
     // being freed finds nothing to walk.
-    fun void() Delete = () {
+    public fun void() Delete = () {
         var Node[A]* n = this.root;
         this.root = null;
         this.len = 0U;
         this.freeAll(n);
     }
 
-    fun void() Mark = () {
+    public fun void() Mark = () {
+        if(!type(System.GC).Markable(@{A})) {
+            return;
+        }
         type(Treap)[A].markTree(this.root);
     }
 
@@ -282,7 +285,7 @@ class Treap[A] {
         var Arr[A]* items;
         var uint i;
 
-        fun Pair[A, bool]() Next = () {
+        public fun Pair[A, bool]() Next = () {
             var Pair[A, bool] p;
             if(this.i >= this.items.Len()) {
                 p.second = false;
@@ -294,7 +297,7 @@ class Treap[A] {
             return p;
         }
 
-        fun Pair[A, bool]() Prev = () {
+        public fun Pair[A, bool]() Prev = () {
             var Pair[A, bool] p;
             if(this.i == 0U) {
                 p.second = false;

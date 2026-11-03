@@ -4,7 +4,7 @@ import "../../lang/Arr.zam";
 import "../../lang/Struct.zam";
 
 // Meldable min max heap of twin pairing heaps sharing their nodes
-class PairHeap[A] {
+public class PairHeap[A] {
     static var uint$ minSide = 0U;
     static var uint$ maxSide = 1U;
 
@@ -23,13 +23,13 @@ class PairHeap[A] {
     var uint len;
     var Node[A]*[2] roots;
 
-    static fun[A] PairHeap[A]*(uint, A...) New = (len, args) {
+    public static fun[A] PairHeap[A]*(uint, A...) New = (len, args) {
         var PairHeap[A]* h = new(PairHeap[A]);
         h.Init(len, args...);
         return h;
     }
 
-    fun void(uint, A...) Init = (len, args) {
+    public fun void(uint, A...) Init = (len, args) {
         this.len = 0U;
         this.roots[0] = null;
         this.roots[1] = null;
@@ -249,11 +249,11 @@ class PairHeap[A] {
         return out;
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun void(A) Add = (v) {
+    public fun void(A) Add = (v) {
         var Node[A]* n = new(Node[A]);
         n.val = v;
         this.roots[0] = this.link(this.roots[0], n, 0U);
@@ -261,28 +261,28 @@ class PairHeap[A] {
         this.len++;
     }
 
-    fun A() GetMin = () {
+    public fun A() GetMin = () {
         if(this.len == 0U) {
             type(System).Panic("PairHeap is empty");
         }
         return this.roots[type(PairHeap).minSide].val;
     }
 
-    fun A() GetMax = () {
+    public fun A() GetMax = () {
         if(this.len == 0U) {
             type(System).Panic("PairHeap is empty");
         }
         return this.roots[type(PairHeap).maxSide].val;
     }
 
-    fun A() RemoveMin = () {
+    public fun A() RemoveMin = () {
         if(this.len == 0U) {
             type(System).Panic("PairHeap is empty");
         }
         return this.removeRoot(type(PairHeap).minSide);
     }
 
-    fun A() RemoveMax = () {
+    public fun A() RemoveMax = () {
         if(this.len == 0U) {
             type(System).Panic("PairHeap is empty");
         }
@@ -290,7 +290,7 @@ class PairHeap[A] {
     }
 
     // Merge moves every element of other into this heap, leaving other empty.
-    fun void(PairHeap[A]*) Merge = (other) {
+    public fun void(PairHeap[A]*) Merge = (other) {
         if(other{void*} == this{void*}) {
             type(System).Panic("PairHeap merged with itself");
         }
@@ -302,12 +302,12 @@ class PairHeap[A] {
         other.len = 0U;
     }
 
-    fun void() Clear = () {
+    public fun void() Clear = () {
         this.Delete();
     }
 
     // Arr returns the elements in no particular order.
-    fun Arr[A]*() Arr = () {
+    public fun Arr[A]*() Arr = () {
         var Node[A]** ns = this.nodes();
         var A* a = new(A, this.len);
         for(var uint i = 0U; i < this.len; i++) {
@@ -319,18 +319,18 @@ class PairHeap[A] {
 
     // Iter visits the elements in no particular order, as they stood when it
     // was made.
-    fun Iter[A]*() Iter = () {
+    public fun Iter[A]*() Iter = () {
         var Iter[A]* i = new(Iter[A]);
         i.items = this.Arr();
         i.i = 0U;
         return i;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         return this.Arr(){str};
     }
 
-    fun void() Delete = () {
+    public fun void() Delete = () {
         var Node[A]** ns = this.nodes();
         for(var uint i = 0U; i < this.len; i++) {
             free(ns[i]);
@@ -341,7 +341,10 @@ class PairHeap[A] {
         this.len = 0U;
     }
 
-    fun void() Mark = () {
+    public fun void() Mark = () {
+        if(!type(System.GC).Markable(@{A})) {
+            return;
+        }
         if(this.roots[0] != null) {
             type(PairHeap)[A].markFrom(this.roots[0]);
         }
@@ -351,7 +354,7 @@ class PairHeap[A] {
         var Arr[A]* items;
         var uint i;
 
-        fun Pair[A, bool]() Next = () {
+        public fun Pair[A, bool]() Next = () {
             var Pair[A, bool] p;
             if(this.i >= this.items.Len()) {
                 p.second = false;
@@ -363,7 +366,7 @@ class PairHeap[A] {
             return p;
         }
 
-        fun Pair[A, bool]() Prev = () {
+        public fun Pair[A, bool]() Prev = () {
             var Pair[A, bool] p;
             if(this.i == 0U) {
                 p.second = false;

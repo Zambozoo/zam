@@ -3,10 +3,11 @@ import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 import "../../lang/Objs.zam";
+import "Streams.zam";
 
-class File {
+public class File {
     // The POSIX open flags
-    enum Flag : byte {
+    public enum Flag : int {
         ReadOnly(flag(0)),
         WriteOnly(flag(1)),
         ReadWrite(flag(2)),
@@ -15,26 +16,43 @@ class File {
         Truncate(flag(5)),
         Append(flag(6));
 
-        static private fun byte(int) flag = (code) {
+        static private fun int(int) flag = (code) {
             var int v;
             native(STD_FILE_FLAG){void(int, int*)}(code, &v);
-            return v{byte};
+            return v;
         }
     }
 
-    static private fun File*(int) newWithFD = (fd) {
+    // Where a Seek offset is measured from
+    public enum Whence : int {
+        Start(0),
+        Current(1),
+        End(2);
+    }
+
+    // FromFD wraps an open file descriptor, which the File then owns.
+    public static fun File*(int) FromFD = (fd) {
         var File* f = new(File);
         f.fd = fd;
         return f;
     }
 
-    static var File*$ StdIn = newWithFD(0);
-    static var File*$ StdOut = newWithFD(1);
-    static var File*$ StdErr = newWithFD(2);
+    public static var File*$ StdIn = FromFD(0);
+    public static var File*$ StdOut = FromFD(1);
+    public static var File*$ StdErr = FromFD(2);
 
     private var int fd;
 
-    static fun Pair[File*, Err*](str, int) New = (path, mode) {
+    // err turns a native's error message into an Err, or null for none.
+    private static fun Err*(str) err = (msg) {
+        if(msg == null) {
+            return null;
+        }
+        return type(StrErr).New(msg);
+    }
+
+    // New opens path with mode, the Flags it is opened with or'd together.
+    public static fun Pair[File*, Err*](str, int) New = (path, mode) {
         var File* f = new(File);
         var Pair[File*, Err*] p;
         p.second = f.Init(path, mode);
@@ -44,59 +62,100 @@ class File {
         return p;
     }
 
-    fun Err*(str, int) Init = (path, mode) {
-        var str errStr;
-        native(STD_FILE_INIT){void(str, int, int*, str*)}(path, mode, &(this.fd), &errStr);
-        if (errStr != null) {
-            var StrErr* se = new(StrErr);
-            se.Init(errStr);
-            return se;
-        }
-        return null;
+    // Open opens path for reading.
+    public static fun Pair[File*, Err*](str) Open = (path) {
+        return type(File).New(path, type(File.Flag).ReadOnly{int});
     }
 
-    fun Pair[int, Err*](byte*, int) Write = (buffer, count) {
+    // Create opens path for writing, creating it or emptying what is there.
+    public static fun Pair[File*, Err*](str) Create = (path) {
+        return type(File).New(path, type(File.Flag).WriteOnly{int} | type(File.Flag).Create{int} | type(File.Flag).Truncate{int});
+    }
+
+    public fun Err*(str, int) Init = (path, mode) {
+        var str errStr;
+        this.fd = -1;
+        native(STD_FILE_INIT){void(str, int, int*, str*)}(path, mode, &(this.fd), &errStr);
+        return type(File).err(errStr);
+    }
+
+    public fun int() FD = () {
+        return this.fd;
+    }
+
+    // InitFD makes the File own an open file descriptor, which is how a
+    // subclass wraps one.
+    public fun void(int) InitFD = (fd) {
+        this.fd = fd;
+    }
+
+    public fun Pair[int, Err*](byte*, int) Write = (buffer, count) {
         var Pair[int, Err*] p;
         var str errStr;
         native(STD_FILE_WRITE){void(int*, byte*, int, int*, str*)}(&(this.fd), buffer, count, &(p.first), &errStr);
-        if (errStr != null) {
-            var StrErr* se = new(StrErr);
-            se.Init(errStr);
-            p.second = se;
-        }
+        p.second = type(File).err(errStr);
         return p;
     }
 
-    fun Pair[int, Err*](str) WriteStr = (s) {
+    public fun Pair[int, Err*](str) WriteStr = (s) {
         var Pair[byte*, int] bytes = type(Strs).ToBytes(s);
         return this.Write(bytes.first, bytes.second);
     }
 
-    fun Pair[int, Err*](byte*, int) Read = (buffer, count) {
+    // Read reads up to count bytes into buffer, returning how many it read,
+    // zero at the end of the file.
+    public fun Pair[int, Err*](byte*, int) Read = (buffer, count) {
         var Pair[int, Err*] p;
         var str errStr;
         native(STD_FILE_READ){void(int*, byte*, int, int*, str*)}(&(this.fd), buffer, count, &(p.first), &errStr);
-        if (errStr != null) {
-            var StrErr* se = new(StrErr);
-            se.Init(errStr);
-            p.second = se;
-        }
+        p.second = type(File).err(errStr);
         return p;
     }
 
-    fun Err*() Close = () {
-        var str errStr;
-        native(STD_FILE_CLOSE){void(int*, str*)}(&(this.fd), &errStr);
-        if (errStr != null) {
-            var StrErr* se = new(StrErr);
-            se.Init(errStr);
-            return se;
-        }
-        return null;
+    // ReadAll reads up to the end of the file.
+    public fun Pair[str, Err*]() ReadAll = () {
+        return type(Streams).ReadAll(this);
     }
 
-    fun void() Delete = () {
-        this.Close();
+    // Seek moves the offset the next read or write begins at, returning the
+    // new offset from the start.
+    public fun Pair[int, Err*](int, File.Whence) Seek = (offset, whence) {
+        var Pair[int, Err*] p;
+        var str errStr;
+        native(STD_FILE_SEEK){void(int*, int, int, int*, str*)}(&(this.fd), offset, whence{int}, &(p.first), &errStr);
+        p.second = type(File).err(errStr);
+        return p;
+    }
+
+    public fun Pair[int, Err*]() Size = () {
+        var Pair[int, Err*] p;
+        var str errStr;
+        native(STD_FILE_SIZE){void(int*, int*, str*)}(&(this.fd), &(p.first), &errStr);
+        p.second = type(File).err(errStr);
+        return p;
+    }
+
+    // Sync commits what has been written to storage.
+    public fun Err*() Sync = () {
+        var str errStr;
+        native(STD_FILE_SYNC){void(int*, str*)}(&(this.fd), &errStr);
+        return type(File).err(errStr);
+    }
+
+    public fun Err*() Close = () {
+        if(this.fd < 0) {
+            return type(StrErr).New("file already closed");
+        }
+        var str errStr;
+        native(STD_FILE_CLOSE){void(int*, str*)}(&(this.fd), &errStr);
+        this.fd = -1;
+        return type(File).err(errStr);
+    }
+
+    public fun void() Delete = () {
+        if(this.fd >= 0) {
+            this.Close();
+        }
         type(Objs).Delete(this);
     }
 }

@@ -1,3 +1,13 @@
-namespace Constants {
-    
+public namespace Constants {
+    public var flt$ Pi = 3.141592653589793;
+    public var flt$ Tau = 6.283185307179586;
+    public var flt$ E = 2.718281828459045;
+    public var flt$ Phi = 1.618033988749895;
+    public var flt$ Sqrt2 = 1.4142135623730951;
+    public var flt$ SqrtE = 1.6487212707001282;
+    public var flt$ SqrtPi = 1.7724538509055159;
+    public var flt$ Ln2 = 0.6931471805599453;
+    public var flt$ Ln10 = 2.302585092994046;
+    public var flt$ Log2E = 1.4426950408889634;
+    public var flt$ Log10E = 0.4342944819032518;
 }

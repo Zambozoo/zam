@@ -1,32 +1,83 @@
-class WaitGroup[A] {
-    static fun[A] WaitGroup[A]() New = () {
-        return NewWithSize(0U);
+import "../lang/System.zam";
+import "Mutex.zam";
+import "Cond.zam";
+
+// Count of outstanding work that waiters block on until it reaches zero. Do
+// runs work on threads of its own, at most max at once when max is not zero.
+public class WaitGroup {
+    var Mutex* m;
+    var Cond* c;
+    var int count;
+    var uint running;
+    var uint max;
+
+    public static fun WaitGroup*() New = () {
+        return type(WaitGroup).NewWithMaxSize(0U);
     }
 
-    // Max size of 0 means no max size
-    static fun[A] WaitGroup[A](uint) NewWithMaxSize = (i) {
-        var WaitGroup[A]* wg = new(WaitGroup);
-        wg.InitWithMaxSize(i);
+    public static fun WaitGroup*(uint) NewWithMaxSize = (max) {
+        var WaitGroup* wg = new(WaitGroup);
+        wg.InitWithMaxSize(max);
         return wg;
     }
 
-    fun void() Init = () {
+    public fun void() Init = () {
         this.InitWithMaxSize(0U);
     }
 
-    fun void(uint) InitWithSize = (i) {
-        // TODO
+    public fun void(uint) InitWithMaxSize = (max) {
+        this.m = type(Mutex).New();
+        this.c = type(Cond).New(this.m);
+        this.count = 0;
+        this.running = 0U;
+        this.max = max;
     }
 
-    fun void(void()) Do = (f) {
-        // TODO
+    private fun void(void()) run = (f) {
+        f();
+        this.m.Lock();
+        this.running--;
+        this.count--;
+        this.c.Broadcast();
+        this.m.Unlock();
     }
 
-    fun void(int) Add = (i) {
-        // TODO
+    // Do runs f on a new thread, first waiting for a free slot when the group
+    // has a max size.
+    public fun void(void()) Do = (f) {
+        this.m.Lock();
+        for(; this.max > 0U && this.running >= this.max;) {
+            this.c.Wait();
+        }
+        this.running++;
+        this.count++;
+        this.m.Unlock();
+        async(this.run(f));
     }
 
-    fun void() Wait = () {
-        // TODO
+    // Add adds i, which may be negative, to the count.
+    public fun void(int) Add = (i) {
+        this.m.Lock();
+        this.count = this.count + i;
+        if(this.count < 0) {
+            type(System).Panic("WaitGroup count is negative");
+        }
+        if(this.count == 0) {
+            this.c.Broadcast();
+        }
+        this.m.Unlock();
+    }
+
+    public fun void() Done = () {
+        this.Add(-1);
+    }
+
+    // Wait returns once the count is zero.
+    public fun void() Wait = () {
+        this.m.Lock();
+        for(; this.count > 0;) {
+            this.c.Wait();
+        }
+        this.m.Unlock();
     }
 }

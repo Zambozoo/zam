@@ -370,9 +370,20 @@ func (v *populateGenericDeclsVisitor) VisitExprSymbol(e *syntax.ExprSymbol) erro
 func (v *populateGenericDeclsVisitor) VisitExprType(e *syntax.ExprType) error {
 	e.Type.Accept(v)
 	if len(e.TypeArgs) > 0 {
+		// Call sites written with an open class-level T (e.g. Arr.Mark's
+		// type(Arrs)[A].MarkAll) share one ExprType across every instantiation
+		// of the enclosing decl. Mapping under the current binding can make
+		// those args ground for materialization — MarkAll[flt], MarkAll[str],
+		// … — but the site itself stays open: which concrete runs is a
+		// question for the receiver at run time. Stamping e.Concrete here
+		// would pin every instantiation to whichever binding walked last.
+		siteOpen := false
 		mapped := make([]syntax.Type, len(e.TypeArgs))
 		ground := true
 		for i, t := range e.TypeArgs {
+			if t.ContainsGenericArg() {
+				siteOpen = true
+			}
 			mapped[i] = t.Map(v.bindings)
 			if mapped[i].ContainsGenericArg() {
 				ground = false
@@ -382,7 +393,7 @@ func (v *populateGenericDeclsVisitor) VisitExprType(e *syntax.ExprType) error {
 			t.Accept(v)
 		}
 		if ground {
-			v.materializeMethod(e, mapped)
+			v.materializeMethod(e, mapped, !siteOpen)
 		}
 	}
 	return nil
@@ -392,7 +403,11 @@ func (v *populateGenericDeclsVisitor) VisitExprType(e *syntax.ExprType) error {
 // method for the given ground type arguments into existence and, if new,
 // enqueues its body for walking under the resolved bindings so any nested
 // generic use within is materialized too.
-func (v *populateGenericDeclsVisitor) materializeMethod(e *syntax.ExprType, typeArgs []syntax.Type) {
+//
+// stampConcrete is true only when the call site's type arguments were already
+// ground in the source. Open sites must leave e.Concrete unset so codegen
+// emits OpPushGenericStaticSlot against the receiver's binding.
+func (v *populateGenericDeclsVisitor) materializeMethod(e *syntax.ExprType, typeArgs []syntax.Type, stampConcrete bool) {
 	tr, ok := e.Type.(syntax.TypeResolvable)
 	if !ok {
 		return
@@ -409,7 +424,9 @@ func (v *populateGenericDeclsVisitor) materializeMethod(e *syntax.ExprType, type
 	if concrete == nil {
 		return
 	}
-	e.Concrete = concrete
+	if stampConcrete {
+		e.Concrete = concrete
+	}
 
 	// Enqueue the walk under the same walked-set guard materialize uses. isNew
 	// on the concrete only reports whether it existed, not whether the body

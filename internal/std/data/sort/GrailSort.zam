@@ -2,7 +2,7 @@ import "../../lang/Arr.zam";
 import "../../lang/Arrs.zam";
 
 // GrailSort is a stable, in-place block merge sort
-namespace GrailSort {
+public namespace GrailSort {
     // The scratch of state threaded through the block-merge loop
     private class State[A] {
         var uint currBlockLen;
@@ -714,14 +714,14 @@ namespace GrailSort {
         }
     }
 
-    fun[A] void(uint, A...) Sort = (len, arr) {
+    public fun[A] void(uint, A...) Sort = (len, arr) {
         if (len > 0U) {
             var State[A] s;
             s.commonSort(arr, 0U, len);
         }
     }
 
-    fun[A] void(Arr[A]*) SortArr = (arr) {
+    public fun[A] void(Arr[A]*) SortArr = (arr) {
         type(GrailSort)[A].Sort(arr.Len(), arr.Arr()...);
     }
 }

@@ -1,18 +1,38 @@
-class Mutex {
-    fun void() RLock = () {
-        // TODO
+import "../lang/Objs.zam";
+
+// Reader writer lock, held by any number of readers or by one writer.
+public class RWMutex {
+    var uint handle;
+
+    public static fun RWMutex*() New = () {
+        var RWMutex* m = new(RWMutex);
+        m.Init();
+        return m;
     }
 
-
-    fun void() RUnlock = () {
-        // TODO
+    public fun void() Init = () {
+        native(STD_RWMUTEX_INIT){void(uint*)}(&(this.handle));
     }
 
-    fun void() Lock = () {
-        // TODO
+    public fun void() RLock = () {
+        native(STD_RWMUTEX_RLOCK){void(uint)}(this.handle);
     }
-    
-    fun void Unlock = () {
-        // TODO
+
+    public fun void() RUnlock = () {
+        native(STD_RWMUTEX_UNLOCK){void(uint)}(this.handle);
+    }
+
+    public fun void() Lock = () {
+        native(STD_RWMUTEX_LOCK){void(uint)}(this.handle);
+    }
+
+    public fun void() Unlock = () {
+        native(STD_RWMUTEX_UNLOCK){void(uint)}(this.handle);
+    }
+
+    public fun void() Delete = () {
+        native(STD_RWMUTEX_DELETE){void(uint)}(this.handle);
+        this.handle = 0U;
+        type(Objs).Delete(this);
     }
 }

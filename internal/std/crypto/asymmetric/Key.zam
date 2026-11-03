@@ -1,0 +1,248 @@
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+
+// Key is a public key, or a private key with its public half, of one Kind.
+// Keys are read and written as PKCS #8 or SubjectPublicKeyInfo, in PEM or
+// DER; the X25519 and Ed25519 kinds also have a raw form.
+public class Key {
+    public enum Kind : byte {
+        X25519(0{byte}),
+        ED25519(1{byte}),
+        P256(2{byte}),
+        P384(3{byte}),
+        P521(4{byte}),
+        RSA(5{byte}),
+        ML_KEM_512(6{byte}),
+        ML_KEM_768(7{byte}),
+        ML_KEM_1024(8{byte}),
+        ML_DSA_44(9{byte}),
+        ML_DSA_65(10{byte}),
+        ML_DSA_87(11{byte});
+    }
+
+    public static var uint$ DefaultRSABits = 3072U;
+
+    var uint handle;
+    var Key.Kind kind;
+    var bool isPrivate;
+
+    static fun Pair[Key*, Err*](uint, Key.Kind, bool, str) of = (h, kind, isPrivate, errStr) {
+        var Pair[Key*, Err*] out;
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        out.first = new(Key);
+        out.first.handle = h;
+        out.first.kind = kind;
+        out.first.isPrivate = isPrivate;
+        return out;
+    }
+
+    // take copies n bytes out of the buffer a native left them in.
+    static fun Pair[Arr[byte]*, Err*](uint, int, str) take = (h, n, errStr) {
+        var Pair[Arr[byte]*, Err*] out;
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        var byte* b = new(byte, n{uint} + 1U);
+        native(STD_CODEC_TAKE){void(uint, byte*)}(h, b);
+        out.first = type(Arr)[byte].New(n{uint}, b...);
+        return out;
+    }
+
+    // check answers an error unless k is of a kind from lo to hi.
+    static fun Err*(Key*, Key.Kind, Key.Kind, str) check = (k, lo, hi, what) {
+        if(k.kind{byte} < lo{byte} || k.kind{byte} > hi{byte}) {
+            return type(StrErr).New(what + " cannot use this kind of key");
+        }
+        return null;
+    }
+
+    // checkPrivate answers an error unless k is a private key of a kind from
+    // lo to hi.
+    static fun Err*(Key*, Key.Kind, Key.Kind, str) checkPrivate = (k, lo, hi, what) {
+        if(!k.isPrivate) {
+            return type(StrErr).New(what + " needs a private key");
+        }
+        return type(Key).check(k, lo, hi, what);
+    }
+
+    static fun Pair[Key*, Err*](Key.Kind, uint) generate = (kind, bits) {
+        var uint h = 0U;
+        var str errStr;
+        native(STD_PKEY_GENERATE){void(byte, int, uint*, str*)}(kind{byte}, bits{int}, &h, &errStr);
+        return type(Key).of(h, kind, true, errStr);
+    }
+
+    // Generate makes a private key of kind, of DefaultRSABits for RSA.
+    public static fun Pair[Key*, Err*](Key.Kind) Generate = (kind) {
+        return type(Key).generate(kind, type(Key).DefaultRSABits);
+    }
+
+    // GenerateRSA makes an RSA private key of bits bits.
+    public static fun Pair[Key*, Err*](uint) GenerateRSA = (bits) {
+        return type(Key).generate(type(Key.Kind).RSA, bits);
+    }
+
+    // kindOf answers the Kind backed by b.
+    static fun Key.Kind(int) kindOf = (b) {
+        if(b == type(Key.Kind).X25519{byte}{int}) {
+            return type(Key.Kind).X25519;
+        }
+        if(b == type(Key.Kind).ED25519{byte}{int}) {
+            return type(Key.Kind).ED25519;
+        }
+        if(b == type(Key.Kind).P256{byte}{int}) {
+            return type(Key.Kind).P256;
+        }
+        if(b == type(Key.Kind).P384{byte}{int}) {
+            return type(Key.Kind).P384;
+        }
+        if(b == type(Key.Kind).P521{byte}{int}) {
+            return type(Key.Kind).P521;
+        }
+        if(b == type(Key.Kind).RSA{byte}{int}) {
+            return type(Key.Kind).RSA;
+        }
+        if(b == type(Key.Kind).ML_KEM_512{byte}{int}) {
+            return type(Key.Kind).ML_KEM_512;
+        }
+        if(b == type(Key.Kind).ML_KEM_768{byte}{int}) {
+            return type(Key.Kind).ML_KEM_768;
+        }
+        if(b == type(Key.Kind).ML_KEM_1024{byte}{int}) {
+            return type(Key.Kind).ML_KEM_1024;
+        }
+        if(b == type(Key.Kind).ML_DSA_44{byte}{int}) {
+            return type(Key.Kind).ML_DSA_44;
+        }
+        if(b == type(Key.Kind).ML_DSA_65{byte}{int}) {
+            return type(Key.Kind).ML_DSA_65;
+        }
+        return type(Key.Kind).ML_DSA_87;
+    }
+
+    static fun Pair[Key*, Err*](byte*, uint, bool) decode = (b, n, pem) {
+        var uint h = 0U;
+        var int kind = 0;
+        var bool isPrivate = false;
+        var str errStr;
+        native(STD_PKEY_DECODE){void(byte*, int, bool, uint*, int*, bool*, str*)}(b, n{int}, pem, &h, &kind, &isPrivate, &errStr);
+        return type(Key).of(h, type(Key).kindOf(kind), isPrivate, errStr);
+    }
+
+    // ParsePEM reads a PEM private key (PKCS #8) or public key
+    // (SubjectPublicKeyInfo).
+    public static fun Pair[Key*, Err*](str) ParsePEM = (s) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(s);
+        return type(Key).decode(p.first, p.second{uint}, true);
+    }
+
+    // ParseDER reads n bytes at b as a DER private key (PKCS #8) or public key
+    // (SubjectPublicKeyInfo).
+    public static fun Pair[Key*, Err*](byte*, uint) ParseDER = (b, n) {
+        return type(Key).decode(b, n, false);
+    }
+
+    // FromRaw makes a key of kind from n raw bytes at b, private or public. Only
+    // the X25519 and Ed25519 kinds have a raw form.
+    public static fun Pair[Key*, Err*](Key.Kind, byte*, uint, bool) FromRaw = (kind, b, n, isPrivate) {
+        var uint h = 0U;
+        var str errStr;
+        native(STD_PKEY_FROM_RAW){void(byte, byte*, int, bool, uint*, str*)}(kind{byte}, b, n{int}, isPrivate, &h, &errStr);
+        return type(Key).of(h, kind, isPrivate, errStr);
+    }
+
+    public fun Key.Kind() Kind = () {
+        return this.kind;
+    }
+
+    public fun bool() IsPrivate = () {
+        return this.isPrivate;
+    }
+
+    // Public returns the public half of the key.
+    public fun Key*() Public = () {
+        var uint h = 0U;
+        var str errStr;
+        native(STD_PKEY_PUBLIC){void(uint, uint*, str*)}(this.handle, &h, &errStr);
+        return type(Key).of(h, this.kind, false, errStr).first;
+    }
+
+    fun Pair[Arr[byte]*, Err*](bool) encode = (pem) {
+        var uint h = 0U;
+        var int n = 0;
+        var str errStr;
+        native(STD_PKEY_ENCODE){void(uint, bool, bool, uint*, int*, str*)}(this.handle, this.isPrivate, pem, &h, &n, &errStr);
+        return type(Key).take(h, n, errStr);
+    }
+
+    // PEM writes the key in PEM, as PKCS #8 if it is private and as
+    // SubjectPublicKeyInfo if it is public.
+    public fun Pair[str, Err*]() PEM = () {
+        var Pair[str, Err*] out;
+        var Pair[Arr[byte]*, Err*] b = this.encode(true);
+        out.first = "";
+        out.second = b.second;
+        if(b.second == null) {
+            out.first = type(Strs).FromBytes(b.first.Arr(), b.first.Len(){int});
+        }
+        return out;
+    }
+
+    // DER writes the key in DER, as PKCS #8 if it is private and as
+    // SubjectPublicKeyInfo if it is public.
+    public fun Pair[Arr[byte]*, Err*]() DER = () {
+        return this.encode(false);
+    }
+
+    // Raw returns the key's raw bytes, private if it is private.
+    public fun Pair[Arr[byte]*, Err*]() Raw = () {
+        var uint h = 0U;
+        var int n = 0;
+        var str errStr;
+        native(STD_PKEY_RAW){void(uint, bool, uint*, int*, str*)}(this.handle, this.isPrivate, &h, &n, &errStr);
+        return type(Key).take(h, n, errStr);
+    }
+
+    // derive agrees a shared secret with a peer's public key.
+    fun Pair[Arr[byte]*, Err*](Key*) derive = (peer) {
+        var uint h = 0U;
+        var int n = 0;
+        var str errStr;
+        native(STD_PKEY_DERIVE){void(uint, uint, uint*, int*, str*)}(this.handle, peer.handle, &h, &n, &errStr);
+        return type(Key).take(h, n, errStr);
+    }
+
+    // sign signs n bytes at b over the Digest.Kind backed by digest, or none
+    // for -1, with PSS padding for RSA when told to.
+    fun Pair[Arr[byte]*, Err*](int, bool, byte*, uint) sign = (digest, pss, b, n) {
+        var uint h = 0U;
+        var int len = 0;
+        var str errStr;
+        native(STD_PKEY_SIGN){void(uint, int, bool, byte*, int, uint*, int*, str*)}(this.handle, digest, pss, b, n{int}, &h, &len, &errStr);
+        return type(Key).take(h, len, errStr);
+    }
+
+    // verify reports whether sigLen bytes at sig sign n bytes at b, as sign
+    // would have signed them.
+    fun bool(int, bool, byte*, uint, byte*, uint) verify = (digest, pss, b, n, sig, sigLen) {
+        var bool ok = false;
+        native(STD_PKEY_VERIFY){void(uint, int, bool, byte*, int, byte*, int, bool*)}(this.handle, digest, pss, b, n{int}, sig, sigLen{int}, &ok);
+        return ok;
+    }
+
+    public fun void() Delete = () {
+        native(STD_PKEY_FREE){void(uint)}(this.handle);
+        this.handle = 0U;
+    }
+}

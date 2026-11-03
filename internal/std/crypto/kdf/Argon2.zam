@@ -1,2 +1,51 @@
-// Argon2id password-hashing function
-namespace Argon2 {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+
+// Argon2id password-hashing function (RFC 9106)
+public namespace Argon2 {
+    public var uint$ DefaultTime = 3U;
+    public var uint$ DefaultMemory = 65536U;
+    public var uint$ DefaultLanes = 4U;
+
+    // Key derives length bytes from a password and salt over time passes of
+    // memory KiB split into lanes.
+    public static fun Pair[Arr[byte]*, Err*](byte*, uint, byte*, uint, uint, uint, uint, uint) Key = (password, passwordLen, salt, saltLen, time, memory, lanes, length) {
+        var byte* out = new(byte, length);
+        var str errStr;
+        native(STD_ARGON2){void(byte*, int, byte*, int, uint, uint, uint, byte*, int, str*)}(password, passwordLen{int}, salt, saltLen{int}, time, memory, lanes, out, length{int}, &errStr);
+        var Pair[Arr[byte]*, Err*] r;
+        r.first = null;
+        r.second = null;
+        if(errStr != null) {
+            free(out);
+            r.second = type(StrErr).New(errStr);
+        } else {
+            r.first = type(Arr)[byte].New(length, out...);
+        }
+        return r;
+    }
+
+    // Hash hashes a password under a fresh salt over time passes of memory
+    // KiB in one lane, into the PHC string form Verify reads.
+    public static fun Pair[str, Err*](byte*, uint, uint, uint) Hash = (password, passwordLen, time, memory) {
+        var Pair[str, Err*] r;
+        var str hash;
+        var str errStr;
+        native(STD_ARGON2_HASH){void(byte*, int, uint, uint, str*, str*)}(password, passwordLen{int}, time, memory, &hash, &errStr);
+        r.first = hash;
+        r.second = null;
+        if(errStr != null) {
+            r.second = type(StrErr).New(errStr);
+        }
+        return r;
+    }
+
+    // Verify reports whether a password matches a hash from Hash.
+    public static fun bool(str, byte*, uint) Verify = (hash, password, passwordLen) {
+        var bool ok = false;
+        native(STD_ARGON2_VERIFY){void(str, byte*, int, bool*)}(hash, password, passwordLen{int}, &ok);
+        return ok;
+    }
+}

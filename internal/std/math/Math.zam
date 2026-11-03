@@ -1,3 +1,282 @@
-namespace Math {
-    
+import "../lang/Flts.zam";
+
+public namespace Math {
+    // Sqrt returns the square root of x, NaN below zero.
+    public static fun flt(flt) Sqrt = (x) {
+        var flt r;
+        native(STD_MATH_SQRT){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Cbrt = (x) {
+        var flt r;
+        native(STD_MATH_CBRT){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    // Exp returns e to the x.
+    public static fun flt(flt) Exp = (x) {
+        var flt r;
+        native(STD_MATH_EXP){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    // Exp2 returns 2 to the x.
+    public static fun flt(flt) Exp2 = (x) {
+        var flt r;
+        native(STD_MATH_EXP2){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    // Expm1 returns e to the x less one, accurate near zero.
+    public static fun flt(flt) Expm1 = (x) {
+        var flt r;
+        native(STD_MATH_EXPM1){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    // Log returns the natural logarithm of x.
+    public static fun flt(flt) Log = (x) {
+        var flt r;
+        native(STD_MATH_LOG){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Log2 = (x) {
+        var flt r;
+        native(STD_MATH_LOG2){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Log10 = (x) {
+        var flt r;
+        native(STD_MATH_LOG10){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    // Log1p returns the natural logarithm of one plus x, accurate near zero.
+    public static fun flt(flt) Log1p = (x) {
+        var flt r;
+        native(STD_MATH_LOG1P){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Floor = (x) {
+        var flt r;
+        native(STD_MATH_FLOOR){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Ceil = (x) {
+        var flt r;
+        native(STD_MATH_CEIL){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    // Round rounds x to the nearest whole number, halves away from zero.
+    public static fun flt(flt) Round = (x) {
+        var flt r;
+        native(STD_MATH_ROUND){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    // Trunc rounds x toward zero.
+    public static fun flt(flt) Trunc = (x) {
+        var flt r;
+        native(STD_MATH_TRUNC){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    // Pow returns x to the y.
+    public static fun flt(flt, flt) Pow = (x, y) {
+        var flt r;
+        native(STD_MATH_POW){void(flt, flt, flt*)}(x, y, &r);
+        return r;
+    }
+
+    // Mod returns the remainder of x / y truncated, with the sign of x.
+    public static fun flt(flt, flt) Mod = (x, y) {
+        var flt r;
+        native(STD_MATH_MOD){void(flt, flt, flt*)}(x, y, &r);
+        return r;
+    }
+
+    // Remainder returns x less y times the nearest whole x / y.
+    public static fun flt(flt, flt) Remainder = (x, y) {
+        var flt r;
+        native(STD_MATH_REMAINDER){void(flt, flt, flt*)}(x, y, &r);
+        return r;
+    }
+
+    // Hypot returns the square root of x*x + y*y without needless overflow.
+    public static fun flt(flt, flt) Hypot = (x, y) {
+        var flt r;
+        native(STD_MATH_HYPOT){void(flt, flt, flt*)}(x, y, &r);
+        return r;
+    }
+
+    // Fma returns x * y + z rounded once.
+    public static fun flt(flt, flt, flt) Fma = (x, y, z) {
+        var flt r;
+        native(STD_MATH_FMA){void(flt, flt, flt, flt*)}(x, y, z, &r);
+        return r;
+    }
+
+    public static fun bool(flt) IsNaN = (x) {
+        return x != x;
+    }
+
+    // IsInf reports whether x is an infinity of the given sign, either one
+    // for a sign of zero.
+    public static fun bool(flt, int) IsInf = (x, sign) {
+        return (sign >= 0 && x == type(Flts).Inf) || (sign <= 0 && x == type(Flts).NegInf);
+    }
+
+    public static fun bool(flt) IsFinite = (x) {
+        return !type(Math).IsNaN(x) && !type(Math).IsInf(x, 0);
+    }
+
+    // SignBit reports whether the sign bit of x is set, as it is for -0.
+    public static fun bool(flt) SignBit = (x) {
+        return (type(Flts).ToBits(x) >> 63U) == 1U;
+    }
+
+    // CopySign returns x with the sign of s.
+    public static fun flt(flt, flt) CopySign = (x, s) {
+        var uint m = type(Flts).ToBits(x) & 9223372036854775807U;
+        return type(Flts).FromBits(m | (type(Flts).ToBits(s) & 9223372036854775808U));
+    }
+
+    public static fun flt(flt) Abs = (x) {
+        return type(Flts).FromBits(type(Flts).ToBits(x) & 9223372036854775807U);
+    }
+
+    public static fun int(int) AbsInt = (x) {
+        if(x < 0) {
+            return -x;
+        }
+        return x;
+    }
+
+    // Sign returns -1, 0 or 1 by the sign of x, and 0 for NaN.
+    public static fun int(flt) Sign = (x) {
+        if(x > 0.0) {
+            return 1;
+        }
+        if(x < 0.0) {
+            return -1;
+        }
+        return 0;
+    }
+
+    public static fun int(int) SignInt = (x) {
+        if(x > 0) {
+            return 1;
+        }
+        if(x < 0) {
+            return -1;
+        }
+        return 0;
+    }
+
+    // Min returns the lesser of x and y, or NaN if either is.
+    public static fun flt(flt, flt) Min = (x, y) {
+        if(x != x || x < y) {
+            return x;
+        }
+        return y;
+    }
+
+    // Max returns the greater of x and y, or NaN if either is.
+    public static fun flt(flt, flt) Max = (x, y) {
+        if(x != x || x > y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fun int(int, int) MinInt = (x, y) {
+        if(x < y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fun int(int, int) MaxInt = (x, y) {
+        if(x > y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fun uint(uint, uint) MinUint = (x, y) {
+        if(x < y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fun uint(uint, uint) MaxUint = (x, y) {
+        if(x > y) {
+            return x;
+        }
+        return y;
+    }
+
+    // Clamp returns x held within [lo, hi].
+    public static fun flt(flt, flt, flt) Clamp = (x, lo, hi) {
+        return type(Math).Min(type(Math).Max(x, lo), hi);
+    }
+
+    public static fun int(int, int, int) ClampInt = (x, lo, hi) {
+        return type(Math).MinInt(type(Math).MaxInt(x, lo), hi);
+    }
+
+    // Lerp returns the point t of the way from a to b.
+    public static fun flt(flt, flt, flt) Lerp = (a, b, t) {
+        return a + (b - a) * t;
+    }
+
+    // PowInt returns x to the n, wrapping on overflow.
+    public static fun int(int, uint) PowInt = (x, n) {
+        var int r = 1;
+        for(; n > 0U; n = n >> 1U) {
+            if((n & 1U) == 1U) {
+                r = r * x;
+            }
+            x = x * x;
+        }
+        return r;
+    }
+
+    // PowUint returns x to the n, wrapping on overflow.
+    public static fun uint(uint, uint) PowUint = (x, n) {
+        var uint r = 1U;
+        for(; n > 0U; n = n >> 1U) {
+            if((n & 1U) == 1U) {
+                r = r * x;
+            }
+            x = x * x;
+        }
+        return r;
+    }
+
+    // Gcd returns the greatest common divisor of a and b, 0 when both are.
+    public static fun uint(uint, uint) Gcd = (a, b) {
+        for(; b != 0U;) {
+            var uint t = a % b;
+            a = b;
+            b = t;
+        }
+        return a;
+    }
+
+    // Lcm returns the least common multiple of a and b, 0 when either is,
+    // wrapping on overflow.
+    public static fun uint(uint, uint) Lcm = (a, b) {
+        if(a == 0U || b == 0U) {
+            return 0U;
+        }
+        return a / type(Math).Gcd(a, b) * b;
+    }
 }

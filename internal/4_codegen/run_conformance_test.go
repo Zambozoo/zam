@@ -32,7 +32,7 @@ var (
 func buildRunHarness(t *testing.T) string {
 	t.Helper()
 	return buildHarness(t, "run_harness.c", "run",
-		"run.c", "thread.c", "vm.c", "gc.c", "native.c", "opcode.c")
+		"run.c", "thread.c", "vm.c", "gc.c", "native.c", "opcode.c", "json.c", "yaml.c", "xml.c", "bson.c", "compress.c", "cbor.c", "archive.c", "net.c", "tls.c", "curl.c", "http.c", "ws.c", "crypto.c", "pki.c", "time.c")
 }
 
 // valueEntryBytes is how wide the mark entry a markable value standing on the
@@ -3650,7 +3650,10 @@ func TestVirtualMethodCConformance(t *testing.T) {
 				"operandCount=1",
 				// That closure's entry, and the call's own — the return offset
 				// and the frame base, which no return came back to take.
-				"markByteCount=32",
+				// The closure's mark entry (8) and the call's function entry
+				// (4 words = 32) — widened when direct calls began recording
+				// the receiver type on the same entry.
+				"markByteCount=40",
 			}, runImage(t, harness, "stop", program, 0, body))
 		})
 	}
@@ -3793,9 +3796,8 @@ func TestGenericMethodCConformance(t *testing.T) {
 				"result=EXIT",
 				"exitStatus=11",
 				"operandCount=1",
-				// The closure's entry, and the call's own — the return offset
-				// and the frame base, which no return came back to take.
-				"markByteCount=32",
+				// The closure's entry (8) and the call's function entry (32).
+				"markByteCount=40",
 			}, runImage(t, harness, "stop", program, 0, 0, 0, body),
 				"instantiation %d", genericID)
 		}
@@ -3872,8 +3874,8 @@ func TestInterfaceMethodCConformance(t *testing.T) {
 			// The closure, standing in the slot the frame keeps for it, exactly
 			// as a virtual call leaves it.
 			"operandCount=1",
-			// Its entry, and the call's return offset and frame base.
-			"markByteCount=32",
+			// Its entry (8) and the call's function entry (32).
+			"markByteCount=40",
 		}, runImage(t, harness, "stop", program, 0, override, implementation))
 	})
 

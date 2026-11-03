@@ -1,1 +1,40 @@
-class Cond {}
+import "../lang/Objs.zam";
+import "Mutex.zam";
+
+// Condition variable over a Mutex. Wait may return without a signal, so a
+// waiter rechecks what it waits for in a loop.
+public class Cond {
+    var Mutex* m;
+    var uint handle;
+
+    public static fun Cond*(Mutex*) New = (m) {
+        var Cond* c = new(Cond);
+        c.Init(m);
+        return c;
+    }
+
+    public fun void(Mutex*) Init = (m) {
+        this.m = m;
+        native(STD_COND_INIT){void(uint*)}(&(this.handle));
+    }
+
+    // Wait releases the mutex, which the caller must hold, until signaled,
+    // and holds it again before returning.
+    public fun void() Wait = () {
+        native(STD_COND_WAIT){void(uint, uint)}(this.handle, this.m.handle);
+    }
+
+    public fun void() Signal = () {
+        native(STD_COND_SIGNAL){void(uint)}(this.handle);
+    }
+
+    public fun void() Broadcast = () {
+        native(STD_COND_BROADCAST){void(uint)}(this.handle);
+    }
+
+    public fun void() Delete = () {
+        native(STD_COND_DELETE){void(uint)}(this.handle);
+        this.handle = 0U;
+        type(Objs).Delete(this);
+    }
+}

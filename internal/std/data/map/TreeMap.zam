@@ -4,7 +4,7 @@ import "../../lang/Arr.zam";
 import "../../lang/Struct.zam";
 
 // Sorted left-leaning red-black tree map
-class TreeMap[A, B] {
+public class TreeMap[A, B] {
     struct Node[A, B] {
         var A key;
         var B val;
@@ -17,13 +17,13 @@ class TreeMap[A, B] {
     var Node[A, B]* root;
     var bool changed;
 
-    static fun[A, B] TreeMap[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+    public static fun[A, B] TreeMap[A, B]*(uint, Pair[A, B]...) New = (len, args) {
         var TreeMap[A, B]* m = new(TreeMap[A, B]);
         m.Init(len, args...);
         return m;
     }
 
-    fun void(uint, Pair[A, B]...) Init = (len, args) {
+    public fun void(uint, Pair[A, B]...) Init = (len, args) {
         this.len = 0U;
         this.root = null;
         for(var uint i = 0U; i < len; i++) {
@@ -277,15 +277,15 @@ class TreeMap[A, B] {
         free(n);
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun bool(A) Contains = (k) {
+    public fun bool(A) Contains = (k) {
         return this.find(k) != null;
     }
 
-    fun Pair[B, bool](A) Get = (k) {
+    public fun Pair[B, bool](A) Get = (k) {
         var Pair[B, bool] p;
         var Node[A, B]* n = this.find(k);
         if(n == null) {
@@ -297,7 +297,7 @@ class TreeMap[A, B] {
         return p;
     }
 
-    fun bool(A, B) Put = (k, v) {
+    public fun bool(A, B) Put = (k, v) {
         this.changed = false;
         this.insert(&(this.root), k, v);
         this.root.red = false;
@@ -307,7 +307,7 @@ class TreeMap[A, B] {
         return this.changed;
     }
 
-    fun Pair[B, bool](A) Remove = (k) {
+    public fun Pair[B, bool](A) Remove = (k) {
         var Pair[B, bool] p;
         var Node[A, B]* n = this.find(k);
         if(n == null) {
@@ -327,14 +327,14 @@ class TreeMap[A, B] {
         return p;
     }
 
-    fun Pair[A, B]() GetFirst = () {
+    public fun Pair[A, B]() GetFirst = () {
         if(this.len == 0U) {
             type(System).Panic("TreeMap is empty");
         }
         return this.entry(this.first());
     }
 
-    fun Pair[A, B]() GetLast = () {
+    public fun Pair[A, B]() GetLast = () {
         if(this.len == 0U) {
             type(System).Panic("TreeMap is empty");
         }
@@ -352,40 +352,43 @@ class TreeMap[A, B] {
 
     // EachValue calls f with every value in key order. It allocates nothing,
     // so a Mark can use it to reach values the map holds.
-    fun void(void(B)) EachValue = (f) {
+    public fun void(void(B)) EachValue = (f) {
         type(TreeMap)[A, B].eachFrom(this.root, f);
     }
 
-    fun void() Clear = () {
+    public fun void() Clear = () {
         this.Delete();
     }
 
-    fun Arr[Pair[A, B]]*() Arr = () {
+    public fun Arr[Pair[A, B]]*() Arr = () {
         var Pair[A, B]* a = new(Pair[A, B], this.len);
         this.fill(this.root, a, 0U);
         return type(Arr)[Pair[A, B]].New(this.len, a...);
     }
 
-    fun Iter[A, B]*() Iter = () {
+    public fun Iter[A, B]*() Iter = () {
         var Iter[A, B]* i = new(Iter[A, B]);
         i.Init(this);
         return i;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         return this.join(this.root, "{") + "}";
     }
 
     // Delete detaches the tree before freeing it, so a collection while it is
     // being freed finds nothing to walk.
-    fun void() Delete = () {
+    public fun void() Delete = () {
         var Node[A, B]* n = this.root;
         this.root = null;
         this.len = 0U;
         this.freeAll(n);
     }
 
-    fun void() Mark = () {
+    public fun void() Mark = () {
+        if(!type(System.GC).Markable(@{A}) && !type(System.GC).Markable(@{B})) {
+            return;
+        }
         type(TreeMap)[A, B].markTree(this.root);
     }
 
@@ -393,12 +396,12 @@ class TreeMap[A, B] {
         var TreeMap[A, B]* m;
         var Node[A, B]* cur;
 
-        fun void(TreeMap[A, B]*) Init = (m) {
+        public fun void(TreeMap[A, B]*) Init = (m) {
             this.m = m;
             this.cur = m.first();
         }
 
-        fun Pair[Pair[A, B], bool]() Next = () {
+        public fun Pair[Pair[A, B], bool]() Next = () {
             var Pair[Pair[A, B], bool] p;
             if(this.cur == null) {
                 p.second = false;
@@ -410,7 +413,7 @@ class TreeMap[A, B] {
             return p;
         }
 
-        fun Pair[Pair[A, B], bool]() Prev = () {
+        public fun Pair[Pair[A, B], bool]() Prev = () {
             var Pair[Pair[A, B], bool] p;
             var Node[A, B]* prev = this.m.last();
             if(this.cur != null) {

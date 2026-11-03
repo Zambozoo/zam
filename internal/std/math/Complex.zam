@@ -1,1 +1,111 @@
-class Complex {}
+import "Math.zam";
+import "Trig.zam";
+
+// Complex number
+public struct Complex {
+    public var flt re;
+    public var flt im;
+
+    public static fun Complex(flt, flt) Of = (re, im) {
+        var Complex c;
+        c.re = re;
+        c.im = im;
+        return c;
+    }
+
+    // Polar returns the complex number of magnitude r at angle theta.
+    public static fun Complex(flt, flt) Polar = (r, theta) {
+        return type(Complex).Of(r * type(Trig).Cos(theta), r * type(Trig).Sin(theta));
+    }
+
+    public fun Complex(Complex) Add = (o) {
+        return type(Complex).Of(this.re + o.re, this.im + o.im);
+    }
+
+    public fun Complex(Complex) Sub = (o) {
+        return type(Complex).Of(this.re - o.re, this.im - o.im);
+    }
+
+    public fun Complex(Complex) Mul = (o) {
+        return type(Complex).Of(this.re * o.re - this.im * o.im, this.re * o.im + this.im * o.re);
+    }
+
+    // Div divides by o, scaling by its larger part to avoid needless
+    // overflow.
+    public fun Complex(Complex) Div = (o) {
+        if(type(Math).Abs(o.re) >= type(Math).Abs(o.im)) {
+            var flt r = o.im / o.re;
+            var flt d = o.re + o.im * r;
+            return type(Complex).Of((this.re + this.im * r) / d, (this.im - this.re * r) / d);
+        }
+        var flt r = o.re / o.im;
+        var flt d = o.re * r + o.im;
+        return type(Complex).Of((this.re * r + this.im) / d, (this.im * r - this.re) / d);
+    }
+
+    public fun Complex(flt) Scale = (k) {
+        return type(Complex).Of(this.re * k, this.im * k);
+    }
+
+    public fun Complex() Neg = () {
+        return type(Complex).Of(-this.re, -this.im);
+    }
+
+    public fun Complex() Conj = () {
+        return type(Complex).Of(this.re, -this.im);
+    }
+
+    // Abs returns the magnitude.
+    public fun flt() Abs = () {
+        return type(Math).Hypot(this.re, this.im);
+    }
+
+    // Arg returns the angle from the positive real axis, in [-Pi, Pi].
+    public fun flt() Arg = () {
+        return type(Trig).Atan2(this.im, this.re);
+    }
+
+    public fun Complex() Exp = () {
+        return type(Complex).Polar(type(Math).Exp(this.re), this.im);
+    }
+
+    // Log returns the principal natural logarithm.
+    public fun Complex() Log = () {
+        return type(Complex).Of(type(Math).Log(this.Abs()), this.Arg());
+    }
+
+    // Sqrt returns the principal square root.
+    public fun Complex() Sqrt = () {
+        var flt r = this.Abs();
+        if(r == 0.0) {
+            return type(Complex).Of(0.0, 0.0);
+        }
+        var flt t = type(Math).Sqrt((r + type(Math).Abs(this.re)) / 2.0);
+        if(this.re >= 0.0) {
+            return type(Complex).Of(t, this.im / (2.0 * t));
+        }
+        return type(Complex).Of(type(Math).Abs(this.im) / (2.0 * t), type(Math).CopySign(t, this.im));
+    }
+
+    // Pow returns the principal value of this to the o.
+    public fun Complex(Complex) Pow = (o) {
+        if(this.re == 0.0 && this.im == 0.0) {
+            if(o.re == 0.0 && o.im == 0.0) {
+                return type(Complex).Of(1.0, 0.0);
+            }
+            return type(Complex).Of(0.0, 0.0);
+        }
+        return o.Mul(this.Log()).Exp();
+    }
+
+    public fun bool(Complex) Eq = (o) {
+        return this.re == o.re && this.im == o.im;
+    }
+
+    public fun str() Str = () {
+        if(this.im < 0.0) {
+            return this.re{str} + "-" + (-this.im){str} + "i";
+        }
+        return this.re{str} + "+" + this.im{str} + "i";
+    }
+}

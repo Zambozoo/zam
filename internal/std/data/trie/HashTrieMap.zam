@@ -7,7 +7,7 @@ import "../map/HashMap.zam";
 
 // Radix trie map from runs of A to B, each node keeping its children in a hash
 // map keyed by the first element of their edges
-class HashTrieMap[A, B] {
+public class HashTrieMap[A, B] {
     struct Node[A, B] {
         var A* edge;
         var uint edgeLen;
@@ -19,13 +19,13 @@ class HashTrieMap[A, B] {
     var uint len;
     var Node[A, B]* root;
 
-    static fun[A, B] HashTrieMap[A, B]*() New = () {
+    public static fun[A, B] HashTrieMap[A, B]*() New = () {
         var HashTrieMap[A, B]* t = new(HashTrieMap[A, B]);
         t.Init();
         return t;
     }
 
-    fun void() Init = () {
+    public fun void() Init = () {
         this.len = 0U;
         this.root = new(Node[A, B]);
     }
@@ -176,24 +176,24 @@ class HashTrieMap[A, B] {
         return i;
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun bool(uint, A*) Contains = (len, key) {
+    public fun bool(uint, A*) Contains = (len, key) {
         var Node[A, B]* n = this.locate(len, key, false);
         return n != null && n.hasValue;
     }
 
     // HasPrefix reports whether some key begins with the given run.
-    fun bool(uint, A*) HasPrefix = (len, key) {
+    public fun bool(uint, A*) HasPrefix = (len, key) {
         if(len == 0U) {
             return this.len > 0U;
         }
         return this.locate(len, key, true) != null;
     }
 
-    fun Pair[B, bool](uint, A*) Get = (len, key) {
+    public fun Pair[B, bool](uint, A*) Get = (len, key) {
         var Pair[B, bool] p;
         var Node[A, B]* n = this.locate(len, key, false);
         if(n == null || !n.hasValue) {
@@ -207,7 +207,7 @@ class HashTrieMap[A, B] {
 
     // Put sets the value of key, reporting whether the key is new. A new node
     // and a node split off an edge are pinned until they are linked in.
-    fun bool(uint, A*, B) Put = (len, key, v) {
+    public fun bool(uint, A*, B) Put = (len, key, v) {
         var Node[A, B]* n = this.root;
         var uint i = 0U;
         for(;;) {
@@ -252,7 +252,7 @@ class HashTrieMap[A, B] {
         }
     }
 
-    fun Pair[B, bool](uint, A*) Remove = (len, key) {
+    public fun Pair[B, bool](uint, A*) Remove = (len, key) {
         var Pair[B, bool] out;
         out.second = false;
         var Node[A, B]* grand = null;
@@ -301,13 +301,13 @@ class HashTrieMap[A, B] {
         return out;
     }
 
-    fun void() Clear = () {
+    public fun void() Clear = () {
         this.Delete();
         this.Init();
     }
 
     // Arr returns the entries, each key a fresh copy, in no particular order.
-    fun Arr[Pair[Arr[A]*, B]]*() Arr = () {
+    public fun Arr[Pair[Arr[A]*, B]]*() Arr = () {
         var Pair[Arr[A]*, B]* a = new(Pair[Arr[A]*, B], this.len);
         var Arr[Pair[Arr[A]*, B]]* out = type(Arr)[Pair[Arr[A]*, B]].New(this.len, a...);
         var ArrList[A]* buf = type(ArrList)[A].New(0U);
@@ -316,14 +316,14 @@ class HashTrieMap[A, B] {
     }
 
     // Iter visits the entries as Arr does, as they stood when it was made.
-    fun Iter[A, B]*() Iter = () {
+    public fun Iter[A, B]*() Iter = () {
         var Iter[A, B]* i = new(Iter[A, B]);
         i.items = this.Arr();
         i.i = 0U;
         return i;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         var Arr[Pair[Arr[A]*, B]]* a = this.Arr();
         var str s = "{";
         var str spacer = "";
@@ -336,7 +336,7 @@ class HashTrieMap[A, B] {
 
     // Delete detaches the trie and frees it with collection blocked: the child
     // maps are collected objects only the detached nodes still name.
-    fun void() Delete = () {
+    public fun void() Delete = () {
         var Node[A, B]* n = this.root;
         this.root = null;
         this.len = 0U;
@@ -347,7 +347,7 @@ class HashTrieMap[A, B] {
         }
     }
 
-    fun void() Mark = () {
+    public fun void() Mark = () {
         type(HashTrieMap)[A, B].markTree(this.root);
     }
 
@@ -355,7 +355,7 @@ class HashTrieMap[A, B] {
         var Arr[Pair[Arr[A]*, B]]* items;
         var uint i;
 
-        fun Pair[Pair[Arr[A]*, B], bool]() Next = () {
+        public fun Pair[Pair[Arr[A]*, B], bool]() Next = () {
             var Pair[Pair[Arr[A]*, B], bool] p;
             if(this.i >= this.items.Len()) {
                 p.second = false;
@@ -367,7 +367,7 @@ class HashTrieMap[A, B] {
             return p;
         }
 
-        fun Pair[Pair[Arr[A]*, B], bool]() Prev = () {
+        public fun Pair[Pair[Arr[A]*, B], bool]() Prev = () {
             var Pair[Pair[Arr[A]*, B], bool] p;
             if(this.i == 0U) {
                 p.second = false;

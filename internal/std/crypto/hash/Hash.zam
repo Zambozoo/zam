@@ -1,0 +1,11 @@
+import "../../lang/Arr.zam";
+
+// Hash is a running digest or MAC: bytes are written to it in turn and Sum
+// returns what they come to without ending it.
+public interface Hash {
+    virtual fun void(byte*, uint) Write;
+    virtual fun Arr[byte]*() Sum;
+    virtual fun void() Reset;
+    virtual fun uint() Size;
+    virtual fun uint() BlockSize;
+}

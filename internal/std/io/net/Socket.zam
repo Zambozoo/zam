@@ -1,1 +1,176 @@
-class Socket {}
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../local/File.zam";
+import "IP.zam";
+
+// Connected socket, read and written as the File it is. A Unix socket has
+// paths where an IP socket has addresses.
+public class Socket <: File* {
+    // Listener accepts connections made to a TCP or Unix address.
+    public class Listener {
+        var uint handle;
+
+        public static fun Socket.Listener*(uint) Of = (handle) {
+            var Socket.Listener* l = new(Socket.Listener);
+            l.handle = handle;
+            return l;
+        }
+
+        // Accept waits for the next connection, and fails once the listener
+        // is closed, from this thread or another.
+        public fun Pair[Socket*, Err*]() Accept = () {
+            var Pair[Socket*, Err*] out;
+            var int fd = -1;
+            var str errStr;
+            native(STD_NET_ACCEPT){void(uint, int*, str*)}(this.handle, &fd, &errStr);
+            out.first = null;
+            out.second = null;
+            if(errStr != null) {
+                out.second = type(StrErr).New(errStr);
+            } else {
+                out.first = type(Socket).Of(fd);
+            }
+            return out;
+        }
+
+        // Addr returns the address the listener is bound to, which names the
+        // port chosen for a listener asked for port 0.
+        public fun Pair[Pair[IP, uint], Err*]() Addr = () {
+            var str text;
+            var int port;
+            var str errStr;
+            native(STD_NET_LISTENER_ADDR){void(uint, str*, int*, str*)}(this.handle, &text, &port, &errStr);
+            return type(Socket).addrOf(text, port, errStr);
+        }
+
+        // Close stops accepting, reporting whether the listener was open.
+        public fun bool() Close = () {
+            var bool was;
+            native(STD_NET_LISTENER_CLOSE){void(uint, bool*)}(this.handle, &was);
+            return was;
+        }
+
+        public fun void() Delete = () {
+            native(STD_NET_LISTENER_FREE){void(uint)}(this.handle);
+            this.handle = 0U;
+        }
+
+        public fun void() Mark = () {
+        }
+    }
+
+    // Of wraps a connected socket's descriptor, which the Socket then owns.
+    public static fun Socket*(int) Of = (fd) {
+        var Socket* s = new(Socket);
+        s.InitFD(fd);
+        return s;
+    }
+
+    private static fun Err*(str) err = (msg) {
+        if(msg == null) {
+            return null;
+        }
+        return type(StrErr).New(msg);
+    }
+
+    // addrOf reads a native's address text and port as an IP and port.
+    static fun Pair[Pair[IP, uint], Err*](str, int, str) addrOf = (text, port, errStr) {
+        var Pair[Pair[IP, uint], Err*] out;
+        out.first.second = port{uint};
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        var Pair[IP, Err*] ip = type(IP).Parse(text);
+        out.first.first = ip.first;
+        out.second = ip.second;
+        return out;
+    }
+
+    // name answers the local or remote address of the socket as the native
+    // gives it: an address's text and port, or a Unix socket's path.
+    private fun Pair[Pair[str, int], str](bool) name = (remote) {
+        var Pair[Pair[str, int], str] out;
+        var str text;
+        var int port;
+        var str errStr;
+        native(STD_SOCKET_ADDR){void(int, bool, str*, int*, str*)}(this.FD(), remote, &text, &port, &errStr);
+        out.first.first = text;
+        out.first.second = port;
+        out.second = errStr;
+        return out;
+    }
+
+    private fun Pair[Pair[IP, uint], Err*](bool) addr = (remote) {
+        var Pair[Pair[str, int], str] n = this.name(remote);
+        return type(Socket).addrOf(n.first.first, n.first.second, n.second);
+    }
+
+    private fun Pair[str, Err*](bool) path = (remote) {
+        var Pair[Pair[str, int], str] n = this.name(remote);
+        var Pair[str, Err*] out;
+        out.first = n.first.first;
+        out.second = type(Socket).err(n.second);
+        return out;
+    }
+
+    // LocalPath returns a Unix socket's own path, empty for a dialed one.
+    public fun Pair[str, Err*]() LocalPath = () {
+        return this.path(false);
+    }
+
+    // RemotePath returns the path of a Unix socket's peer.
+    public fun Pair[str, Err*]() RemotePath = () {
+        return this.path(true);
+    }
+
+    public fun Pair[Pair[IP, uint], Err*]() LocalAddr = () {
+        return this.addr(false);
+    }
+
+    public fun Pair[Pair[IP, uint], Err*]() RemoteAddr = () {
+        return this.addr(true);
+    }
+
+    // SetReadTimeout makes a read fail once it has waited ms milliseconds, or
+    // wait for ever for zero.
+    public fun Err*(uint) SetReadTimeout = (ms) {
+        var str errStr;
+        native(STD_SOCKET_TIMEOUT){void(int, bool, int, str*)}(this.FD(), false, ms{int}, &errStr);
+        return type(Socket).err(errStr);
+    }
+
+    public fun Err*(uint) SetWriteTimeout = (ms) {
+        var str errStr;
+        native(STD_SOCKET_TIMEOUT){void(int, bool, int, str*)}(this.FD(), true, ms{int}, &errStr);
+        return type(Socket).err(errStr);
+    }
+
+    private fun Err*(int) shutdown = (how) {
+        var str errStr;
+        native(STD_SOCKET_SHUTDOWN){void(int, int, str*)}(this.FD(), how, &errStr);
+        return type(Socket).err(errStr);
+    }
+
+    // CloseRead stops reading, waking a read waiting in another thread.
+    public fun Err*() CloseRead = () {
+        return this.shutdown(0);
+    }
+
+    // CloseWrite stops writing, which the peer reads as the end of the
+    // stream.
+    public fun Err*() CloseWrite = () {
+        return this.shutdown(1);
+    }
+
+    // Close shuts the socket down in both directions, waking any read
+    // waiting on it, and closes it.
+    public fun Err*() Close = () {
+        if(this.FD() >= 0) {
+            this.shutdown(2);
+        }
+        return super.Close();
+    }
+}

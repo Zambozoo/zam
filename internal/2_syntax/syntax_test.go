@@ -963,3 +963,22 @@ func TestNewASTPlacesStrFirstInEnumsAndStructs(t *testing.T) {
 		})
 	}
 }
+
+// TestNewASTTakesOnlyPublicOnATopLevelDecl pins that a file's declaration may
+// be marked public, widening it past its package, and nothing else.
+func TestNewASTTakesOnlyPublicOnATopLevelDecl(t *testing.T) {
+	body := ` namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        return;
+    }
+}
+`
+	assert.Empty(t, parseEntry(t, "public"+body))
+	for _, modifier := range []string{"private", "protected", "static", "virtual"} {
+		t.Run(modifier, func(t *testing.T) {
+			errs := parseEntry(t, modifier+body)
+			require.NotEmpty(t, errs)
+			assert.Contains(t, errs[0].Error(), "a top-level declaration can only be public")
+		})
+	}
+}

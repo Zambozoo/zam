@@ -1,1 +1,55 @@
-class Timer {}
+import "Duration.zam";
+
+// Timer fires once, a Duration after it is made or reset, unless it is
+// stopped first. Any number of threads may wait on it.
+public class Timer {
+    var uint handle;
+
+    // deadline is the monotonic reading d from now.
+    static fun int(Duration) deadline = (d) {
+        var int wall;
+        var int mono;
+        native(STD_TIME_NOW){void(int*, int*)}(&wall, &mono);
+        return mono + d.InNanoseconds();
+    }
+
+    // New starts a timer that fires d from now.
+    public static fun Timer*(Duration) New = (d) {
+        var Timer* t = new(Timer);
+        native(STD_TIMER_NEW){void(int, int, uint*)}(type(Timer).deadline(d), 0, &(t.handle));
+        return t;
+    }
+
+    // Sleep blocks the calling thread for d.
+    public static fun void(Duration) Sleep = (d) {
+        native(STD_TIME_SLEEP){void(int)}(d.InNanoseconds());
+    }
+
+    // Wait blocks until the timer fires, answering true, or is stopped,
+    // answering false. A timer that has fired answers true at once.
+    public fun bool() Wait = () {
+        var bool fired = false;
+        native(STD_TIMER_WAIT){void(uint, bool*)}(this.handle, &fired);
+        return fired;
+    }
+
+    // Stop keeps the timer from firing, answering whether it had yet to.
+    public fun bool() Stop = () {
+        var bool active = false;
+        native(STD_TIMER_STOP){void(uint, bool*)}(this.handle, &active);
+        return active;
+    }
+
+    // Reset sets the timer to fire d from now, whether it had fired, been
+    // stopped or neither, answering whether it had yet to fire.
+    public fun bool(Duration) Reset = (d) {
+        var bool active = false;
+        native(STD_TIMER_RESET){void(uint, int, int, bool*)}(this.handle, type(Timer).deadline(d), 0, &active);
+        return active;
+    }
+
+    public fun void() Delete = () {
+        native(STD_TIMER_FREE){void(uint)}(this.handle);
+        this.handle = 0U;
+    }
+}

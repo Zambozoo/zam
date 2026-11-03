@@ -1,1 +1,38 @@
-namespace X25519 {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "Key.zam";
+
+// X25519 Diffie-Hellman key agreement (RFC 7748)
+public namespace X25519 {
+    // Generate makes a private key.
+    public static fun Key*() Generate = () {
+        return type(Key).Generate(type(Key.Kind).X25519).first;
+    }
+
+    // PrivateKey makes a private key from its 32 raw bytes.
+    public static fun Pair[Key*, Err*](byte*, uint) PrivateKey = (b, n) {
+        return type(Key).FromRaw(type(Key.Kind).X25519, b, n, true);
+    }
+
+    // PublicKey makes a public key from its 32 raw bytes.
+    public static fun Pair[Key*, Err*](byte*, uint) PublicKey = (b, n) {
+        return type(Key).FromRaw(type(Key.Kind).X25519, b, n, false);
+    }
+
+    // Derive agrees a 32-byte shared secret between a private key and a
+    // peer's public key.
+    public static fun Pair[Arr[byte]*, Err*](Key*, Key*) Derive = (key, peer) {
+        var Err* e = type(Key).checkPrivate(key, type(Key.Kind).X25519, type(Key.Kind).X25519, "X25519");
+        if(e == null) {
+            e = type(Key).check(peer, type(Key.Kind).X25519, type(Key.Kind).X25519, "X25519");
+        }
+        if(e != null) {
+            var Pair[Arr[byte]*, Err*] out;
+            out.first = null;
+            out.second = e;
+            return out;
+        }
+        return key.derive(peer);
+    }
+}

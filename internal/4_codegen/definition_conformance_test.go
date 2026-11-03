@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	build "github.com/zambozoo/zam/internal/5_build"
 )
 
 // harnessCache memoizes each compiled harness binary by its config, so a
@@ -112,15 +114,22 @@ func compileHarness(name string, sources []string, runtime string) (string, erro
 		return "", fmt.Errorf("could not create a scratch directory for harness binaries")
 	}
 
+	cflags, libs, err := build.CodecFlags()
+	if err != nil {
+		return "", err
+	}
+
 	harness := filepath.Join(harnessDir, name)
-	build := exec.Command(compiler, append([]string{
+	args := append([]string{
 		"-std=gnu11", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-O1",
 		"-fsanitize=undefined", "-fno-sanitize-recover=all",
 		"-I" + filepath.Join(runtime, "src"),
 		"-I" + filepath.Join(runtime, "include"),
 		"-o", harness,
-	}, sources...)...)
-	out, err := build.CombinedOutput()
+	}, cflags...)
+	args = append(append(args, sources...), libs...)
+	cmd := exec.Command(compiler, args...)
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%w: %s", err, out)
 	}

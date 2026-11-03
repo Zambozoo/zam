@@ -1,2 +1,19 @@
-// BLAKE2B hashing algorithm
-namespace BLAKE2B {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "Digest.zam";
+
+// BLAKE2b, of any length from 1 to 64 bytes
+public namespace BLAKE2B {
+    public var uint$ MaxSize = 64U;
+
+    // New starts a BLAKE2b digest size bytes long.
+    public static fun Pair[Digest*, Err*](uint) New = (size) {
+        return type(Digest).New(type(Digest.Kind).BLAKE2B, size);
+    }
+
+    // Sum returns the 64-byte BLAKE2b digest of n bytes at b.
+    public static fun Arr[byte]*(byte*, uint) Sum = (b, n) {
+        return type(Digest).Of(type(Digest.Kind).BLAKE2B, 0U, b, n);
+    }
+}

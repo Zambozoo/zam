@@ -1,0 +1,125 @@
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/time/Time.zam";
+
+// Archives held whole in memory, over libarchive. TAR and ZIP are this for
+// one format each. Entry names are kept as written, so one may name a path
+// outside wherever the entries are extracted to; check before writing any
+// out.
+public namespace Archive {
+    enum Format : int {
+        Tar(0),
+        Zip(1);
+    }
+
+    // One file or directory in an archive
+    public class Entry {
+        public var str name;
+        // data is null for a directory.
+        public var Arr[byte]* data;
+        // mode holds the permission bits.
+        public var int mode;
+        // modTime is the last modification, to the second.
+        public var Time modTime;
+        public var bool isDir;
+
+        // File makes a file entry with permission bits 0644.
+        public static fun Archive.Entry*(str, Arr[byte]*) File = (name, data) {
+            var Archive.Entry* e = new(Archive.Entry);
+            e.name = name;
+            e.data = data;
+            e.mode = 420;
+            e.modTime = type(Time).FromUnix(0, 0);
+            e.isDir = false;
+            return e;
+        }
+
+        // Dir makes a directory entry with permission bits 0755.
+        public static fun Archive.Entry*(str) Dir = (name) {
+            var Archive.Entry* e = new(Archive.Entry);
+            e.name = name;
+            e.data = null;
+            e.mode = 493;
+            e.modTime = type(Time).FromUnix(0, 0);
+            e.isDir = true;
+            return e;
+        }
+    }
+
+    // Read reads every entry of an archive in format f from n bytes at b.
+    static fun Pair[Arr[Archive.Entry*]*, Err*](byte*, uint, Archive.Format) Read = (b, n, f) {
+        var Pair[Arr[Archive.Entry*]*, Err*] out;
+        var uint list = 0U;
+        var int count = 0;
+        var str errStr;
+        native(STD_ARCHIVE_READ){void(byte*, int, int, uint*, int*, str*)}(b, n{int}, f{int}, &list, &count, &errStr);
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        out.first = type(Arr)[Archive.Entry*].New(count{uint}, new(Archive.Entry*, count{uint})...);
+        for(var int i = 0; i < count; i++) {
+            var Archive.Entry* e = new(Archive.Entry);
+            var int size;
+            var int modTime;
+            native(STD_ARCHIVE_ENTRY){void(uint, int, str*, int*, int*, bool*, int*)}(list, i, &(e.name), &(e.mode), &modTime, &(e.isDir), &size);
+            e.modTime = type(Time).FromUnix(modTime, 0);
+            e.data = null;
+            if(!e.isDir) {
+                var byte* data = new(byte, size{uint});
+                native(STD_ARCHIVE_ENTRY_DATA){void(uint, int, byte*)}(list, i, data);
+                e.data = type(Arr)[byte].New(size{uint}, data...);
+            }
+            out.first.Set(i{uint}, e);
+        }
+        native(STD_ARCHIVE_FREE){void(uint)}(list);
+        return out;
+    }
+
+    // Write writes entries as an archive in format f.
+    static fun Pair[Arr[byte]*, Err*](Arr[Archive.Entry*]*, Archive.Format) Write = (entries, f) {
+        var Pair[Arr[byte]*, Err*] out;
+        out.first = null;
+        out.second = null;
+        var uint w;
+        native(STD_ARCHIVE_WRITER_NEW){void(int, uint*)}(f{int}, &w);
+        for(var uint i = 0U; i < entries.Len(); i++) {
+            var Archive.Entry* e = entries.Get(i);
+            var byte* data = null;
+            var uint n = 0U;
+            if(!e.isDir && e.data != null) {
+                data = e.data.Arr();
+                n = e.data.Len();
+            }
+            var str errStr;
+            native(STD_ARCHIVE_WRITER_ADD){void(uint, str, byte*, int, int, int, bool, str*)}(w, e.name, data, n{int}, e.mode, e.modTime.Unix(), e.isDir, &errStr);
+            if(errStr != null && out.second == null) {
+                out.second = type(StrErr).New(e.name + ": " + errStr);
+            }
+        }
+        var uint h;
+        var int len;
+        var str errStr;
+        native(STD_ARCHIVE_WRITER_FINISH){void(uint, uint*, int*, str*)}(w, &h, &len, &errStr);
+        if(out.second != null) {
+            if(errStr == null) {
+                var byte* discard = new(byte, len{uint});
+                native(STD_CODEC_TAKE){void(uint, byte*)}(h, discard);
+                free(discard);
+            }
+            return out;
+        }
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        var byte* b = new(byte, len{uint});
+        native(STD_CODEC_TAKE){void(uint, byte*)}(h, b);
+        out.first = type(Arr)[byte].New(len{uint}, b...);
+        return out;
+    }
+}

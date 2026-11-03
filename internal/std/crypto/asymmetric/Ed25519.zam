@@ -1,2 +1,41 @@
-// Edwards-curve Digital Signature Algorithm
-namespace Ed25519 {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "Key.zam";
+
+// Edwards-curve Digital Signature Algorithm over Curve25519 (RFC 8032)
+public namespace Ed25519 {
+    // Generate makes a private key.
+    public static fun Key*() Generate = () {
+        return type(Key).Generate(type(Key.Kind).ED25519).first;
+    }
+
+    // PrivateKey makes a private key from its 32-byte seed.
+    public static fun Pair[Key*, Err*](byte*, uint) PrivateKey = (b, n) {
+        return type(Key).FromRaw(type(Key.Kind).ED25519, b, n, true);
+    }
+
+    // PublicKey makes a public key from its 32 raw bytes.
+    public static fun Pair[Key*, Err*](byte*, uint) PublicKey = (b, n) {
+        return type(Key).FromRaw(type(Key.Kind).ED25519, b, n, false);
+    }
+
+    // Sign returns the 64-byte signature of n bytes at b.
+    public static fun Pair[Arr[byte]*, Err*](Key*, byte*, uint) Sign = (key, b, n) {
+        var Err* e = type(Key).checkPrivate(key, type(Key.Kind).ED25519, type(Key.Kind).ED25519, "Ed25519");
+        if(e != null) {
+            var Pair[Arr[byte]*, Err*] out;
+            out.first = null;
+            out.second = e;
+            return out;
+        }
+        return key.sign(-1, false, b, n);
+    }
+
+    // Verify reports whether sigLen bytes at sig are a signature of n bytes at
+    // b under key.
+    public static fun bool(Key*, byte*, uint, byte*, uint) Verify = (key, b, n, sig, sigLen) {
+        return type(Key).check(key, type(Key.Kind).ED25519, type(Key.Kind).ED25519, "Ed25519") == null &&
+            key.verify(-1, false, b, n, sig, sigLen);
+    }
+}

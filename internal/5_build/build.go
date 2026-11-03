@@ -90,6 +90,11 @@ func Build(image []byte, nativeNames []string, opts Options) error {
 		return fmt.Errorf("cannot resolve output path %q: %w", opts.OutputPath, err)
 	}
 
+	codecCFlags, codecLibs, err := CodecFlags()
+	if err != nil {
+		return err
+	}
+
 	args := []string{
 		"-std=gnu11",
 		"-O3",
@@ -97,10 +102,12 @@ func Build(image []byte, nativeNames []string, opts Options) error {
 		"-I" + runtimeSrcDir,
 		"-o", outputPath,
 	}
+	args = append(args, codecCFlags...)
 	args = append(args, runtimeCSources...)
 	args = append(args, wrapperPath)
 	args = append(args, projectSources...)
-	args = append(args, "-lpthread")
+	args = append(args, "-lpthread", "-lm")
+	args = append(args, codecLibs...)
 	args = append(args, opts.Project.Native.Links...)
 
 	cmd := exec.Command(cc, args...)
@@ -110,6 +117,64 @@ func Build(image []byte, nativeNames []string, opts Options) error {
 		return fmt.Errorf("%s failed: %w", cc, err)
 	}
 	return nil
+}
+
+// codecPackages are the pkg-config names of the C libraries the codec natives
+// wrap, every one of which each binary links.
+var codecPackages = []string{
+	"json-c", "yaml-0.1", "libxml-2.0", "bson2", "libcbor",
+	"zlib", "liblz4", "libzstd", "libbrotlienc", "libbrotlidec",
+	"openssl", "libcurl", "libllhttp", "libsodium", "libxcrypt",
+}
+
+// codecLinks are the codec libraries linked by name, having no pkg-config
+// file where they ship: libarchive comes with macOS without one.
+var codecLinks = []string{"-larchive"}
+
+// codecKegs are where Homebrew keeps libraries it leaves off the default
+// search path, curl and libxcrypt among them, so that the system's copy stays
+// in charge.
+var codecKegs = []string{
+	"/opt/homebrew/opt/curl/lib/pkgconfig",
+	"/usr/local/opt/curl/lib/pkgconfig",
+	"/opt/homebrew/opt/libxcrypt/lib/pkgconfig",
+	"/usr/local/opt/libxcrypt/lib/pkgconfig",
+}
+
+// codecPkgConfigPath is PKG_CONFIG_PATH with every keg that exists ahead of
+// it, so a keg's library is preferred to the system's.
+func codecPkgConfigPath() string {
+	var dirs []string
+	for _, dir := range codecKegs {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			dirs = append(dirs, dir)
+		}
+	}
+	if existing := os.Getenv("PKG_CONFIG_PATH"); existing != "" {
+		dirs = append(dirs, existing)
+	}
+	return strings.Join(dirs, string(os.PathListSeparator))
+}
+
+// CodecFlags asks pkg-config for the compile and link flags of the C
+// libraries the codec natives wrap.
+func CodecFlags() (cflags, libs []string, err error) {
+	query := func(flag string) ([]string, error) {
+		cmd := exec.Command("pkg-config", append([]string{flag}, codecPackages...)...)
+		cmd.Env = append(os.Environ(), "PKG_CONFIG_PATH="+codecPkgConfigPath())
+		out, err := cmd.Output()
+		if err != nil {
+			return nil, fmt.Errorf("pkg-config cannot resolve the codec libraries %s: %w", strings.Join(codecPackages, ", "), err)
+		}
+		return strings.Fields(string(out)), nil
+	}
+	if cflags, err = query("--cflags"); err != nil {
+		return nil, nil, err
+	}
+	if libs, err = query("--libs"); err != nil {
+		return nil, nil, err
+	}
+	return cflags, append(libs, codecLinks...), nil
 }
 
 // resolveCC looks up the C compiler the driver will invoke. The $CC

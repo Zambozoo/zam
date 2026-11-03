@@ -1,1 +1,92 @@
-namespace HMAC {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "../Subtle.zam";
+import "../hash/Digest.zam";
+
+// HMAC is a running keyed-hash message authentication code (RFC 2104) over a
+// Digest.Kind.
+public class HMAC {
+    var uint handle;
+    var uint size;
+    var uint block;
+
+    // New starts an HMAC over kind under a key of keyLen bytes.
+    public static fun Pair[HMAC*, Err*](Digest.Kind, byte*, uint) New = (kind, key, keyLen) {
+        var Pair[HMAC*, Err*] out;
+        out.first = null;
+        out.second = null;
+        var uint h = 0U;
+        var int n = 0;
+        var int block = 0;
+        var str errStr;
+        native(STD_HMAC_NEW){void(byte, byte*, int, uint*, int*, int*, str*)}(kind{byte}, key, keyLen{int}, &h, &n, &block, &errStr);
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        out.first = new(HMAC);
+        out.first.handle = h;
+        out.first.size = n{uint};
+        out.first.block = block{uint};
+        return out;
+    }
+
+    // Of returns the HMAC over kind of n bytes at b.
+    public static fun Pair[Arr[byte]*, Err*](Digest.Kind, byte*, uint, byte*, uint) Of = (kind, key, keyLen, b, n) {
+        var Pair[Arr[byte]*, Err*] out;
+        out.first = null;
+        var Pair[HMAC*, Err*] m = type(HMAC).New(kind, key, keyLen);
+        out.second = m.second;
+        if(m.second == null) {
+            m.first.Write(b, n);
+            out.first = m.first.Sum();
+            m.first.Delete();
+        }
+        return out;
+    }
+
+    // Verify reports whether the tagLen bytes at tag are the HMAC over kind of
+    // n bytes at b.
+    public static fun bool(Digest.Kind, byte*, uint, byte*, uint, byte*, uint) Verify = (kind, key, keyLen, b, n, tag, tagLen) {
+        var Pair[Arr[byte]*, Err*] sum = type(HMAC).Of(kind, key, keyLen, b, n);
+        if(sum.second != null || sum.first.Len() != tagLen) {
+            return false;
+        }
+        return type(Subtle).Equal(sum.first.Arr(), tag, tagLen);
+    }
+
+    public fun void(byte*, uint) Write = (b, n) {
+        native(STD_MAC_WRITE){void(uint, byte*, int)}(this.handle, b, n{int});
+    }
+
+    public fun void(str) WriteStr = (s) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(s);
+        this.Write(p.first, p.second{uint});
+    }
+
+    public fun Arr[byte]*() Sum = () {
+        var byte* b = new(byte, this.size);
+        native(STD_MAC_SUM){void(uint, byte*)}(this.handle, b);
+        return type(Arr)[byte].New(this.size, b...);
+    }
+
+    public fun void() Reset = () {
+        native(STD_MAC_RESET){void(uint)}(this.handle);
+    }
+
+    public fun uint() Size = () {
+        return this.size;
+    }
+
+    public fun uint() BlockSize = () {
+        return this.block;
+    }
+
+    public fun void() Delete = () {
+        native(STD_MAC_FREE){void(uint)}(this.handle);
+        this.handle = 0U;
+    }
+}

@@ -1,4 +1,4 @@
-namespace Ints {
-    var int$ Max = 9223372036854775807;
-    var int$ Min = -9223372036854775808;
+public namespace Ints {
+    public var int$ Max = 9223372036854775807;
+    public var int$ Min = -9223372036854775808;
 }

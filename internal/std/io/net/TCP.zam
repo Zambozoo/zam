@@ -1,1 +1,40 @@
-namespace TCP {}
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "Socket.zam";
+
+// TCP connections, over IPv4 and IPv6
+public namespace TCP {
+    // Dial connects to the first of host's addresses that answers on port.
+    public static fun Pair[Socket*, Err*](str, uint) Dial = (host, port) {
+        var Pair[Socket*, Err*] out;
+        var int fd = -1;
+        var str errStr;
+        native(STD_TCP_DIAL){void(str, int, int*, str*)}(host, port{int}, &fd, &errStr);
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(host + ":" + port{str} + ": " + errStr);
+        } else {
+            out.first = type(Socket).Of(fd);
+        }
+        return out;
+    }
+
+    // Listen accepts connections on host and port. An empty host listens on
+    // every local address, and port 0 lets the system choose one.
+    public static fun Pair[Socket.Listener*, Err*](str, uint) Listen = (host, port) {
+        var Pair[Socket.Listener*, Err*] out;
+        var uint h = 0U;
+        var str errStr;
+        native(STD_NET_LISTEN){void(bool, str, int, uint*, str*)}(false, host, port{int}, &h, &errStr);
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(host + ":" + port{str} + ": " + errStr);
+        } else {
+            out.first = type(Socket.Listener).Of(h);
+        }
+        return out;
+    }
+}

@@ -1,17 +1,21 @@
 #include "zam/native.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
 #include "definition.h"
 #include "gc.h"
+#include "run.h"
 #include "thread.h"
 #include "vm.h"
 
@@ -119,6 +123,225 @@ static void stdFileInit(ZamThread *thread) {
     *fdOut = fd;
     *errOut = 0;
     zam_native_return_void(thread);
+}
+
+// cString copies the zam string at wordIndex into a NUL-terminated C string the
+// caller frees, which is what every path-taking call wants.
+static char *cString(ZamThread *thread, uint64_t wordIndex) {
+    const ZamString *s =
+        zam_string_of((void *)(uintptr_t)zam_native_argument(thread, wordIndex));
+    char *c = malloc(s->length + 1);
+    if (c == NULL)
+        zam_native_panic(thread, "out of memory for a path");
+    memcpy(c, s->bytes, s->length);
+    c[s->length] = '\0';
+    return c;
+}
+
+// finishErr writes the error slot at errIndex from the result of a call that
+// answers -1 and errno on failure, and returns from the native.
+static void finishErr(ZamThread *thread, uint64_t errIndex, int result,
+                      int err) {
+    ZamWord *errOut = (ZamWord *)zam_native_argument_pointer(thread, errIndex);
+    *errOut = result < 0 ? errorMessage(thread, err) : 0;
+    zam_native_return_void(thread);
+}
+
+static void stdFileSeek(ZamThread *thread) {
+    int fd = (int)*(ZamInt *)zam_native_argument_pointer(thread, 0);
+    off_t offset = (off_t)(ZamInt)zam_native_argument(thread, 1);
+    int whence = (int)zam_native_argument(thread, 2);
+    ZamInt *posOut = (ZamInt *)zam_native_argument_pointer(thread, 3);
+    off_t pos = lseek(fd, offset, whence);
+    int err = errno;
+    *posOut = pos < 0 ? 0 : (ZamInt)pos;
+    finishErr(thread, 4, pos < 0 ? -1 : 0, err);
+}
+
+static void stdFileSize(ZamThread *thread) {
+    int fd = (int)*(ZamInt *)zam_native_argument_pointer(thread, 0);
+    ZamInt *sizeOut = (ZamInt *)zam_native_argument_pointer(thread, 1);
+    struct stat st;
+    int result = fstat(fd, &st);
+    int err = errno;
+    *sizeOut = result < 0 ? 0 : (ZamInt)st.st_size;
+    finishErr(thread, 2, result, err);
+}
+
+static void stdFileSync(ZamThread *thread) {
+    int fd = (int)*(ZamInt *)zam_native_argument_pointer(thread, 0);
+    zam_native_block_begin(thread);
+    int result = fsync(fd);
+    int err = errno;
+    zam_native_block_end(thread);
+    finishErr(thread, 1, result, err);
+}
+
+// stdFsStat reports the size, permission bits, kind and modification time in
+// seconds since the epoch of what lies at a path, following symbolic links.
+static void stdFsStat(ZamThread *thread) {
+    char *path = cString(thread, 0);
+    ZamInt *sizeOut = (ZamInt *)zam_native_argument_pointer(thread, 1);
+    ZamInt *modeOut = (ZamInt *)zam_native_argument_pointer(thread, 2);
+    bool *dirOut = (bool *)zam_native_argument_pointer(thread, 3);
+    ZamInt *timeOut = (ZamInt *)zam_native_argument_pointer(thread, 4);
+    struct stat st;
+    zam_native_block_begin(thread);
+    int result = stat(path, &st);
+    int err = errno;
+    zam_native_block_end(thread);
+    free(path);
+    if (result == 0) {
+        *sizeOut = (ZamInt)st.st_size;
+        *modeOut = (ZamInt)(st.st_mode & 07777);
+        *dirOut = S_ISDIR(st.st_mode);
+        *timeOut = (ZamInt)st.st_mtime;
+    }
+    finishErr(thread, 5, result, err);
+}
+
+static void stdFsRemove(ZamThread *thread) {
+    char *path = cString(thread, 0);
+    zam_native_block_begin(thread);
+    int result = remove(path);
+    int err = errno;
+    zam_native_block_end(thread);
+    free(path);
+    finishErr(thread, 1, result, err);
+}
+
+static void stdFsRename(ZamThread *thread) {
+    char *from = cString(thread, 0);
+    char *to = cString(thread, 1);
+    zam_native_block_begin(thread);
+    int result = rename(from, to);
+    int err = errno;
+    zam_native_block_end(thread);
+    free(from);
+    free(to);
+    finishErr(thread, 2, result, err);
+}
+
+static void stdFsMakeDir(ZamThread *thread) {
+    char *path = cString(thread, 0);
+    mode_t mode = (mode_t)zam_native_argument(thread, 1);
+    zam_native_block_begin(thread);
+    int result = mkdir(path, mode);
+    int err = errno;
+    zam_native_block_end(thread);
+    free(path);
+    finishErr(thread, 2, result, err);
+}
+
+static void stdFsChmod(ZamThread *thread) {
+    char *path = cString(thread, 0);
+    mode_t mode = (mode_t)zam_native_argument(thread, 1);
+    int result = chmod(path, mode);
+    int err = errno;
+    free(path);
+    finishErr(thread, 2, result, err);
+}
+
+static void stdFsChdir(ZamThread *thread) {
+    char *path = cString(thread, 0);
+    int result = chdir(path);
+    int err = errno;
+    free(path);
+    finishErr(thread, 1, result, err);
+}
+
+static int compareNames(const void *a, const void *b) {
+    return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+// stdFsReadDir lists a directory's entries but . and .., sorted bytewise and
+// joined by NUL bytes into one string, which the zam side splits.
+static void stdFsReadDir(ZamThread *thread) {
+    char *path = cString(thread, 0);
+    ZamWord *namesOut = (ZamWord *)zam_native_argument_pointer(thread, 1);
+    uint64_t count = 0, capacity = 16, bytes = 0;
+    char **names = zam_alloc(capacity * sizeof *names);
+
+    zam_native_block_begin(thread);
+    DIR *dir = opendir(path);
+    int err = errno;
+    if (dir != NULL) {
+        for (struct dirent *entry = readdir(dir); entry != NULL;
+             entry = readdir(dir)) {
+            if (strcmp(entry->d_name, ".") == 0 ||
+                strcmp(entry->d_name, "..") == 0)
+                continue;
+            if (count == capacity) {
+                capacity *= 2;
+                char **grown = realloc(names, capacity * sizeof *names);
+                if (grown == NULL)
+                    zam_native_panic(thread, "out of memory listing a directory");
+                names = grown;
+            }
+            names[count] = strdup(entry->d_name);
+            bytes += strlen(entry->d_name) + 1;
+            count++;
+        }
+        closedir(dir);
+    }
+    zam_native_block_end(thread);
+    free(path);
+
+    if (dir != NULL) {
+        qsort(names, count, sizeof *names, compareNames);
+        char *joined = zam_alloc(bytes + 1);
+        uint64_t at = 0;
+        for (uint64_t i = 0; i < count; i++) {
+            if (i > 0)
+                joined[at++] = '\0';
+            size_t length = strlen(names[i]);
+            memcpy(joined + at, names[i], length);
+            at += length;
+            free(names[i]);
+        }
+        *namesOut = (ZamWord)zam_native_new_string(thread, joined, at);
+        free(joined);
+    }
+    free(names);
+    finishErr(thread, 2, dir == NULL ? -1 : 0, err);
+}
+
+static void stdFsCwd(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+    char *cwd = getcwd(NULL, 0);
+    int err = errno;
+    if (cwd != NULL) {
+        *out = (ZamWord)zam_native_new_string(thread, cwd, strlen(cwd));
+        free(cwd);
+    }
+    finishErr(thread, 1, cwd == NULL ? -1 : 0, err);
+}
+
+// stdFsTempDir answers $TMPDIR, or /tmp when it is unset, without a trailing
+// slash.
+static void stdFsTempDir(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+    const char *dir = getenv("TMPDIR");
+    if (dir == NULL || dir[0] == '\0')
+        dir = "/tmp";
+    size_t length = strlen(dir);
+    while (length > 1 && dir[length - 1] == '/')
+        length--;
+    *out = (ZamWord)zam_native_new_string(thread, dir, length);
+    zam_native_return_void(thread);
+}
+
+static void stdPipeInit(ZamThread *thread) {
+    ZamInt *readOut = (ZamInt *)zam_native_argument_pointer(thread, 0);
+    ZamInt *writeOut = (ZamInt *)zam_native_argument_pointer(thread, 1);
+    int fds[2];
+    int result = pipe(fds);
+    int err = errno;
+    if (result == 0) {
+        *readOut = fds[0];
+        *writeOut = fds[1];
+    }
+    finishErr(thread, 2, result, err);
 }
 
 // stdFileFlag answers the OS's value for one of the POSIX open flags, picked
@@ -313,6 +536,27 @@ static void stdArrsCopy(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
+// stdArrsMarkAll marks a run of len A elements while collecting, walking it
+// in C as the one value of type A[len] it is. A run whose elements hold
+// nothing to mark costs nothing.
+static void stdArrsMarkAll(ZamThread *thread) {
+   ZamWord typeWords[ZAMTYPE_ID_WORDS] = {
+        zam_native_argument(thread, 0),
+        zam_native_argument(thread, 1),
+        zam_native_argument(thread, 2),
+    };
+   ZamTypeID type = zam_type_id_read(typeWords);
+   ZamUint len = (ZamUint)zam_native_argument(thread, 3);
+    // Resolve through zam_native_argument_pointer the same way Arrs.Copy does:
+    // the run may arrive as a frame location rather than a raw address.
+    void *run = zam_native_argument_pointer(thread, 4);
+    if (len != 0 && run != NULL) {
+        type.arrayLength = len;
+        zam_gc_mark_value(thread, (ZamWord)(uintptr_t)run, type);
+    }
+    zam_native_return_void(thread);
+}
+
 // stdGcBlock and stdGcUnblock freeze and unfreeze collection for the calling
 // thread. They nest: a collection waits until every GC.Block a thread has
 // made is matched by a GC.Unblock and the thread reaches its next safepoint.
@@ -325,6 +569,18 @@ static void stdGcUnblock(ZamThread *thread) {
     if (thread->gcBlockDepth == 0)
         zam_native_panic(thread, "GC.Unblock without a matching GC.Block");
     thread->gcBlockDepth--;
+    zam_native_return_void(thread);
+}
+
+// stdGcMarkable reports whether a value of a type holds anything the
+// collector must visit: the test that decides whether a value gets a mark
+// entry, so a Mark override can skip walking what holds nothing to mark.
+static void stdGcMarkable(ZamThread *thread) {
+    ZamWord words[ZAMTYPE_ID_WORDS];
+    for (uint64_t i = 0; i < ZAMTYPE_ID_WORDS; i++)
+        words[i] = zam_native_argument(thread, i);
+    bool *out = (bool *)zam_native_argument_pointer(thread, ZAMTYPE_ID_WORDS);
+    *out = zam_type_contains_markable(thread->vm, zam_type_id_read(words));
     zam_native_return_void(thread);
 }
 
@@ -537,7 +793,7 @@ static void stdSignalThreadUnblock(ZamThread *thread) {
 // is a member.
 static void stdSignalIsBlocked(ZamThread *thread) {
     int sig = (int)zam_native_argument(thread, 0);
-    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
+    bool *out = (bool *)zam_native_argument_pointer(thread, 1);
     sigset_t current;
     if (sigprocmask(0, NULL, &current) != 0)
         zam_native_panic(thread, "STD_SIGNAL_IS_BLOCKED: sigprocmask failed");
@@ -551,7 +807,7 @@ static void stdSignalIsBlocked(ZamThread *thread) {
 
 static void stdSignalIsThreadBlocked(ZamThread *thread) {
     int sig = (int)zam_native_argument(thread, 0);
-    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
+    bool *out = (bool *)zam_native_argument_pointer(thread, 1);
     sigset_t current;
     if (pthread_sigmask(0, NULL, &current) != 0)
         zam_native_panic(thread,
@@ -583,6 +839,279 @@ static void stdSignalHandle(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
+// The sync natives. A Mutex, RWMutex or Cond holds its pthread object as a
+// handle word: the address of a malloc'd lock, which is never moved and never
+// on the heap the collector walks. Every lock is tried first, and only one that
+// is contended is waited on from a safe region, so an uncontended lock costs
+// nothing beyond the pthread call.
+
+// syncHandle reads the handle argument at wordIndex, which a deleted lock
+// leaves zero.
+static void *syncHandle(ZamThread *thread, uint64_t wordIndex,
+                        const char *name) {
+    void *handle = (void *)(uintptr_t)zam_native_argument(thread, wordIndex);
+    if (handle == NULL)
+        zam_native_panic(thread, name);
+    return handle;
+}
+
+// stdMutexInit writes the handle of a new error-checking mutex, so that a
+// thread locking a mutex it holds, or unlocking one it does not, panics rather
+// than deadlocking or corrupting it.
+static void stdMutexInit(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+    pthread_mutex_t *mutex = zam_alloc(sizeof *mutex);
+    pthread_mutexattr_t attr;
+    pthread_mutexattr_init(&attr);
+    pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK);
+    if (pthread_mutex_init(mutex, &attr) != 0)
+        zam_native_panic(thread, "STD_MUTEX_INIT: pthread_mutex_init failed");
+    pthread_mutexattr_destroy(&attr);
+    *out = (ZamWord)(uintptr_t)mutex;
+    zam_native_return_void(thread);
+}
+
+static void stdMutexLock(ZamThread *thread) {
+    pthread_mutex_t *mutex =
+        syncHandle(thread, 0, "Mutex.Lock: the mutex was deleted");
+    int err = pthread_mutex_trylock(mutex);
+    if (err == EBUSY) {
+        zam_native_block_begin(thread);
+        err = pthread_mutex_lock(mutex);
+        zam_native_block_end(thread);
+    }
+    if (err == EDEADLK)
+        zam_native_panic(thread, "Mutex.Lock: the mutex is already held by "
+                                 "this thread");
+    if (err != 0)
+        zam_native_panic(thread, "Mutex.Lock: pthread_mutex_lock failed");
+    zam_native_return_void(thread);
+}
+
+static void stdMutexTryLock(ZamThread *thread) {
+    pthread_mutex_t *mutex =
+        syncHandle(thread, 0, "Mutex.TryLock: the mutex was deleted");
+    bool *out = (bool *)zam_native_argument_pointer(thread, 1);
+    int err = pthread_mutex_trylock(mutex);
+    if (err != 0 && err != EBUSY)
+        zam_native_panic(thread, "Mutex.TryLock: pthread_mutex_trylock failed");
+    *out = err == 0;
+    zam_native_return_void(thread);
+}
+
+static void stdMutexUnlock(ZamThread *thread) {
+    pthread_mutex_t *mutex =
+        syncHandle(thread, 0, "Mutex.Unlock: the mutex was deleted");
+    if (pthread_mutex_unlock(mutex) != 0)
+        zam_native_panic(thread, "Mutex.Unlock: the mutex is not held by this "
+                                 "thread");
+    zam_native_return_void(thread);
+}
+
+static void stdMutexDelete(ZamThread *thread) {
+    pthread_mutex_t *mutex = (void *)(uintptr_t)zam_native_argument(thread, 0);
+    if (mutex != NULL) {
+        pthread_mutex_destroy(mutex);
+        free(mutex);
+    }
+    zam_native_return_void(thread);
+}
+
+static void stdRWMutexInit(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+    pthread_rwlock_t *lock = zam_alloc(sizeof *lock);
+    if (pthread_rwlock_init(lock, NULL) != 0)
+        zam_native_panic(thread, "STD_RWMUTEX_INIT: pthread_rwlock_init failed");
+    *out = (ZamWord)(uintptr_t)lock;
+    zam_native_return_void(thread);
+}
+
+// rwLock takes lock for reading or writing, waiting from a safe region only if
+// it is contended.
+static void rwLock(ZamThread *thread, bool write) {
+    pthread_rwlock_t *lock =
+        syncHandle(thread, 0, "RWMutex: the mutex was deleted");
+    int err = write ? pthread_rwlock_trywrlock(lock)
+                    : pthread_rwlock_tryrdlock(lock);
+    if (err == EBUSY) {
+        zam_native_block_begin(thread);
+        err = write ? pthread_rwlock_wrlock(lock) : pthread_rwlock_rdlock(lock);
+        zam_native_block_end(thread);
+    }
+    if (err == EDEADLK)
+        zam_native_panic(thread, "RWMutex: the mutex is already held by this "
+                                 "thread");
+    if (err != 0)
+        zam_native_panic(thread, "RWMutex: locking failed");
+    zam_native_return_void(thread);
+}
+
+static void stdRWMutexRLock(ZamThread *thread) { rwLock(thread, false); }
+
+static void stdRWMutexLock(ZamThread *thread) { rwLock(thread, true); }
+
+static void stdRWMutexUnlock(ZamThread *thread) {
+    pthread_rwlock_t *lock =
+        syncHandle(thread, 0, "RWMutex.Unlock: the mutex was deleted");
+    if (pthread_rwlock_unlock(lock) != 0)
+        zam_native_panic(thread, "RWMutex: the mutex is not held by this "
+                                 "thread");
+    zam_native_return_void(thread);
+}
+
+static void stdRWMutexDelete(ZamThread *thread) {
+    pthread_rwlock_t *lock = (void *)(uintptr_t)zam_native_argument(thread, 0);
+    if (lock != NULL) {
+        pthread_rwlock_destroy(lock);
+        free(lock);
+    }
+    zam_native_return_void(thread);
+}
+
+static void stdCondInit(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+    pthread_cond_t *cond = zam_alloc(sizeof *cond);
+    if (pthread_cond_init(cond, NULL) != 0)
+        zam_native_panic(thread, "STD_COND_INIT: pthread_cond_init failed");
+    *out = (ZamWord)(uintptr_t)cond;
+    zam_native_return_void(thread);
+}
+
+// stdCondWait releases the mutex, waits from a safe region for a signal, and
+// takes the mutex back before leaving it.
+static void stdCondWait(ZamThread *thread) {
+    pthread_cond_t *cond =
+        syncHandle(thread, 0, "Cond.Wait: the condition was deleted");
+    pthread_mutex_t *mutex =
+        syncHandle(thread, 1, "Cond.Wait: the mutex was deleted");
+    zam_native_block_begin(thread);
+    int err = pthread_cond_wait(cond, mutex);
+    zam_native_block_end(thread);
+    if (err != 0)
+        zam_native_panic(thread, "Cond.Wait: the mutex is not held by this "
+                                 "thread");
+    zam_native_return_void(thread);
+}
+
+static void stdCondSignal(ZamThread *thread) {
+    pthread_cond_signal(
+        syncHandle(thread, 0, "Cond.Signal: the condition was deleted"));
+    zam_native_return_void(thread);
+}
+
+static void stdCondBroadcast(ZamThread *thread) {
+    pthread_cond_broadcast(
+        syncHandle(thread, 0, "Cond.Broadcast: the condition was deleted"));
+    zam_native_return_void(thread);
+}
+
+static void stdCondDelete(ZamThread *thread) {
+    pthread_cond_t *cond = (void *)(uintptr_t)zam_native_argument(thread, 0);
+    if (cond != NULL) {
+        pthread_cond_destroy(cond);
+        free(cond);
+    }
+    zam_native_return_void(thread);
+}
+
+// The math natives. A flt crosses the ABI as the bits of a double in one word,
+// and each result is written through the out pointer that follows the
+// arguments.
+
+static double fltArgument(ZamThread *thread, uint64_t wordIndex) {
+    uint64_t word = zam_native_argument(thread, wordIndex);
+    double value;
+    memcpy(&value, &word, sizeof value);
+    return value;
+}
+
+#define MATH_UNARY(name, fn)                                                  \
+    static void name(ZamThread *thread) {                                     \
+        double *out = (double *)zam_native_argument_pointer(thread, 1);       \
+        *out = fn(fltArgument(thread, 0));                                    \
+        zam_native_return_void(thread);                                       \
+    }
+
+#define MATH_BINARY(name, fn)                                                 \
+    static void name(ZamThread *thread) {                                     \
+        double *out = (double *)zam_native_argument_pointer(thread, 2);       \
+        *out = fn(fltArgument(thread, 0), fltArgument(thread, 1));            \
+        zam_native_return_void(thread);                                       \
+    }
+
+MATH_UNARY(stdMathSqrt, sqrt)
+MATH_UNARY(stdMathCbrt, cbrt)
+MATH_UNARY(stdMathExp, exp)
+MATH_UNARY(stdMathExp2, exp2)
+MATH_UNARY(stdMathExpm1, expm1)
+MATH_UNARY(stdMathLog, log)
+MATH_UNARY(stdMathLog2, log2)
+MATH_UNARY(stdMathLog10, log10)
+MATH_UNARY(stdMathLog1p, log1p)
+MATH_UNARY(stdMathFloor, floor)
+MATH_UNARY(stdMathCeil, ceil)
+MATH_UNARY(stdMathRound, round)
+MATH_UNARY(stdMathTrunc, trunc)
+MATH_UNARY(stdMathSin, sin)
+MATH_UNARY(stdMathCos, cos)
+MATH_UNARY(stdMathTan, tan)
+MATH_UNARY(stdMathAsin, asin)
+MATH_UNARY(stdMathAcos, acos)
+MATH_UNARY(stdMathAtan, atan)
+MATH_UNARY(stdMathSinh, sinh)
+MATH_UNARY(stdMathCosh, cosh)
+MATH_UNARY(stdMathTanh, tanh)
+MATH_UNARY(stdMathAsinh, asinh)
+MATH_UNARY(stdMathAcosh, acosh)
+MATH_UNARY(stdMathAtanh, atanh)
+MATH_BINARY(stdMathPow, pow)
+MATH_BINARY(stdMathMod, fmod)
+MATH_BINARY(stdMathRemainder, remainder)
+MATH_BINARY(stdMathHypot, hypot)
+MATH_BINARY(stdMathAtan2, atan2)
+
+static void stdMathFma(ZamThread *thread) {
+    double *out = (double *)zam_native_argument_pointer(thread, 3);
+    *out = fma(fltArgument(thread, 0), fltArgument(thread, 1),
+               fltArgument(thread, 2));
+    zam_native_return_void(thread);
+}
+
+// stdBitsCopy writes its argument word through the out pointer unchanged,
+// which reinterprets a flt as its bits or bits as a flt depending on the
+// signature it was called under.
+static void stdBitsCopy(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
+    *out = zam_native_argument(thread, 0);
+    zam_native_return_void(thread);
+}
+
+static void stdBitsOnes(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
+    *out = (ZamWord)__builtin_popcountll(zam_native_argument(thread, 0));
+    zam_native_return_void(thread);
+}
+
+static void stdBitsLeadingZeros(ZamThread *thread) {
+    uint64_t x = zam_native_argument(thread, 0);
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
+    *out = x == 0 ? 64 : (ZamWord)__builtin_clzll(x);
+    zam_native_return_void(thread);
+}
+
+static void stdBitsTrailingZeros(ZamThread *thread) {
+    uint64_t x = zam_native_argument(thread, 0);
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
+    *out = x == 0 ? 64 : (ZamWord)__builtin_ctzll(x);
+    zam_native_return_void(thread);
+}
+
+static void stdBitsReverseBytes(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
+    *out = (ZamWord)__builtin_bswap64(zam_native_argument(thread, 0));
+    zam_native_return_void(thread);
+}
+
 const ZamNativeEntry zamNativeTable[] = {
     {"STD_MARK", stdMark},
     {"STD_MARK_OVERRIDE", stdMarkOverride},
@@ -593,13 +1122,28 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_FILE_WRITE", stdFileWrite},
     {"STD_FILE_READ", stdFileRead},
     {"STD_FILE_CLOSE", stdFileClose},
+    {"STD_FILE_SEEK", stdFileSeek},
+    {"STD_FILE_SIZE", stdFileSize},
+    {"STD_FILE_SYNC", stdFileSync},
+    {"STD_FS_STAT", stdFsStat},
+    {"STD_FS_REMOVE", stdFsRemove},
+    {"STD_FS_RENAME", stdFsRename},
+    {"STD_FS_MAKE_DIR", stdFsMakeDir},
+    {"STD_FS_CHMOD", stdFsChmod},
+    {"STD_FS_CHDIR", stdFsChdir},
+    {"STD_FS_READ_DIR", stdFsReadDir},
+    {"STD_FS_CWD", stdFsCwd},
+    {"STD_FS_TEMP_DIR", stdFsTempDir},
+    {"STD_PIPE_INIT", stdPipeInit},
     {"STD_STRS_FROM_BYTES", stdStrsFromBytes},
     {"STD_STRS_TO_CHARS", stdStrsToChars},
     {"STD_STRS_CHAR_LEN", stdStrsCharLen},
     {"STD_STRS_BYTE_LEN", stdStrsByteLen},
     {"STD_ARRS_COPY", stdArrsCopy},
+    {"STD_ARRS_MARK_ALL", stdArrsMarkAll},
     {"STD_GC_BLOCK", stdGcBlock},
     {"STD_GC_UNBLOCK", stdGcUnblock},
+    {"STD_GC_MARKABLE", stdGcMarkable},
     {"STD_SYSTEM_EXIT", stdSystemExit},
     {"STD_SYSTEM_PROCESS_ID", stdSystemProcessID},
     {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},
@@ -616,6 +1160,58 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_SIGNAL_THREAD_UNBLOCK", stdSignalThreadUnblock},
     {"STD_SIGNAL_IS_BLOCKED", stdSignalIsBlocked},
     {"STD_SIGNAL_IS_THREAD_BLOCKED", stdSignalIsThreadBlocked},
+    {"STD_MUTEX_INIT", stdMutexInit},
+    {"STD_MUTEX_LOCK", stdMutexLock},
+    {"STD_MUTEX_TRY_LOCK", stdMutexTryLock},
+    {"STD_MUTEX_UNLOCK", stdMutexUnlock},
+    {"STD_MUTEX_DELETE", stdMutexDelete},
+    {"STD_RWMUTEX_INIT", stdRWMutexInit},
+    {"STD_RWMUTEX_RLOCK", stdRWMutexRLock},
+    {"STD_RWMUTEX_LOCK", stdRWMutexLock},
+    {"STD_RWMUTEX_UNLOCK", stdRWMutexUnlock},
+    {"STD_RWMUTEX_DELETE", stdRWMutexDelete},
+    {"STD_COND_INIT", stdCondInit},
+    {"STD_COND_WAIT", stdCondWait},
+    {"STD_COND_SIGNAL", stdCondSignal},
+    {"STD_COND_BROADCAST", stdCondBroadcast},
+    {"STD_COND_DELETE", stdCondDelete},
+    {"STD_MATH_SQRT", stdMathSqrt},
+    {"STD_MATH_CBRT", stdMathCbrt},
+    {"STD_MATH_EXP", stdMathExp},
+    {"STD_MATH_EXP2", stdMathExp2},
+    {"STD_MATH_EXPM1", stdMathExpm1},
+    {"STD_MATH_LOG", stdMathLog},
+    {"STD_MATH_LOG2", stdMathLog2},
+    {"STD_MATH_LOG10", stdMathLog10},
+    {"STD_MATH_LOG1P", stdMathLog1p},
+    {"STD_MATH_FLOOR", stdMathFloor},
+    {"STD_MATH_CEIL", stdMathCeil},
+    {"STD_MATH_ROUND", stdMathRound},
+    {"STD_MATH_TRUNC", stdMathTrunc},
+    {"STD_MATH_SIN", stdMathSin},
+    {"STD_MATH_COS", stdMathCos},
+    {"STD_MATH_TAN", stdMathTan},
+    {"STD_MATH_ASIN", stdMathAsin},
+    {"STD_MATH_ACOS", stdMathAcos},
+    {"STD_MATH_ATAN", stdMathAtan},
+    {"STD_MATH_SINH", stdMathSinh},
+    {"STD_MATH_COSH", stdMathCosh},
+    {"STD_MATH_TANH", stdMathTanh},
+    {"STD_MATH_ASINH", stdMathAsinh},
+    {"STD_MATH_ACOSH", stdMathAcosh},
+    {"STD_MATH_ATANH", stdMathAtanh},
+    {"STD_MATH_POW", stdMathPow},
+    {"STD_MATH_MOD", stdMathMod},
+    {"STD_MATH_REMAINDER", stdMathRemainder},
+    {"STD_MATH_HYPOT", stdMathHypot},
+    {"STD_MATH_ATAN2", stdMathAtan2},
+    {"STD_MATH_FMA", stdMathFma},
+    {"STD_BITS_FROM_FLT", stdBitsCopy},
+    {"STD_BITS_TO_FLT", stdBitsCopy},
+    {"STD_BITS_ONES", stdBitsOnes},
+    {"STD_BITS_LEADING_ZEROS", stdBitsLeadingZeros},
+    {"STD_BITS_TRAILING_ZEROS", stdBitsTrailingZeros},
+    {"STD_BITS_REVERSE_BYTES", stdBitsReverseBytes},
 };
 
 const uint64_t zamNativeTableCount =
@@ -629,6 +1225,62 @@ const uint64_t zamNativeTableCount =
 // anything.
 extern const ZamNativeEntry zamProjectNativeTable[];
 extern const uint64_t zamProjectNativeTableCount;
+
+// The codec natives live beside the libraries they wrap, each file with a
+// table of its own.
+extern const ZamNativeEntry zamJsonNativeTable[];
+extern const uint64_t zamJsonNativeTableCount;
+extern const ZamNativeEntry zamYamlNativeTable[];
+extern const uint64_t zamYamlNativeTableCount;
+extern const ZamNativeEntry zamXmlNativeTable[];
+extern const uint64_t zamXmlNativeTableCount;
+extern const ZamNativeEntry zamBsonNativeTable[];
+extern const uint64_t zamBsonNativeTableCount;
+extern const ZamNativeEntry zamCompressNativeTable[];
+extern const uint64_t zamCompressNativeTableCount;
+extern const ZamNativeEntry zamCborNativeTable[];
+extern const uint64_t zamCborNativeTableCount;
+extern const ZamNativeEntry zamArchiveNativeTable[];
+extern const uint64_t zamArchiveNativeTableCount;
+extern const ZamNativeEntry zamNetNativeTable[];
+extern const uint64_t zamNetNativeTableCount;
+extern const ZamNativeEntry zamTlsNativeTable[];
+extern const uint64_t zamTlsNativeTableCount;
+extern const ZamNativeEntry zamCurlNativeTable[];
+extern const uint64_t zamCurlNativeTableCount;
+extern const ZamNativeEntry zamHttpNativeTable[];
+extern const uint64_t zamHttpNativeTableCount;
+extern const ZamNativeEntry zamWsNativeTable[];
+extern const uint64_t zamWsNativeTableCount;
+extern const ZamNativeEntry zamCryptoNativeTable[];
+extern const uint64_t zamCryptoNativeTableCount;
+extern const ZamNativeEntry zamPkiNativeTable[];
+extern const uint64_t zamPkiNativeTableCount;
+extern const ZamNativeEntry zamTimeNativeTable[];
+extern const uint64_t zamTimeNativeTableCount;
+
+// stdTables are the standard library's tables, searched in order.
+static const struct {
+    const ZamNativeEntry *table;
+    const uint64_t *count;
+} stdTables[] = {
+    {zamNativeTable, &zamNativeTableCount},
+    {zamJsonNativeTable, &zamJsonNativeTableCount},
+    {zamYamlNativeTable, &zamYamlNativeTableCount},
+    {zamXmlNativeTable, &zamXmlNativeTableCount},
+    {zamBsonNativeTable, &zamBsonNativeTableCount},
+    {zamCompressNativeTable, &zamCompressNativeTableCount},
+    {zamCborNativeTable, &zamCborNativeTableCount},
+    {zamArchiveNativeTable, &zamArchiveNativeTableCount},
+    {zamNetNativeTable, &zamNetNativeTableCount},
+    {zamTlsNativeTable, &zamTlsNativeTableCount},
+    {zamCurlNativeTable, &zamCurlNativeTableCount},
+    {zamHttpNativeTable, &zamHttpNativeTableCount},
+    {zamWsNativeTable, &zamWsNativeTableCount},
+    {zamCryptoNativeTable, &zamCryptoNativeTableCount},
+    {zamPkiNativeTable, &zamPkiNativeTableCount},
+    {zamTimeNativeTable, &zamTimeNativeTableCount},
+};
 
 // matchNative searches a table for a name of the given length and returns the
 // bound function, or NULL if the table has no such entry. Names are stored as
@@ -667,8 +1319,10 @@ void zam_natives_resolve(ZamVM *vm) {
         // appears in both is bound to the runtime's own entry. A project is
         // free to ship a C function whose name begins with STD_ by accident,
         // but it may not shadow one the standard library already answers to.
-       ZamNativeFn fn = matchNative(zamNativeTable, zamNativeTableCount, name,
-                                     nameByteCount);
+       ZamNativeFn fn = NULL;
+        for (uint64_t t = 0; fn == NULL && t < sizeof stdTables / sizeof stdTables[0]; t++)
+            fn = matchNative(stdTables[t].table, *stdTables[t].count, name,
+                             nameByteCount);
         if (fn == NULL)
             fn = matchNative(zamProjectNativeTable,
                              zamProjectNativeTableCount, name, nameByteCount);

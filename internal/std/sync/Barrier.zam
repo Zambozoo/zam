@@ -1,1 +1,49 @@
-class Barrier {}
+import "../lang/System.zam";
+import "Mutex.zam";
+import "Cond.zam";
+
+// Reusable barrier that holds threads until a fixed number have arrived
+public class Barrier {
+    var Mutex* m;
+    var Cond* c;
+    var uint parties;
+    var uint waiting;
+    var uint generation;
+
+    public static fun Barrier*(uint) New = (parties) {
+        var Barrier* b = new(Barrier);
+        b.Init(parties);
+        return b;
+    }
+
+    public fun void(uint) Init = (parties) {
+        if(parties == 0U) {
+            type(System).Panic("Barrier needs at least one party");
+        }
+        this.m = type(Mutex).New();
+        this.c = type(Cond).New(this.m);
+        this.parties = parties;
+        this.waiting = 0U;
+        this.generation = 0U;
+    }
+
+    // Wait blocks until every party has called it, then releases them all and
+    // resets. It reports true to the last to arrive.
+    public fun bool() Wait = () {
+        this.m.Lock();
+        var uint gen = this.generation;
+        this.waiting++;
+        if(this.waiting == this.parties) {
+            this.waiting = 0U;
+            this.generation++;
+            this.c.Broadcast();
+            this.m.Unlock();
+            return true;
+        }
+        for(; gen == this.generation;) {
+            this.c.Wait();
+        }
+        this.m.Unlock();
+        return false;
+    }
+}

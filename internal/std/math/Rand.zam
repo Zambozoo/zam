@@ -2,29 +2,29 @@ import "../lang/System.zam";
 
 // Rand draws from a per-thread generator seeded by the OS. It is not suitable
 // for cryptography.
-namespace Rand {
+public namespace Rand {
     static var uint$ surrogateLo = 55296U;
     static var uint$ surrogateHi = 57343U;
     static var uint$ maxChar = 1114111U;
 
     // Byte returns a uniformly random byte.
-    fun byte() Byte = () {
+    public fun byte() Byte = () {
         return (type(Rand).Uint() >> 56U){byte};
     }
 
     // ByteRange returns a uniformly random byte in [min, max].
-    fun byte(byte, byte) ByteRange = (min, max) {
+    public fun byte(byte, byte) ByteRange = (min, max) {
         return type(Rand).UintRange(min{uint}, max{uint}){byte};
     }
 
     // Char returns a uniformly random Unicode scalar value.
-    fun char() Char = () {
+    public fun char() Char = () {
         return type(Rand).CharRange(0U{char}, type(Rand).maxChar{char});
     }
 
     // CharRange returns a uniformly random Unicode scalar value in [min, max],
     // never a surrogate.
-    fun char(char, char) CharRange = (min, max) {
+    public fun char(char, char) CharRange = (min, max) {
         var uint lo = min{uint};
         var uint hi = max{uint};
         if(lo > hi) {
@@ -53,14 +53,14 @@ namespace Rand {
     }
 
     // Uint returns a uniformly random uint.
-    fun uint() Uint = () {
+    public fun uint() Uint = () {
         var uint u;
         native(STD_RAND_UINT){void(uint*)}(&u);
         return u;
     }
 
     // UintRange returns a uniformly random uint in [min, max].
-    fun uint(uint, uint) UintRange = (min, max) {
+    public fun uint(uint, uint) UintRange = (min, max) {
         if(min > max) {
             type(System).Panic("Rand.UintRange: min is greater than max");
         }
@@ -77,12 +77,12 @@ namespace Rand {
     }
 
     // Int returns a uniformly random int.
-    fun int() Int = () {
+    public fun int() Int = () {
         return type(Rand).Uint(){int};
     }
 
     // IntRange returns a uniformly random int in [min, max].
-    fun int(int, int) IntRange = (min, max) {
+    public fun int(int, int) IntRange = (min, max) {
         if(min > max) {
             type(System).Panic("Rand.IntRange: min is greater than max");
         }
@@ -90,14 +90,14 @@ namespace Rand {
     }
 
     // Flt returns a uniformly random flt in [0, 1).
-    fun flt() Flt = () {
+    public fun flt() Flt = () {
         var flt f;
         native(STD_RAND_FLT){void(flt*)}(&f);
         return f;
     }
 
     // FltRange returns a uniformly random flt between min and max.
-    fun flt(flt, flt) FltRange = (min, max) {
+    public fun flt(flt, flt) FltRange = (min, max) {
         if(min > max) {
             type(System).Panic("Rand.FltRange: min is greater than max");
         }
@@ -105,7 +105,7 @@ namespace Rand {
     }
 
     // Bool returns true or false with equal odds.
-    fun bool() Bool = () {
+    public fun bool() Bool = () {
         return (type(Rand).Uint() >> 63U) == 1U;
     }
 }

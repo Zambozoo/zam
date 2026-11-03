@@ -83,6 +83,28 @@ void zam_native_return_void(ZamThread *thread);
 void zam_native_block_begin(ZamThread *thread);
 void zam_native_block_end(ZamThread *thread);
 
+// zam_native_call runs a function value — a closure, lambda or bound method
+// the native was handed as an argument — to its return, on the calling
+// thread, and copies the words of its result into result, answering how many
+// there were (none for void). The argument words are the function's
+// parameters laid out as a call from Zamylene would lay them, and are checked
+// against its signature.
+//
+// It is how a native serves a C library that calls back: the callback calls
+// this, and the zam body runs nested inside the native's C frame.
+//
+// The body may allocate, collect, block and call natives of its own. Three
+// things follow from that. It must not be called between
+// zam_native_block_begin and zam_native_block_end. A pointer the native took
+// from zam_native_argument_pointer may be stale after it returns, since the
+// operand stack may have moved; take it again. And a reference the result
+// holds is rooted by nothing once this returns: store it where the collector
+// will find it, such as an out argument, before anything else allocates.
+//
+// A panic or exit inside the body ends the process, as it would anywhere.
+uint64_t zam_native_call(ZamThread *thread, uint64_t function, const uint64_t *args,
+                         uint64_t argWords, uint64_t *result, uint64_t resultCapacity);
+
 // zam_native_panic ends the run from inside a native, for the failures a native
 // can see and the program cannot be handed back: there are no exceptions to
 // throw and no Result to return.

@@ -1,1 +1,76 @@
-namespace Hex {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+
+// Base 16, written in lower case and read in either case
+public namespace Hex {
+    var str$ digits = "0123456789abcdef";
+
+    public static fun str(byte*, uint) Encode = (b, n) {
+        var Pair[byte*, int] d = type(Strs).ToBytes(type(Hex).digits);
+        var byte* out = new(byte, 2U * n + 1U);
+        for(var uint i = 0U; i < n; i++) {
+            out[2U * i] = d.first[b[i]{uint} >> 4U];
+            out[2U * i + 1U] = d.first[b[i]{uint} & 15U];
+        }
+        var str s = type(Strs).FromBytes(out, (2U * n){int});
+        free(out);
+        return s;
+    }
+
+    public static fun str(str) EncodeStr = (s) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(s);
+        return type(Hex).Encode(p.first, p.second{uint});
+    }
+
+    private static fun int(int) value = (c) {
+        if(c >= '0'{int} && c <= '9'{int}) {
+            return c - '0'{int};
+        }
+        if(c >= 'a'{int} && c <= 'f'{int}) {
+            return c - 'a'{int} + 10;
+        }
+        if(c >= 'A'{int} && c <= 'F'{int}) {
+            return c - 'A'{int} + 10;
+        }
+        return -1;
+    }
+
+    public static fun Pair[Arr[byte]*, Err*](str) Decode = (s) {
+        var Pair[Arr[byte]*, Err*] out;
+        out.first = null;
+        var Pair[byte*, int] p = type(Strs).ToBytes(s);
+        var uint n = p.second{uint};
+        if(n % 2U != 0U) {
+            out.second = type(StrErr).New("odd hex length");
+            return out;
+        }
+        var byte* b = new(byte, n / 2U);
+        for(var uint i = 0U; i < n; i = i + 2U) {
+            var int hi = type(Hex).value(p.first[i]{int});
+            var int lo = type(Hex).value(p.first[i + 1U]{int});
+            if(hi < 0 || lo < 0) {
+                free(b);
+                out.second = type(StrErr).New("invalid hex byte at offset " + i{str});
+                return out;
+            }
+            b[i / 2U] = (hi * 16 + lo){byte};
+        }
+        out.first = type(Arr)[byte].New(n / 2U, b...);
+        out.second = null;
+        return out;
+    }
+
+    public static fun Pair[str, Err*](str) DecodeStr = (s) {
+        var Pair[str, Err*] out;
+        var Pair[Arr[byte]*, Err*] d = type(Hex).Decode(s);
+        out.second = d.second;
+        out.first = "";
+        if(d.second == null) {
+            out.first = type(Strs).FromBytes(d.first.Arr(), d.first.Len(){int});
+        }
+        return out;
+    }
+}

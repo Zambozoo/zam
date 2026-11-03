@@ -1,1 +1,886 @@
-class HTTP {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "../../data/list/ArrList.zam";
+import "../../data/map/HashMap.zam";
+import "../local/Buffer.zam";
+import "../local/Stream.zam";
+import "../local/Streams.zam";
+import "../net/IP.zam";
+import "../net/Socket.zam";
+import "../net/TCP.zam";
+import "../net/TLS.zam";
+import "URL.zam";
+
+// HTTP client over libcurl, and HTTP/1.1 server over llhttp, both streaming
+// bodies in each direction. The client speaks HTTP/1.1 and HTTP/2, over TLS
+// for https, and decodes compressed responses. The server serves HTTP or
+// HTTPS, each connection on a thread of its own.
+public class HTTP {
+    // Headers: a map from each name, folded to lower case, to its values in
+    // the order they were added. Every method taking a name folds it, so
+    // names match without regard to case; they are written in lower case.
+    public class Headers <: HashMap[str, ArrList[str]*]* {
+        public static fun HTTP.Headers*() New = () {
+            var HTTP.Headers* h = new(HTTP.Headers);
+            h.Init(0U);
+            return h;
+        }
+
+        // FromJoined reads names and values each ended by a NUL byte, as the
+        // natives hand them over.
+        public static fun HTTP.Headers*(str) FromJoined = (joined) {
+            var HTTP.Headers* h = type(HTTP.Headers).New();
+            if(type(Strs).ByteLen(joined) == 0) {
+                return h;
+            }
+            var Arr[str]* parts = type(Strs).Split(joined, 0{byte});
+            for(var uint i = 0U; i + 1U < parts.Len(); i = i + 2U) {
+                h.Add(parts.Get(i), parts.Get(i + 1U));
+            }
+            return h;
+        }
+
+        // Fold folds ASCII letters to lower case, as names are compared.
+        public static fun str(str) Fold = (name) {
+            var Pair[byte*, int] p = type(Strs).ToBytes(name);
+            var byte* lower = new(byte, p.second{uint} + 1U);
+            for(var int i = 0; i < p.second; i++) {
+                var int c = p.first[i]{int};
+                if(c >= 'A'{int} && c <= 'Z'{int}) {
+                    c = c + 32;
+                }
+                lower[i] = c{byte};
+            }
+            var str s = type(Strs).FromBytes(lower, p.second);
+            free(lower);
+            return s;
+        }
+
+        public fun Pair[ArrList[str]*, bool](str) Get = (name) {
+            return super.Get(type(HTTP.Headers).Fold(name));
+        }
+
+        public fun bool(str, ArrList[str]*) Put = (name, values) {
+            return super.Put(type(HTTP.Headers).Fold(name), values);
+        }
+
+        public fun bool(str) Contains = (name) {
+            return super.Contains(type(HTTP.Headers).Fold(name));
+        }
+
+        public fun Pair[ArrList[str]*, bool](str) Remove = (name) {
+            return super.Remove(type(HTTP.Headers).Fold(name));
+        }
+
+        // Add adds a value to name's.
+        public fun void(str, str) Add = (name, value) {
+            var Pair[ArrList[str]*, bool] e = this.Get(name);
+            if(!e.second) {
+                e.first = type(ArrList)[str].New(0U);
+                this.Put(name, e.first);
+            }
+            e.first.AddLast(value);
+        }
+
+        // Set replaces every value of name with one.
+        public fun void(str, str) Set = (name, value) {
+            this.Put(name, type(ArrList)[str].New(1U, value));
+        }
+
+        // Value returns the first value of name, and false when there is none.
+        public fun Pair[str, bool](str) Value = (name) {
+            var Pair[str, bool] out;
+            out.first = "";
+            var Pair[ArrList[str]*, bool] e = this.Get(name);
+            out.second = e.second;
+            if(e.second) {
+                out.first = e.first.GetFirst();
+            }
+            return out;
+        }
+
+        // Values returns every value of name, in the order they were added.
+        public fun Arr[str]*(str) Values = (name) {
+            var Pair[ArrList[str]*, bool] e = this.Get(name);
+            if(!e.second) {
+                return type(Arr)[str].New(0U, new(str, 0U)...);
+            }
+            return e.first.Arr();
+        }
+
+        public fun void(str) Del = (name) {
+            this.Remove(name);
+        }
+
+        // Join writes a line for each value: the name, between, the value and
+        // after.
+        public fun str(str, str) Join = (between, after) {
+            var Arr[Pair[str, ArrList[str]*]]* all = this.Arr();
+            var str s = "";
+            for(var uint i = 0U; i < all.Len(); i++) {
+                var Pair[str, ArrList[str]*] e = all.Get(i);
+                for(var uint j = 0U; j < e.second.Len(); j++) {
+                    s = s + e.first + between + e.second.Get(j) + after;
+                }
+            }
+            return s;
+        }
+
+        // Lines joins "name: value" lines with NUL bytes, as the natives take
+        // them.
+        public fun str() Lines = () {
+            var byte* zero = new(byte, 1U);
+            zero[0] = 0{byte};
+            var str nul = type(Strs).FromBytes(zero, 1);
+            free(zero);
+            return this.Join(": ", nul);
+        }
+    }
+
+    // Conn reads HTTP/1.1 messages off a stream: requests on a server's
+    // connection, or responses on a client's. Next reads each message's head
+    // into the public fields, and ReadBody its body.
+    public class Conn {
+        public var Stream* stream;
+        // sock is the socket under stream.
+        public var Socket* sock;
+        public var str method;
+        public var str target;
+        public var HTTP.Headers* headers;
+        public var uint status;
+        // version is ten times the major version plus the minor.
+        public var int version;
+        // length is the body's, or -1 when it comes in chunks or runs to
+        // the end of the stream.
+        public var int length;
+        public var bool keepAlive;
+        public var bool upgrade;
+        var uint parser;
+        var byte* chunk;
+        var int state;
+        var bool hijacked;
+
+        static fun HTTP.Conn*(Stream*, Socket*, bool) New = (stream, sock, response) {
+            var HTTP.Conn* c = new(HTTP.Conn);
+            c.stream = stream;
+            c.sock = sock;
+            c.headers = type(HTTP.Headers).New();
+            native(STD_HTTP_CONN_NEW){void(bool, uint*)}(response, &(c.parser));
+            c.chunk = new(byte, 16384U);
+            c.state = 0;
+            c.hijacked = false;
+            return c;
+        }
+
+        // feed parses n more bytes from chunk, what is left over for n of
+        // zero, or the end of the stream for n below zero.
+        private fun Err*(int) feed = (n) {
+            var str errStr;
+            native(STD_HTTP_FEED){void(uint, byte*, int, int*, str*)}(this.parser, this.chunk, n, &(this.state), &errStr);
+            if(errStr != null) {
+                return type(StrErr).New(errStr);
+            }
+            return null;
+        }
+
+        private fun Err*() fill = () {
+            var Pair[int, Err*] p = this.stream.Read(this.chunk, 16384);
+            if(p.second != null) {
+                return p.second;
+            }
+            if(p.first == 0) {
+                return this.feed(-1);
+            }
+            return this.feed(p.first);
+        }
+
+        // Next reads the head of the next message, once the last is done,
+        // answering false when the stream ends before one begins.
+        public fun Pair[bool, Err*]() Next = () {
+            var Pair[bool, Err*] out;
+            out.first = false;
+            native(STD_HTTP_NEXT){void(uint)}(this.parser);
+            out.second = this.feed(0);
+            for(; out.second == null && (this.state & 5) == 0;) {
+                out.second = this.fill();
+            }
+            if(out.second != null || (this.state & 4) != 0) {
+                return out;
+            }
+            var str headers;
+            var int status;
+            native(STD_HTTP_HEAD){void(uint, str*, str*, str*, int*, int*, int*, bool*, bool*)}(this.parser, &(this.method), &(this.target), &headers, &status, &(this.version), &(this.length), &(this.keepAlive), &(this.upgrade));
+            this.headers = type(HTTP.Headers).FromJoined(headers);
+            this.status = status{uint};
+            out.first = true;
+            return out;
+        }
+
+        // ReadBody reads up to count bytes of the message's body into
+        // buffer, returning zero at its end.
+        public fun Pair[int, Err*](byte*, int) ReadBody = (buffer, count) {
+            var Pair[int, Err*] out;
+            out.second = null;
+            for(;;) {
+                native(STD_HTTP_BODY){void(uint, byte*, int, int*)}(this.parser, buffer, count, &(out.first));
+                if(out.first > 0 || (this.state & 2) != 0) {
+                    return out;
+                }
+                out.second = this.fill();
+                if(out.second != null) {
+                    return out;
+                }
+            }
+            return out;
+        }
+
+        // Done reports whether the whole message has been read.
+        public fun bool() Done = () {
+            return (this.state & 2) != 0;
+        }
+
+        // Drain reads and drops the rest of the body, at most limit bytes of
+        // it, reporting whether it reached the end.
+        public fun bool(int) Drain = (limit) {
+            var byte* b = new(byte, 16384U);
+            var int seen = 0;
+            for(; !this.Done() && seen <= limit;) {
+                var Pair[int, Err*] p = this.ReadBody(b, 16384);
+                if(p.second != null) {
+                    break;
+                }
+                seen = seen + p.first;
+            }
+            free(b);
+            return this.Done();
+        }
+
+        // Rest takes the bytes read past the message, which belong to
+        // whatever the connection carries after it.
+        public fun str() Rest = () {
+            var str s;
+            native(STD_HTTP_REST){void(uint, str*)}(this.parser, &s);
+            return s;
+        }
+
+        public fun void() Hijack = () {
+            this.hijacked = true;
+        }
+
+        public fun bool() Hijacked = () {
+            return this.hijacked;
+        }
+
+        public fun void() Delete = () {
+            if(this.parser != 0U) {
+                native(STD_HTTP_CONN_FREE){void(uint)}(this.parser);
+                this.parser = 0U;
+                free(this.chunk);
+                this.chunk = null;
+            }
+        }
+    }
+
+    // Body is the body of a request a server is handling, read as it
+    // arrives. A client that asked to be told to go on before sending it is
+    // told so at the first read.
+    class Body {
+        var HTTP.Conn* conn;
+        var bool waiting;
+        var bool closed;
+
+        public static fun HTTP.Body*(HTTP.Conn*) New = (conn) {
+            var HTTP.Body* b = new(HTTP.Body);
+            b.conn = conn;
+            b.waiting = type(HTTP.Headers).Fold(conn.headers.Value("expect").first) == "100-continue";
+            b.closed = false;
+            return b;
+        }
+
+        public fun Pair[int, Err*](byte*, int) Read = (buffer, count) {
+            var Pair[int, Err*] out;
+            out.first = 0;
+            out.second = null;
+            if(this.closed) {
+                out.second = type(StrErr).New("request body is closed");
+                return out;
+            }
+            if(this.waiting) {
+                this.waiting = false;
+                out.second = type(Streams).WriteStr(this.conn.stream, "HTTP/1.1 100 Continue\r\n\r\n");
+                if(out.second != null) {
+                    return out;
+                }
+            }
+            return this.conn.ReadBody(buffer, count);
+        }
+
+        public fun Pair[int, Err*](byte*, int) Write = (buffer, count) {
+            var Pair[int, Err*] out;
+            out.first = 0;
+            out.second = type(StrErr).New("request body is read-only");
+            return out;
+        }
+
+        // Close stops reading; the server reads past what is left.
+        public fun Err*() Close = () {
+            this.closed = true;
+            return null;
+        }
+
+        // Waiting reports whether the client is still waiting to be told to
+        // send the body.
+        public fun bool() Waiting = () {
+            return this.waiting;
+        }
+    }
+
+    // Transfer is the body of a response a client is receiving, read as it
+    // arrives. Reading it also sends the rest of the request's body.
+    class Transfer {
+        var uint handle;
+        var Stream* upload;
+        var byte* chunk;
+        var bool done;
+        var Err* err;
+
+        // Start opens a transfer for r, sending nothing until it is read.
+        public static fun HTTP.Transfer*(HTTP.Request*) Start = (r) {
+            var int length = -2;
+            if(r.body != null) {
+                length = r.length;
+                if(length < -1) {
+                    length = -1;
+                }
+            }
+            var HTTP.Transfer* t = new(HTTP.Transfer);
+            native(STD_HTTP_OPEN){void(str, str, str, int, bool, int, uint*)}(r.method, r.url, r.headers.Lines(), r.timeoutMs{int}, r.followRedirects, length, &(t.handle));
+            t.upload = r.body;
+            t.chunk = new(byte, 16384U);
+            t.done = false;
+            t.err = null;
+            return t;
+        }
+
+        // Head waits for the response's head, answering its status and
+        // headers, or the transfer's failure.
+        public fun Pair[HTTP.Response*, Err*]() Head = () {
+            var Pair[HTTP.Response*, Err*] out;
+            out.first = null;
+            out.second = null;
+            for(; (this.step() & 2) == 0;) {
+            }
+            if(this.err != null) {
+                out.second = this.err;
+                return out;
+            }
+            var int status;
+            var str headers;
+            native(STD_HTTP_RESPONSE_HEAD){void(uint, int*, str*)}(this.handle, &status, &headers);
+            out.first = type(HTTP.Response).Of(status{uint}, this, -1);
+            out.first.headers = type(HTTP.Headers).FromJoined(headers);
+            return out;
+        }
+
+        // step runs the transfer, feeding it the request body, until it has
+        // something for the reader, answering the state it reached.
+        fun int() step = () {
+            for(;;) {
+                var int state;
+                var str errStr;
+                native(STD_HTTP_STEP){void(uint, int*, str*)}(this.handle, &state, &errStr);
+                if((state & 8) != 0) {
+                    this.done = true;
+                    if(errStr != null && this.err == null) {
+                        this.err = type(StrErr).New(errStr);
+                    }
+                }
+                if((state & 1) == 0) {
+                    return state;
+                }
+                var int n = 0;
+                if(this.upload != null) {
+                    var Pair[int, Err*] p = this.upload.Read(this.chunk, 16384);
+                    if(p.second != null) {
+                        this.err = p.second;
+                        this.done = true;
+                        return 10;
+                    }
+                    n = p.first;
+                }
+                native(STD_HTTP_UPLOAD){void(uint, byte*, int)}(this.handle, this.chunk, n);
+            }
+            return 0;
+        }
+
+        public fun Pair[int, Err*](byte*, int) Read = (buffer, count) {
+            var Pair[int, Err*] out;
+            out.first = 0;
+            out.second = null;
+            if(this.handle == 0U) {
+                out.second = type(StrErr).New("response body is closed");
+                return out;
+            }
+            for(;;) {
+                native(STD_HTTP_TAKE){void(uint, byte*, int, int*)}(this.handle, buffer, count, &(out.first));
+                if(out.first > 0) {
+                    return out;
+                }
+                if(this.done) {
+                    out.second = this.err;
+                    return out;
+                }
+                this.step();
+            }
+            return out;
+        }
+
+        public fun Pair[int, Err*](byte*, int) Write = (buffer, count) {
+            var Pair[int, Err*] out;
+            out.first = 0;
+            out.second = type(StrErr).New("response body is read-only");
+            return out;
+        }
+
+        // Close ends the transfer, whether or not it is done.
+        public fun Err*() Close = () {
+            if(this.handle != 0U) {
+                native(STD_HTTP_FREE){void(uint)}(this.handle);
+                this.handle = 0U;
+                free(this.chunk);
+                this.chunk = null;
+            }
+            return null;
+        }
+
+        public fun void() Delete = () {
+            this.Close();
+        }
+    }
+
+    // Request is what a client sends and a server handles. A server's
+    // request holds the target as sent, such as /path?query, in url.
+    public class Request {
+        public var str method;
+        public var str url;
+        public var HTTP.Headers* headers;
+        // body is sent by a client, from which it reads it to its end, and
+        // read by a server as it arrives. It is null for none.
+        public var Stream* body;
+        // length is the body's, or -1 when unknown, which a client sends in
+        // chunks.
+        public var int length;
+        // timeoutMs bounds a client's whole request, or not at all for 0.
+        public var uint timeoutMs;
+        public var bool followRedirects;
+        var HTTP.Conn* conn;
+
+        // New starts a request with no headers or body that follows
+        // redirects.
+        public static fun HTTP.Request*(str, str) New = (method, url) {
+            var HTTP.Request* r = new(HTTP.Request);
+            r.method = method;
+            r.url = url;
+            r.headers = type(HTTP.Headers).New();
+            r.body = null;
+            r.length = -1;
+            r.timeoutMs = 0U;
+            r.followRedirects = true;
+            r.conn = null;
+            return r;
+        }
+
+        // Received makes the request whose head conn has just read, with
+        // body read from it.
+        static fun HTTP.Request*(HTTP.Conn*, HTTP.Body*) Received = (conn, body) {
+            var HTTP.Request* r = type(HTTP.Request).New(conn.method, conn.target);
+            r.headers = conn.headers;
+            r.body = body;
+            r.length = conn.length;
+            r.conn = conn;
+            return r;
+        }
+
+        // SetBody makes s the body.
+        public fun void(str) SetBody = (s) {
+            var Buffer* b = type(Buffer).New();
+            b.WriteStr(s);
+            this.body = b;
+            this.length = type(Strs).ByteLen(s);
+        }
+
+        // ReadBody reads the body to its end.
+        public fun Pair[str, Err*]() ReadBody = () {
+            if(this.body == null) {
+                var Pair[str, Err*] none;
+                none.first = "";
+                none.second = null;
+                return none;
+            }
+            return type(Streams).ReadAll(this.body);
+        }
+
+        // Hijack takes a server's connection from it: the server neither
+        // answers this request nor reads another, leaving the connection to
+        // the caller, Rest holding what was read past the request. It
+        // answers null for a request not received by a server.
+        public fun HTTP.Conn*() Hijack = () {
+            if(this.conn == null) {
+                return null;
+            }
+            this.conn.Drain(1048576);
+            this.conn.Hijack();
+            return this.conn;
+        }
+
+        // Path returns a server's request target up to its query.
+        public fun str() Path = () {
+            return type(Strs).Split(this.url, '?'{int}{byte}).Get(0U);
+        }
+
+        // QueryValues decodes a server's request target's query.
+        public fun Arr[Pair[str, str]]*() QueryValues = () {
+            var Arr[str]* parts = type(Strs).Split(this.url, '?'{int}{byte});
+            var str q = "";
+            for(var uint i = 1U; i < parts.Len(); i++) {
+                if(i > 1U) {
+                    q = q + "?";
+                }
+                q = q + parts.Get(i);
+            }
+            return type(URL).ParseQuery(q);
+        }
+    }
+
+    public class Response {
+        public var uint status;
+        public var HTTP.Headers* headers;
+        // body is read to its end and closed by a server sending it, and
+        // read as it arrives by a client. It is null for none.
+        public var Stream* body;
+        // length is the body's, or -1 when unknown, which a server sends in
+        // chunks.
+        public var int length;
+
+        public static fun HTTP.Response*(uint, str) New = (status, body) {
+            var Buffer* b = type(Buffer).New();
+            b.WriteStr(body);
+            return type(HTTP.Response).Of(status, b, type(Strs).ByteLen(body));
+        }
+
+        // Of makes a response whose body, length bytes long or -1 when
+        // unknown, is read from a stream.
+        public static fun HTTP.Response*(uint, Stream*, int) Of = (status, body, length) {
+            var HTTP.Response* r = new(HTTP.Response);
+            r.status = status;
+            r.headers = type(HTTP.Headers).New();
+            r.body = body;
+            r.length = length;
+            return r;
+        }
+
+        // ReadBody reads the body to its end.
+        public fun Pair[str, Err*]() ReadBody = () {
+            if(this.body == null) {
+                var Pair[str, Err*] none;
+                none.first = "";
+                none.second = null;
+                return none;
+            }
+            return type(Streams).ReadAll(this.body);
+        }
+    }
+
+    // Open sends a request and waits for the head of its response, whose
+    // body is read as it arrives. The response's body must be closed once
+    // done with, unless read to its end.
+    public static fun Pair[HTTP.Response*, Err*](HTTP.Request*) Open = (r) {
+        var Pair[HTTP.Response*, Err*] out;
+        out.first = null;
+        out.second = null;
+        var HTTP.Transfer* t = type(HTTP.Transfer).Start(r);
+        var Pair[HTTP.Response*, Err*] head = t.Head();
+        if(head.second != null) {
+            t.Close();
+            out.second = type(StrErr).New(r.method + " " + r.url + ": " + head.second.Err());
+            return out;
+        }
+        return head;
+    }
+
+    // Do sends a request and reads its whole response.
+    public static fun Pair[HTTP.Response*, Err*](HTTP.Request*) Do = (r) {
+        var Pair[HTTP.Response*, Err*] out = type(HTTP).Open(r);
+        if(out.second != null) {
+            return out;
+        }
+        var Stream* t = out.first.body;
+        var Pair[str, Err*] body = type(Streams).ReadAll(t);
+        t.Close();
+        if(body.second != null) {
+            out.first = null;
+            out.second = type(StrErr).New(r.method + " " + r.url + ": " + body.second.Err());
+            return out;
+        }
+        var Buffer* b = type(Buffer).New();
+        b.WriteStr(body.first);
+        out.first.body = b;
+        out.first.length = type(Strs).ByteLen(body.first);
+        return out;
+    }
+
+    public static fun Pair[HTTP.Response*, Err*](str) Get = (url) {
+        return type(HTTP).Do(type(HTTP.Request).New("GET", url));
+    }
+
+    public static fun Pair[HTTP.Response*, Err*](str, str, str) Post = (url, contentType, body) {
+        var HTTP.Request* r = type(HTTP.Request).New("POST", url);
+        r.headers.Set("Content-Type", contentType);
+        r.SetBody(body);
+        return type(HTTP).Do(r);
+    }
+
+    // StatusText returns the reason phrase of a status code.
+    public static fun str(uint) StatusText = (status) {
+        if(status == 100U) { return "Continue"; }
+        if(status == 101U) { return "Switching Protocols"; }
+        if(status == 200U) { return "OK"; }
+        if(status == 201U) { return "Created"; }
+        if(status == 202U) { return "Accepted"; }
+        if(status == 204U) { return "No Content"; }
+        if(status == 301U) { return "Moved Permanently"; }
+        if(status == 302U) { return "Found"; }
+        if(status == 303U) { return "See Other"; }
+        if(status == 304U) { return "Not Modified"; }
+        if(status == 307U) { return "Temporary Redirect"; }
+        if(status == 308U) { return "Permanent Redirect"; }
+        if(status == 400U) { return "Bad Request"; }
+        if(status == 401U) { return "Unauthorized"; }
+        if(status == 403U) { return "Forbidden"; }
+        if(status == 404U) { return "Not Found"; }
+        if(status == 405U) { return "Method Not Allowed"; }
+        if(status == 409U) { return "Conflict"; }
+        if(status == 413U) { return "Content Too Large"; }
+        if(status == 426U) { return "Upgrade Required"; }
+        if(status == 429U) { return "Too Many Requests"; }
+        if(status == 500U) { return "Internal Server Error"; }
+        if(status == 501U) { return "Not Implemented"; }
+        if(status == 502U) { return "Bad Gateway"; }
+        if(status == 503U) { return "Service Unavailable"; }
+        return "Status " + status{str};
+    }
+
+    // Server serves HTTP/1.1 on a TCP address, over TLS when given a
+    // context, handing each request to a handler and writing back the
+    // response it returns, with keep-alive and pipelining. A request's body
+    // is read as it arrives, and a response's body is sent as it is read,
+    // in chunks when its length is unknown. A handler returning null answers
+    // 500, and one that hijacks the request answers nothing.
+    public class Server {
+        var Socket.Listener* listener;
+        var TLS.Context* ctx;
+        var HTTP.Response*(HTTP.Request*) handler;
+
+        // Listen binds host and port; see TCP.Listen. Serve starts serving.
+        public static fun Pair[HTTP.Server*, Err*](str, uint, HTTP.Response*(HTTP.Request*)) Listen = (host, port, handler) {
+            return type(HTTP.Server).ListenTLS(host, port, null, handler);
+        }
+
+        // ListenTLS binds host and port to serve HTTPS with ctx, a server
+        // context, or plain HTTP for a null one.
+        public static fun Pair[HTTP.Server*, Err*](str, uint, TLS.Context*, HTTP.Response*(HTTP.Request*)) ListenTLS = (host, port, ctx, handler) {
+            var Pair[HTTP.Server*, Err*] out;
+            var Pair[Socket.Listener*, Err*] l = type(TCP).Listen(host, port);
+            out.first = null;
+            out.second = l.second;
+            if(l.second == null) {
+                var HTTP.Server* s = new(HTTP.Server);
+                s.listener = l.first;
+                s.ctx = ctx;
+                s.handler = handler;
+                out.first = s;
+            }
+            return out;
+        }
+
+        public fun Pair[Pair[IP, uint], Err*]() Addr = () {
+            return this.listener.Addr();
+        }
+
+        // Serve accepts connections, each served on a thread of its own,
+        // until the server is closed.
+        public fun void() Serve = () {
+            for(;;) {
+                var Pair[Socket*, Err*] a = this.listener.Accept();
+                if(a.second != null) {
+                    return;
+                }
+                async(this.serve(a.first));
+            }
+        }
+
+        // Close stops accepting connections, reporting whether the server was
+        // open. Connections already accepted are served to their end.
+        public fun bool() Close = () {
+            return this.listener.Close();
+        }
+
+        private static fun str(int) hex = (n) {
+            var str digits = "0123456789abcdef";
+            var Pair[byte*, int] d = type(Strs).ToBytes(digits);
+            var byte* b = new(byte, 16U);
+            var int i = 16;
+            for(;;) {
+                i--;
+                b[i] = d.first[n % 16];
+                n = n / 16;
+                if(n == 0) {
+                    break;
+                }
+            }
+            var str s = type(Strs).FromBytes(b + i{uint}, 16 - i);
+            free(b);
+            return s;
+        }
+
+        private static fun bool(Stream*, Buffer*) flush = (s, out) {
+            if(out.Len() == 0U) {
+                return true;
+            }
+            var Err* e = type(Streams).WriteStr(s, out.Str());
+            out.Reset();
+            return e == null;
+        }
+
+        // respond writes resp and closes its body, answering whether the
+        // connection can carry another request.
+        private fun bool(Stream*, HTTP.Response*, bool, bool, int) respond = (s, resp, keepAlive, head, version) {
+            var Stream* body = resp.body;
+            var int length = resp.length;
+            if(body == null) {
+                length = 0;
+            }
+            var bool informational = resp.status < 200U || resp.status == 204U;
+            var bool none = head || informational || resp.status == 304U;
+            var bool chunked = false;
+            if(length < 0 && !none) {
+                if(version >= 11) {
+                    chunked = true;
+                } else {
+                    keepAlive = false;
+                }
+            }
+            resp.headers.Del("Content-Length");
+            resp.headers.Del("Transfer-Encoding");
+            resp.headers.Del("Connection");
+            var Buffer* out = type(Buffer).New();
+            out.WriteStr("HTTP/1.1 " + resp.status{str} + " " + type(HTTP).StatusText(resp.status) + "\r\n");
+            out.WriteStr(resp.headers.Join(": ", "\r\n"));
+            if(length >= 0 && !informational) {
+                out.WriteStr("Content-Length: " + length{str} + "\r\n");
+            }
+            if(chunked) {
+                out.WriteStr("Transfer-Encoding: chunked\r\n");
+            }
+            if(!keepAlive) {
+                out.WriteStr("Connection: close\r\n");
+            }
+            out.WriteStr("\r\n");
+            var bool ok = true;
+            if(!none && body != null) {
+                var byte* chunk = new(byte, 16384U);
+                var int left = length;
+                for(; ok;) {
+                    var int want = 16384;
+                    if(length >= 0) {
+                        if(left == 0) {
+                            break;
+                        }
+                        if(left < want) {
+                            want = left;
+                        }
+                    }
+                    var Pair[int, Err*] p = body.Read(chunk, want);
+                    if(p.second != null || p.first == 0) {
+                        ok = p.second == null && left <= 0;
+                        break;
+                    }
+                    if(chunked) {
+                        out.WriteStr(type(HTTP.Server).hex(p.first) + "\r\n");
+                    }
+                    out.Write(chunk, p.first);
+                    if(chunked) {
+                        out.WriteStr("\r\n");
+                    }
+                    left = left - p.first;
+                    if(chunked || out.Len() >= 16384U) {
+                        ok = type(HTTP.Server).flush(s, out);
+                    }
+                }
+                free(chunk);
+                if(chunked && ok) {
+                    out.WriteStr("0\r\n\r\n");
+                }
+            }
+            if(body != null) {
+                body.Close();
+            }
+            if(!type(HTTP.Server).flush(s, out)) {
+                ok = false;
+            }
+            out.Delete();
+            return ok && keepAlive;
+        }
+
+        // serve reads requests off one connection until either side ends it,
+        // or a handler hijacks it, and returns how many it served.
+        private fun int(Socket*) serve = (sock) {
+            var Stream* s = sock;
+            if(this.ctx != null) {
+                var Pair[TLS*, Err*] t = type(TLS).Server(sock, this.ctx);
+                if(t.second != null) {
+                    sock.Close();
+                    return 0;
+                }
+                s = t.first;
+            }
+            var HTTP.Conn* c = type(HTTP.Conn).New(s, sock, false);
+            var HTTP.Response*(HTTP.Request*) handler = this.handler;
+            var int served = 0;
+            for(;;) {
+                var Pair[bool, Err*] next = c.Next();
+                if(next.second != null) {
+                    this.respond(s, type(HTTP.Response).New(400U, next.second.Err() + "\n"), false, false, 11);
+                    break;
+                }
+                if(!next.first) {
+                    break;
+                }
+                var HTTP.Body* body = type(HTTP.Body).New(c);
+                var HTTP.Request* req = type(HTTP.Request).Received(c, body);
+                var HTTP.Response* resp = handler(req);
+                served++;
+                if(c.Hijacked()) {
+                    return served;
+                }
+                if(resp == null) {
+                    resp = type(HTTP.Response).New(500U, "");
+                }
+                var bool keepAlive = c.keepAlive && !c.upgrade;
+                if(!c.Done() && (body.Waiting() || !c.Drain(1048576))) {
+                    keepAlive = false;
+                }
+                body.Close();
+                if(!this.respond(s, resp, keepAlive, req.method == "HEAD", c.version)) {
+                    break;
+                }
+            }
+            c.Delete();
+            s.Close();
+            return served;
+        }
+    }
+}

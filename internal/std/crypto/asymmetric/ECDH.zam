@@ -1,2 +1,35 @@
-// Elliptic Curve Diffie-Hellman
-namespace ECDH {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "Key.zam";
+
+// Elliptic Curve Diffie-Hellman over the NIST curves P256, P384 and P521
+public namespace ECDH {
+    // Generate makes a private key on a curve.
+    public static fun Pair[Key*, Err*](Key.Kind) Generate = (curve) {
+        if(curve{byte} < type(Key.Kind).P256{byte} || curve{byte} > type(Key.Kind).P521{byte}) {
+            var Pair[Key*, Err*] out;
+            out.first = null;
+            out.second = type(StrErr).New("ECDH needs a P256, P384 or P521 curve");
+            return out;
+        }
+        return type(Key).Generate(curve);
+    }
+
+    // Derive agrees a shared secret between a private key and a peer's public
+    // key on the same curve.
+    public static fun Pair[Arr[byte]*, Err*](Key*, Key*) Derive = (key, peer) {
+        var Err* e = type(Key).checkPrivate(key, type(Key.Kind).P256, type(Key.Kind).P521, "ECDH");
+        if(e == null) {
+            e = type(Key).check(peer, key.Kind(), key.Kind(), "ECDH");
+        }
+        if(e != null) {
+            var Pair[Arr[byte]*, Err*] out;
+            out.first = null;
+            out.second = e;
+            return out;
+        }
+        return key.derive(peer);
+    }
+}

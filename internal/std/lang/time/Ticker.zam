@@ -1,0 +1,51 @@
+import "../System.zam";
+import "Duration.zam";
+import "Timer.zam";
+
+// Ticker ticks every period from when it is made or reset until it is
+// stopped. Each tick lets one Wait through; ticks no one waits for are
+// dropped rather than queued.
+public class Ticker {
+    var uint handle;
+
+    // New starts a ticker ticking every period, which must be positive.
+    public static fun Ticker*(Duration) New = (period) {
+        if(period.InNanoseconds() <= 0) {
+            type(System).Panic("Ticker.New: the period must be positive");
+        }
+        var Ticker* t = new(Ticker);
+        native(STD_TIMER_NEW){void(int, int, uint*)}(type(Timer).deadline(period), period.InNanoseconds(), &(t.handle));
+        return t;
+    }
+
+    // Wait blocks until the next tick, answering true, or until the ticker is
+    // stopped, answering false.
+    public fun bool() Wait = () {
+        var bool ticked = false;
+        native(STD_TIMER_WAIT){void(uint, bool*)}(this.handle, &ticked);
+        return ticked;
+    }
+
+    // Stop ends the ticking, answering whether it was still ticking.
+    public fun bool() Stop = () {
+        var bool active = false;
+        native(STD_TIMER_STOP){void(uint, bool*)}(this.handle, &active);
+        return active;
+    }
+
+    // Reset restarts the ticking every period from now, answering whether it
+    // was still ticking.
+    public fun bool(Duration) Reset = (period) {
+        if(period.InNanoseconds() <= 0) {
+            type(System).Panic("Ticker.Reset: the period must be positive");
+        }
+        var bool active = false;
+        native(STD_TIMER_RESET){void(uint, int, int, bool*)}(this.handle, type(Timer).deadline(period), period.InNanoseconds(), &active);
+        return active;
+    }
+
+    public fun void() Delete = () {
+        native(STD_TIMER_FREE){void(uint)}(this.handle);
+        this.handle = 0U;
+    }
+}

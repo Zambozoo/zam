@@ -1,27 +1,31 @@
+import "../lang/Pair.zam";
 import "RWMutex.zam";
 
-class Atomic[A] {
-    var RWMutex m;
+// Value read and written by many threads at once
+public class Atomic[A] {
+    var RWMutex* m;
     var A v;
 
-    static fun Atomic[A]*(A) New = (v) {
+    public static fun[A] Atomic[A]*(A) New = (v) {
         var Atomic[A]* a = new(Atomic[A]);
-        return a.Init(v);
+        a.Init(v);
+        return a;
     }
 
-    fun void(A) Init = (v) {
-        this.m.Init();
-        this.a = v;
+    public fun void(A) Init = (v) {
+        this.m = type(RWMutex).New();
+        this.v = v;
     }
 
-    fun A() Load = () {
+    public fun A() Load = () {
         this.m.RLock();
         var A v = this.v;
         this.m.RUnlock();
         return v;
     }
 
-    fun A(A) Set = (v) {
+    // Set stores v and returns the value it replaced.
+    public fun A(A) Set = (v) {
         this.m.Lock();
         var A old = this.v;
         this.v = v;
@@ -29,7 +33,9 @@ class Atomic[A] {
         return old;
     }
 
-    fun Pair[A, bool](A, bool(A, A)) Update = (v, f) {
+    // Update stores v if f holds for the current value and v, returning the
+    // value it replaced and whether it did.
+    public fun Pair[A, bool](A, bool(A, A)) Update = (v, f) {
         this.m.Lock();
         var Pair[A, bool] p;
         if(f(this.v, v)) {

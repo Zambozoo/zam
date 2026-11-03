@@ -194,3 +194,188 @@ namespace Main {
 	require.Zero(t, status, stderr)
 	assert.Equal(t, "true/7 hi/9 falsetrue\n", stdout)
 }
+
+// TestSubclassesOfGenericInstantiations calls methods inherited from a generic
+// class on a plain subclass, a generic subclass, and a subclass two generic
+// levels down, collecting while the inherited Mark is all that holds their
+// elements.
+func TestSubclassesOfGenericInstantiations(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    class Vec <: Arr[flt]* {
+        static fun Vec*(uint, flt...) New = (len, args) {
+            var Vec* v = new(Vec);
+            v.Init(len, args...);
+            return v;
+        }
+
+        fun flt() Sum = () {
+            var flt s = 0.0;
+            for(var uint i = 0U; i < this.Len(); i++) {
+                s = s + this.Get(i);
+            }
+            return s;
+        }
+    }
+
+    class Named[X] <: Arr[X]* {
+        var str name;
+
+        fun str() Label = () {
+            return this.name + this.Str();
+        }
+    }
+
+    class Tagged <: Named[str]* {
+        fun str(uint) At = (i) {
+            return this.Get(i) + "!";
+        }
+    }
+
+    static fun str(int) churn = (n) {
+        var str s = "";
+        for(var int i = 0; i < n; i++) {
+            s = i{str} + "-churn";
+        }
+        return s;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Vec* v = type(Vec).New(3U, 1.5, 2.0, 3.0);
+        v.Set(1U, 4.0);
+
+        var Named[str]* n = new(Named[str]);
+        n.Init(2U, "a" + type(Main).churn(1), "b" + type(Main).churn(1));
+        n.name = "n";
+
+        var Tagged* t = new(Tagged);
+        t.Init(2U, "c" + type(Main).churn(1), "d" + type(Main).churn(1));
+        t.name = "t";
+
+        type(Main).churn(5000);
+        type(File).StdOut.WriteStr(v.Sum(){str} + " " + v.Len(){str} + " " + v{str} + " " + n.Label() + " " + t.Label() + " " + t.At(1U) + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "8.5 3 [1.5, 4, 3] n[a0-churn, b0-churn] t[c0-churn, d0-churn] d0-churn!\n", stdout)
+}
+
+// TestPointerDowncasts reads an Obj* back as the class it holds, and as a
+// class it does not hold, which answers null.
+func TestPointerDowncasts(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    class Cat {
+        var int lives;
+    }
+
+    class Dog {
+        var int barks;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Cat* c = new(Cat);
+        c.lives = 9;
+        var Obj* o = c;
+        var Cat* back = o{Cat*};
+        var Dog* wrong = o{Dog*};
+        type(File).StdOut.WriteStr(back.lives{str} + " " + (wrong{void*} == null){str} + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "9 true\n", stdout)
+}
+
+// TestNullCastsToTheNullStr pins that a null of every reference kind casts to
+// the null str rather than to text describing it.
+func TestNullCastsToTheNullStr(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    class Box {
+        var int n;
+    }
+
+    interface Shape {
+        virtual fun int() Sides;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Box* box = null;
+        var Shape* shape = null;
+        var any a = null;
+        var void() f = null;
+        var str s = null;
+        var str unset;
+        var bool ok = box{str} == null && shape{str} == null && a{str} == null && f{str} == null &&
+            s{str} == null && s == null && unset == null && null{str} == null;
+        var Box* full = new(Box);
+        ok = ok && full{str} != null && 0{str} == "0";
+        type(File).StdOut.WriteStr(ok{str} + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "true\n", stdout)
+}
+
+// TestArrsOf builds raw runs of primitives, strings and structs from their
+// elements, and an empty one as null.
+func TestArrsOf(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    struct Point {
+        var int x;
+        var int y;
+    }
+
+    static fun Point(int, int) point = (x, y) {
+        var Point p;
+        p.x = x;
+        p.y = y;
+        return p;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int* ints = type(Arrs)[int].Of(3, 1, 4, 1, 5);
+        var int sum = 0;
+        for(var uint i = 0U; i < 5U; i++) {
+            sum = sum + ints[i];
+        }
+        free(ints);
+
+        type(System.GC).Block();
+        var str* words = type(Arrs)[str].Of("raw", "run");
+        var str joined = words[0] + " " + words[1];
+        free(words);
+        type(System.GC).Unblock();
+
+        var Point* points = type(Arrs)[Point].Of(type(Main).point(1, 2), type(Main).point(3, 4));
+        var int span = points[1].x + points[1].y - points[0].x;
+        free(points);
+
+        var int* none = type(Arrs)[int].Of();
+        type(File).StdOut.WriteStr(sum{str} + " " + joined + " " + span{str} + " " + (none == null){str} + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "14 raw run 6 true\n", stdout)
+}

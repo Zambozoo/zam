@@ -1,1 +1,205 @@
-namespace FS {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "../../lang/time/Time.zam";
+import "File.zam";
+
+// Operations on the paths of the local file system
+public namespace FS {
+    // What lies at a path
+    public struct Info {
+        public var int size;
+        // mode holds the permission bits.
+        public var int mode;
+        public var bool isDir;
+        // modTime is the last modification, to the second.
+        public var Time modTime;
+    }
+
+    private static fun Err*(str) err = (msg) {
+        if(msg == null) {
+            return null;
+        }
+        return type(StrErr).New(msg);
+    }
+
+    // Stat describes what lies at path, following symbolic links.
+    public static fun Pair[FS.Info, Err*](str) Stat = (path) {
+        var Pair[FS.Info, Err*] p;
+        var str errStr;
+        var int modTime = 0;
+        native(STD_FS_STAT){void(str, int*, int*, bool*, int*, str*)}(path, &(p.first.size), &(p.first.mode), &(p.first.isDir), &modTime, &errStr);
+        p.first.modTime = type(Time).FromUnix(modTime, 0);
+        p.second = type(FS).err(errStr);
+        return p;
+    }
+
+    public static fun bool(str) Exists = (path) {
+        return type(FS).Stat(path).second == null;
+    }
+
+    public static fun bool(str) IsDir = (path) {
+        var Pair[FS.Info, Err*] p = type(FS).Stat(path);
+        return p.second == null && p.first.isDir;
+    }
+
+    // Remove removes a file or an empty directory.
+    public static fun Err*(str) Remove = (path) {
+        var str errStr;
+        native(STD_FS_REMOVE){void(str, str*)}(path, &errStr);
+        return type(FS).err(errStr);
+    }
+
+    // RemoveAll removes path and everything beneath it. A path that does not
+    // exist is no error.
+    public static fun Err*(str) RemoveAll = (path) {
+        if(!type(FS).Exists(path)) {
+            return null;
+        }
+        if(type(FS).IsDir(path)) {
+            var Pair[Arr[str]*, Err*] entries = type(FS).ReadDir(path);
+            if(entries.second != null) {
+                return entries.second;
+            }
+            for(var uint i = 0U; i < entries.first.Len(); i++) {
+                var Err* e = type(FS).RemoveAll(type(FS).Join(path, entries.first.Get(i)));
+                if(e != null) {
+                    return e;
+                }
+            }
+        }
+        return type(FS).Remove(path);
+    }
+
+    public static fun Err*(str, str) Rename = (from, to) {
+        var str errStr;
+        native(STD_FS_RENAME){void(str, str, str*)}(from, to, &errStr);
+        return type(FS).err(errStr);
+    }
+
+    // MakeDir makes a directory with permission bits 0755.
+    public static fun Err*(str) MakeDir = (path) {
+        var str errStr;
+        native(STD_FS_MAKE_DIR){void(str, int, str*)}(path, 493, &errStr);
+        return type(FS).err(errStr);
+    }
+
+    // MakeDirs makes path and every directory above it that is missing.
+    public static fun Err*(str) MakeDirs = (path) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(path);
+        var uint n = p.second{uint};
+        for(var uint i = 1U; i <= n; i++) {
+            if(i == n || p.first[i]{int} == '/'{int}) {
+                var str prefix = type(Strs).FromBytes(p.first, i{int});
+                if(!type(FS).IsDir(prefix)) {
+                    var Err* e = type(FS).MakeDir(prefix);
+                    if(e != null) {
+                        return e;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    public static fun Err*(str, int) Chmod = (path, mode) {
+        var str errStr;
+        native(STD_FS_CHMOD){void(str, int, str*)}(path, mode, &errStr);
+        return type(FS).err(errStr);
+    }
+
+    // ReadDir lists the names in a directory but . and .., sorted bytewise.
+    public static fun Pair[Arr[str]*, Err*](str) ReadDir = (path) {
+        var Pair[Arr[str]*, Err*] out;
+        var str joined;
+        var str errStr;
+        native(STD_FS_READ_DIR){void(str, str*, str*)}(path, &joined, &errStr);
+        out.second = type(FS).err(errStr);
+        if(out.second != null) {
+            out.first = null;
+            return out;
+        }
+        if(type(Strs).ByteLen(joined) == 0) {
+            out.first = type(Arr)[str].New(0U, new(str, 0U)...);
+        } else {
+            out.first = type(Strs).Split(joined, 0{byte});
+        }
+        return out;
+    }
+
+    public static fun Pair[str, Err*](str) ReadFile = (path) {
+        var Pair[str, Err*] out;
+        var Pair[File*, Err*] f = type(File).Open(path);
+        if(f.second != null) {
+            out.first = "";
+            out.second = f.second;
+            return out;
+        }
+        out = f.first.ReadAll();
+        var Err* e = f.first.Close();
+        if(out.second == null) {
+            out.second = e;
+        }
+        return out;
+    }
+
+    private static fun Err*(str, str, int) writeWith = (path, s, mode) {
+        var Pair[File*, Err*] f = type(File).New(path, mode);
+        if(f.second != null) {
+            return f.second;
+        }
+        var Pair[int, Err*] w = f.first.WriteStr(s);
+        var Err* e = f.first.Close();
+        if(w.second != null) {
+            return w.second;
+        }
+        return e;
+    }
+
+    // WriteFile writes s as the whole of path, creating it if need be.
+    public static fun Err*(str, str) WriteFile = (path, s) {
+        return type(FS).writeWith(path, s, type(File.Flag).WriteOnly{int} | type(File.Flag).Create{int} | type(File.Flag).Truncate{int});
+    }
+
+    // AppendFile writes s at the end of path, creating it if need be.
+    public static fun Err*(str, str) AppendFile = (path, s) {
+        return type(FS).writeWith(path, s, type(File.Flag).WriteOnly{int} | type(File.Flag).Create{int} | type(File.Flag).Append{int});
+    }
+
+    // Cwd returns the working directory.
+    public static fun Pair[str, Err*]() Cwd = () {
+        var Pair[str, Err*] out;
+        var str errStr;
+        native(STD_FS_CWD){void(str*, str*)}(&(out.first), &errStr);
+        out.second = type(FS).err(errStr);
+        return out;
+    }
+
+    // Chdir changes the working directory.
+    public static fun Err*(str) Chdir = (path) {
+        var str errStr;
+        native(STD_FS_CHDIR){void(str, str*)}(path, &errStr);
+        return type(FS).err(errStr);
+    }
+
+    // TempDir returns the directory for temporary files: $TMPDIR, or /tmp.
+    public static fun str() TempDir = () {
+        var str dir;
+        native(STD_FS_TEMP_DIR){void(str*)}(&dir);
+        return dir;
+    }
+
+    // Join joins two paths with one slash between them.
+    public static fun str(str, str) Join = (a, b) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(a);
+        if(p.second == 0) {
+            return b;
+        }
+        if(p.first[p.second - 1]{int} == '/'{int}) {
+            return a + b;
+        }
+        return a + "/" + b;
+    }
+}

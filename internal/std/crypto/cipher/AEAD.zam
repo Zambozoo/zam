@@ -1,0 +1,110 @@
+import "../../lang/Arr.zam";
+import "../../lang/Arrs.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/System.zam";
+
+// AEAD is a key for authenticated encryption with associated data. Seal and
+// Open take a nonce NonceSize bytes long, which must never repeat under one
+// key, and a sealed message is Overhead bytes longer than its plaintext.
+public class AEAD {
+    enum Kind : byte {
+        AES_GCM(0{byte}),
+        CHACHA20_POLY1305(1{byte}),
+        XCHACHA20_POLY1305(2{byte}),
+        XSALSA20_POLY1305(3{byte});
+    }
+
+    var AEAD.Kind kind;
+    var byte* key;
+    var uint keyLen;
+    var uint nonceSize;
+    var uint overhead;
+
+    private static fun str(AEAD.Kind) nameOf = (kind) {
+        if(kind == type(AEAD.Kind).AES_GCM) {
+            return "AES-GCM";
+        } else if(kind == type(AEAD.Kind).CHACHA20_POLY1305) {
+            return "ChaCha20-Poly1305";
+        } else if(kind == type(AEAD.Kind).XCHACHA20_POLY1305) {
+            return "XChaCha20-Poly1305";
+        }
+        return "XSalsa20-Poly1305";
+    }
+
+    // New keeps a copy of a key of keyLen bytes for kind, which must be
+    // keySize bytes long.
+    static fun Pair[AEAD*, Err*](AEAD.Kind, byte*, uint, uint, uint, uint) New = (kind, key, keyLen, keySize, nonceSize, overhead) {
+        var Pair[AEAD*, Err*] out;
+        out.first = null;
+        out.second = null;
+        if(keyLen != keySize) {
+            out.second = type(StrErr).New(type(AEAD).nameOf(kind) + " needs a " + keySize{str} + "-byte key, not " + keyLen{str});
+            return out;
+        }
+        var AEAD* a = new(AEAD);
+        a.kind = kind;
+        a.key = new(byte, keyLen);
+        type(Arrs)[byte].Copy(keyLen, key, a.key);
+        a.keyLen = keyLen;
+        a.nonceSize = nonceSize;
+        a.overhead = overhead;
+        out.first = a;
+        return out;
+    }
+
+    public fun uint() NonceSize = () {
+        return this.nonceSize;
+    }
+
+    public fun uint() Overhead = () {
+        return this.overhead;
+    }
+
+    // Seal encrypts and authenticates n bytes at b, and authenticates aadLen
+    // bytes at aad.
+    public fun Arr[byte]*(byte*, byte*, uint, byte*, uint) Seal = (nonce, b, n, aad, aadLen) {
+        var uint length = n + this.overhead;
+        var byte* out = new(byte, length);
+        var bool ok = false;
+        native(STD_AEAD){void(byte, bool, byte*, int, byte*, int, byte*, int, byte*, int, byte*, bool*)}(this.kind{byte}, true, this.key, this.keyLen{int}, nonce, this.nonceSize{int}, b, n{int}, aad, aadLen{int}, out, &ok);
+        if(!ok) {
+            free(out);
+            type(System).Panic(type(AEAD).nameOf(this.kind) + " cannot seal this message");
+        }
+        return type(Arr)[byte].New(length, out...);
+    }
+
+    // Open decrypts n sealed bytes at b, failing unless they and aadLen bytes
+    // at aad are as sealed.
+    public fun Pair[Arr[byte]*, Err*](byte*, byte*, uint, byte*, uint) Open = (nonce, b, n, aad, aadLen) {
+        var Pair[Arr[byte]*, Err*] r;
+        r.first = null;
+        r.second = null;
+        var bool ok = false;
+        var byte* out = null;
+        var uint length = 0U;
+        if(n >= this.overhead) {
+            length = n - this.overhead;
+            out = new(byte, length + 1U);
+            native(STD_AEAD){void(byte, bool, byte*, int, byte*, int, byte*, int, byte*, int, byte*, bool*)}(this.kind{byte}, false, this.key, this.keyLen{int}, nonce, this.nonceSize{int}, b, n{int}, aad, aadLen{int}, out, &ok);
+        }
+        if(!ok) {
+            free(out);
+            r.second = type(StrErr).New(type(AEAD).nameOf(this.kind) + ": message authentication failed");
+            return r;
+        }
+        r.first = type(Arr)[byte].New(length, out...);
+        return r;
+    }
+
+    public fun void() Delete = () {
+        for(var uint i = 0U; i < this.keyLen; i++) {
+            this.key[i] = 0{byte};
+        }
+        free(this.key);
+        this.key = null;
+        this.keyLen = 0U;
+    }
+}

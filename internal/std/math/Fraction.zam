@@ -1,1 +1,80 @@
-class Fraction {}
+import "../lang/System.zam";
+import "Math.zam";
+
+// Rational number of int parts, kept in lowest terms with a positive
+// denominator. Arithmetic wraps on overflow.
+public struct Fraction {
+    var int num;
+    var int den;
+
+    // Of returns num / den in lowest terms.
+    public static fun Fraction(int, int) Of = (num, den) {
+        if(den == 0) {
+            type(System).Panic("Fraction with a zero denominator");
+        }
+        if(den < 0) {
+            num = -num;
+            den = -den;
+        }
+        var int g = type(Math).Gcd(type(Math).AbsInt(num){uint}, den{uint}){int};
+        var Fraction f;
+        f.num = num / g;
+        f.den = den / g;
+        return f;
+    }
+
+    public static fun Fraction(int) FromInt = (n) {
+        return type(Fraction).Of(n, 1);
+    }
+
+    public fun Fraction(Fraction) Add = (o) {
+        var int g = type(Math).Gcd(this.den{uint}, o.den{uint}){int};
+        return type(Fraction).Of(this.num * (o.den / g) + o.num * (this.den / g), this.den / g * o.den);
+    }
+
+    public fun Fraction(Fraction) Sub = (o) {
+        return this.Add(o.Neg());
+    }
+
+    public fun Fraction(Fraction) Mul = (o) {
+        var int g1 = type(Math).Gcd(type(Math).AbsInt(this.num){uint}, o.den{uint}){int};
+        var int g2 = type(Math).Gcd(type(Math).AbsInt(o.num){uint}, this.den{uint}){int};
+        return type(Fraction).Of((this.num / g1) * (o.num / g2), (this.den / g2) * (o.den / g1));
+    }
+
+    public fun Fraction(Fraction) Div = (o) {
+        return this.Mul(o.Inv());
+    }
+
+    public fun Fraction() Neg = () {
+        var Fraction f;
+        f.num = -this.num;
+        f.den = this.den;
+        return f;
+    }
+
+    // Inv returns the reciprocal.
+    public fun Fraction() Inv = () {
+        return type(Fraction).Of(this.den, this.num);
+    }
+
+    // Cmp returns -1, 0 or 1 as this is less than, equal to or greater than o.
+    public fun int(Fraction) Cmp = (o) {
+        return type(Math).SignInt(this.Sub(o).num);
+    }
+
+    public fun bool(Fraction) Eq = (o) {
+        return this.num == o.num && this.den == o.den;
+    }
+
+    public fun flt() Flt = () {
+        return this.num{flt} / this.den{flt};
+    }
+
+    public fun str() Str = () {
+        if(this.den == 1) {
+            return this.num{str};
+        }
+        return this.num{str} + "/" + this.den{str};
+    }
+}

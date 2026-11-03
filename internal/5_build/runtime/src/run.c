@@ -1637,6 +1637,25 @@ static const ZamPerfectHash *dispatchOf(const ZamImage *image, ZamTypeID type) {
 // two are the kinds whose answer is worked out rather than looked up, neither
 // standing below any declaration. Two pointers answer before their pointees are
 // asked at all, and both are noted where they are read.
+// ancestorOfTemplate finds the instantiation of the generic declaration
+// templateDecl that type descends from. A class descends from one
+// instantiation of any template on its base chain, and its supertype set holds
+// every one of them, so the first in the set naming templateDecl is it.
+static ZamTypeShort ancestorOfTemplate(const ZamImage *image, ZamTypeID type,
+                                       uint16_t templateDecl) {
+    const ZamPerfectHash *supertypes = supertypesOf(image, type);
+    if (supertypes != NULL) {
+        const ZamWord *slots = zam_perfect_hash_slots(supertypes);
+        for (uint64_t i = 0; i < supertypes->slotCount; i++) {
+            ZamTypeShort candidate = (ZamTypeShort)slots[i];
+            if (candidate != 0 && ZAMTYPE_DECL(candidate) == templateDecl)
+                return candidate;
+        }
+    }
+    zam_die(ZAMEXIT_PANIC, "type %u descends from no instantiation of %u\n",
+            type.shortID, templateDecl);
+}
+
 static bool typeIsSubtypeOf(const ZamImage *image, ZamTypeID child,
                            ZamTypeID parent) {
     if (child.shortID == parent.shortID &&
@@ -2015,6 +2034,37 @@ static uint64_t openWords(ZamThread *thread, uint64_t count) {
     return words;
 }
 
+// enterClosureFrame opens a call to the closure standing at base, its
+// arguments above it, and jumps to its body.
+static void enterClosureFrame(ZamThread *thread, uint64_t base) {
+    void *object = (void *)(uintptr_t)thread->operands[base];
+    if (object == NULL)
+        zam_die(ZAMEXIT_PANIC, "called a null function\n");
+   ZamClosure *closure = zam_closure_of(object);
+
+    zam_thread_push_function(thread, thread->instructionOffset, base);
+    thread->instructionOffset = closure->instruction;
+
+    // The closure's captures land past the arguments, where the body was
+    // compiled to read them: slot 0 is the closure, the parameters follow,
+    // and the captures follow those. They are copied by value, which is what
+    // the closure already holds for each one — a reference is one word
+    // pointing at an allocation elsewhere, and a value is held entire.
+    if (closure->captureCount != 0) {
+        const ZamImage *image = &thread->vm->image;
+        const ZamWord *entry = closureCaptures(image, closure);
+        for (uint64_t i = 0; i < closure->captureCount; i++) {
+           ZamTypeID capType = zam_closure_entry_type(entry);
+            const ZamWord *capValue = zam_closure_entry_value(entry);
+            uint64_t capWords = valueWordsOf(image, capType);
+            for (uint64_t w = 0; w < capWords; w++)
+                zam_thread_push(thread, capValue[w]);
+            markPushedValue(thread, image, capType);
+            entry = zam_closure_entry_next(entry, capWords);
+        }
+    }
+}
+
 static ZamResult step(ZamThread *thread) {
    ZamInstruction instruction = fetch(thread);
     thread->instructionOffset += instruction.byteCount;
@@ -2277,8 +2327,10 @@ static ZamResult step(ZamThread *thread) {
         while (ZAMTYPE_DECL(type.shortID) == ZAMPRIMITIVE_ANY) {
             void *anyBox = (void *)(uintptr_t)zam_thread_pop(thread);
             zam_thread_pop_mark(thread, thread->operandCount);
-            if (anyBox == NULL)
-                zam_die(ZAMEXIT_PANIC, "string cast of a null any\n");
+            if (anyBox == NULL) {
+                zam_thread_push(thread, 0);
+                return ZAMRESULT_CONTINUE;
+            }
 
             uint64_t typedHeader =
                 zam_object_header_bytes(ZAMOBJECT_INSTANCE);
@@ -2318,14 +2370,21 @@ static ZamResult step(ZamThread *thread) {
             type = payloadType;
         }
 
+        // A null reference casts to the null string: there is nothing to write
+        // out, and what reading one as text means is left undefined.
+        if (isReferenceType(image, type) && zam_thread_peek(thread, 0) == 0) {
+            popValue(thread, image, type);
+            zam_thread_push(thread, 0);
+            return ZAMRESULT_CONTINUE;
+        }
+
         if (answersThroughObject(image, type))
             return enterObjectMethod(thread, image, type, ZAMOBJECT_SLOT_STR,
                                      false, 0, type);
 
         // A pointer to an enum or struct is written out by the Str every one
-        // of them has first among its methods. A null one names nothing to
-        // ask, so it is written out as the address it is.
-        if (namesValueWithStr(image, type) && zam_thread_peek(thread, 0) != 0)
+        // of them has first among its methods.
+        if (namesValueWithStr(image, type))
             return enterObjectMethod(thread, image, type, ZAMVALUE_SLOT_STR,
                                      false, 0, type);
 
@@ -2920,6 +2979,74 @@ static ZamResult step(ZamThread *thread) {
     // that being the one step whose length the kind decides.
     // OpCallMethodOpen's frame holds arguments an instantiation decides the
     // width of, their type ids standing above it.
+    // A method called on a receiver passed by address, with no closure built:
+    // the receiver's address is slot 0 of the frame and its type stands above
+    // the frame, which is what the method is resolved against — virtually for
+    // an abstract as OpPushMethod resolves it, and through the class's
+    // dispatch table for an interface as OpPushInterfaceMethod does. The frame
+    // is marked direct so that `this` is read out of slot 0 rather than out of
+    // a closure.
+    case OpCallMethodDirect:
+    case OpCallMethodDirectOpen: {
+        const ZamImage *image = &thread->vm->image;
+        uint64_t frameWords = operandAt(instruction, 1);
+        if (instruction.opcode == OpCallMethodDirectOpen)
+            frameWords += openWords(thread, operandAt(instruction, 2));
+        ZamTypeID objectType = zam_thread_pop_type(thread);
+        if (frameWords == 0 || frameWords > thread->operandCount)
+            zam_die(ZAMEXIT_PANIC,
+                    "a frame of %llu words under a stack of %llu\n",
+                    (unsigned long long)frameWords,
+                    (unsigned long long)thread->operandCount);
+        uint64_t base = thread->operandCount - frameWords;
+
+        ZamTypeID declared = pointeeOf(image, objectType);
+        ZamWord receiver = thread->operands[base];
+        ZamTypeShort concreteID = declared.shortID;
+        uint32_t methodIndex = (uint32_t)operandAt(instruction, 0);
+
+        // An interface numbers its methods its own way, so the index has to be
+        // translated through the implementor's dispatch table — the same step
+        // OpPushInterfaceMethod takes before it builds a closure. An abstract
+        // keeps the index and only changes which table it is read out of.
+        switch (zam_image_bucket_of(image, ZAMTYPE_DECL(declared.shortID))) {
+        case ZAMBUCKET_INTERFACE:
+        case ZAMBUCKET_GENERIC_INTERFACE: {
+            if (receiver == 0)
+                zam_die(ZAMEXIT_PANIC, "selected a method of a null pointer\n");
+            concreteID = zam_object_header_of(
+                zam_thread_location_address(thread, receiver))->shortID;
+            const ZamPerfectHash *dispatch =
+                dispatchOf(image, (ZamTypeID){.shortID = concreteID});
+            uint32_t index = 0;
+            if (dispatch == NULL ||
+                !zam_dispatch_lookup(dispatch, declared.shortID, methodIndex,
+                                     &index))
+                zam_die(ZAMEXIT_PANIC,
+                        "type %u implements no method %u of interface %u\n",
+                        concreteID, methodIndex, declared.shortID);
+            methodIndex = index;
+            break;
+        }
+        case ZAMBUCKET_ABSTRACT:
+        case ZAMBUCKET_GENERIC_ABSTRACT:
+            if (receiver == 0)
+                zam_die(ZAMEXIT_PANIC, "selected a method of a null pointer\n");
+            concreteID = zam_object_header_of(
+                zam_thread_location_address(thread, receiver))->shortID;
+            break;
+        default:
+            break;
+        }
+        ZamMethodDefinition method =
+            zam_type_method(image, concreteID, methodIndex);
+
+        zam_thread_push_direct_function(thread, thread->instructionOffset, base,
+                                        objectType.shortID);
+        thread->instructionOffset = method.instruction;
+        return ZAMRESULT_CONTINUE;
+    }
+
     case OpCallMethod:
     case OpCallMethodOpen: {
         uint64_t frameWords = operandAt(instruction, 0);
@@ -2932,32 +3059,7 @@ static ZamResult step(ZamThread *thread) {
                     (unsigned long long)thread->operandCount);
         uint64_t base = thread->operandCount - frameWords;
 
-        void *object = (void *)(uintptr_t)thread->operands[base];
-        if (object == NULL)
-            zam_die(ZAMEXIT_PANIC, "called a null function\n");
-       ZamClosure *closure = zam_closure_of(object);
-
-        zam_thread_push_function(thread, thread->instructionOffset, base);
-        thread->instructionOffset = closure->instruction;
-
-        // The closure's captures land past the arguments, where the body was
-        // compiled to read them: slot 0 is the closure, the parameters follow,
-        // and the captures follow those. They are copied by value, which is
-        // what the closure already holds for each one — a reference is one
-        // word pointing at an allocation elsewhere, and a value is held entire.
-        if (closure->captureCount != 0) {
-            const ZamImage *image = &thread->vm->image;
-            const ZamWord *entry = closureCaptures(image, closure);
-            for (uint64_t i = 0; i < closure->captureCount; i++) {
-               ZamTypeID capType = zam_closure_entry_type(entry);
-                const ZamWord *capValue = zam_closure_entry_value(entry);
-                uint64_t capWords = valueWordsOf(image, capType);
-                for (uint64_t w = 0; w < capWords; w++)
-                    zam_thread_push(thread, capValue[w]);
-                markPushedValue(thread, image, capType);
-                entry = zam_closure_entry_next(entry, capWords);
-            }
-        }
+        enterClosureFrame(thread, base);
         return ZAMRESULT_CONTINUE;
     }
 
@@ -2989,7 +3091,9 @@ static ZamResult step(ZamThread *thread) {
         // closure too.
         void *enclosingClosure = NULL;
        ZamObjectKind enclosingKind = ZAMOBJECT_FUNCTION_CLOSURE;
-        if (thread->functionEntry != ZAMMARK_NONE) {
+       ZamTypeID directType;
+        bool direct = zam_thread_frame_direct(thread, &directType);
+        if (thread->functionEntry != ZAMMARK_NONE && !direct) {
             enclosingClosure = (void *)(uintptr_t)
                 thread->operands[zam_thread_frame_base(thread)];
             if (enclosingClosure != NULL)
@@ -3017,6 +3121,12 @@ static ZamResult step(ZamThread *thread) {
             receiverEntryValueWords = 1;
         }
 
+        if (direct) {
+            receiverType = directType;
+            newKind = ZAMOBJECT_REFERENCE_METHOD_CLOSURE;
+            receiverEntryValueWords = 1;
+        }
+
         uint64_t bodyWords = ZAMTYPE_ID_WORDS + receiverEntryValueWords;
         for (uint64_t i = 0; i < captureCount; i++) {
             uint64_t topOffset = (captureCount - 1 - i) * captureSlotWords;
@@ -3037,7 +3147,10 @@ static ZamResult step(ZamThread *thread) {
        ZamWord *writeHead = closure->body;
         zam_type_id_write(writeHead, receiverType);
         writeHead += ZAMTYPE_ID_WORDS;
-        if (receiverEntryValueWords == 1) {
+        if (direct) {
+            *writeHead = thread->operands[zam_thread_frame_base(thread)];
+            writeHead++;
+        } else if (receiverEntryValueWords == 1) {
             const ZamClosure *ec = zam_closure_of(enclosingClosure);
             const ZamWord *entry = zam_closure_first(ec);
             if (enclosingKind == ZAMOBJECT_VALUE_METHOD_CLOSURE)
@@ -3939,6 +4052,12 @@ static ZamResult step(ZamThread *thread) {
     // No mark entry: this addresses the inside of the closure, and slot 0 holds
     // the closure for the whole of the call under an entry of its own.
     case OpPushReceiver: {
+       ZamTypeID passedAs;
+        if (zam_thread_frame_direct(thread, &passedAs)) {
+            zam_thread_push(thread, zam_frame_location(zam_thread_frame_base(thread) *
+                                                       ZAMWORD_BYTES));
+            return ZAMRESULT_CONTINUE;
+        }
         void *object =
             (void *)(uintptr_t)thread->operands[zam_thread_frame_base(thread)];
         if (object == NULL)
@@ -4158,7 +4277,11 @@ static ZamResult step(ZamThread *thread) {
     case OpPushReceiverType: {
         uint64_t slot = operandAt(instruction, 0);
         void *receiver;
-        if (slot == UINT64_MAX) {
+       ZamTypeID passedAs;
+        if (slot == UINT64_MAX && zam_thread_frame_direct(thread, &passedAs)) {
+            receiver = zam_thread_location_address(
+                thread, thread->operands[zam_thread_frame_base(thread)]);
+        } else if (slot == UINT64_MAX) {
             void *closureObject = (void *)(uintptr_t)thread->operands
                                       [zam_thread_frame_base(thread)];
             if (closureObject == NULL)
@@ -4208,6 +4331,11 @@ static ZamResult step(ZamThread *thread) {
                               ? zam_object_tail_length_of(receiver)
                               : 0,
         };
+        uint64_t templateDecl = operandAt(instruction, 1);
+        if (templateDecl != UINT64_MAX &&
+            ZAMTYPE_DECL(actual.shortID) != templateDecl)
+            actual.shortID = ancestorOfTemplate(&thread->vm->image, actual,
+                                                (uint16_t)templateDecl);
         zam_thread_push_type(thread, actual);
         return ZAMRESULT_CONTINUE;
     }
@@ -4583,4 +4711,62 @@ ZamResult zam_vm_run(ZamVM *vm, int argC, const char *argV[]) {
 
     zam_vm_thread_exited(main);
     return main->result;
+}
+
+uint64_t zam_native_call(ZamThread *thread, ZamWord function, const ZamWord *args,
+                         uint64_t argWords, ZamWord *result, uint64_t resultCapacity) {
+    if (thread->state == ZAMTHREAD_SAFE)
+        zam_die(ZAMEXIT_PANIC, "zam_native_call between zam_native_block_begin and _end\n");
+    if (function == 0)
+        zam_die(ZAMEXIT_PANIC, "called a null function\n");
+    const ZamImage *image = &thread->vm->image;
+    const ZamTypeList *signature = zam_function_type_signature(
+        image, ZAMTYPE_DECL(zam_object_header_of((void *)(uintptr_t)function)->shortID));
+
+    uint64_t expected = 0;
+    for (uint64_t i = 1; i < signature->count; i++)
+        expected += valueWordsOf(image, zam_type_list_at(signature, i));
+    if (expected != argWords)
+        zam_die(ZAMEXIT_PANIC,
+                "zam_native_call passed %llu argument words to a function taking %llu\n",
+                (unsigned long long)argWords, (unsigned long long)expected);
+
+    // The function and each argument go on with the entries a call made from
+    // zam would give them, so that a collection the body runs keeps them.
+    uint64_t outerEntry = thread->functionEntry;
+    uint64_t base = thread->operandCount;
+    zam_thread_push(thread, function);
+    zam_thread_push_mark(thread, base);
+    const ZamWord *at = args;
+    for (uint64_t i = 1; i < signature->count; i++) {
+       ZamTypeID parameter = zam_type_list_at(signature, i);
+        uint64_t words = valueWordsOf(image, parameter);
+        for (uint64_t w = 0; w < words; w++)
+            zam_thread_push(thread, *at++);
+        markPushedValue(thread, image, parameter);
+    }
+
+    enterClosureFrame(thread, base);
+   ZamResult ran = runEntered(thread, outerEntry);
+    if (ran == ZAMRESULT_EXIT)
+        exit(thread->exitStatus);
+    if (ran != ZAMRESULT_CONTINUE)
+        zam_die(ZAMEXIT_PANIC, "a function called from a native did not return: %s\n",
+                zam_result_name(ran));
+
+    // The return left the result where the function stood.
+   ZamTypeID returned = zam_type_list_at(signature, 0);
+    uint64_t words = returned.shortID == ZAMTYPE_SHORT(ZAMPRIMITIVE_VOID, 0) &&
+                             returned.arrayLength == 0
+                         ? 0
+                         : valueWordsOf(image, returned);
+    if (words > resultCapacity)
+        zam_die(ZAMEXIT_PANIC,
+                "zam_native_call given room for %llu result words of %llu\n",
+                (unsigned long long)resultCapacity, (unsigned long long)words);
+    for (uint64_t w = 0; w < words; w++)
+        result[w] = thread->operands[base + w];
+    if (words != 0)
+        popValue(thread, image, returned);
+    return words;
 }

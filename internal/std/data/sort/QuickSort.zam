@@ -1,6 +1,6 @@
 import "../../lang/Arr.zam";
 
-namespace QuickSort {
+public namespace QuickSort {
     fun[A] void(A*, A*) swap = (a, b) {
         var A t = *a;
         *a = *b;
@@ -37,13 +37,13 @@ namespace QuickSort {
         }
     }
 
-    fun[A] void(uint, A...) Sort = (len, arr) {
+    public fun[A] void(uint, A...) Sort = (len, arr) {
         if (len > 0U) {
             type(QuickSort)[A].quickSort(arr, 0U, len - 1U);
         }
     }
 
-    fun[A] void(Arr[A]*) SortArr = (arr) {
+    public fun[A] void(Arr[A]*) SortArr = (arr) {
        type(QuickSort)[A].Sort(arr.Len(), arr.Arr()...);
     }
 }

@@ -1,0 +1,80 @@
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "Buffer.zam";
+import "Stream.zam";
+
+// Helpers over any Stream
+public namespace Streams {
+    // ReadAll reads s to its end.
+    public static fun Pair[str, Err*](Stream*) ReadAll = (s) {
+        var Pair[str, Err*] out;
+        var Buffer* b = type(Buffer).New();
+        var byte* chunk = new(byte, 16384U);
+        out.second = null;
+        for(;;) {
+            var Pair[int, Err*] p = s.Read(chunk, 16384);
+            if(p.second != null) {
+                out.second = p.second;
+                break;
+            }
+            if(p.first == 0) {
+                break;
+            }
+            b.Write(chunk, p.first);
+        }
+        free(chunk);
+        out.first = b.Str();
+        b.Delete();
+        return out;
+    }
+
+    // WriteAll writes all n bytes at b, writing again after a short write.
+    public static fun Err*(Stream*, byte*, int) WriteAll = (s, b, n) {
+        var int done = 0;
+        for(; done < n;) {
+            var Pair[int, Err*] p = s.Write(b + done{uint}, n - done);
+            if(p.second != null) {
+                return p.second;
+            }
+            if(p.first <= 0) {
+                return type(StrErr).New("stream accepted no bytes");
+            }
+            done = done + p.first;
+        }
+        return null;
+    }
+
+    public static fun Err*(Stream*, str) WriteStr = (s, text) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(text);
+        return type(Streams).WriteAll(s, p.first, p.second);
+    }
+
+    // Copy writes what it reads from src to dst until src ends, returning how
+    // many bytes it copied.
+    public static fun Pair[int, Err*](Stream*, Stream*) Copy = (dst, src) {
+        var Pair[int, Err*] out;
+        out.first = 0;
+        out.second = null;
+        var byte* chunk = new(byte, 16384U);
+        for(;;) {
+            var Pair[int, Err*] p = src.Read(chunk, 16384);
+            if(p.second != null) {
+                out.second = p.second;
+                break;
+            }
+            if(p.first == 0) {
+                break;
+            }
+            var Err* e = type(Streams).WriteAll(dst, chunk, p.first);
+            if(e != null) {
+                out.second = e;
+                break;
+            }
+            out.first = out.first + p.first;
+        }
+        free(chunk);
+        return out;
+    }
+}

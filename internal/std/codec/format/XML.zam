@@ -1,1 +1,144 @@
-namespace XML {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+
+// XML element over libxml2, which owns the document. Parsing never touches
+// the network or expands external entities, and drops whitespace-only text
+// between elements. Elements reached through one another share their
+// document; Append copies the element it is handed.
+public class XML {
+    var uint node;
+
+    private static fun XML*(uint) wrap = (n) {
+        var XML* x = new(XML);
+        x.node = n;
+        return x;
+    }
+
+    // Parse reads a document and returns its root element.
+    public static fun Pair[XML*, Err*](str) Parse = (s) {
+        var Pair[XML*, Err*] out;
+        var uint n = 0U;
+        var str errStr;
+        native(STD_XML_PARSE){void(str, uint*, str*)}(s, &n, &errStr);
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+        } else {
+            out.first = type(XML).wrap(n);
+        }
+        return out;
+    }
+
+    // New makes the root element of a new document.
+    public static fun XML*(str) New = (name) {
+        var uint n;
+        native(STD_XML_NEW){void(str, uint*)}(name, &n);
+        return type(XML).wrap(n);
+    }
+
+    public fun str() Name = () {
+        var str s;
+        native(STD_XML_NAME){void(uint, str*)}(this.node, &s);
+        return s;
+    }
+
+    // Text returns the text of the element and everything beneath it.
+    public fun str() Text = () {
+        var str s;
+        native(STD_XML_TEXT){void(uint, str*)}(this.node, &s);
+        return s;
+    }
+
+    // SetText replaces the element's children with text.
+    public fun void(str) SetText = (s) {
+        native(STD_XML_SET_TEXT){void(uint, str)}(this.node, s);
+    }
+
+    // Attr returns an attribute's value, and false when there is none.
+    public fun Pair[str, bool](str) Attr = (name) {
+        var Pair[str, bool] out;
+        native(STD_XML_ATTR){void(uint, str, str*, bool*)}(this.node, name, &(out.first), &(out.second));
+        return out;
+    }
+
+    public fun void(str, str) SetAttr = (name, value) {
+        native(STD_XML_SET_ATTR){void(uint, str, str)}(this.node, name, value);
+    }
+
+    public fun void(str) RemoveAttr = (name) {
+        native(STD_XML_REMOVE_ATTR){void(uint, str)}(this.node, name);
+    }
+
+    // Attrs returns the attribute names in document order.
+    public fun Arr[str]*() Attrs = () {
+        var str joined;
+        native(STD_XML_ATTRS){void(uint, str*)}(this.node, &joined);
+        if(type(Strs).ByteLen(joined) == 0) {
+            return type(Arr)[str].New(0U, new(str, 0U)...);
+        }
+        return type(Strs).Split(joined, 0{byte});
+    }
+
+    // Len counts the element's child elements.
+    public fun uint() Len = () {
+        var int n;
+        native(STD_XML_CHILD_COUNT){void(uint, int*)}(this.node, &n);
+        return n{uint};
+    }
+
+    // At returns child element i.
+    public fun XML*(uint) At = (i) {
+        var uint n;
+        native(STD_XML_CHILD_AT){void(uint, int, uint*)}(this.node, i{int}, &n);
+        return type(XML).wrap(n);
+    }
+
+    // Child returns the first child element by name, and false when there is
+    // none.
+    public fun Pair[XML*, bool](str) Child = (name) {
+        var Pair[XML*, bool] out;
+        var uint n;
+        native(STD_XML_CHILD){void(uint, str, uint*, bool*)}(this.node, name, &n, &(out.second));
+        out.first = null;
+        if(out.second) {
+            out.first = type(XML).wrap(n);
+        }
+        return out;
+    }
+
+    // AddChild appends a new, empty child element and returns it.
+    public fun XML*(str) AddChild = (name) {
+        var uint n;
+        native(STD_XML_ADD_CHILD){void(uint, str, uint*)}(this.node, name, &n);
+        return type(XML).wrap(n);
+    }
+
+    // Append appends a copy of x and everything beneath it.
+    public fun void(XML*) Append = (x) {
+        native(STD_XML_APPEND){void(uint, uint)}(this.node, x.node);
+    }
+
+    // Encode writes the element and everything beneath it, indented when
+    // pretty.
+    public fun str(bool) Encode = (pretty) {
+        var str s;
+        native(STD_XML_ENCODE){void(uint, bool, str*)}(this.node, pretty, &s);
+        return s;
+    }
+
+    public fun str() Str = () {
+        return this.Encode(false);
+    }
+
+    public fun void() Delete = () {
+        native(STD_XML_RELEASE){void(uint)}(this.node);
+        this.node = 0U;
+    }
+
+    public fun void() Mark = () {
+    }
+}

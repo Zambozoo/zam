@@ -86,6 +86,12 @@ typedef struct ZamMarkFunction {
     uint64_t returnInstruction;
     // operandPop is how far the operand stack rewinds when this returns.
     uint64_t operandPop;
+    // direct says the call was made with OpCallMethodDirect: slot 0 of the
+    // frame holds the receiver's address rather than a closure, and
+    // receiverType is the type the receiver was passed as.
+    uint64_t receiverType : 32;
+    uint64_t direct : 1;
+    uint64_t spare : 31;
 } ZamMarkFunction;
 
 typedef struct ZamMarkObject {
@@ -141,7 +147,7 @@ typedef struct ZamMarkInterior {
 
 // Entries are stacked with nothing between them, so a width that stopped being
 // a multiple of a word would misalign every entry above it.
-_Static_assert(sizeof(ZamMarkFunction) == 3 * ZAMWORD_BYTES, "function entry");
+_Static_assert(sizeof(ZamMarkFunction) == 4 * ZAMWORD_BYTES, "function entry");
 _Static_assert(sizeof(ZamMarkObject) == 1 * ZAMWORD_BYTES, "object entry");
 _Static_assert(sizeof(ZamMarkArray) == 3 * ZAMWORD_BYTES, "array entry");
 _Static_assert(sizeof(ZamMarkScope) == 2 * ZAMWORD_BYTES, "scope entry");
@@ -421,6 +427,16 @@ uint64_t zam_thread_frame_base(const ZamThread *thread);
 void zam_thread_push_function(ZamThread *thread, uint64_t returnInstruction,
                               uint64_t operandPop);
 ZamMarkFunction zam_thread_pop_function(ZamThread *thread);
+
+// zam_thread_push_direct_function opens a call made with the receiver's
+// address in slot 0 rather than a closure, recording the type it was passed
+// as.
+void zam_thread_push_direct_function(ZamThread *thread, uint64_t returnInstruction,
+                                     uint64_t operandPop, ZamTypeShort receiverType);
+
+// zam_thread_frame_direct reports whether the innermost open call was made
+// directly, and if so writes the type its receiver was passed as.
+bool zam_thread_frame_direct(const ZamThread *thread, ZamTypeID *receiverType);
 
 // zam_thread_push_scope opens a lexical scope at the top of the operand stack,
 // and zam_thread_pop_scope rewinds both stacks to where the innermost open one

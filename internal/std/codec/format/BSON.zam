@@ -1,1 +1,282 @@
-namespace BSON {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Obj.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "../../lang/time/Time.zam";
+
+// BSON document over libbson. Members are read by key and appended in order;
+// an array is a document whose keys are "0", "1" and so on. A document read
+// out of another, or appended into one, is a copy.
+public class BSON {
+    public enum Kind : int {
+        Missing(0),
+        Double(1),
+        String(2),
+        Document(3),
+        Array(4),
+        Binary(5),
+        ObjectId(7),
+        Bool(8),
+        DateTime(9),
+        Null(10),
+        Int32(16),
+        Timestamp(17),
+        Int64(18),
+        Decimal128(19),
+        Other(255);
+    }
+
+    var uint handle;
+
+    private static fun BSON*(uint) wrap = (h) {
+        var BSON* b = new(BSON);
+        b.handle = h;
+        return b;
+    }
+
+    private static fun Pair[BSON*, Err*](uint, str) result = (h, errStr) {
+        var Pair[BSON*, Err*] out;
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+        } else {
+            out.first = type(BSON).wrap(h);
+        }
+        return out;
+    }
+
+    public static fun BSON*() New = () {
+        var uint h;
+        native(STD_BSON_NEW){void(uint*)}(&h);
+        return type(BSON).wrap(h);
+    }
+
+    // FromBytes reads and validates a document in BSON's binary form.
+    public static fun Pair[BSON*, Err*](byte*, uint) FromBytes = (b, n) {
+        var uint h = 0U;
+        var str errStr;
+        native(STD_BSON_FROM_BYTES){void(byte*, int, uint*, str*)}(b, n{int}, &h, &errStr);
+        return type(BSON).result(h, errStr);
+    }
+
+    // FromJSON reads MongoDB extended JSON, canonical or relaxed.
+    public static fun Pair[BSON*, Err*](str) FromJSON = (s) {
+        var uint h = 0U;
+        var str errStr;
+        native(STD_BSON_FROM_JSON){void(str, uint*, str*)}(s, &h, &errStr);
+        return type(BSON).result(h, errStr);
+    }
+
+    // NewObjectId returns a fresh ObjectId as 24 hex digits.
+    public static fun str() NewObjectId = () {
+        var str s;
+        native(STD_BSON_NEW_OBJECT_ID){void(str*)}(&s);
+        return s;
+    }
+
+    // ToJSON writes MongoDB extended JSON, canonical or relaxed.
+    public fun str(bool) ToJSON = (canonical) {
+        var str s;
+        native(STD_BSON_TO_JSON){void(uint, bool, str*)}(this.handle, canonical, &s);
+        return s;
+    }
+
+    // Bytes returns the document in BSON's binary form.
+    public fun Arr[byte]*() Bytes = () {
+        var int n;
+        native(STD_BSON_BYTE_LEN){void(uint, int*)}(this.handle, &n);
+        var byte* b = new(byte, n{uint});
+        native(STD_BSON_COPY_BYTES){void(uint, byte*)}(this.handle, b);
+        return type(Arr)[byte].New(n{uint}, b...);
+    }
+
+    public fun uint() Len = () {
+        var int n;
+        native(STD_BSON_COUNT){void(uint, int*)}(this.handle, &n);
+        return n{uint};
+    }
+
+    // Keys returns the keys in document order.
+    public fun Arr[str]*() Keys = () {
+        var str joined;
+        native(STD_BSON_KEYS){void(uint, str*)}(this.handle, &joined);
+        if(this.Len() == 0U) {
+            return type(Arr)[str].New(0U, new(str, 0U)...);
+        }
+        return type(Strs).Split(joined, 0{byte});
+    }
+
+    // Kind returns the type of a member, Missing when there is none.
+    public fun BSON.Kind(str) Kind = (key) {
+        var int t;
+        native(STD_BSON_TYPE){void(uint, str, int*)}(this.handle, key, &t);
+        if(t == 0) {
+            return type(BSON.Kind).Missing;
+        }
+        if(t == 1) {
+            return type(BSON.Kind).Double;
+        }
+        if(t == 2) {
+            return type(BSON.Kind).String;
+        }
+        if(t == 3) {
+            return type(BSON.Kind).Document;
+        }
+        if(t == 4) {
+            return type(BSON.Kind).Array;
+        }
+        if(t == 5) {
+            return type(BSON.Kind).Binary;
+        }
+        if(t == 7) {
+            return type(BSON.Kind).ObjectId;
+        }
+        if(t == 8) {
+            return type(BSON.Kind).Bool;
+        }
+        if(t == 9) {
+            return type(BSON.Kind).DateTime;
+        }
+        if(t == 10) {
+            return type(BSON.Kind).Null;
+        }
+        if(t == 16) {
+            return type(BSON.Kind).Int32;
+        }
+        if(t == 17) {
+            return type(BSON.Kind).Timestamp;
+        }
+        if(t == 18) {
+            return type(BSON.Kind).Int64;
+        }
+        if(t == 19) {
+            return type(BSON.Kind).Decimal128;
+        }
+        return type(BSON.Kind).Other;
+    }
+
+    public fun bool(str) Has = (key) {
+        return this.Kind(key) != type(BSON.Kind).Missing;
+    }
+
+    public fun str(str) GetStr = (key) {
+        var str s;
+        native(STD_BSON_GET_STR){void(uint, str, str*)}(this.handle, key, &s);
+        return s;
+    }
+
+    // GetInt reads any number, truncating a double toward zero.
+    public fun int(str) GetInt = (key) {
+        var int i;
+        native(STD_BSON_GET_INT){void(uint, str, int*)}(this.handle, key, &i);
+        return i;
+    }
+
+    public fun flt(str) GetFlt = (key) {
+        var flt f;
+        native(STD_BSON_GET_FLT){void(uint, str, flt*)}(this.handle, key, &f);
+        return f;
+    }
+
+    public fun bool(str) GetBool = (key) {
+        var bool b;
+        native(STD_BSON_GET_BOOL){void(uint, str, bool*)}(this.handle, key, &b);
+        return b;
+    }
+
+    // GetDoc returns a copy of a member that is a document or an array.
+    public fun BSON*(str) GetDoc = (key) {
+        var uint h;
+        native(STD_BSON_GET_DOC){void(uint, str, uint*)}(this.handle, key, &h);
+        return type(BSON).wrap(h);
+    }
+
+    // GetDateTime returns a date-time, which BSON holds to the millisecond.
+    public fun Time(str) GetDateTime = (key) {
+        var int ms;
+        native(STD_BSON_GET_DATE_TIME){void(uint, str, int*)}(this.handle, key, &ms);
+        return type(Time).FromUnixMilli(ms);
+    }
+
+    // GetObjectId returns an ObjectId as 24 hex digits.
+    public fun str(str) GetObjectId = (key) {
+        var str s;
+        native(STD_BSON_GET_OBJECT_ID){void(uint, str, str*)}(this.handle, key, &s);
+        return s;
+    }
+
+    public fun Arr[byte]*(str) GetBinary = (key) {
+        var int n;
+        native(STD_BSON_BINARY_LEN){void(uint, str, int*)}(this.handle, key, &n);
+        var byte* b = new(byte, n{uint});
+        native(STD_BSON_BINARY_COPY){void(uint, str, byte*)}(this.handle, key, b);
+        return type(Arr)[byte].New(n{uint}, b...);
+    }
+
+    public fun void(str, str) AppendStr = (key, s) {
+        native(STD_BSON_APPEND_STR){void(uint, str, str)}(this.handle, key, s);
+    }
+
+    // AppendInt appends an int64.
+    public fun void(str, int) AppendInt = (key, i) {
+        native(STD_BSON_APPEND_INT){void(uint, str, int)}(this.handle, key, i);
+    }
+
+    public fun void(str, flt) AppendFlt = (key, f) {
+        native(STD_BSON_APPEND_FLT){void(uint, str, flt)}(this.handle, key, f);
+    }
+
+    public fun void(str, bool) AppendBool = (key, b) {
+        native(STD_BSON_APPEND_BOOL){void(uint, str, bool)}(this.handle, key, b);
+    }
+
+    public fun void(str) AppendNull = (key) {
+        native(STD_BSON_APPEND_NULL){void(uint, str)}(this.handle, key);
+    }
+
+    // AppendDoc appends a copy of d as a document.
+    public fun void(str, BSON*) AppendDoc = (key, d) {
+        native(STD_BSON_APPEND_DOC){void(uint, str, uint, bool)}(this.handle, key, d.handle, false);
+    }
+
+    // AppendArray appends a copy of d, whose keys must be "0", "1" and so on,
+    // as an array.
+    public fun void(str, BSON*) AppendArray = (key, d) {
+        native(STD_BSON_APPEND_DOC){void(uint, str, uint, bool)}(this.handle, key, d.handle, true);
+    }
+
+    // AppendDateTime appends t, to the millisecond.
+    public fun void(str, Time) AppendDateTime = (key, t) {
+        native(STD_BSON_APPEND_DATE_TIME){void(uint, str, int)}(this.handle, key, t.UnixMilli());
+    }
+
+    // AppendObjectId appends an ObjectId given as 24 hex digits.
+    public fun void(str, str) AppendObjectId = (key, hex) {
+        native(STD_BSON_APPEND_OBJECT_ID){void(uint, str, str)}(this.handle, key, hex);
+    }
+
+    public fun void(str, byte*, uint) AppendBinary = (key, b, n) {
+        native(STD_BSON_APPEND_BINARY){void(uint, str, byte*, int)}(this.handle, key, b, n{int});
+    }
+
+    public fun bool(Obj*) Eq = (o) {
+        var bool eq;
+        native(STD_BSON_EQUAL){void(uint, uint, bool*)}(this.handle, o{BSON*}.handle, &eq);
+        return eq;
+    }
+
+    public fun str() Str = () {
+        return this.ToJSON(false);
+    }
+
+    public fun void() Delete = () {
+        native(STD_BSON_RELEASE){void(uint)}(this.handle);
+        this.handle = 0U;
+    }
+
+    public fun void() Mark = () {
+    }
+}

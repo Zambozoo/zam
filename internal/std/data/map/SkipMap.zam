@@ -4,7 +4,7 @@ import "../../lang/Arr.zam";
 import "../../math/Rand.zam";
 
 // Sorted skiplist map
-class SkipMap[A, B] {
+public class SkipMap[A, B] {
     struct Node~[A, B] {
         struct Link[A, B] {
             var Node~[A, B]* n;
@@ -22,13 +22,13 @@ class SkipMap[A, B] {
     var Node.Link[A, B]* heads;
     var Node~[A, B]* tail;
 
-    static fun[A, B] SkipMap[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+    public static fun[A, B] SkipMap[A, B]*(uint, Pair[A, B]...) New = (len, args) {
         var SkipMap[A, B]* m = new(SkipMap[A, B]);
         m.Init(len, args...);
         return m;
     }
 
-    fun void(uint, Pair[A, B]...) Init = (len, args) {
+    public fun void(uint, Pair[A, B]...) Init = (len, args) {
         this.len = 0U;
         this.heads = new(Node.Link[A, B], type(SkipMap).maxHeight{uint});
         this.tail = null;
@@ -94,15 +94,15 @@ class SkipMap[A, B] {
         return p;
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun bool(A) Contains = (k) {
+    public fun bool(A) Contains = (k) {
         return this.find(k) != null;
     }
 
-    fun Pair[B, bool](A) Get = (k) {
+    public fun Pair[B, bool](A) Get = (k) {
         var Pair[B, bool] p;
         var Node~[A, B]* n = this.find(k);
         if(n == null) {
@@ -114,7 +114,7 @@ class SkipMap[A, B] {
         return p;
     }
 
-    fun bool(A, B) Put = (k, v) {
+    public fun bool(A, B) Put = (k, v) {
         var Node~[A, B]** preds = new(Node~[A, B]*, type(SkipMap).maxHeight{uint});
         this.walk(k, preds);
         var Node~[A, B]* at = this.nextOf(preds[0], 0U);
@@ -144,7 +144,7 @@ class SkipMap[A, B] {
         return true;
     }
 
-    fun Pair[B, bool](A) Remove = (k) {
+    public fun Pair[B, bool](A) Remove = (k) {
         var Pair[B, bool] p;
         var Node~[A, B]** preds = new(Node~[A, B]*, type(SkipMap).maxHeight{uint});
         this.walk(k, preds);
@@ -171,26 +171,26 @@ class SkipMap[A, B] {
         return p;
     }
 
-    fun Pair[A, B]() GetFirst = () {
+    public fun Pair[A, B]() GetFirst = () {
         if(this.len == 0U) {
             type(System).Panic("SkipMap is empty");
         }
         return this.entry(this.heads[0].n);
     }
 
-    fun Pair[A, B]() GetLast = () {
+    public fun Pair[A, B]() GetLast = () {
         if(this.len == 0U) {
             type(System).Panic("SkipMap is empty");
         }
         return this.entry(this.tail);
     }
 
-    fun void() Clear = () {
+    public fun void() Clear = () {
         this.Delete();
         this.Init(0U);
     }
 
-    fun Arr[Pair[A, B]]*() Arr = () {
+    public fun Arr[Pair[A, B]]*() Arr = () {
         var Pair[A, B]* a = new(Pair[A, B], this.len);
         var uint i = 0U;
         for(var Node~[A, B]* n = this.heads[0].n; n != null; n = n.nexts[0].n) {
@@ -201,13 +201,13 @@ class SkipMap[A, B] {
         return type(Arr)[Pair[A, B]].New(this.len, a...);
     }
 
-    fun Iter[A, B]*() Iter = () {
+    public fun Iter[A, B]*() Iter = () {
         var Iter[A, B]* i = new(Iter[A, B]);
         i.Init(this);
         return i;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         var str s = "{";
         var str spacer = "";
         for(var Node~[A, B]* n = this.heads[0].n; n != null; n = n.nexts[0].n) {
@@ -217,7 +217,7 @@ class SkipMap[A, B] {
         return s + "}";
     }
 
-    fun void() Delete = () {
+    public fun void() Delete = () {
         if(this.heads == null) {
             return;
         }
@@ -232,7 +232,10 @@ class SkipMap[A, B] {
         this.tail = null;
     }
 
-    fun void() Mark = () {
+    public fun void() Mark = () {
+        if(!type(System.GC).Markable(@{A}) && !type(System.GC).Markable(@{B})) {
+            return;
+        }
         if(this.heads == null) {
             return;
         }
@@ -246,12 +249,12 @@ class SkipMap[A, B] {
         var SkipMap[A, B]* m;
         var Node~[A, B]* cur;
 
-        fun void(SkipMap[A, B]*) Init = (m) {
+        public fun void(SkipMap[A, B]*) Init = (m) {
             this.m = m;
             this.cur = m.heads[0].n;
         }
 
-        fun Pair[Pair[A, B], bool]() Next = () {
+        public fun Pair[Pair[A, B], bool]() Next = () {
             var Pair[Pair[A, B], bool] p;
             if(this.cur == null) {
                 p.second = false;
@@ -263,7 +266,7 @@ class SkipMap[A, B] {
             return p;
         }
 
-        fun Pair[Pair[A, B], bool]() Prev = () {
+        public fun Pair[Pair[A, B], bool]() Prev = () {
             var Pair[Pair[A, B], bool] p;
             var Node~[A, B]* prev = this.m.tail;
             if(this.cur != null) {

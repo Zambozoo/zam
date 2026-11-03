@@ -4,27 +4,27 @@ import "../../lang/Arrs.zam";
 import "../../lang/Arr.zam";
 
 // Circularly buffered array-based list
-class ArrList[A] {
+public class ArrList[A] {
     var A* arr;
     var uint start;
     var uint len;
     var uint cap;
 
-    static fun[A] ArrList[A]*(uint, A...) New = (len, args) {
+    public static fun[A] ArrList[A]*(uint, A...) New = (len, args) {
         return type(ArrList)[A].NewWithCap(len, len, args...);
     }
 
-    fun void(uint, A...) Init = (len, args) {
+    public fun void(uint, A...) Init = (len, args) {
         this.InitWithCap(len, len, args...);
     }
 
-    static fun[A] ArrList[A]*(uint, uint, A...) NewWithCap = (cap, len, args) {
+    public static fun[A] ArrList[A]*(uint, uint, A...) NewWithCap = (cap, len, args) {
         var ArrList[A]* a = new(ArrList[A]);
         a.InitWithCap(cap, len, args...);
         return a;
     }
 
-    fun void(uint, uint, A...) InitWithCap = (cap, len, args) {
+    public fun void(uint, uint, A...) InitWithCap = (cap, len, args) {
         if(cap < len) {
             cap = len;
         }
@@ -57,28 +57,28 @@ class ArrList[A] {
         this.start = newStart;
     }
 
-    fun A() GetFirst = () {
+    public fun A() GetFirst = () {
         if(this.len == 0U) {
             type(System).Panic("Arr out of bounds");
         }
         return this.arr[this.start];
     }
 
-    fun A() GetLast = () {
+    public fun A() GetLast = () {
         if(this.len == 0U) {
             type(System).Panic("Arr out of bounds");
         }
         return this.arr[(this.start + this.len - 1U) % this.cap];
     }
 
-    fun A(uint) Get = (i) {
+    public fun A(uint) Get = (i) {
         if(i >= this.len) {
             type(System).Panic("Arr out of bounds");
         }
         return this.arr[(this.start + i) % this.cap];
     }
 
-    fun A(A) SetFirst = (v) {
+    public fun A(A) SetFirst = (v) {
         if(this.len == 0U) {
             type(System).Panic("Arr out of bounds");
         }
@@ -87,7 +87,7 @@ class ArrList[A] {
         return old;
     }
 
-    fun A(A) SetLast = (v) {
+    public fun A(A) SetLast = (v) {
         if(this.len == 0U) {
             type(System).Panic("Arr out of bounds");
         }
@@ -97,7 +97,7 @@ class ArrList[A] {
         return old;
     }
 
-    fun A(uint, A) Set = (i, v) {
+    public fun A(uint, A) Set = (i, v) {
         if(i >= this.len) {
             type(System).Panic("Arr out of bounds");
         }
@@ -107,7 +107,7 @@ class ArrList[A] {
         return old;
     }
 
-    fun void(A) AddFirst = (v) {
+    public fun void(A) AddFirst = (v) {
         if(this.len == this.cap) {
             this.grow();
         }
@@ -116,7 +116,7 @@ class ArrList[A] {
         this.len++;
     }
 
-    fun void(A) AddLast = (v) {
+    public fun void(A) AddLast = (v) {
         if(this.len == this.cap) {
             this.grow();
         }
@@ -124,7 +124,7 @@ class ArrList[A] {
         this.len++;
     }
 
-    fun void(uint, A) Add = (i, v) {
+    public fun void(uint, A) Add = (i, v) {
         if(i > this.len) {
             type(System).Panic("Arr out of bounds");
         } else if(i == this.len) {
@@ -151,7 +151,7 @@ class ArrList[A] {
         this.len++;
     }
 
-    fun A() RemoveFirst = () {
+    public fun A() RemoveFirst = () {
         if(this.len == 0U) {
             type(System).Panic("Arr out of bounds");
         }
@@ -161,7 +161,7 @@ class ArrList[A] {
         return old;
     }
 
-    fun A() RemoveLast = () {
+    public fun A() RemoveLast = () {
         if(this.len == 0U) {
             type(System).Panic("Arr out of bounds");
         }
@@ -169,7 +169,7 @@ class ArrList[A] {
         return this.arr[(this.start + this.len) % this.cap];
     }
 
-    fun A(uint) Remove = (i) {
+    public fun A(uint) Remove = (i) {
         if(i >= this.len) {
             type(System).Panic("Arr out of bounds");
         }
@@ -189,16 +189,16 @@ class ArrList[A] {
         return old;
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun void() Clear = () {
+    public fun void() Clear = () {
         this.Delete();
         this.InitWithCap(1U, 0U);
     }
 
-    fun Arr[A]*() Arr = () {
+    public fun Arr[A]*() Arr = () {
         var A* a = new(A, this.len);
         for(var uint i = 0U; i < this.len; i++) {
             a[i] = this.arr[(this.start + i) % this.cap];
@@ -206,13 +206,13 @@ class ArrList[A] {
         return type(Arr)[A].New(this.len, a...);
     }
 
-    fun Iter[A]*() Iter = () {
+    public fun Iter[A]*() Iter = () {
         var Iter[A]* i = new(Iter[A]);
         i.Init(this);
         return i;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         var str s = "[";
         var str spacer = "";
         for(var uint i = 0U; i < this.len; i++) {
@@ -222,25 +222,34 @@ class ArrList[A] {
         return s + "]";
     }
 
-    fun void() Delete = () {
+    public fun void() Delete = () {
         free(this.arr);
     }
 
-    fun void() Mark = () {
-        for(var uint i = 0U; i < this.len; i++) {
-            mark(this.arr[(this.start + i) % this.cap]);
+    // Live elements of a circular buffer are at most two runs: from start to the
+    // end of the buffer, then from its front.
+    public fun void() Mark = () {
+        if(this.len == 0U) {
+            return;
         }
+        var uint first = this.cap - this.start;
+        if(first > this.len) {
+            first = this.len;
+        }
+        var A* tail = &(this.arr[this.start]);
+        type(Arrs)[A].MarkAll(first, tail);
+        type(Arrs)[A].MarkAll(this.len - first, this.arr);
     }
 
     private class Iter[A] {
         var ArrList[A]* l;
         var uint i;
 
-        fun void(ArrList[A]*) Init = (l) {
+        public fun void(ArrList[A]*) Init = (l) {
             this.InitWithIndex(l, 0U);
         }
 
-        fun void(ArrList[A]*, uint) InitWithIndex = (l, i) {
+        public fun void(ArrList[A]*, uint) InitWithIndex = (l, i) {
             if(i > l.Len()) {
                 type(System).Panic("Arr out of bounds");
             }
@@ -248,7 +257,7 @@ class ArrList[A] {
             this.i = i;
         }
 
-        fun Pair[A, bool]() Next = () {
+        public fun Pair[A, bool]() Next = () {
             var Pair[A, bool] p;
             if(this.i >= this.l.Len()) {
                 p.second = false;
@@ -260,7 +269,7 @@ class ArrList[A] {
             return p;
         }
 
-        fun Pair[A, bool]() Prev = () {
+        public fun Pair[A, bool]() Prev = () {
             var Pair[A, bool] p;
             if(this.i == 0U) {
                 p.second = false;

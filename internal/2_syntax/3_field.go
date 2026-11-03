@@ -99,6 +99,9 @@ type (
 		// field in the subclass's table as in the base's, so recording it here
 		// records it for every table the method appears in at once.
 		instruction uint64
+		// origin is the declared method a mapped copy was made from, which is
+		// where the copy's body was emitted and so where its instruction lies.
+		origin *FieldMethod
 
 		// generics is the parameter map a generic method was written with, or
 		// nil for a method with no `[T,...]` list of its own. A method's T is
@@ -634,7 +637,13 @@ func (f *FieldMethod) FieldType() Type {
 // Instruction is where the method's body begins, once codegen has emitted it. A
 // method with no body never has one recorded and so keeps offset zero, which is
 // where the program begins and so names no body.
+//
+// A copy mapped into an instantiation answers with its origin's, since the
+// body is emitted once for the template however many instantiations name it.
 func (f *FieldMethod) Instruction() *uint64 {
+	if f.origin != nil {
+		return &f.origin.instruction
+	}
 	return &f.instruction
 }
 
@@ -646,6 +655,9 @@ func (f *FieldMethod) Accept(visitor FieldVisitor) error {
 // Map implements the [FieldTypeable] interface.
 func (f *FieldMethod) Map(types map[GenericArgKey]Type) FieldTypeable {
 	field := *f
+	if field.origin == nil {
+		field.origin = f
+	}
 	field.fieldType = field.fieldType.Map(types).(*TypeFunction)
 	return &field
 }
@@ -838,9 +850,10 @@ func (f *FieldEnum) Type() Type {
 	return f.outerDecl.(DeclTypeable).DeclType()
 }
 
-// Modifiers implements the [Field] interface.
+// Modifiers implements the [Field] interface. An enum's values are as visible
+// as the enum itself.
 func (f *FieldEnum) Modifiers() Modifier {
-	return ModifierStatic
+	return ModifierStatic | ModifierPublic
 }
 
 // Accept implements the [Field] interface.

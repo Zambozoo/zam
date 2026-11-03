@@ -1,2 +1,74 @@
-// Rivest–Shamir–Adleman Cryptosystem
-namespace RSA {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../hash/Digest.zam";
+import "Key.zam";
+
+// Rivest–Shamir–Adleman signatures and OAEP encryption
+public namespace RSA {
+    // Padding is how a signature is padded: PSS, salted as long as the digest,
+    // or the older deterministic PKCS #1 v1.5.
+    public enum Padding {
+        PSS,
+        PKCS1V15;
+    }
+
+    // Generate makes a private key of bits bits, at least 2048.
+    public static fun Pair[Key*, Err*](uint) Generate = (bits) {
+        if(bits < 2048U) {
+            var Pair[Key*, Err*] out;
+            out.first = null;
+            out.second = type(StrErr).New("RSA keys are at least 2048 bits");
+            return out;
+        }
+        return type(Key).GenerateRSA(bits);
+    }
+
+    // Sign returns the signature of the digest of n bytes at b.
+    public static fun Pair[Arr[byte]*, Err*](Key*, Digest.Kind, RSA.Padding, byte*, uint) Sign = (key, digest, padding, b, n) {
+        var Err* e = type(Key).checkPrivate(key, type(Key.Kind).RSA, type(Key.Kind).RSA, "RSA");
+        if(e != null) {
+            var Pair[Arr[byte]*, Err*] out;
+            out.first = null;
+            out.second = e;
+            return out;
+        }
+        return key.sign(digest{byte}{int}, padding == type(RSA.Padding).PSS, b, n);
+    }
+
+    // Verify reports whether sigLen bytes at sig are a signature of the digest
+    // of n bytes at b under key.
+    public static fun bool(Key*, Digest.Kind, RSA.Padding, byte*, uint, byte*, uint) Verify = (key, digest, padding, b, n, sig, sigLen) {
+        return type(Key).check(key, type(Key.Kind).RSA, type(Key.Kind).RSA, "RSA") == null &&
+            key.verify(digest{byte}{int}, padding == type(RSA.Padding).PSS, b, n, sig, sigLen);
+    }
+
+    private static fun Pair[Arr[byte]*, Err*](Key*, Digest.Kind, bool, byte*, uint) oaep = (key, digest, decrypt, b, n) {
+        var Err* e = type(Key).check(key, type(Key.Kind).RSA, type(Key.Kind).RSA, "RSA");
+        if(e == null && decrypt && !key.IsPrivate()) {
+            e = type(StrErr).New("RSA decryption needs a private key");
+        }
+        if(e != null) {
+            var Pair[Arr[byte]*, Err*] out;
+            out.first = null;
+            out.second = e;
+            return out;
+        }
+        var uint h = 0U;
+        var int len = 0;
+        var str errStr;
+        native(STD_PKEY_OAEP){void(uint, byte, bool, byte*, int, uint*, int*, str*)}(key.handle, digest{byte}, decrypt, b, n{int}, &h, &len, &errStr);
+        return type(Key).take(h, len, errStr);
+    }
+
+    // Encrypt encrypts n bytes at b with OAEP over a digest.
+    public static fun Pair[Arr[byte]*, Err*](Key*, Digest.Kind, byte*, uint) Encrypt = (key, digest, b, n) {
+        return type(RSA).oaep(key, digest, false, b, n);
+    }
+
+    // Decrypt decrypts n bytes at b with OAEP over a digest.
+    public static fun Pair[Arr[byte]*, Err*](Key*, Digest.Kind, byte*, uint) Decrypt = (key, digest, b, n) {
+        return type(RSA).oaep(key, digest, true, b, n);
+    }
+}

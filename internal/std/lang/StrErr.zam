@@ -1,15 +1,21 @@
-class StrErr {
+public class StrErr {
     var str msg;
 
-    fun void(str) Init = (msg) {
+    public static fun StrErr*(str) New = (msg) {
+        var StrErr* e = new(StrErr);
+        e.Init(msg);
+        return e;
+    }
+
+    public fun void(str) Init = (msg) {
         this.msg = msg;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         return this.msg;
     }
 
-    fun str() Err = () {
+    public fun str() Err = () {
         return this.msg;
     }
 }

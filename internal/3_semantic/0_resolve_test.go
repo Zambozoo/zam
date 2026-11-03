@@ -1,6 +1,7 @@
 package semantic
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,6 +26,7 @@ func writeFile(t *testing.T, dir, name, body string) string {
 	t.Helper()
 
 	path := filepath.Join(dir, name)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 	return path
 }
@@ -309,4 +311,28 @@ namespace Main {
 
 	require.NotEmpty(t, errs)
 	assert.Contains(t, errs[0].Error(), "spread may only appear as the last argument")
+}
+
+// Two imports declaring one name leave a bare use of it ambiguous, which is
+// reported rather than settled by whichever import was walked first; aliasing
+// one of them is what tells them apart.
+func TestValidateASTResolvesImportsOfOneNameByAlias(t *testing.T) {
+	files := map[string]string{
+		"a/Thing.zam": "public namespace Thing {\n    public static fun int() A = () { return 1; }\n}\n",
+		"b/Thing.zam": "public namespace Thing {\n    public static fun int() B = () { return 2; }\n}\n",
+	}
+	main := `
+namespace Main {
+` + mainMethod + `
+    static fun int() use = () {
+        return %s;
+    }
+}
+`
+	errs := validate(t, "import \"a/Thing.zam\";\nimport \"b/Thing.zam\";\n"+fmt.Sprintf(main, "type(Thing).A()"), files)
+	require.NotEmpty(t, errs)
+	assert.Contains(t, errs[0].Error(), `declaration "Thing" is ambiguous`)
+
+	errs = validate(t, "import \"a/Thing.zam\";\nimport Other = \"b/Thing.zam\";\n"+fmt.Sprintf(main, "type(Thing).A() + type(Other.Thing).B()"), files)
+	assert.Empty(t, errs)
 }

@@ -3,7 +3,7 @@ import "../../lang/Arrs.zam";
 import "../list/ArrList.zam";
 
 // TimSort
-namespace Sort {
+public namespace Sort {
     // Walks the input finding natural runs, extends short runs to minRun.
     fun[A] void(A*, A*, ArrList[uint]*, ArrList[uint]*, uint) run = (arr, tmp, runBase, runLen, len) {
         var uint lo = 0U;
@@ -200,7 +200,7 @@ namespace Sort {
         }
     }
 
-    fun[A] void(uint, A...) Sort = (len, arr) {
+    public fun[A] void(uint, A...) Sort = (len, arr) {
         if (len < 2U) {
             return;
         }
@@ -224,7 +224,7 @@ namespace Sort {
         free(tmp);
     }
 
-    fun[A] void(Arr[A]*) SortArr = (arr) {
+    public fun[A] void(Arr[A]*) SortArr = (arr) {
         type(Sort)[A].Sort(arr.Len(), arr.Arr()...);
     }
 }

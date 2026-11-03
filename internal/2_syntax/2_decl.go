@@ -258,6 +258,8 @@ type (
 		DeclTypeable
 		// MapType substitutes the concrete's binding into the given type.
 		MapType(t Type) Type
+		// Template is the generic declaration this instantiates.
+		Template() DeclGeneric
 	}
 	// declConcrete is a concrete declaration.
 	declConcrete struct {
@@ -2147,6 +2149,20 @@ func (d *declConcrete) AllInstanceFields() *base.StaticOrderedMap[string, Field]
 	}
 	d.cachedAllInstanceFields = fields
 	return fields
+}
+
+// Template implements the [DeclConcrete] interface.
+func (d *declConcrete) Template() DeclGeneric {
+	return d.DeclGeneric
+}
+
+// TemplateOf is the declaration d instantiates, or d itself when it
+// instantiates nothing.
+func TemplateOf(d Decl) Decl {
+	if c, ok := d.(DeclConcrete); ok {
+		return c.Template()
+	}
+	return d
 }
 
 // DeclType implements the [DeclTypeable] interface.

@@ -1,1 +1,135 @@
-class URL {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "../../data/list/ArrList.zam";
+
+// URL split into its parts, over libcurl. Each part is as written, so
+// percent-escaped wherever the URL escapes it; a missing part is empty, and
+// a missing port is 0.
+public class URL {
+    public var str scheme;
+    public var str user;
+    public var str password;
+    public var str host;
+    public var uint port;
+    public var str path;
+    public var str query;
+    public var str fragment;
+
+    // Parse reads an absolute URL.
+    public static fun Pair[URL*, Err*](str) Parse = (s) {
+        var Pair[URL*, Err*] out;
+        var URL* u = new(URL);
+        var int port;
+        var str errStr;
+        native(STD_URL_PARSE){void(str, str*, str*, str*, str*, int*, str*, str*, str*, str*)}(s, &(u.scheme), &(u.user), &(u.password), &(u.host), &port, &(u.path), &(u.query), &(u.fragment), &errStr);
+        u.port = port{uint};
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(s + ": " + errStr);
+        } else {
+            out.first = u;
+        }
+        return out;
+    }
+
+    // Escape percent-escapes every byte of s but letters, digits and -._~.
+    public static fun str(str) Escape = (s) {
+        var str out;
+        native(STD_URL_ESCAPE){void(str, str*)}(s, &out);
+        return out;
+    }
+
+    // Unescape decodes every percent escape in s.
+    public static fun str(str) Unescape = (s) {
+        var str out;
+        native(STD_URL_UNESCAPE){void(str, str*)}(s, &out);
+        return out;
+    }
+
+    // ParseQuery decodes a query as name=value pairs joined by &, reading +
+    // as a space. A pair with no = has an empty value.
+    public static fun Arr[Pair[str, str]]*(str) ParseQuery = (q) {
+        var ArrList[Pair[str, str]]* pairs = type(ArrList)[Pair[str, str]].New(0U);
+        if(type(Strs).ByteLen(q) == 0) {
+            return pairs.Arr();
+        }
+        var Arr[str]* parts = type(Strs).Split(q, '&'{int}{byte});
+        for(var uint i = 0U; i < parts.Len(); i++) {
+            var str part = parts.Get(i);
+            if(type(Strs).ByteLen(part) == 0) {
+                continue;
+            }
+            var Arr[str]* kv = type(Strs).Split(part, '='{int}{byte});
+            var str value = "";
+            for(var uint j = 1U; j < kv.Len(); j++) {
+                if(j > 1U) {
+                    value = value + "=";
+                }
+                value = value + kv.Get(j);
+            }
+            var Pair[str, str] p;
+            p.first = type(URL).Unescape(type(URL).plusToSpace(kv.Get(0U)));
+            p.second = type(URL).Unescape(type(URL).plusToSpace(value));
+            pairs.AddLast(p);
+        }
+        return pairs.Arr();
+    }
+
+    private static fun str(str) plusToSpace = (s) {
+        var Arr[str]* parts = type(Strs).Split(s, '+'{int}{byte});
+        var str out = parts.Get(0U);
+        for(var uint i = 1U; i < parts.Len(); i++) {
+            out = out + " " + parts.Get(i);
+        }
+        return out;
+    }
+
+    // QueryValues decodes this URL's query; see ParseQuery.
+    public fun Arr[Pair[str, str]]*() QueryValues = () {
+        return type(URL).ParseQuery(this.query);
+    }
+
+    // QueryValue returns the first value the query gives a name, and false
+    // when it gives none.
+    public fun Pair[str, bool](str) QueryValue = (name) {
+        var Pair[str, bool] out;
+        out.first = "";
+        out.second = false;
+        var Arr[Pair[str, str]]* values = this.QueryValues();
+        for(var uint i = 0U; i < values.Len(); i++) {
+            if(values.Get(i).first == name) {
+                out.first = values.Get(i).second;
+                out.second = true;
+                return out;
+            }
+        }
+        return out;
+    }
+
+    // Resolve resolves a reference, absolute or relative, against this URL.
+    public fun Pair[URL*, Err*](str) Resolve = (ref) {
+        var str resolved;
+        var str errStr;
+        native(STD_URL_RESOLVE){void(str, str, str*, str*)}(this.Str(), ref, &resolved, &errStr);
+        if(errStr != null) {
+            var Pair[URL*, Err*] out;
+            out.first = null;
+            out.second = type(StrErr).New(ref + ": " + errStr);
+            return out;
+        }
+        return type(URL).Parse(resolved);
+    }
+
+    // Str joins the parts back into a URL, or is empty when they do not make
+    // one.
+    public fun str() Str = () {
+        var str out;
+        var str errStr;
+        native(STD_URL_BUILD){void(str, str, str, str, int, str, str, str, str*, str*)}(this.scheme, this.user, this.password, this.host, this.port{int}, this.path, this.query, this.fragment, &out, &errStr);
+        return out;
+    }
+}

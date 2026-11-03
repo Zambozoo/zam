@@ -3,7 +3,7 @@ import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 
 // Open-addressed hash set with linear probing
-class HashSet[A] {
+public class HashSet[A] {
     static var byte$ empty = 0{byte};
     static var byte$ full = 1{byte};
     static var byte$ removed = 2{byte};
@@ -24,13 +24,13 @@ class HashSet[A] {
     var uint len;
     var uint used;
 
-    static fun[A] HashSet[A]*(uint, A...) New = (len, args) {
+    public static fun[A] HashSet[A]*(uint, A...) New = (len, args) {
         var HashSet[A]* s = new(HashSet[A]);
         s.Init(len, args...);
         return s;
     }
 
-    fun void(uint, A...) Init = (len, args) {
+    public fun void(uint, A...) Init = (len, args) {
         this.alloc(type(HashSet).minCap);
         for(var uint i = 0U; i < len; i++) {
             this.Add(args[i]);
@@ -115,15 +115,15 @@ class HashSet[A] {
         this.len++;
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun bool(A) Contains = (v) {
+    public fun bool(A) Contains = (v) {
         return this.find(v) != this.cap;
     }
 
-    fun bool(A) Add = (v) {
+    public fun bool(A) Add = (v) {
         if(this.find(v) != this.cap) {
             return false;
         }
@@ -134,7 +134,7 @@ class HashSet[A] {
         return true;
     }
 
-    fun bool(A) Remove = (v) {
+    public fun bool(A) Remove = (v) {
         var uint i = this.find(v);
         if(i == this.cap) {
             return false;
@@ -144,12 +144,12 @@ class HashSet[A] {
         return true;
     }
 
-    fun void() Clear = () {
+    public fun void() Clear = () {
         this.Delete();
         this.alloc(type(HashSet).minCap);
     }
 
-    fun Arr[A]*() Arr = () {
+    public fun Arr[A]*() Arr = () {
         var A* a = new(A, this.len);
         var uint n = 0U;
         for(var uint i = 0U; i < this.cap; i++) {
@@ -161,13 +161,13 @@ class HashSet[A] {
         return type(Arr)[A].New(this.len, a...);
     }
 
-    fun Iter[A]*() Iter = () {
+    public fun Iter[A]*() Iter = () {
         var Iter[A]* i = new(Iter[A]);
         i.Init(this);
         return i;
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         var str s = "{";
         var str spacer = "";
         for(var uint i = 0U; i < this.cap; i++) {
@@ -179,7 +179,7 @@ class HashSet[A] {
         return s + "}";
     }
 
-    fun void() Delete = () {
+    public fun void() Delete = () {
         free(this.vals);
         free(this.states);
         this.vals = null;
@@ -189,7 +189,10 @@ class HashSet[A] {
         this.used = 0U;
     }
 
-    fun void() Mark = () {
+    public fun void() Mark = () {
+        if(!type(System.GC).Markable(@{A})) {
+            return;
+        }
         for(var uint i = 0U; i < this.cap; i++) {
             if(this.states[i] == type(HashSet).full) {
                 mark(this.vals[i]);
@@ -201,12 +204,12 @@ class HashSet[A] {
         var HashSet[A]* s;
         var uint i;
 
-        fun void(HashSet[A]*) Init = (s) {
+        public fun void(HashSet[A]*) Init = (s) {
             this.s = s;
             this.i = 0U;
         }
 
-        fun Pair[A, bool]() Next = () {
+        public fun Pair[A, bool]() Next = () {
             var Pair[A, bool] p;
             for(; this.i < this.s.cap; this.i++) {
                 if(this.s.states[this.i] == type(HashSet).full) {
@@ -220,7 +223,7 @@ class HashSet[A] {
             return p;
         }
 
-        fun Pair[A, bool]() Prev = () {
+        public fun Pair[A, bool]() Prev = () {
             var Pair[A, bool] p;
             for(; this.i > 0U;) {
                 this.i--;

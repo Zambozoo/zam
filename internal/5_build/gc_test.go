@@ -43,11 +43,12 @@ func compile(t *testing.T, source string) string {
 	return out
 }
 
-// run runs a binary to its end and returns what it wrote and how it exited.
-func run(t *testing.T, binary string) (stdout, stderr string, status int) {
+// run runs a binary with args to its end and returns what it wrote and how it
+// exited.
+func run(t *testing.T, binary string, args ...string) (stdout, stderr string, status int) {
 	t.Helper()
 
-	out, err := exec.Command(binary).Output()
+	out, err := exec.Command(binary, args...).Output()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		return string(out), string(exit.Stderr), exit.ExitCode()
@@ -295,7 +296,8 @@ namespace Main {
 
 // TestCollectionKeepsARunOfInstances holds an array of class instances only
 // through an Arr. The array is the program's memory, which the collector never
-// frees, and Arr's Mark keeps what its elements hold.
+// frees, and Arr's Mark keeps what its elements hold. Until the Arr holds it,
+// nothing marks the run, so it is filled with collection blocked.
 func TestCollectionKeepsARunOfInstances(t *testing.T) {
 	t.Parallel()
 	binary := compile(t, `import std("lang/*");
@@ -303,12 +305,15 @@ import std("io/local/*");
 
 namespace Main {
     static fun Arr[Pair[int, str]]*() build = () {
+        type(System.GC).Block();
         var Pair[int, str]* a = new(Pair[int, str], 100U);
         for(var uint i = 0U; i < 100U; i++) {
             a[i].first = i{int};
             a[i].second = i{str} + "!";
         }
-        return type(Arr)[Pair[int, str]].New(100U, a...);
+        var Arr[Pair[int, str]]* arr = type(Arr)[Pair[int, str]].New(100U, a...);
+        type(System.GC).Unblock();
+        return arr;
     }
 
     fun void(uint, str...) main = (argC, argV) {
@@ -407,4 +412,56 @@ namespace Main {
 	stdout, stderr, status := run(t, binary)
 	require.Zero(t, status, stderr)
 	assert.Equal(t, "0\n", stdout)
+}
+
+// TestMarkable checks GC.Markable across the kinds of type, and that a
+// collection over a large array of bytes no longer walks its elements.
+func TestMarkable(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    struct Plain {
+        var int a;
+        var flt b;
+    }
+
+    struct Holder {
+        var int a;
+        var str s;
+    }
+
+    class Box {
+        var int v;
+    }
+
+    static fun bool(type) m = (t) {
+        return type(System.GC).Markable(t);
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var str s = type(Main).m(@{byte}){str} + " " + type(Main).m(@{int}){str} + " " + type(Main).m(@{flt}){str} + " " + type(Main).m(@{bool}){str};
+        s = s + " " + type(Main).m(@{str}){str} + " " + type(Main).m(@{any}){str} + " " + type(Main).m(@{void()}){str} + " " + type(Main).m(@{Box*}){str};
+        s = s + " " + type(Main).m(@{Plain}){str} + " " + type(Main).m(@{Holder}){str} + " " + type(Main).m(@{Plain*}){str} + " " + type(Main).m(@{Holder*}){str};
+        s = s + " " + type(Main).m(@{int[4]}){str} + " " + type(Main).m(@{str[4]}){str} + " " + type(Main).m(@{Pair[int, int]}){str} + "\n";
+
+        var uint n = 50000U;
+        var byte* raw = new(byte, n);
+        for(var uint i = 0U; i < n; i++) {
+            raw[i] = (i % 251U){byte};
+        }
+        var Arr[byte]* a = type(Arr)[byte].New(n, raw...);
+        var uint sum = 0U;
+        for(var uint i = 0U; i < n; i++) {
+            sum = sum + a.Get(i){uint};
+        }
+        s = s + sum{str} + "\n";
+        type(File).StdOut.WriteStr(s);
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "false false false false true true true true false true false false false true true\n6244900\n", stdout)
 }

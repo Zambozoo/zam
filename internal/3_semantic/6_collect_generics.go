@@ -71,6 +71,24 @@ func (c *genericTypeCollector) visitFields(d syntax.Decl) {
 	}
 }
 
+// visitInheritedFields enumerates the types of the fields d inherits, which
+// its initializer and the bodies it inherits name under d's own arguments: a
+// Named[X] based on Arr[X] holds Arr's A* as an X*.
+func (c *genericTypeCollector) visitInheritedFields(d syntax.Decl) {
+	own := map[string]bool{}
+	for name := range d.InstanceFields() {
+		own[name] = true
+	}
+	for _, entry := range d.AllInstanceFields().All() {
+		if own[entry.Key] {
+			continue
+		}
+		if field, ok := entry.Value.(syntax.FieldTypeable); ok {
+			field.FieldType().Accept(c)
+		}
+	}
+}
+
 // visitDecls descends into a declaration's nested declarations, letting the
 // single collector traverse the whole tree while it swaps target as it enters
 // each generic decl.
@@ -92,6 +110,7 @@ func (c *genericTypeCollector) VisitDeclAbstract(d *syntax.DeclAbstract) error {
 		c.visitBounds(d)
 		d.BaseDeclType().Accept(c)
 		c.visitFields(d)
+		c.visitInheritedFields(d)
 		c.target = previous
 	}
 	c.visitDecls(d)
@@ -105,6 +124,7 @@ func (c *genericTypeCollector) VisitDeclClass(d *syntax.DeclClass) error {
 		c.visitBounds(d)
 		d.BaseDeclType().Accept(c)
 		c.visitFields(d)
+		c.visitInheritedFields(d)
 		c.target = previous
 	}
 	c.visitDecls(d)

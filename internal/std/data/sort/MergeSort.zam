@@ -1,7 +1,7 @@
 import "../../lang/Arr.zam";
 import "../../lang/Arrs.zam";
 
-namespace MergeSort {
+public namespace MergeSort {
     // Merges the two sorted halves arr[l..m] and arr[m+1..r] through buf
     fun[A] void(A*, A*, uint, uint, uint) merge = (arr, buf, l, m, r) {
         type(Arrs)[A].Copy(r - l + 1U, arr + l, buf + l);
@@ -38,7 +38,7 @@ namespace MergeSort {
         }
     }
 
-    fun[A] void(uint, A...) Sort = (len, arr) {
+    public fun[A] void(uint, A...) Sort = (len, arr) {
         if (len > 0U) {
             var A* buf = new(A, len);
             type(MergeSort)[A].mergeSort(arr, buf, 0U, len - 1U);
@@ -46,7 +46,7 @@ namespace MergeSort {
         }
     }
 
-    fun[A] void(Arr[A]*) SortArr = (arr) {
+    public fun[A] void(Arr[A]*) SortArr = (arr) {
        type(MergeSort)[A].Sort(arr.Len(), arr.Arr()...);
     }
 }

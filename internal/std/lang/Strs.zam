@@ -1,11 +1,12 @@
+import "Arr.zam";
 import "Pair.zam";
 
-namespace Strs {
+public namespace Strs {
     // ToBytes hands back the str's own bytes and length. The pointer is the
     // str's own bytes field — a plain cast, no copy, NUL-terminated — so the
     // caller must not outlive the str; use Strs.FromBytes on the result if
     // lifetime independence is needed.
-    static fun Pair[byte*, int](str) ToBytes = (s) {
+    public static fun Pair[byte*, int](str) ToBytes = (s) {
         var Pair[byte*, int] p;
         p.first = s{byte*};
         p.second = type(Strs).ByteLen(s);
@@ -14,7 +15,7 @@ namespace Strs {
 
     // FromBytes copies the given byte run into a fresh str allocation. The
     // caller may free the source buffer immediately after.
-    static fun str(byte*, int) FromBytes = (b, i) {
+    public static fun str(byte*, int) FromBytes = (b, i) {
         var str s;
         native(STD_STRS_FROM_BYTES){void(byte*, int, str*)}(b, i, &s);
         return s;
@@ -26,7 +27,7 @@ namespace Strs {
     // char through it reads one byte at the char's low eight bits and whatever
     // follows above them; it is a reinterpretation for the C side rather than a
     // decoded run.
-    static fun Pair[char*, int](str) Chars = (s) {
+    public static fun Pair[char*, int](str) Chars = (s) {
         var Pair[char*, int] p;
         p.first = s{char*};
         p.second = type(Strs).CharLen(s);
@@ -34,24 +35,48 @@ namespace Strs {
     }
 
     // ToChars encodes a run of code points as a fresh UTF-8 str.
-    static fun str(char*, int) ToChars = (cs, i) {
+    public static fun str(char*, int) ToChars = (cs, i) {
         var str s;
         native(STD_STRS_TO_CHARS){void(char*, int, str*)}(cs, i, &s);
         return s;
     }
 
     // The number of UTF-8 code points in the str.
-    static fun int(str) CharLen = (s) {
+    public static fun int(str) CharLen = (s) {
         var int n;
         native(STD_STRS_CHAR_LEN){void(str, int*)}(s, &n);
         return n;
     }
 
     // The number of bytes in the str.
-    static fun int(str) ByteLen = (s) {
+    public static fun int(str) ByteLen = (s) {
         var int n;
         native(STD_STRS_BYTE_LEN){void(str, int*)}(s, &n);
         return n;
+    }
+
+    // Split returns the runs of s between each sep byte, so an empty s is one
+    // empty run.
+    public static fun Arr[str]*(str, byte) Split = (s, sep) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(s);
+        var uint n = p.second{uint};
+        var uint count = 1U;
+        for(var uint i = 0U; i < n; i++) {
+            if(p.first[i] == sep) {
+                count++;
+            }
+        }
+        var Arr[str]* out = type(Arr)[str].New(count, new(str, count)...);
+        var uint start = 0U;
+        var uint k = 0U;
+        for(var uint i = 0U; i <= n; i++) {
+            if(i == n || p.first[i] == sep) {
+                out.Set(k, type(Strs).FromBytes(&(p.first[start]), (i - start){int}));
+                k++;
+                start = i + 1U;
+            }
+        }
+        return out;
     }
 
     // Sprintf renders fmt with the args laid in where its directives sit.
@@ -64,7 +89,7 @@ namespace Strs {
     // The args' count is not passed with the variadic, so a directive that
     // reaches past the end of args reads past the array. The format string
     // is the count there is, as it is for printf everywhere else.
-    static fun str(str, any...) Sprintf = (fmt, args) {
+    public static fun str(str, any...) Sprintf = (fmt, args) {
         var str result = "";
         var int argIndex = 0;
         var Pair[byte*, int] fmtBytes = type(Strs).ToBytes(fmt);

@@ -1,37 +1,38 @@
+import "Arrs.zam";
 import "System.zam";
 
 // Collected array that owns the run it wraps
-class Arr[A] {
-    var A* arr;
-    var uint len;
+public class Arr[A] {
+    protected var A* arr;
+    protected var uint len;
 
-    static fun[A] Arr[A]*(uint, A...) New = (count, args) {
+    public static fun[A] Arr[A]*(uint, A...) New = (count, args) {
         var Arr[A]* a = new(Arr[A]);
         a.Init(count, args...);
         return a;
     }
 
-    fun void(uint, A...) Init = (count, args) {
+    public fun void(uint, A...) Init = (count, args) {
         this.len = count;
         this.arr = args;
     }
 
-    fun uint() Len = () {
+    public fun uint() Len = () {
         return this.len;
     }
 
-    fun A*() Arr = () {
+    public fun A*() Arr = () {
         return this.arr;
     }
 
-    fun A(uint) Get = (i) {
+    public fun A(uint) Get = (i) {
         if(i >= this.len) {
             type(System).Panic("Arr out of bounds");
         }
         return this.arr[i];
     }
 
-    fun A(uint, A) Set = (i, t) {
+    public fun A(uint, A) Set = (i, t) {
         if(i >= this.len) {
             type(System).Panic("Arr out of bounds");
         }
@@ -40,19 +41,17 @@ class Arr[A] {
         return old;
     }
 
-    fun void() Delete = () {
+    public fun void() Delete = () {
         free(this.arr);
         this.arr = null;
         this.len = 0U;
     }
 
-    fun void() Mark = () {
-        for(var uint i = 0U; i < this.len; i++) {
-            mark(this.arr[i]);
-        }
+    public fun void() Mark = () {
+        type(Arrs)[A].MarkAll(this.len, this.arr);
     }
 
-    fun str() Str = () {
+    public fun str() Str = () {
         var str s = "[";
         var str spacer = "";
         for(var uint i = 0U; i < this.len; i++) {

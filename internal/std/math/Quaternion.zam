@@ -1,1 +1,116 @@
-class Quaternion {}
+import "../lang/System.zam";
+import "Math.zam";
+import "Trig.zam";
+import "Vector.zam";
+
+// Quaternion w + xi + yj + zk
+public struct Quaternion {
+    public var flt w;
+    public var flt x;
+    public var flt y;
+    public var flt z;
+
+    public static fun Quaternion(flt, flt, flt, flt) Of = (w, x, y, z) {
+        var Quaternion q;
+        q.w = w;
+        q.x = x;
+        q.y = y;
+        q.z = z;
+        return q;
+    }
+
+    public static fun Quaternion() Identity = () {
+        return type(Quaternion).Of(1.0, 0.0, 0.0, 0.0);
+    }
+
+    // FromAxisAngle returns the rotation by angle radians about the axis
+    // (x, y, z), which need not be of length one.
+    public static fun Quaternion(flt, flt, flt, flt) FromAxisAngle = (x, y, z, angle) {
+        var flt n = type(Math).Sqrt(x * x + y * y + z * z);
+        var flt s = type(Trig).Sin(angle / 2.0) / n;
+        return type(Quaternion).Of(type(Trig).Cos(angle / 2.0), x * s, y * s, z * s);
+    }
+
+    public fun Quaternion(Quaternion) Add = (o) {
+        return type(Quaternion).Of(this.w + o.w, this.x + o.x, this.y + o.y, this.z + o.z);
+    }
+
+    public fun Quaternion(Quaternion) Sub = (o) {
+        return type(Quaternion).Of(this.w - o.w, this.x - o.x, this.y - o.y, this.z - o.z);
+    }
+
+    // Mul returns the Hamilton product, which applied as a rotation is o
+    // followed by this.
+    public fun Quaternion(Quaternion) Mul = (o) {
+        return type(Quaternion).Of(
+            this.w * o.w - this.x * o.x - this.y * o.y - this.z * o.z,
+            this.w * o.x + this.x * o.w + this.y * o.z - this.z * o.y,
+            this.w * o.y - this.x * o.z + this.y * o.w + this.z * o.x,
+            this.w * o.z + this.x * o.y - this.y * o.x + this.z * o.w);
+    }
+
+    public fun Quaternion(flt) Scale = (k) {
+        return type(Quaternion).Of(this.w * k, this.x * k, this.y * k, this.z * k);
+    }
+
+    public fun Quaternion() Neg = () {
+        return this.Scale(-1.0);
+    }
+
+    public fun Quaternion() Conj = () {
+        return type(Quaternion).Of(this.w, -this.x, -this.y, -this.z);
+    }
+
+    public fun flt(Quaternion) Dot = (o) {
+        return this.w * o.w + this.x * o.x + this.y * o.y + this.z * o.z;
+    }
+
+    public fun flt() Norm = () {
+        return type(Math).Sqrt(this.Dot(*this));
+    }
+
+    public fun Quaternion() Normalize = () {
+        return this.Scale(1.0 / this.Norm());
+    }
+
+    public fun Quaternion() Inverse = () {
+        return this.Conj().Scale(1.0 / this.Dot(*this));
+    }
+
+    // Rotate rotates v, of length three, by this quaternion, which must be of
+    // length one.
+    public fun Vector*(Vector*) Rotate = (v) {
+        if(v.Len() != 3U) {
+            type(System).Panic("Quaternion.Rotate needs a vector of length three");
+        }
+        var Quaternion p = type(Quaternion).Of(0.0, v.Get(0U), v.Get(1U), v.Get(2U));
+        var Quaternion r = this.Mul(p).Mul(this.Conj());
+        return type(Vector).New(3U, r.x, r.y, r.z);
+    }
+
+    // Slerp interpolates along the shorter arc from this to o, both of length
+    // one, by t in [0, 1].
+    public fun Quaternion(Quaternion, flt) Slerp = (o, t) {
+        var flt d = this.Dot(o);
+        if(d < 0.0) {
+            o = o.Neg();
+            d = -d;
+        }
+        if(d > 0.9995) {
+            return this.Add(o.Sub(*this).Scale(t)).Normalize();
+        }
+        var flt theta = type(Trig).Acos(d);
+        var flt s = type(Trig).Sin(theta);
+        var flt a = type(Trig).Sin((1.0 - t) * theta) / s;
+        var flt b = type(Trig).Sin(t * theta) / s;
+        return this.Scale(a).Add(o.Scale(b));
+    }
+
+    public fun bool(Quaternion) Eq = (o) {
+        return this.w == o.w && this.x == o.x && this.y == o.y && this.z == o.z;
+    }
+
+    public fun str() Str = () {
+        return "(" + this.w{str} + ", " + this.x{str} + ", " + this.y{str} + ", " + this.z{str} + ")";
+    }
+}

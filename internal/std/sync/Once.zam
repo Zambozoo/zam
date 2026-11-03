@@ -1,1 +1,29 @@
-class Once {}
+import "Mutex.zam";
+
+// Runs a function once across every thread
+public class Once {
+    var Mutex* m;
+    var bool done;
+
+    public static fun Once*() New = () {
+        var Once* o = new(Once);
+        o.Init();
+        return o;
+    }
+
+    public fun void() Init = () {
+        this.m = type(Mutex).New();
+        this.done = false;
+    }
+
+    // Do runs f if no Do has run before. Every call returns only once the
+    // first f has.
+    public fun void(void()) Do = (f) {
+        this.m.Lock();
+        if(!this.done) {
+            f();
+            this.done = true;
+        }
+        this.m.Unlock();
+    }
+}

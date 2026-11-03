@@ -1,2 +1,92 @@
-// Hybrid Public Key Encryption
-namespace HPKE {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "Key.zam";
+
+// Hybrid Public Key Encryption (RFC 9180) in its base mode: a message sealed
+// to a recipient's public key, with a KEM, KDF and AEAD agreed on beforehand
+public namespace HPKE {
+    // KEM is the key encapsulation, which fixes the recipient's key kind:
+    // X25519 or P256, P384 and P521.
+    public enum KEM : int {
+        P256_SHA256(16),
+        P384_SHA384(17),
+        P521_SHA512(18),
+        X25519_SHA256(32);
+    }
+
+    public enum KDF : int {
+        SHA256(1),
+        SHA384(2),
+        SHA512(3);
+    }
+
+    public enum Cipher : int {
+        AES_128_GCM(1),
+        AES_256_GCM(2),
+        CHACHA20_POLY1305(3);
+    }
+
+    // Suite is the algorithms both sides agree on.
+    public struct Suite {
+        public var HPKE.KEM kem;
+        public var HPKE.KDF kdf;
+        public var HPKE.Cipher cipher;
+    }
+
+    // Sealed is a sealed message: the encapsulated key and the ciphertext,
+    // both of which the recipient needs.
+    public class Sealed {
+        public var Arr[byte]* enc;
+        public var Arr[byte]* ciphertext;
+    }
+
+    // Of returns the suite of kem, kdf and cipher.
+    public static fun HPKE.Suite(HPKE.KEM, HPKE.KDF, HPKE.Cipher) Of = (kem, kdf, cipher) {
+        var HPKE.Suite s;
+        s.kem = kem;
+        s.kdf = kdf;
+        s.cipher = cipher;
+        return s;
+    }
+
+    // Seal seals n bytes at b to key, binding infoLen bytes at info and
+    // aadLen bytes at aad.
+    public static fun Pair[HPKE.Sealed*, Err*](HPKE.Suite, Key*, byte*, uint, byte*, uint, byte*, uint) Seal = (suite, key, info, infoLen, aad, aadLen, b, n) {
+        var Pair[HPKE.Sealed*, Err*] out;
+        out.first = null;
+        out.second = null;
+        var uint encH = 0U;
+        var int encN = 0;
+        var uint ctH = 0U;
+        var int ctN = 0;
+        var str errStr;
+        native(STD_HPKE_SEAL){void(int, int, int, uint, byte*, int, byte*, int, byte*, int, uint*, int*, uint*, int*, str*)}(suite.kem{int}, suite.kdf{int}, suite.cipher{int}, key.handle, info, infoLen{int}, aad, aadLen{int}, b, n{int}, &encH, &encN, &ctH, &ctN, &errStr);
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        var HPKE.Sealed* s = new(HPKE.Sealed);
+        s.enc = type(Key).take(encH, encN, null).first;
+        s.ciphertext = type(Key).take(ctH, ctN, null).first;
+        out.first = s;
+        return out;
+    }
+
+    // Open opens what Seal sealed to key's public half, given the same info
+    // and aad.
+    public static fun Pair[Arr[byte]*, Err*](HPKE.Suite, Key*, HPKE.Sealed*, byte*, uint, byte*, uint) Open = (suite, key, sealed, info, infoLen, aad, aadLen) {
+        if(!key.IsPrivate()) {
+            var Pair[Arr[byte]*, Err*] out;
+            out.first = null;
+            out.second = type(StrErr).New("HPKE needs a private key to open");
+            return out;
+        }
+        var uint h = 0U;
+        var int len = 0;
+        var str errStr;
+        native(STD_HPKE_OPEN){void(int, int, int, uint, byte*, int, byte*, int, byte*, int, byte*, int, uint*, int*, str*)}(suite.kem{int}, suite.kdf{int}, suite.cipher{int}, key.handle, sealed.enc.Arr(), sealed.enc.Len(){int}, info, infoLen{int}, aad, aadLen{int}, sealed.ciphertext.Arr(), sealed.ciphertext.Len(){int}, &h, &len, &errStr);
+        return type(Key).take(h, len, errStr);
+    }
+}

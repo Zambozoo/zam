@@ -1,0 +1,105 @@
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "../../lang/System.zam";
+
+// Digest is a running hash of one Kind of digest algorithm.
+public class Digest {
+    // Kind is a digest algorithm. SHAKE128 and SHAKE256 are extendable-output
+    // functions; BLAKE2B and BLAKE2S may be shortened.
+    public enum Kind : byte {
+        MD5(0{byte}),
+        SHA1(1{byte}),
+        SHA224(2{byte}),
+        SHA256(3{byte}),
+        SHA384(4{byte}),
+        SHA512(5{byte}),
+        SHA512_256(6{byte}),
+        SHA3_224(7{byte}),
+        SHA3_256(8{byte}),
+        SHA3_384(9{byte}),
+        SHA3_512(10{byte}),
+        SHAKE128(11{byte}),
+        SHAKE256(12{byte}),
+        BLAKE2B(13{byte}),
+        BLAKE2S(14{byte});
+    }
+
+    var uint handle;
+    var uint size;
+    var uint block;
+
+    // New starts a digest of kind, size bytes long, or of its default length
+    // for 0. An extendable-output function needs a size.
+    public static fun Pair[Digest*, Err*](Digest.Kind, uint) New = (kind, size) {
+        var Pair[Digest*, Err*] out;
+        out.first = null;
+        out.second = null;
+        var uint h = 0U;
+        var int n = 0;
+        var int block = 0;
+        var str errStr;
+        native(STD_HASH_NEW){void(byte, int, uint*, int*, int*, str*)}(kind{byte}, size{int}, &h, &n, &block, &errStr);
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        out.first = new(Digest);
+        out.first.handle = h;
+        out.first.size = n{uint};
+        out.first.block = block{uint};
+        return out;
+    }
+
+    // Must starts a digest that cannot fail to start, panicking otherwise.
+    static fun Digest*(Digest.Kind, uint) Must = (kind, size) {
+        var Pair[Digest*, Err*] d = type(Digest).New(kind, size);
+        if(d.second != null) {
+            type(System).Panic(kind{str} + ": " + d.second.Err());
+        }
+        return d.first;
+    }
+
+    // Of hashes n bytes at b with kind.
+    static fun Arr[byte]*(Digest.Kind, uint, byte*, uint) Of = (kind, size, b, n) {
+        var Digest* d = type(Digest).Must(kind, size);
+        d.Write(b, n);
+        var Arr[byte]* sum = d.Sum();
+        d.Delete();
+        return sum;
+    }
+
+    public fun void(byte*, uint) Write = (b, n) {
+        native(STD_HASH_WRITE){void(uint, byte*, int)}(this.handle, b, n{int});
+    }
+
+    public fun void(str) WriteStr = (s) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(s);
+        this.Write(p.first, p.second{uint});
+    }
+
+    public fun Arr[byte]*() Sum = () {
+        var byte* b = new(byte, this.size);
+        native(STD_HASH_SUM){void(uint, byte*)}(this.handle, b);
+        return type(Arr)[byte].New(this.size, b...);
+    }
+
+    public fun void() Reset = () {
+        native(STD_HASH_RESET){void(uint)}(this.handle);
+    }
+
+    public fun uint() Size = () {
+        return this.size;
+    }
+
+    public fun uint() BlockSize = () {
+        return this.block;
+    }
+
+    public fun void() Delete = () {
+        native(STD_HASH_FREE){void(uint)}(this.handle);
+        this.handle = 0U;
+    }
+}

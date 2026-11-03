@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"fmt"
+	"slices"
 
 	syntax "github.com/zambozoo/zam/internal/2_syntax"
 )
@@ -433,14 +434,10 @@ func (r *referenceTypeResolverVisitor) visitTypeReference(t *syntax.TypeReferenc
 	// package name is the usual case — so the right one is the one whose file
 	// declares a top-level type whose name matches the next id.
 	if imports, ok := t.OuterDecl().File().Imports[t.Ids[0]]; ok && len(t.Ids) > 1 {
-		for _, imp := range imports {
-			fileDecl := imp.ImportedFile.Decl
-			if fileDecl.Name() != t.Ids[1] {
-				continue
-			}
-			if decl, ok := nestedDecl(fileDecl, t.Ids[2:]); ok {
-				return r.setDecl(t, decl)
-			}
+		if decl, err := importedDecl(t, imports, t.Ids[1:], false); err != nil {
+			return err
+		} else if decl != nil {
+			return r.setDecl(t, decl)
 		}
 	}
 
@@ -450,23 +447,48 @@ func (r *referenceTypeResolverVisitor) visitTypeReference(t *syntax.TypeReferenc
 	// `import "../Pair.zam"` or `import std("Pair.zam")` be reached as just
 	// `Pair`. Walking every import rather than keying by id covers both the
 	// relative form (whose id is "Pair" already) and the package form (whose
-	// id is the package name, "std").
+	// id is the package name, "std"). An aliased import is reached only by its
+	// alias, which is what lets two imports declaring one name be told apart.
+	var all []*syntax.Import
 	for _, imports := range t.OuterDecl().File().Imports {
-		for _, imp := range imports {
-			if imp.ImportedFile == nil {
-				continue
-			}
-			fileDecl := imp.ImportedFile.Decl
-			if fileDecl.Name() != t.Ids[0] {
-				continue
-			}
-			if decl, ok := nestedDecl(fileDecl, t.Ids[1:]); ok {
-				return r.setDecl(t, decl)
-			}
-		}
+		all = append(all, imports...)
+	}
+	if decl, err := importedDecl(t, all, t.Ids, true); err != nil {
+		return err
+	} else if decl != nil {
+		return r.setDecl(t, decl)
 	}
 
 	return fmt.Errorf("declaration %q not found", t.String())
+}
+
+// importedDecl finds what ids name among imports, ids[0] being the name of an
+// imported file's declaration and the rest a path nested inside it, skipping
+// aliased imports when told to. Two imports answering with different
+// declarations make the name ambiguous, since which one was meant is for an
+// alias to say.
+func importedDecl(t *syntax.TypeReference, imports []*syntax.Import, ids []string, skipAliased bool) (syntax.Decl, error) {
+	var found syntax.Decl
+	for _, imp := range imports {
+		if imp.ImportedFile == nil || (skipAliased && imp.Alias != nil) {
+			continue
+		}
+		fileDecl := imp.ImportedFile.Decl
+		if fileDecl.Name() != ids[0] {
+			continue
+		}
+		decl, ok := nestedDecl(fileDecl, ids[1:])
+		if !ok || decl == found {
+			continue
+		}
+		if found != nil {
+			paths := []string{found.File().Path.String(), decl.File().Path.String()}
+			slices.Sort(paths)
+			return nil, fmt.Errorf("declaration %q is ambiguous between %s and %s; alias one of their imports", t.String(), paths[0], paths[1])
+		}
+		found = decl
+	}
+	return found, nil
 }
 
 // VisitTypeReference implements [syntax.TypeVisitor].

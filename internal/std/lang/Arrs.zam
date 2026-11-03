@@ -1,9 +1,17 @@
-namespace Arrs {
-    // Copy moves len elements of A from src to dst. The element type goes
-    // across the C boundary as its id so the native asks the image how wide
-    // one A is — a template is not one width — and overlapping ranges inside
-    // the same run are allowed, the native uses memmove.
-    static fun[A] void(uint, A*, A*) Copy = (len, src, dst) {
+public namespace Arrs {
+    // Of returns a raw run of its arguments, as new(A, n) would hold them,
+    // for free to release, or null for none. The collector does not trace a
+    // run of references, so one is used between System.GC.Block and Unblock.
+    // A spread argument is handed back as it is rather than copied.
+    public static fun[A] A*(A...) Of = (args) {
+        return args;
+    }
+
+    public static fun[A] void(uint, A*, A*) Copy = (len, src, dst) {
         native(STD_ARRS_COPY){void(type, uint, void*, void*)}(type(A), len, src, dst);
+    }
+
+    public static fun[A] void(uint, A*) MarkAll = (len, arr) {
+        native(STD_ARRS_MARK_ALL){void(type, uint, void*)}(type(A), len, arr);
     }
 }

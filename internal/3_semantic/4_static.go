@@ -1045,18 +1045,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprField(e *syntax.ExprField) er
 		return v.errf("field %s.%s not found", rt.Decl().Name(), e.Field)
 	}
 
-	accessible := f.OuterDecl().File() == v.currentDecl.File()
-	if modifiers := f.Modifiers(); !accessible {
-		switch {
-		case modifiers.Has(syntax.ModifierPublic), !modifiers.Has(syntax.ModifierPrivate) && !modifiers.Has(syntax.ModifierProtected):
-			accessible = true
-		case modifiers.Has(syntax.ModifierProtected):
-			outerDeclTypeable, isTypeable := f.OuterDecl().(syntax.DeclTypeable)
-			declSubtypeable, isSubtypeable := v.currentDecl.(syntax.DeclSubtypeable)
-			accessible = isTypeable && isSubtypeable && declSubtypeable.IsSubtypeOf(outerDeclTypeable.DeclType())
-		}
-	}
-	if !accessible {
+	if !v.accessible(f.Modifiers(), f.OuterDecl()) {
 		return v.errf("field %s.%s is not accessible", f.OuterDecl().Name(), f.Name())
 	}
 
@@ -1811,6 +1800,9 @@ func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) erro
 	if !ok {
 		return v.errf("static field %s.%s not found", tr.Decl().Name(), e.Field)
 	}
+	if !v.accessible(fi.Modifiers(), fi.OuterDecl()) {
+		return v.errf("static field %s.%s is not accessible", tr.Decl().Name(), e.Field)
+	}
 	fieldType, _ := staticFieldType(fi)
 	v.reference(e.FieldToken, syntax.TargetOf(fi), fieldType)
 
@@ -1954,22 +1946,50 @@ func (v *staticSemanticsValidatorVisitor) VisitTypePrimitive(t *syntax.TypePrimi
 // written there.
 func (v *staticSemanticsValidatorVisitor) VisitTypeReference(t *syntax.TypeReference) error {
 	defer v.at(t)()
-	if t.Decl().File() == v.currentDecl.File() {
-		return nil
+	if !v.accessible(t.Decl().Modifiers(), t.Decl()) {
+		v.errf("type %s is not accessible", t.String())
 	}
-	modifiers := t.Decl().Modifiers()
-	if modifiers.Has(syntax.ModifierPublic) {
-		return nil
-	} else if modifiers.Has(syntax.ModifierProtected) {
-		if declSubtypeable, ok := v.currentDecl.(syntax.DeclSubtypeable); ok && declSubtypeable.IsSubtypeOf(t.Decl().DeclType()) {
-			return nil
-		}
-	} else if !modifiers.Has(syntax.ModifierPrivate) {
-		return nil
-	}
-
-	v.errf("type %s is not accessible", t.String())
 	return nil
+}
+
+// accessible reports whether something with modifiers, declared in or as
+// owner, may be named from the declaration being checked. Anything is
+// accessible from its own file; past it, public and virtual reach everywhere,
+// protected reaches owner's subtypes, private reaches nowhere, and the
+// unmarked default reaches the files of owner's package, its directory.
+func (v *staticSemanticsValidatorVisitor) accessible(modifiers syntax.Modifier, owner syntax.Decl) bool {
+	switch {
+	case owner.File() == v.currentDecl.File(),
+		modifiers.Has(syntax.ModifierPublic),
+		modifiers.Has(syntax.ModifierVirtual):
+		return true
+	case modifiers.Has(syntax.ModifierPrivate):
+		return false
+	case modifiers.Has(syntax.ModifierProtected):
+		return descends(v.currentDecl, owner)
+	}
+	return owner.File().Path.Dir() == v.currentDecl.File().Path.Dir()
+}
+
+// descends reports whether d is ancestor or extends it, by way of any
+// instantiation of either.
+func descends(d, ancestor syntax.Decl) bool {
+	ancestor = syntax.TemplateOf(ancestor)
+	for d != nil {
+		if syntax.TemplateOf(d) == ancestor {
+			return true
+		}
+		subtypeable, ok := d.(syntax.DeclSubtypeable)
+		if !ok || subtypeable.BaseDeclType() == nil {
+			return false
+		}
+		resolvable, ok := subtypeable.BaseDeclType().Type.(syntax.TypeResolvable)
+		if !ok {
+			return false
+		}
+		d = resolvable.Decl()
+	}
+	return false
 }
 
 // VisitTypeTailed implements [syntax.TypeVisitor].

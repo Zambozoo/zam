@@ -1,1 +1,251 @@
-namespace YAML {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+
+// YAML value over libyaml, which owns the document. Plain scalars resolve
+// under the YAML 1.2 core schema, and quoted or block scalars are strings.
+// Aliases read as the node they name. Set and Append copy the value they are
+// handed, so it shares nothing with this document after.
+public class YAML {
+    public enum Kind : int {
+        Null(0),
+        Bool(1),
+        Int(2),
+        Flt(3),
+        String(4),
+        Seq(5),
+        Map(6);
+    }
+
+    var uint doc;
+    var int node;
+
+    private static fun YAML*(uint, int) wrap = (doc, node) {
+        native(STD_YAML_RETAIN){void(uint)}(doc);
+        var YAML* y = new(YAML);
+        y.doc = doc;
+        y.node = node;
+        return y;
+    }
+
+    // ParseAll reads every document in a stream.
+    public static fun Pair[Arr[YAML*]*, Err*](str) ParseAll = (s) {
+        var Pair[Arr[YAML*]*, Err*] out;
+        var uint list = 0U;
+        var int count = 0;
+        var str errStr;
+        native(STD_YAML_PARSE){void(str, uint*, int*, str*)}(s, &list, &count, &errStr);
+        out.first = null;
+        out.second = null;
+        if(errStr != null) {
+            out.second = type(StrErr).New(errStr);
+            return out;
+        }
+        out.first = type(Arr)[YAML*].New(count{uint}, new(YAML*, count{uint})...);
+        for(var int i = 0; i < count; i++) {
+            var uint doc;
+            native(STD_YAML_TAKE){void(uint, int, uint*)}(list, i, &doc);
+            out.first.Set(i{uint}, type(YAML).wrap(doc, 1));
+        }
+        return out;
+    }
+
+    // Parse reads the first document in a stream, null for an empty one.
+    public static fun Pair[YAML*, Err*](str) Parse = (s) {
+        var Pair[YAML*, Err*] out;
+        var Pair[Arr[YAML*]*, Err*] all = type(YAML).ParseAll(s);
+        out.first = null;
+        out.second = all.second;
+        if(all.second == null) {
+            if(all.first.Len() == 0U) {
+                out.first = type(YAML).Null();
+            } else {
+                out.first = all.first.Get(0U);
+            }
+        }
+        return out;
+    }
+
+    private static fun YAML*(str, bool) scalar = (text, isStr) {
+        var uint doc;
+        var int node;
+        native(STD_YAML_NEW_SCALAR){void(str, bool, uint*, int*)}(text, isStr, &doc, &node);
+        return type(YAML).wrap(doc, node);
+    }
+
+    public static fun YAML*() Null = () {
+        return type(YAML).scalar("null", false);
+    }
+
+    public static fun YAML*(bool) NewBool = (b) {
+        return type(YAML).scalar(b{str}, false);
+    }
+
+    public static fun YAML*(int) NewInt = (i) {
+        return type(YAML).scalar(i{str}, false);
+    }
+
+    public static fun YAML*(flt) NewFlt = (f) {
+        var uint doc;
+        var int node;
+        native(STD_YAML_NEW_FLT){void(flt, uint*, int*)}(f, &doc, &node);
+        return type(YAML).wrap(doc, node);
+    }
+
+    // NewStr makes a string, quoted when it would otherwise read back as
+    // something else.
+    public static fun YAML*(str) NewStr = (s) {
+        return type(YAML).scalar(s, true);
+    }
+
+    private static fun YAML*(bool) collection = (isMap) {
+        var uint doc;
+        var int node;
+        native(STD_YAML_NEW_COLLECTION){void(bool, uint*, int*)}(isMap, &doc, &node);
+        return type(YAML).wrap(doc, node);
+    }
+
+    public static fun YAML*() NewSeq = () {
+        return type(YAML).collection(false);
+    }
+
+    public static fun YAML*() NewMap = () {
+        return type(YAML).collection(true);
+    }
+
+    // orNull stands a null pointer in for YAML null.
+    private static fun YAML*(YAML*) orNull = (y) {
+        if(y == null) {
+            return type(YAML).Null();
+        }
+        return y;
+    }
+
+    public fun YAML.Kind() Kind = () {
+        var int k;
+        native(STD_YAML_KIND){void(uint, int, int*)}(this.doc, this.node, &k);
+        if(k == 1) {
+            return type(YAML.Kind).Bool;
+        }
+        if(k == 2) {
+            return type(YAML.Kind).Int;
+        }
+        if(k == 3) {
+            return type(YAML.Kind).Flt;
+        }
+        if(k == 4) {
+            return type(YAML.Kind).String;
+        }
+        if(k == 5) {
+            return type(YAML.Kind).Seq;
+        }
+        if(k == 6) {
+            return type(YAML.Kind).Map;
+        }
+        return type(YAML.Kind).Null;
+    }
+
+    public fun bool() IsNull = () {
+        return this.Kind() == type(YAML.Kind).Null;
+    }
+
+    public fun bool() AsBool = () {
+        var bool b;
+        native(STD_YAML_BOOL){void(uint, int, bool*)}(this.doc, this.node, &b);
+        return b;
+    }
+
+    // AsInt reads a number, truncating a flt toward zero.
+    public fun int() AsInt = () {
+        var int i;
+        native(STD_YAML_INT){void(uint, int, int*)}(this.doc, this.node, &i);
+        return i;
+    }
+
+    public fun flt() AsFlt = () {
+        var flt f;
+        native(STD_YAML_FLT){void(uint, int, flt*)}(this.doc, this.node, &f);
+        return f;
+    }
+
+    // AsStr returns the text of any scalar.
+    public fun str() AsStr = () {
+        var str s;
+        native(STD_YAML_SCALAR){void(uint, int, str*)}(this.doc, this.node, &s);
+        return s;
+    }
+
+    // Len counts a sequence's items or a mapping's pairs.
+    public fun uint() Len = () {
+        var int n;
+        native(STD_YAML_LEN){void(uint, int, int*)}(this.doc, this.node, &n);
+        return n{uint};
+    }
+
+    public fun YAML*(uint) At = (i) {
+        var int child;
+        native(STD_YAML_AT){void(uint, int, int, int*)}(this.doc, this.node, i{int}, &child);
+        return type(YAML).wrap(this.doc, child);
+    }
+
+    // Get returns a mapping's value for a scalar key, and false when it has
+    // none.
+    public fun Pair[YAML*, bool](str) Get = (key) {
+        var Pair[YAML*, bool] out;
+        var int child;
+        native(STD_YAML_GET){void(uint, int, str, int*, bool*)}(this.doc, this.node, key, &child, &(out.second));
+        out.first = null;
+        if(out.second) {
+            out.first = type(YAML).wrap(this.doc, child);
+        }
+        return out;
+    }
+
+    // Keys returns a mapping's keys in document order, a key that is not a
+    // scalar reading as empty.
+    public fun Arr[str]*() Keys = () {
+        var str joined;
+        native(STD_YAML_KEYS){void(uint, int, str*)}(this.doc, this.node, &joined);
+        if(this.Len() == 0U) {
+            return type(Arr)[str].New(0U, new(str, 0U)...);
+        }
+        return type(Strs).Split(joined, 0{byte});
+    }
+
+    // Set sets a mapping's value for a key to a copy of v.
+    public fun void(str, YAML*) Set = (key, v) {
+        v = type(YAML).orNull(v);
+        native(STD_YAML_SET){void(uint, int, str, uint, int)}(this.doc, this.node, key, v.doc, v.node);
+    }
+
+    public fun void(str) Remove = (key) {
+        native(STD_YAML_REMOVE){void(uint, int, str)}(this.doc, this.node, key);
+    }
+
+    // Append appends a copy of v to a sequence.
+    public fun void(YAML*) Append = (v) {
+        v = type(YAML).orNull(v);
+        native(STD_YAML_APPEND){void(uint, int, uint, int)}(this.doc, this.node, v.doc, v.node);
+    }
+
+    // Encode writes the value as a YAML document.
+    public fun str() Encode = () {
+        var str s;
+        native(STD_YAML_ENCODE){void(uint, int, str*)}(this.doc, this.node, &s);
+        return s;
+    }
+
+    public fun str() Str = () {
+        return this.Encode();
+    }
+
+    public fun void() Delete = () {
+        native(STD_YAML_RELEASE){void(uint)}(this.doc);
+        this.doc = 0U;
+    }
+
+    public fun void() Mark = () {
+    }
+}

@@ -1,1 +1,416 @@
-class WebSocket {}
+import "../../lang/Arrs.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../../lang/Strs.zam";
+import "../../sync/Mutex.zam";
+import "../local/Buffer.zam";
+import "../local/Stream.zam";
+import "../local/Streams.zam";
+import "../net/Socket.zam";
+import "../net/TCP.zam";
+import "../net/TLS.zam";
+import "HTTP.zam";
+import "URL.zam";
+
+// WebSocket over any stream, per RFC 6455: dialed as a client to ws:// and
+// wss:// URLs, or accepted by a server from an HTTP request. One thread may
+// send while another receives. Pings are answered without being seen.
+public class WebSocket {
+    // One whole message, or the end of the connection when closed is true
+    public class Message {
+        public var bool text;
+        public var str data;
+        public var bool closed;
+    }
+
+    // The largest message Receive takes, joined from its fragments
+    public static var int MaxMessage = 67108864;
+
+    var Stream* stream;
+    var Socket* sock;
+    var bool client;
+    var Mutex* lock;
+    var byte* buf;
+    var int bufCap;
+    var int bufStart;
+    var int bufEnd;
+    var bool closeSent;
+    var bool ended;
+    var bool receiving;
+    var bool released;
+
+    private static fun WebSocket*(Stream*, Socket*, bool, str) of = (stream, sock, client, rest) {
+        var WebSocket* ws = new(WebSocket);
+        ws.stream = stream;
+        ws.sock = sock;
+        ws.client = client;
+        ws.lock = type(Mutex).New();
+        ws.bufCap = 16384;
+        ws.buf = new(byte, 16384U);
+        ws.bufStart = 0;
+        ws.bufEnd = 0;
+        var Pair[byte*, int] r = type(Strs).ToBytes(rest);
+        if(r.second > 0) {
+            ws.reserve(r.second);
+            type(Arrs)[byte].Copy(r.second{uint}, r.first, ws.buf);
+            ws.bufEnd = r.second;
+        }
+        ws.closeSent = false;
+        ws.ended = false;
+        ws.receiving = false;
+        ws.released = false;
+        return ws;
+    }
+
+    private static fun Pair[WebSocket*, Err*](str) fail = (msg) {
+        var Pair[WebSocket*, Err*] out;
+        out.first = null;
+        out.second = type(StrErr).New(msg);
+        return out;
+    }
+
+    // Dial opens a WebSocket to a ws:// or wss:// url, sending headers,
+    // which may be null, with the opening handshake. A wss:// connection is
+    // verified with ctx, or against the system's roots for a null one.
+    public static fun Pair[WebSocket*, Err*](str, HTTP.Headers*, TLS.Context*) Dial = (url, headers, ctx) {
+        var Pair[URL*, Err*] parsed = type(URL).Parse(url);
+        if(parsed.second != null) {
+            return type(WebSocket).fail(url + ": " + parsed.second.Err());
+        }
+        var URL* u = parsed.first;
+        var bool secure = u.scheme == "wss" || u.scheme == "https";
+        if(!secure && u.scheme != "ws" && u.scheme != "http") {
+            return type(WebSocket).fail(url + ": not a WebSocket URL");
+        }
+        var uint port = u.port;
+        if(port == 0U) {
+            port = 80U;
+            if(secure) {
+                port = 443U;
+            }
+        }
+        var Pair[Socket*, Err*] d = type(TCP).Dial(u.host, port);
+        if(d.second != null) {
+            return type(WebSocket).fail(url + ": " + d.second.Err());
+        }
+        var Stream* s = d.first;
+        if(secure) {
+            if(ctx == null) {
+                var Pair[TLS.Context*, Err*] roots = type(TLS.Context).Client("", true);
+                if(roots.second != null) {
+                    d.first.Close();
+                    return type(WebSocket).fail(url + ": " + roots.second.Err());
+                }
+                ctx = roots.first;
+            }
+            var Pair[TLS*, Err*] t = type(TLS).Client(d.first, ctx, u.host);
+            if(t.second != null) {
+                d.first.Close();
+                return type(WebSocket).fail(url + ": " + t.second.Err());
+            }
+            s = t.first;
+        }
+
+        var str target = u.path;
+        if(target == "") {
+            target = "/";
+        }
+        if(u.query != "") {
+            target = target + "?" + u.query;
+        }
+        var str host = u.host;
+        if(u.port != 0U) {
+            host = host + ":" + u.port{str};
+        }
+        var str key;
+        native(STD_WS_KEY){void(str*)}(&key);
+        var str extra = "";
+        if(headers != null) {
+            extra = headers.Join(": ", "\r\n");
+        }
+        var Err* e = type(Streams).WriteStr(s, "GET " + target + " HTTP/1.1\r\nHost: " + host + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: " + key + "\r\nSec-WebSocket-Version: 13\r\n" + extra + "\r\n");
+        if(e != null) {
+            s.Close();
+            return type(WebSocket).fail(url + ": " + e.Err());
+        }
+        var HTTP.Conn* c = type(HTTP.Conn).New(s, d.first, true);
+        var Pair[bool, Err*] next = c.Next();
+        var str problem = "";
+        if(next.second != null) {
+            problem = next.second.Err();
+        } else if(!next.first) {
+            problem = "connection closed during the handshake";
+        } else if(c.status != 101U) {
+            problem = "handshake answered " + c.status{str} + " " + type(HTTP).StatusText(c.status);
+        } else {
+            var str want;
+            native(STD_WS_ACCEPT){void(str, str*)}(key, &want);
+            if(c.headers.Value("sec-websocket-accept").first != want) {
+                problem = "handshake answered the wrong key";
+            }
+        }
+        if(problem != "") {
+            c.Delete();
+            s.Close();
+            return type(WebSocket).fail(url + ": " + problem);
+        }
+        var str rest = c.Rest();
+        c.Delete();
+        var Pair[WebSocket*, Err*] out;
+        out.first = type(WebSocket).of(s, d.first, true, rest);
+        out.second = null;
+        return out;
+    }
+
+    // Accept answers a request to open a WebSocket, hijacking the
+    // connection it came on. It fails, leaving the request to be answered,
+    // for a request that is not one.
+    public static fun Pair[WebSocket*, Err*](HTTP.Request*) Accept = (req) {
+        var Pair[str, bool] key = req.headers.Value("sec-websocket-key");
+        if(req.method != "GET" || type(HTTP.Headers).Fold(req.headers.Value("upgrade").first) != "websocket" || !key.second) {
+            return type(WebSocket).fail("not a WebSocket request");
+        }
+        if(req.headers.Value("sec-websocket-version").first != "13") {
+            return type(WebSocket).fail("unsupported WebSocket version");
+        }
+        var HTTP.Conn* c = req.Hijack();
+        if(c == null) {
+            return type(WebSocket).fail("request was not received by a server");
+        }
+        var str accept;
+        native(STD_WS_ACCEPT){void(str, str*)}(key.first, &accept);
+        var Err* e = type(Streams).WriteStr(c.stream, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n");
+        if(e != null) {
+            c.stream.Close();
+            return type(WebSocket).fail(e.Err());
+        }
+        var Pair[WebSocket*, Err*] out;
+        out.first = type(WebSocket).of(c.stream, c.sock, false, c.Rest());
+        out.second = null;
+        return out;
+    }
+
+    // sendLocked sends one frame; the caller holds the lock.
+    private fun Err*(int, byte*, int) sendLocked = (opcode, b, n) {
+        if(this.closeSent || this.released) {
+            return type(StrErr).New("WebSocket is closed");
+        }
+        if(opcode == 8) {
+            this.closeSent = true;
+        }
+        var byte* frame = new(byte, (n + 14){uint});
+        var int len;
+        native(STD_WS_FRAME){void(int, bool, byte*, int, byte*, int*)}(opcode, this.client, b, n, frame, &len);
+        var Err* e = type(Streams).WriteAll(this.stream, frame, len);
+        free(frame);
+        return e;
+    }
+
+    private fun Err*(int, byte*, int) send = (opcode, b, n) {
+        this.lock.Lock();
+        var Err* e = this.sendLocked(opcode, b, n);
+        this.lock.Unlock();
+        return e;
+    }
+
+    public fun Err*(str) SendText = (s) {
+        var Pair[byte*, int] p = type(Strs).ToBytes(s);
+        return this.send(1, p.first, p.second);
+    }
+
+    public fun Err*(byte*, uint) SendBinary = (b, n) {
+        return this.send(2, b, n{int});
+    }
+
+    // reserve makes room for n unread bytes in buf.
+    private fun void(int) reserve = (n) {
+        var int len = this.bufEnd - this.bufStart;
+        if(this.bufStart > 0) {
+            if(len > 0) {
+                type(Arrs)[byte].Copy(len{uint}, this.buf + this.bufStart{uint}, this.buf);
+            }
+            this.bufStart = 0;
+            this.bufEnd = len;
+        }
+        if(n <= this.bufCap) {
+            return;
+        }
+        var byte* grown = new(byte, n{uint});
+        if(len > 0) {
+            type(Arrs)[byte].Copy(len{uint}, this.buf, grown);
+        }
+        free(this.buf);
+        this.buf = grown;
+        this.bufCap = n;
+    }
+
+    // fill reads until n bytes are unread, answering false at the end of the
+    // stream.
+    private fun Pair[bool, Err*](int) fill = (n) {
+        var Pair[bool, Err*] out;
+        out.first = true;
+        out.second = null;
+        if(this.bufEnd - this.bufStart >= n) {
+            return out;
+        }
+        if(this.bufStart + n > this.bufCap) {
+            var int want = n;
+            if(want < 16384) {
+                want = 16384;
+            }
+            this.reserve(want);
+        }
+        for(; this.bufEnd - this.bufStart < n;) {
+            var Pair[int, Err*] p = this.stream.Read(this.buf + this.bufEnd{uint}, this.bufCap - this.bufEnd);
+            if(p.second != null) {
+                out.first = false;
+                out.second = p.second;
+                return out;
+            }
+            if(p.first == 0) {
+                out.first = false;
+                return out;
+            }
+            this.bufEnd = this.bufEnd + p.first;
+        }
+        return out;
+    }
+
+    // release closes the stream once nothing more is to be read or sent;
+    // the caller holds the lock.
+    private fun void() release = () {
+        if(!this.released) {
+            this.released = true;
+            this.stream.Close();
+        }
+    }
+
+    // Receive waits for the next whole message, joining its fragments. Once
+    // the connection is closed, from either end, it answers a closed message.
+    public fun Pair[WebSocket.Message*, Err*]() Receive = () {
+        var Pair[WebSocket.Message*, Err*] out;
+        out.first = new(WebSocket.Message);
+        out.first.text = false;
+        out.first.data = "";
+        out.first.closed = true;
+        out.second = null;
+        this.lock.Lock();
+        if(this.ended) {
+            this.lock.Unlock();
+            return out;
+        }
+        this.receiving = true;
+        this.lock.Unlock();
+
+        var Buffer* message = null;
+        for(;;) {
+            var bool fin;
+            var int opcode;
+            var int head = 0;
+            var int length;
+            var Pair[bool, Err*] got = this.fill(2);
+            for(; got.first && head == 0;) {
+                native(STD_WS_HEADER){void(byte*, int, bool*, int*, int*, int*)}(this.buf + this.bufStart{uint}, this.bufEnd - this.bufStart, &fin, &opcode, &head, &length);
+                if(head == 0) {
+                    got = this.fill(this.bufEnd - this.bufStart + 1);
+                }
+            }
+            if(got.first && (length > type(WebSocket).MaxMessage || (message != null && message.Len(){int} + length > type(WebSocket).MaxMessage))) {
+                got.first = false;
+                got.second = type(StrErr).New("WebSocket message too large");
+            }
+            if(got.first) {
+                got = this.fill(head + length);
+            }
+            if(!got.first) {
+                if(got.second != null && !this.closeSent) {
+                    out.second = got.second;
+                } else if(message != null) {
+                    out.second = type(StrErr).New("connection ended in the middle of a message");
+                }
+                break;
+            }
+            var byte* payload = this.buf + (this.bufStart + head){uint};
+            if((this.buf[this.bufStart + 1]{int} & 128) != 0) {
+                native(STD_WS_UNMASK){void(byte*, int, byte*)}(payload, length, payload - 4U);
+            }
+            this.bufStart = this.bufStart + head + length;
+            if(opcode == 8) {
+                var int echo = length;
+                if(echo > 2) {
+                    echo = 2;
+                }
+                this.lock.Lock();
+                if(!this.closeSent) {
+                    this.sendLocked(8, payload, echo);
+                }
+                this.lock.Unlock();
+                break;
+            }
+            if(opcode == 9) {
+                this.send(10, payload, length);
+                continue;
+            }
+            if(opcode == 10) {
+                continue;
+            }
+            if((opcode == 1 || opcode == 2) && message == null) {
+                if(fin) {
+                    out.first.text = opcode == 1;
+                    out.first.data = type(Strs).FromBytes(payload, length);
+                    out.first.closed = false;
+                    break;
+                }
+                out.first.text = opcode == 1;
+                message = type(Buffer).New();
+                message.Write(payload, length);
+                continue;
+            }
+            if(opcode == 0 && message != null) {
+                message.Write(payload, length);
+                if(fin) {
+                    out.first.data = message.Str();
+                    out.first.closed = false;
+                    message.Delete();
+                    break;
+                }
+                continue;
+            }
+            out.second = type(StrErr).New("WebSocket protocol error: unexpected opcode " + opcode{str});
+            break;
+        }
+
+        this.lock.Lock();
+        this.receiving = false;
+        if(out.first.closed || out.second != null) {
+            this.ended = true;
+            out.first.closed = true;
+            this.release();
+        }
+        this.lock.Unlock();
+        return out;
+    }
+
+    // Close sends a close frame, if none has been sent, and ends the
+    // connection, ending any Receive waiting in another thread.
+    public fun void() Close = () {
+        this.lock.Lock();
+        if(!this.closeSent && !this.released) {
+            this.sendLocked(8, null, 0);
+        }
+        this.ended = true;
+        if(this.receiving) {
+            this.sock.CloseRead();
+            this.sock.CloseWrite();
+        } else {
+            this.release();
+        }
+        this.lock.Unlock();
+    }
+
+    public fun void() Delete = () {
+        free(this.buf);
+        this.buf = null;
+    }
+}

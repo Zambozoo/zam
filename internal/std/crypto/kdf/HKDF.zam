@@ -1,2 +1,40 @@
-// HMAC-based Extract-and-Expand Key Derivation Function
-namespace HKDF {}
+import "../../lang/Arr.zam";
+import "../../lang/Err.zam";
+import "../../lang/Pair.zam";
+import "../../lang/StrErr.zam";
+import "../hash/Digest.zam";
+import "../mac/HMAC.zam";
+
+// HMAC-based Extract-and-Expand Key Derivation Function (RFC 5869)
+public namespace HKDF {
+    private static fun Pair[Arr[byte]*, Err*](Digest.Kind, int, byte*, uint, byte*, uint, byte*, uint, uint) derive = (kind, mode, key, keyLen, salt, saltLen, info, infoLen, length) {
+        var byte* out = new(byte, length);
+        var str errStr;
+        native(STD_HKDF){void(byte, int, byte*, int, byte*, int, byte*, int, byte*, int, str*)}(kind{byte}, mode, key, keyLen{int}, salt, saltLen{int}, info, infoLen{int}, out, length{int}, &errStr);
+        var Pair[Arr[byte]*, Err*] r;
+        r.first = null;
+        r.second = null;
+        if(errStr != null) {
+            free(out);
+            r.second = type(StrErr).New(errStr);
+        } else {
+            r.first = type(Arr)[byte].New(length, out...);
+        }
+        return r;
+    }
+
+    // Key derives length bytes from a secret, salt and info.
+    public static fun Pair[Arr[byte]*, Err*](Digest.Kind, byte*, uint, byte*, uint, byte*, uint, uint) Key = (kind, secret, secretLen, salt, saltLen, info, infoLen, length) {
+        return type(HKDF).derive(kind, 0, secret, secretLen, salt, saltLen, info, infoLen, length);
+    }
+
+    // Extract returns the pseudorandom key extracted from a secret and salt.
+    public static fun Pair[Arr[byte]*, Err*](Digest.Kind, byte*, uint, byte*, uint) Extract = (kind, secret, secretLen, salt, saltLen) {
+        return type(HMAC).Of(kind, salt, saltLen, secret, secretLen);
+    }
+
+    // Expand expands a pseudorandom key and info to length bytes.
+    public static fun Pair[Arr[byte]*, Err*](Digest.Kind, byte*, uint, byte*, uint, uint) Expand = (kind, prk, prkLen, info, infoLen, length) {
+        return type(HKDF).derive(kind, 2, prk, prkLen, null, 0U, info, infoLen, length);
+    }
+}
