@@ -1,12 +1,11 @@
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 
 // Stream is anything bytes are read from or written to in turn, such as a
 // File, a Socket, a TLS connection or a Buffer. Read returns zero at the end
 // of the stream; Write may write fewer bytes than asked, which Streams.WriteAll
 // makes up for.
 public interface Stream {
-    virtual fun Pair[int, Err*](byte*, int) Read;
-    virtual fun Pair[int, Err*](byte*, int) Write;
+    virtual fun (int, Err*)(byte*, int) Read;
+    virtual fun (int, Err*)(byte*, int) Write;
     virtual fun Err*() Close;
 }

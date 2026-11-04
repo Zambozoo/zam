@@ -13,6 +13,9 @@ type (
 	Lexer struct {
 		rr         runeReader
 		LineStarts []uint
+		// last is the kind of the token most recently lexed. Digits after a
+		// period select a tuple element, so they lex as an integer alone.
+		last TokenKind
 	}
 
 	// LexedToken is a token together with the offset, in runes, just past its
@@ -81,6 +84,14 @@ func Lex(r io.ReadCloser) ([]LexedToken, error) {
 }
 
 func (l *Lexer) Next() (*Token, error) {
+	tok, err := l.next()
+	if err == nil {
+		l.last = tok.Kind
+	}
+	return tok, err
+}
+
+func (l *Lexer) next() (*Token, error) {
 	if err := l.whitespace(); err != nil {
 		if errors.Is(err, io.EOF) {
 			return newToken(TTEOF, l.rr.Offset(), nil), nil
@@ -126,10 +137,12 @@ func (l *Lexer) whitespace() error {
 					if err != nil {
 						return err
 					}
-					l.rr.Advance(1)
 					if c == '\n' {
+						l.newLine()
+						l.rr.Advance(1)
 						break
 					}
+					l.rr.Advance(1)
 				}
 				continue
 			} else if r1 == '*' {
@@ -198,6 +211,14 @@ func (l *Lexer) number() (*Token, error) {
 			break
 		}
 		b.WriteRune(*r)
+	}
+
+	if l.last == TTPeriod {
+		value, err := strconv.ParseUint(b.String(), 10, 64)
+		if err != nil {
+			return nil, errInvalidInt
+		}
+		return newToken(TTIntLiteral, offset, value), nil
 	}
 
 	if dot, err := l.rr.Peek(0); err == nil && dot == '.' {

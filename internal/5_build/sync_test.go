@@ -29,14 +29,14 @@ namespace Main {
         var int total = 0;
         for(var int i = 0; i < n; i++) {
             var str s = i{str} + "-churn";
-            total = total + type(Strs).ByteLen(s);
+            total = total + Strs::ByteLen(s);
         }
         return total;
     }
 
     static fun int(Mutex*, Counter*, int) bump = (m, c, n) {
         for(var int i = 0; i < n; i++) {
-            type(Main).churn(3);
+            Main::churn(3);
             m.Lock();
             c.n++;
             m.Unlock();
@@ -51,7 +51,7 @@ namespace Main {
     static fun int(Atomic[int]*, RWMutex*, Counter*, int) climb = (a, rw, c, n) {
         for(var int i = 0; i < n; i++) {
             for(var bool done = false; !done;) {
-                done = a.Update(a.Load() + 1, type(Main).succ).second;
+                done = a.Update(a.Load() + 1, Main::succ).1;
             }
             rw.Lock();
             c.n++;
@@ -60,33 +60,33 @@ namespace Main {
             var int seen = c.n;
             rw.RUnlock();
             if(seen < 1) {
-                type(System).Panic("RWMutex lost a write");
+                System::Panic("RWMutex lost a write");
             }
-            type(Main).churn(2);
+            Main::churn(2);
         }
         return n;
     }
 
     static fun void() tick = () {
-        type(Main).lock.Lock();
-        type(Main).active++;
-        if(type(Main).active > type(Main).peak) {
-            type(Main).peak = type(Main).active;
+        Main::lock.Lock();
+        Main::active++;
+        if(Main::active > Main::peak) {
+            Main::peak = Main::active;
         }
-        type(Main).lock.Unlock();
-        type(Main).churn(200);
-        type(Main).lock.Lock();
-        type(Main).active--;
-        type(Main).lock.Unlock();
+        Main::lock.Unlock();
+        Main::churn(200);
+        Main::lock.Lock();
+        Main::active--;
+        Main::lock.Unlock();
     }
 
     static fun void() hit = () {
-        type(Main).hits++;
+        Main::hits++;
     }
 
     static fun int(Once*, Latch*) start = (o, l) {
-        type(Main).churn(50);
-        o.Do(type(Main).hit);
+        Main::churn(50);
+        o.Do(Main::hit);
         l.CountDown();
         return 0;
     }
@@ -94,7 +94,7 @@ namespace Main {
     static fun int(Barrier*, int) rounds = (b, n) {
         var int last = 0;
         for(var int i = 0; i < n; i++) {
-            type(Main).churn(5);
+            Main::churn(5);
             if(b.Wait()) {
                 last++;
             }
@@ -104,62 +104,62 @@ namespace Main {
 
     static fun int(Semaphore*, int) post = (s, n) {
         for(var int i = 0; i < n; i++) {
-            type(Main).churn(20);
+            Main::churn(20);
             s.Unlock();
         }
         return n;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var Mutex* m = type(Mutex).New();
+        var Mutex* m = Mutex::New();
         var Counter* c = new(Counter);
-        var thread[int] a = async(type(Main).bump(m, c, 300));
-        var thread[int] b = async(type(Main).bump(m, c, 300));
-        var thread[int] d = async(type(Main).bump(m, c, 300));
+        var thread[int] a = async(Main::bump(m, c, 300));
+        var thread[int] b = async(Main::bump(m, c, 300));
+        var thread[int] d = async(Main::bump(m, c, 300));
         var int w = wait(a) + wait(b) + wait(d);
         var str out = c.n{str};
         out = out + " " + m.TryLock(){str} + " " + m.TryLock(){str};
         m.Unlock();
 
-        var Atomic[int]* at = type(Atomic)[int].New(0);
-        var RWMutex* rw = type(RWMutex).New();
+        var Atomic[int]* at = Atomic::[int]New(0);
+        var RWMutex* rw = RWMutex::New();
         var Counter* rc = new(Counter);
-        a = async(type(Main).climb(at, rw, rc, 200));
-        b = async(type(Main).climb(at, rw, rc, 200));
+        a = async(Main::climb(at, rw, rc, 200));
+        b = async(Main::climb(at, rw, rc, 200));
         w = wait(a) + wait(b);
         out = out + " " + at.Load(){str} + " " + rc.n{str} + " " + at.Set(7){str} + " " + at.Load(){str};
 
-        type(Main).lock = type(Mutex).New();
-        var WaitGroup* wg = type(WaitGroup).NewWithMaxSize(2U);
+        Main::lock = Mutex::New();
+        var WaitGroup* wg = WaitGroup::NewWithMaxSize(2U);
         for(var int i = 0; i < 6; i++) {
-            wg.Do(type(Main).tick);
+            wg.Do(Main::tick);
         }
         wg.Wait();
-        out = out + " " + (type(Main).peak <= 2){str} + " " + type(Main).active{str};
+        out = out + " " + (Main::peak <= 2){str} + " " + Main::active{str};
 
-        var Once* o = type(Once).New();
-        var Latch* l = type(Latch).New(3U);
-        a = async(type(Main).start(o, l));
-        b = async(type(Main).start(o, l));
-        d = async(type(Main).start(o, l));
+        var Once* o = Once::New();
+        var Latch* l = Latch::New(3U);
+        a = async(Main::start(o, l));
+        b = async(Main::start(o, l));
+        d = async(Main::start(o, l));
         l.Wait();
-        out = out + " " + type(Main).hits{str} + " " + l.Count(){str};
+        out = out + " " + Main::hits{str} + " " + l.Count(){str};
         w = wait(a) + wait(b) + wait(d);
 
-        var Barrier* br = type(Barrier).New(3U);
-        a = async(type(Main).rounds(br, 40));
-        b = async(type(Main).rounds(br, 40));
-        d = async(type(Main).rounds(br, 40));
+        var Barrier* br = Barrier::New(3U);
+        a = async(Main::rounds(br, 40));
+        b = async(Main::rounds(br, 40));
+        d = async(Main::rounds(br, 40));
         out = out + " " + (wait(a) + wait(b) + wait(d)){str};
 
-        var Semaphore* s = type(Semaphore).New(0U);
-        a = async(type(Main).post(s, 25));
+        var Semaphore* s = Semaphore::New(0U);
+        a = async(Main::post(s, 25));
         for(var int i = 0; i < 25; i++) {
             s.Wait();
         }
         w = wait(a);
         out = out + " " + s.TryWait(){str} + "\n";
-        type(File).StdOut.WriteStr(out);
+        File::StdOut.WriteStr(out);
     }
 }
 `)
@@ -176,7 +176,7 @@ import std("sync/*");
 
 namespace Main {
     fun void(uint, str...) main = (argC, argV) {
-        var Mutex* m = type(Mutex).New();
+        var Mutex* m = Mutex::New();
         m.Lock();
         m.Lock();
     }

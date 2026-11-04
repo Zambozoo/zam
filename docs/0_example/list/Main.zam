@@ -5,7 +5,7 @@ import std("lang/*");
 
 namespace Main {
     interface Iter[A] {
-        virtual fun Pair[A, bool]() Next;
+        virtual fun (A, bool)() Next;
     }
     
     interface Iterable[A] {
@@ -14,25 +14,25 @@ namespace Main {
     }
 
     fun[A] void(Iterable[A]*) Print = (i) {
-        type(File).StdOut.WriteStr(i{str} + "\n");
+        File::StdOut.WriteStr(i{str} + "\n");
         var Iter[A]* iter = i.Iter();
-        for(var Pair[A, bool] p = iter.Next(); p.second; p = iter.Next()) {
-            type(File).StdOut.WriteStr(p.first{str} + "\n");
+        for(var (A, bool) p = iter.Next(); p.1; p = iter.Next()) {
+            File::StdOut.WriteStr(p.0{str} + "\n");
         }
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var Iterable[str]* al = type(ArrList)[str].New(argC, argV...);
-        type(Main)[str].Print(al);
+        var Iterable[str]* al = ArrList::[str]New(argC, argV...);
+        Main::[str]Print(al);
 
-        var Iterable[str]* ll = type(LinkList)[str].New(argC, argV...);
-        type(Main)[str].Print(ll);
+        var Iterable[str]* ll = LinkList::[str]New(argC, argV...);
+        Main::[str]Print(ll);
 
-        var Iterable[str]* sl = type(SkipList)[str].New(argC, argV...);
-        type(Main)[str].Print(sl);
+        var Iterable[str]* sl = SkipList::[str]New(argC, argV...);
+        Main::[str]Print(sl);
 
         var Arr[str]* arr = al.Arr();
-        type(Sort)[str].SortArr(arr);
-        type(File).StdOut.WriteStr(arr{str} + "\n");
+        Sort::[str]SortArr(arr);
+        File::StdOut.WriteStr(arr{str} + "\n");
     }
 }

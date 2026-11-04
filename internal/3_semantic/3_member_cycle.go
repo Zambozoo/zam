@@ -160,6 +160,14 @@ func (v *memberCycleDetectorVisitor) VisitTypeTailed(t *syntax.TypeTailed) error
 // variadic each put their element behind indirection, so following one is not
 // a cycle in the member graph. Const adds no indirection — a const T is laid
 // out exactly as T — so a const member is followed in through its inner type.
+// VisitTypeTuple implements [syntax.TypeVisitor]. Every element lies inline.
+func (v *memberCycleDetectorVisitor) VisitTypeTuple(t *syntax.TypeTuple) error {
+	for _, element := range t.Types {
+		element.Accept(v)
+	}
+	return nil
+}
+
 func (v *memberCycleDetectorVisitor) VisitTypeWrapped(t *syntax.TypeWrapped) error {
 	if t.Kind() == syntax.TypeKindConst {
 		t.Type.Accept(v)

@@ -271,7 +271,7 @@ namespace Main {
         return;
     }
     static fun void() call = () {
-        type(Main).take(42);
+        Main::take(42);
         return;
     }
 }
@@ -293,7 +293,7 @@ namespace Main {
         return;
     }
     static fun void() call = () {
-        type(Main).take(1, 2, 3);
+        Main::take(1, 2, 3);
         return;
     }
 }
@@ -644,7 +644,7 @@ namespace Main {
     }
 
     static fun int() f = () {
-        return type(Mask).B{int};
+        return Mask::B{int};
     }
 }
 `)
@@ -687,7 +687,7 @@ namespace Main {
     }
 
     static fun str() f = () {
-        var Name n = type(Name).X;
+        var Name n = Name::X;
         return `+test.cast+`;
     }
 }
@@ -713,7 +713,7 @@ namespace Main {
         }
     }
 
-    static var int later = type(Code).A{int};
+    static var int later = Code::A{int};
 }
 `)
 	lastLambda, firstDefault := -1, -1
@@ -786,7 +786,7 @@ namespace Main {
     }
 
     static fun int() f = () {
-        return type(Main).make().get();
+        return Main::make().get();
     }
 }
 `)
@@ -808,7 +808,7 @@ namespace Main {
 
     static fun str() f = () {
         var str s = null;
-        return type(Main).same(null);
+        return Main::same(null);
     }
 }
 `)

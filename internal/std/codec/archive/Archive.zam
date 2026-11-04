@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/time/Time.zam";
 
@@ -31,7 +30,7 @@ public namespace Archive {
             e.name = name;
             e.data = data;
             e.mode = 420;
-            e.modTime = type(Time).FromUnix(0, 0);
+            e.modTime = Time::FromUnix(0, 0);
             e.isDir = false;
             return e;
         }
@@ -42,49 +41,49 @@ public namespace Archive {
             e.name = name;
             e.data = null;
             e.mode = 493;
-            e.modTime = type(Time).FromUnix(0, 0);
+            e.modTime = Time::FromUnix(0, 0);
             e.isDir = true;
             return e;
         }
     }
 
     // Read reads every entry of an archive in format f from n bytes at b.
-    static fun Pair[Arr[Archive.Entry*]*, Err*](byte*, uint, Archive.Format) Read = (b, n, f) {
-        var Pair[Arr[Archive.Entry*]*, Err*] out;
+    static fun (Arr[Archive.Entry*]*, Err*)(byte*, uint, Archive.Format) Read = (b, n, f) {
+        var (Arr[Archive.Entry*]*, Err*) out;
         var uint list = 0U;
         var int count = 0;
         var str errStr;
         native(STD_ARCHIVE_READ){void(byte*, int, int, uint*, int*, str*)}(b, n{int}, f{int}, &list, &count, &errStr);
-        out.first = null;
-        out.second = null;
+        out.0 = null;
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
             return out;
         }
-        out.first = type(Arr)[Archive.Entry*].New(count{uint}, new(Archive.Entry*, count{uint})...);
+        out.0 = Arr::[Archive.Entry*]New(count{uint}, new(Archive.Entry*, count{uint})...);
         for(var int i = 0; i < count; i++) {
             var Archive.Entry* e = new(Archive.Entry);
             var int size;
             var int modTime;
             native(STD_ARCHIVE_ENTRY){void(uint, int, str*, int*, int*, bool*, int*)}(list, i, &(e.name), &(e.mode), &modTime, &(e.isDir), &size);
-            e.modTime = type(Time).FromUnix(modTime, 0);
+            e.modTime = Time::FromUnix(modTime, 0);
             e.data = null;
             if(!e.isDir) {
                 var byte* data = new(byte, size{uint});
                 native(STD_ARCHIVE_ENTRY_DATA){void(uint, int, byte*)}(list, i, data);
-                e.data = type(Arr)[byte].New(size{uint}, data...);
+                e.data = Arr::[byte]New(size{uint}, data...);
             }
-            out.first.Set(i{uint}, e);
+            out.0.Set(i{uint}, e);
         }
         native(STD_ARCHIVE_FREE){void(uint)}(list);
         return out;
     }
 
     // Write writes entries as an archive in format f.
-    static fun Pair[Arr[byte]*, Err*](Arr[Archive.Entry*]*, Archive.Format) Write = (entries, f) {
-        var Pair[Arr[byte]*, Err*] out;
-        out.first = null;
-        out.second = null;
+    static fun (Arr[byte]*, Err*)(Arr[Archive.Entry*]*, Archive.Format) Write = (entries, f) {
+        var (Arr[byte]*, Err*) out;
+        out.0 = null;
+        out.1 = null;
         var uint w;
         native(STD_ARCHIVE_WRITER_NEW){void(int, uint*)}(f{int}, &w);
         for(var uint i = 0U; i < entries.Len(); i++) {
@@ -97,15 +96,15 @@ public namespace Archive {
             }
             var str errStr;
             native(STD_ARCHIVE_WRITER_ADD){void(uint, str, byte*, int, int, int, bool, str*)}(w, e.name, data, n{int}, e.mode, e.modTime.Unix(), e.isDir, &errStr);
-            if(errStr != null && out.second == null) {
-                out.second = type(StrErr).New(e.name + ": " + errStr);
+            if(errStr != null && out.1 == null) {
+                out.1 = StrErr::New(e.name + ": " + errStr);
             }
         }
         var uint h;
         var int len;
         var str errStr;
         native(STD_ARCHIVE_WRITER_FINISH){void(uint, uint*, int*, str*)}(w, &h, &len, &errStr);
-        if(out.second != null) {
+        if(out.1 != null) {
             if(errStr == null) {
                 var byte* discard = new(byte, len{uint});
                 native(STD_CODEC_TAKE){void(uint, byte*)}(h, discard);
@@ -114,12 +113,12 @@ public namespace Archive {
             return out;
         }
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
             return out;
         }
         var byte* b = new(byte, len{uint});
         native(STD_CODEC_TAKE){void(uint, byte*)}(h, b);
-        out.first = type(Arr)[byte].New(len{uint}, b...);
+        out.0 = Arr::[byte]New(len{uint}, b...);
         return out;
     }
 }

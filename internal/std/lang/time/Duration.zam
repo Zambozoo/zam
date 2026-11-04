@@ -10,23 +10,23 @@ public struct Duration {
     }
 
     public static fun Duration(int) Microseconds = (n) {
-        return type(Duration).Nanoseconds(n * 1000);
+        return Duration::Nanoseconds(n * 1000);
     }
 
     public static fun Duration(int) Milliseconds = (n) {
-        return type(Duration).Nanoseconds(n * 1000000);
+        return Duration::Nanoseconds(n * 1000000);
     }
 
     public static fun Duration(int) Seconds = (n) {
-        return type(Duration).Nanoseconds(n * 1000000000);
+        return Duration::Nanoseconds(n * 1000000000);
     }
 
     public static fun Duration(int) Minutes = (n) {
-        return type(Duration).Nanoseconds(n * 60000000000);
+        return Duration::Nanoseconds(n * 60000000000);
     }
 
     public static fun Duration(int) Hours = (n) {
-        return type(Duration).Nanoseconds(n * 3600000000000);
+        return Duration::Nanoseconds(n * 3600000000000);
     }
 
     public fun int() InNanoseconds = () {
@@ -56,24 +56,24 @@ public struct Duration {
     }
 
     public fun Duration(Duration) Add = (o) {
-        return type(Duration).Nanoseconds(this.ns + o.ns);
+        return Duration::Nanoseconds(this.ns + o.ns);
     }
 
     public fun Duration(Duration) Sub = (o) {
-        return type(Duration).Nanoseconds(this.ns - o.ns);
+        return Duration::Nanoseconds(this.ns - o.ns);
     }
 
     public fun Duration(int) Mul = (n) {
-        return type(Duration).Nanoseconds(this.ns * n);
+        return Duration::Nanoseconds(this.ns * n);
     }
 
     public fun Duration(int) Div = (n) {
-        return type(Duration).Nanoseconds(this.ns / n);
+        return Duration::Nanoseconds(this.ns / n);
     }
 
     public fun Duration() Abs = () {
         if(this.ns < 0) {
-            return type(Duration).Nanoseconds(-this.ns);
+            return Duration::Nanoseconds(-this.ns);
         }
         return *this;
     }
@@ -131,16 +131,16 @@ public struct Duration {
             return sign + u{str} + "ns";
         }
         if(u < 1000000U) {
-            return sign + type(Duration).fraction(u, 3U) + "µs";
+            return sign + Duration::fraction(u, 3U) + "µs";
         }
         if(u < 1000000000U) {
-            return sign + type(Duration).fraction(u, 6U) + "ms";
+            return sign + Duration::fraction(u, 6U) + "ms";
         }
         var uint hours = u / 3600000000000U;
         u = u % 3600000000000U;
         var uint minutes = u / 60000000000U;
         u = u % 60000000000U;
-        var str s = type(Duration).fraction(u, 9U) + "s";
+        var str s = Duration::fraction(u, 9U) + "s";
         if(hours > 0U) {
             return sign + hours{str} + "h" + minutes{str} + "m" + s;
         }

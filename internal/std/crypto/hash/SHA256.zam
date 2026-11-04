@@ -5,21 +5,21 @@ import "Digest.zam";
 public namespace SHA256 {
     // New starts a SHA-256 digest.
     public static fun Digest*() New = () {
-        return type(Digest).Must(type(Digest.Kind).SHA256, 0U);
+        return Digest::Must(Digest.Kind::SHA256, 0U);
     }
 
     // Sum returns the SHA-256 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).SHA256, 0U, b, n);
+        return Digest::Of(Digest.Kind::SHA256, 0U, b, n);
     }
 
     // New224 starts a SHA-224 digest.
     public static fun Digest*() New224 = () {
-        return type(Digest).Must(type(Digest.Kind).SHA224, 0U);
+        return Digest::Must(Digest.Kind::SHA224, 0U);
     }
 
     // Sum224 returns the SHA-224 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum224 = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).SHA224, 0U, b, n);
+        return Digest::Of(Digest.Kind::SHA224, 0U, b, n);
     }
 }

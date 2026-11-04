@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 import "../../math/Rand.zam";
 import "../../lang/Struct.zam";
@@ -18,17 +17,17 @@ public class TreapPriorityQueue[A, B] {
     var uint len;
     var Node[A, B]* root;
 
-    public static fun[A, B] TreapPriorityQueue[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+    public static fun[A, B] TreapPriorityQueue[A, B]*(uint, (A, B)...) New = (len, args) {
         var TreapPriorityQueue[A, B]* t = new(TreapPriorityQueue[A, B]);
         t.Init(len, args...);
         return t;
     }
 
-    public fun void(uint, Pair[A, B]...) Init = (len, args) {
+    public fun void(uint, (A, B)...) Init = (len, args) {
         this.len = 0U;
         this.root = null;
         for(var uint i = 0U; i < len; i++) {
-            this.Add(args[i].first, args[i].second);
+            this.Add(args[i].0, args[i].1);
         }
     }
 
@@ -38,7 +37,7 @@ public class TreapPriorityQueue[A, B] {
         var Node[A, B]* n = *link;
         var Node[A, B]* l = n.left;
         var Struct[Node[A, B]*] pin;
-        pin.Init(l, type(TreapPriorityQueue)[A, B].markTree, null);
+        pin.Init(l, TreapPriorityQueue::[A, B]markTree, null);
         n.left = l.right;
         l.right = n;
         *link = l;
@@ -49,7 +48,7 @@ public class TreapPriorityQueue[A, B] {
         var Node[A, B]* n = *link;
         var Node[A, B]* r = n.right;
         var Struct[Node[A, B]*] pin;
-        pin.Init(r, type(TreapPriorityQueue)[A, B].markTree, null);
+        pin.Init(r, TreapPriorityQueue::[A, B]markTree, null);
         n.right = r.left;
         r.left = n;
         *link = r;
@@ -64,7 +63,7 @@ public class TreapPriorityQueue[A, B] {
             var Node[A, B]* m = new(Node[A, B]);
             m.key = k;
             m.val = v;
-            m.prio = type(Rand).Uint();
+            m.prio = Rand::Uint();
             *link = m;
             return;
         }
@@ -112,7 +111,7 @@ public class TreapPriorityQueue[A, B] {
             return;
         }
         var Struct[Node[A, B]*] rest;
-        rest.Init(b, type(TreapPriorityQueue)[A, B].markTree, null);
+        rest.Init(b, TreapPriorityQueue::[A, B]markTree, null);
         if(b.prio < a.prio) {
             rest.s = a;
             *link = b;
@@ -120,9 +119,9 @@ public class TreapPriorityQueue[A, B] {
             b = rest.s;
         }
         var Struct[Node[A, B]*] lo;
-        lo.Init(null, type(TreapPriorityQueue)[A, B].markTree, null);
+        lo.Init(null, TreapPriorityQueue::[A, B]markTree, null);
         var Struct[Node[A, B]*] hi;
-        hi.Init(null, type(TreapPriorityQueue)[A, B].markTree, null);
+        hi.Init(null, TreapPriorityQueue::[A, B]markTree, null);
         this.split(b, a.key, &(lo.s), &(hi.s));
         rest.s = null;
         this.union(&(a.left), lo.s);
@@ -155,20 +154,20 @@ public class TreapPriorityQueue[A, B] {
         }
     }
 
-    private fun Pair[A, B](Node[A, B]*) entry = (n) {
-        var Pair[A, B] p;
-        p.first = n.key;
-        p.second = n.val;
+    private fun (A, B)(Node[A, B]*) entry = (n) {
+        var (A, B) p;
+        p.0 = n.key;
+        p.1 = n.val;
         return p;
     }
 
-    private fun uint(Node[A, B]*, Pair[A, B]*, uint) fill = (n, a, i) {
+    private fun uint(Node[A, B]*, (A, B)*, uint) fill = (n, a, i) {
         if(n == null) {
             return i;
         }
         i = this.fill(n.left, a, i);
-        a[i].first = n.key;
-        a[i].second = n.val;
+        a[i].0 = n.key;
+        a[i].1 = n.val;
         return this.fill(n.right, a, i + 1U);
     }
 
@@ -178,8 +177,8 @@ public class TreapPriorityQueue[A, B] {
         }
         mark(n.key);
         mark(n.val);
-        type(TreapPriorityQueue)[A, B].markTree(n.left);
-        type(TreapPriorityQueue)[A, B].markTree(n.right);
+        TreapPriorityQueue::[A, B]markTree(n.left);
+        TreapPriorityQueue::[A, B]markTree(n.right);
     }
 
     private fun void(Node[A, B]*) freeAll = (n) {
@@ -200,9 +199,9 @@ public class TreapPriorityQueue[A, B] {
         this.len++;
     }
 
-    public fun Pair[A, B]() GetMin = () {
+    public fun (A, B)() GetMin = () {
         if(this.len == 0U) {
-            type(System).Panic("TreapPriorityQueue is empty");
+            System::Panic("TreapPriorityQueue is empty");
         }
         var Node[A, B]* n = this.root;
         for(; n.left != null;) {
@@ -211,9 +210,9 @@ public class TreapPriorityQueue[A, B] {
         return this.entry(n);
     }
 
-    public fun Pair[A, B]() GetMax = () {
+    public fun (A, B)() GetMax = () {
         if(this.len == 0U) {
-            type(System).Panic("TreapPriorityQueue is empty");
+            System::Panic("TreapPriorityQueue is empty");
         }
         var Node[A, B]* n = this.root;
         for(; n.right != null;) {
@@ -222,21 +221,21 @@ public class TreapPriorityQueue[A, B] {
         return this.entry(n);
     }
 
-    public fun Pair[A, B]() RemoveMin = () {
+    public fun (A, B)() RemoveMin = () {
         if(this.len == 0U) {
-            type(System).Panic("TreapPriorityQueue is empty");
+            System::Panic("TreapPriorityQueue is empty");
         }
-        var Pair[A, B] v = this.GetMin();
+        var (A, B) v = this.GetMin();
         this.unlinkEnd(true);
         this.len--;
         return v;
     }
 
-    public fun Pair[A, B]() RemoveMax = () {
+    public fun (A, B)() RemoveMax = () {
         if(this.len == 0U) {
-            type(System).Panic("TreapPriorityQueue is empty");
+            System::Panic("TreapPriorityQueue is empty");
         }
-        var Pair[A, B] v = this.GetMax();
+        var (A, B) v = this.GetMax();
         this.unlinkEnd(false);
         this.len--;
         return v;
@@ -245,7 +244,7 @@ public class TreapPriorityQueue[A, B] {
     // Merge moves every entry of other into this queue, leaving other empty.
     public fun void(TreapPriorityQueue[A, B]*) Merge = (other) {
         if(other{void*} == this{void*}) {
-            type(System).Panic("TreapPriorityQueue merged with itself");
+            System::Panic("TreapPriorityQueue merged with itself");
         }
         this.union(&(this.root), other.root);
         this.len = this.len + other.len;
@@ -258,10 +257,10 @@ public class TreapPriorityQueue[A, B] {
     }
 
     // Arr returns the entries in ascending order of priority.
-    public fun Arr[Pair[A, B]]*() Arr = () {
-        var Pair[A, B]* a = new(Pair[A, B], this.len);
+    public fun Arr[(A, B)]*() Arr = () {
+        var (A, B)* a = new((A, B), this.len);
         this.fill(this.root, a, 0U);
-        return type(Arr)[Pair[A, B]].New(this.len, a...);
+        return Arr::[(A, B)]New(this.len, a...);
     }
 
     // Iter visits the entries in ascending order of priority, as they stood
@@ -274,11 +273,11 @@ public class TreapPriorityQueue[A, B] {
     }
 
     public fun str() Str = () {
-        var Arr[Pair[A, B]]* a = this.Arr();
+        var Arr[(A, B)]* a = this.Arr();
         var str s = "[";
         var str spacer = "";
         for(var uint i = 0U; i < a.Len(); i++) {
-            s = s + spacer + a.Get(i).first{str} + ": " + a.Get(i).second{str};
+            s = s + spacer + a.Get(i).0{str} + ": " + a.Get(i).1{str};
             spacer = ", ";
         }
         return s + "]";
@@ -294,37 +293,37 @@ public class TreapPriorityQueue[A, B] {
     }
 
     public fun void() Mark = () {
-        if(!type(System.GC).Markable(@{A}) && !type(System.GC).Markable(@{B})) {
+        if(!System.GC::Markable(@{A}) && !System.GC::Markable(@{B})) {
             return;
         }
-        type(TreapPriorityQueue)[A, B].markTree(this.root);
+        TreapPriorityQueue::[A, B]markTree(this.root);
     }
 
     private class Iter[A, B] {
-        var Arr[Pair[A, B]]* items;
+        var Arr[(A, B)]* items;
         var uint i;
 
-        public fun Pair[Pair[A, B], bool]() Next = () {
-            var Pair[Pair[A, B], bool] p;
+        public fun ((A, B), bool)() Next = () {
+            var ((A, B), bool) p;
             if(this.i >= this.items.Len()) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.items.Get(this.i);
-            p.second = true;
+            p.0 = this.items.Get(this.i);
+            p.1 = true;
             this.i++;
             return p;
         }
 
-        public fun Pair[Pair[A, B], bool]() Prev = () {
-            var Pair[Pair[A, B], bool] p;
+        public fun ((A, B), bool)() Prev = () {
+            var ((A, B), bool) p;
             if(this.i == 0U) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
             this.i--;
-            p.first = this.items.Get(this.i);
-            p.second = true;
+            p.0 = this.items.Get(this.i);
+            p.1 = true;
             return p;
         }
     }

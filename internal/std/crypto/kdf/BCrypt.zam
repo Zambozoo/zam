@@ -1,5 +1,4 @@
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 
 // bcrypt password-hashing function, for passwords of at most 72 bytes
@@ -7,15 +6,15 @@ public namespace BCrypt {
     public var int$ DefaultCost = 10;
 
     // Hash hashes a password under a fresh salt at cost, from 4 to 31.
-    public static fun Pair[str, Err*](byte*, uint, int) Hash = (password, passwordLen, cost) {
-        var Pair[str, Err*] r;
+    public static fun (str, Err*)(byte*, uint, int) Hash = (password, passwordLen, cost) {
+        var (str, Err*) r;
         var str hash;
         var str errStr;
         native(STD_BCRYPT_HASH){void(byte*, int, int, str*, str*)}(password, passwordLen{int}, cost, &hash, &errStr);
-        r.first = hash;
-        r.second = null;
+        r.0 = hash;
+        r.1 = null;
         if(errStr != null) {
-            r.second = type(StrErr).New(errStr);
+            r.1 = StrErr::New(errStr);
         }
         return r;
     }

@@ -75,7 +75,7 @@ namespace Main {
         var int(int) f;
 
         fun void() Delete = () {
-            type(Main).deleted++;
+            Main::deleted++;
         }
     }
 
@@ -85,29 +85,29 @@ namespace Main {
         b.name = s;
         b.payload = s{any};
         b.f = lambda int(int):(x) {
-            return x + type(Strs).ByteLen(s);
+            return x + Strs::ByteLen(s);
         };
         return b;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        type(Main).kept = type(ArrList)[str].New(0U);
-        var LinkList[str]* linked = type(LinkList)[str].New(0U);
-        var Pair[str, int] pair;
-        pair.first = "pair-" + 7{str};
+        Main::kept = ArrList::[str]New(0U);
+        var LinkList[str]* linked = LinkList::[str]New(0U);
+        var (str, int) pair;
+        pair.0 = "pair-" + 7{str};
         var any held = ("held-" + 8{str}){any};
-        var Box* anchor = type(Main).box(-1);
+        var Box* anchor = Main::box(-1);
 
         for (var int i = 0; i < 5000; i++) {
-            var Box* b = type(Main).box(i);
+            var Box* b = Main::box(i);
             if (i % 100 == 0) {
-                type(Main).kept.AddLast(b.name);
+                Main::kept.AddLast(b.name);
                 linked.AddLast(b.name + "!");
             }
         }
 
-        type(File).StdOut.WriteStr(type(Main).kept.Get(49U) + " " + linked.Get(49U) + " " + pair.first + " " + held{str} + " " + anchor.name + " " + anchor.f(1){str} + " " + anchor.payload{str} + "\n");
-        type(File).StdOut.WriteStr((type(Main).deleted > 0){str} + "\n");
+        File::StdOut.WriteStr(Main::kept.Get(49U) + " " + linked.Get(49U) + " " + pair.0 + " " + held{str} + " " + anchor.name + " " + anchor.f(1){str} + " " + anchor.payload{str} + "\n");
+        File::StdOut.WriteStr((Main::deleted > 0){str} + "\n");
     }
 }
 `)
@@ -129,7 +129,7 @@ namespace Main {
         var int total = 0;
         for (var int i = 0; i < n; i++) {
             var str s = i{str} + "-churn";
-            total = total + type(Strs).ByteLen(s);
+            total = total + Strs::ByteLen(s);
         }
         return total;
     }
@@ -137,20 +137,20 @@ namespace Main {
     static fun int(int) frozen = (n) {
         var int total = 0;
         for (var int i = 0; i < n; i++) {
-            type(System.GC).Block();
+            System.GC::Block();
             var str s = i{str} + "-frozen";
-            total = total + type(Strs).ByteLen(s);
-            type(System.GC).Unblock();
+            total = total + Strs::ByteLen(s);
+            System.GC::Unblock();
         }
         return total;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var thread[int] a = async(type(Main).churn(20000));
-        var thread[int] b = async(type(Main).frozen(20000));
-        var thread[int] c = async(type(Main).churn(20000));
+        var thread[int] a = async(Main::churn(20000));
+        var thread[int] b = async(Main::frozen(20000));
+        var thread[int] c = async(Main::churn(20000));
         var int total = wait(a) + wait(b) + wait(c);
-        type(File).StdOut.WriteStr(total{str} + "\n");
+        File::StdOut.WriteStr(total{str} + "\n");
     }
 }
 `)
@@ -171,8 +171,8 @@ namespace Main {
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var thread[int] a = async(type(Main).one());
-        type(System.GC).Block();
+        var thread[int] a = async(Main::one());
+        System.GC::Block();
         var int x = wait(a);
     }
 }
@@ -200,8 +200,8 @@ namespace Main {
         var str[3] names;
 
         fun void() Delete = () {
-            if (type(Main).assigning == this.id) {
-                type(Main).early++;
+            if (Main::assigning == this.id) {
+                Main::early++;
             }
         }
     }
@@ -213,19 +213,19 @@ namespace Main {
     }
 
     static fun str(int) churn = (id) {
-        type(Main).assigning = id;
+        Main::assigning = id;
         var str s = "";
         for (var int i = 0; i < 3000; i++) {
             s = i{str} + "-churn";
         }
-        type(Main).assigning = 0;
+        Main::assigning = 0;
         return s;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        type(Main).make(1).name = type(Main).churn(1);
-        type(Main).make(2).names[1] = type(Main).churn(2);
-        type(File).StdOut.WriteStr(type(Main).early{str} + "\n");
+        Main::make(1).name = Main::churn(1);
+        Main::make(2).names[1] = Main::churn(2);
+        File::StdOut.WriteStr(Main::early{str} + "\n");
     }
 }
 `)
@@ -245,14 +245,14 @@ namespace Main {
         var int total = 0;
         for (var int i = 0; i < n; i++) {
             var str s = i{str} + "-churn";
-            total = total + type(Strs).ByteLen(s);
+            total = total + Strs::ByteLen(s);
         }
         return total;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var thread[int] a = async(type(Main).churn(100000000));
-        var thread[int] b = async(type(Main).churn(100000000));
+        var thread[int] a = async(Main::churn(100000000));
+        var thread[int] b = async(Main::churn(100000000));
     }
 }
 `)
@@ -284,8 +284,8 @@ namespace Main {
         for(var int i = 0; i < 5; i++) {
             s = s + i{str} + ",";
         }
-        type(Main).churn();
-        type(File).StdOut.WriteStr(s + "\n");
+        Main::churn();
+        File::StdOut.WriteStr(s + "\n");
     }
 }
 `)
@@ -304,31 +304,31 @@ func TestCollectionKeepsARunOfInstances(t *testing.T) {
 import std("io/local/*");
 
 namespace Main {
-    static fun Arr[Pair[int, str]]*() build = () {
-        type(System.GC).Block();
-        var Pair[int, str]* a = new(Pair[int, str], 100U);
+    static fun Arr[(int, str)]*() build = () {
+        System.GC::Block();
+        var (int, str)* a = new((int, str), 100U);
         for(var uint i = 0U; i < 100U; i++) {
-            a[i].first = i{int};
-            a[i].second = i{str} + "!";
+            a[i].0 = i{int};
+            a[i].1 = i{str} + "!";
         }
-        var Arr[Pair[int, str]]* arr = type(Arr)[Pair[int, str]].New(100U, a...);
-        type(System.GC).Unblock();
+        var Arr[(int, str)]* arr = Arr::[(int, str)]New(100U, a...);
+        System.GC::Unblock();
         return arr;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var Arr[Pair[int, str]]* a = type(Main).build();
+        var Arr[(int, str)]* a = Main::build();
         var str t = "";
         for(var int i = 0; i < 3000; i++) {
             t = i{str} + "-churn";
         }
         var int bad = 0;
         for(var uint i = 0U; i < 100U; i++) {
-            if(a.Get(i).first != i{int} || a.Get(i).second != i{str} + "!") {
+            if(a.Get(i).0 != i{int} || a.Get(i).1 != i{str} + "!") {
                 bad++;
             }
         }
-        type(File).StdOut.WriteStr(bad{str} + "\n");
+        File::StdOut.WriteStr(bad{str} + "\n");
     }
 }
 `)
@@ -347,33 +347,33 @@ import std("io/local/*");
 
 namespace Main {
     struct Holder {
-        var Pair[int, int]* run;
+        var (int, int)* run;
     }
 
     static fun Holder*() build = () {
         var Holder* h = new(Holder);
-        h.run = new(Pair[int, int], 50U);
+        h.run = new((int, int), 50U);
         for(var uint i = 0U; i < 50U; i++) {
-            h.run[i].second = i{int} * 3;
+            h.run[i].1 = i{int} * 3;
         }
         return h;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var Holder* h = type(Main).build();
+        var Holder* h = Main::build();
         var str t = "";
         for(var int i = 0; i < 3000; i++) {
             t = i{str} + "-churn";
         }
         var int bad = 0;
         for(var uint i = 0U; i < 50U; i++) {
-            if(h.run[i].second != i{int} * 3) {
+            if(h.run[i].1 != i{int} * 3) {
                 bad++;
             }
         }
         free(h.run);
         free(h);
-        type(File).StdOut.WriteStr(bad{str} + "\n");
+        File::StdOut.WriteStr(bad{str} + "\n");
     }
 }
 `)
@@ -393,19 +393,19 @@ import std("data/map/*");
 
 namespace Main {
     fun void(uint, str...) main = (argC, argV) {
-        var HashSet[str]* s = type(HashSet)[str].New(0U);
-        var HashMap[str, int]* m = type(HashMap)[str, int].New(0U);
+        var HashSet[str]* s = HashSet::[str]New(0U);
+        var HashMap[str, int]* m = HashMap::[str, int]New(0U);
         for(var int i = 0; i < 400; i++) {
             s.Add(i{str} + "k");
             m.Put(i{str} + "k", i);
         }
         var int bad = 0;
         for(var int i = 0; i < 400; i++) {
-            if(!s.Contains(i{str} + "k") || m.Get(i{str} + "k").first != i) {
+            if(!s.Contains(i{str} + "k") || m.Get(i{str} + "k").0 != i) {
                 bad++;
             }
         }
-        type(File).StdOut.WriteStr(bad{str} + "\n");
+        File::StdOut.WriteStr(bad{str} + "\n");
     }
 }
 `)
@@ -437,31 +437,32 @@ namespace Main {
     }
 
     static fun bool(type) m = (t) {
-        return type(System.GC).Markable(t);
+        return System.GC::Markable(t);
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var str s = type(Main).m(@{byte}){str} + " " + type(Main).m(@{int}){str} + " " + type(Main).m(@{flt}){str} + " " + type(Main).m(@{bool}){str};
-        s = s + " " + type(Main).m(@{str}){str} + " " + type(Main).m(@{any}){str} + " " + type(Main).m(@{void()}){str} + " " + type(Main).m(@{Box*}){str};
-        s = s + " " + type(Main).m(@{Plain}){str} + " " + type(Main).m(@{Holder}){str} + " " + type(Main).m(@{Plain*}){str} + " " + type(Main).m(@{Holder*}){str};
-        s = s + " " + type(Main).m(@{int[4]}){str} + " " + type(Main).m(@{str[4]}){str} + " " + type(Main).m(@{Pair[int, int]}){str} + "\n";
+        var str s = Main::m(@{byte}){str} + " " + Main::m(@{int}){str} + " " + Main::m(@{flt}){str} + " " + Main::m(@{bool}){str};
+        s = s + " " + Main::m(@{str}){str} + " " + Main::m(@{any}){str} + " " + Main::m(@{void()}){str} + " " + Main::m(@{Box*}){str};
+        s = s + " " + Main::m(@{Plain}){str} + " " + Main::m(@{Holder}){str} + " " + Main::m(@{Plain*}){str} + " " + Main::m(@{Holder*}){str};
+        s = s + " " + Main::m(@{int[4]}){str} + " " + Main::m(@{str[4]}){str} + " " + Main::m(@{Box}){str};
+        s = s + " " + Main::m(@{(int, int)}){str} + " " + Main::m(@{(int, str)}){str} + "\n";
 
         var uint n = 50000U;
         var byte* raw = new(byte, n);
         for(var uint i = 0U; i < n; i++) {
             raw[i] = (i % 251U){byte};
         }
-        var Arr[byte]* a = type(Arr)[byte].New(n, raw...);
+        var Arr[byte]* a = Arr::[byte]New(n, raw...);
         var uint sum = 0U;
         for(var uint i = 0U; i < n; i++) {
             sum = sum + a.Get(i){uint};
         }
         s = s + sum{str} + "\n";
-        type(File).StdOut.WriteStr(s);
+        File::StdOut.WriteStr(s);
     }
 }
 `)
 	stdout, stderr, status := run(t, binary)
 	require.Zero(t, status, stderr)
-	assert.Equal(t, "false false false false true true true true false true false false false true true\n6244900\n", stdout)
+	assert.Equal(t, "false false false false true true true true false true false false false true true false true\n6244900\n", stdout)
 }

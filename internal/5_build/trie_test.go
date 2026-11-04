@@ -21,20 +21,20 @@ namespace Main {
     interface TrieMap[A, B] {
         virtual fun uint() Len;
         virtual fun bool(uint, A*, B) Put;
-        virtual fun Pair[B, bool](uint, A*) Get;
+        virtual fun (B, bool)(uint, A*) Get;
         virtual fun bool(uint, A*) Contains;
         virtual fun bool(uint, A*) HasPrefix;
-        virtual fun Pair[B, bool](uint, A*) Remove;
+        virtual fun (B, bool)(uint, A*) Remove;
         virtual fun void() Clear;
-        virtual fun Arr[Pair[Arr[A]*, B]]*() Arr;
+        virtual fun Arr[(Arr[A]*, B)]*() Arr;
     }
 
     static fun str(Arr[char]*) text = (a) {
-        return type(Strs).ToChars(a.Arr(), a.Len(){int});
+        return Strs::ToChars(a.Arr(), a.Len(){int});
     }
 
     static fun bool(TrieMap[char, int]*, bool) run = (t, ordered) {
-        var HashMap[str, int]* ref = type(HashMap)[str, int].New(0U);
+        var HashMap[str, int]* ref = HashMap::[str, int]New(0U);
         var char* k = new(char, 8U);
         var bool ok = true;
         var uint x = 21U;
@@ -45,30 +45,30 @@ namespace Main {
             for(var uint j = 0U; j < n; j++) {
                 k[j] = (97 + ((r >> (3U + 2U * j)) % 3U){int}){char};
             }
-            var str s = type(Strs).ToChars(k, n{int});
+            var str s = Strs::ToChars(k, n{int});
             var uint op = (r >> 27U) % 3U;
             if(op == 0U) {
                 ok = ok && t.Put(n, k, i) == ref.Put(s, i);
             } else if(op == 1U) {
-                var Pair[int, bool] a = t.Remove(n, k);
-                var Pair[int, bool] b = ref.Remove(s);
-                ok = ok && a.second == b.second && (!a.second || a.first == b.first);
+                var (int, bool) a = t.Remove(n, k);
+                var (int, bool) b = ref.Remove(s);
+                ok = ok && a.1 == b.1 && (!a.1 || a.0 == b.0);
             } else {
-                var Pair[int, bool] a = t.Get(n, k);
-                var Pair[int, bool] b = ref.Get(s);
-                ok = ok && a.second == b.second && (!a.second || a.first == b.first) && t.Contains(n, k) == b.second;
+                var (int, bool) a = t.Get(n, k);
+                var (int, bool) b = ref.Get(s);
+                ok = ok && a.1 == b.1 && (!a.1 || a.0 == b.0) && t.Contains(n, k) == b.1;
             }
             ok = ok && t.Len() == ref.Len();
         }
 
-        var Arr[Pair[Arr[char]*, int]]* entries = t.Arr();
+        var Arr[(Arr[char]*, int)]* entries = t.Arr();
         ok = ok && entries.Len() == ref.Len();
         for(var uint i = 0U; i < entries.Len(); i++) {
-            var str key = type(Main).text(entries.Get(i).first);
-            var Pair[int, bool] want = ref.Get(key);
-            ok = ok && want.second && want.first == entries.Get(i).second;
+            var str key = Main::text(entries.Get(i).0);
+            var (int, bool) want = ref.Get(key);
+            ok = ok && want.1 && want.0 == entries.Get(i).1;
             if(ordered && i > 0U) {
-                ok = ok && type(Main).text(entries.Get(i - 1U).first) < key;
+                ok = ok && Main::text(entries.Get(i - 1U).0) < key;
             }
         }
 
@@ -81,7 +81,7 @@ namespace Main {
         t.Put(3U, k, 1);
         ok = ok && t.HasPrefix(0U, k) && t.HasPrefix(2U, k) && t.HasPrefix(3U, k) && !t.HasPrefix(4U, k);
         t.Put(0U, k, 9);
-        ok = ok && t.Get(0U, k).first == 9 && t.Len() == 2U && t.Remove(0U, k).second && t.Len() == 1U;
+        ok = ok && t.Get(0U, k).0 == 9 && t.Len() == 2U && t.Remove(0U, k).1 && t.Len() == 1U;
         return ok;
     }
 
@@ -94,7 +94,7 @@ namespace Main {
     }
 
     static fun bool(TrieSet[char]*) runSet = (t) {
-        var HashSet[str]* ref = type(HashSet)[str].New(0U);
+        var HashSet[str]* ref = HashSet::[str]New(0U);
         var char* k = new(char, 8U);
         var bool ok = true;
         var uint x = 23U;
@@ -105,7 +105,7 @@ namespace Main {
             for(var uint j = 0U; j < n; j++) {
                 k[j] = (97 + ((r >> (3U + 2U * j)) % 3U){int}){char};
             }
-            var str s = type(Strs).ToChars(k, n{int});
+            var str s = Strs::ToChars(k, n{int});
             var uint op = (r >> 27U) % 3U;
             if(op == 0U) {
                 ok = ok && t.Add(n, k) == ref.Add(s);
@@ -119,23 +119,23 @@ namespace Main {
         var Arr[Arr[char]*]* keys = t.Arr();
         ok = ok && keys.Len() == ref.Len();
         for(var uint i = 0U; i < keys.Len(); i++) {
-            ok = ok && ref.Contains(type(Main).text(keys.Get(i)));
+            ok = ok && ref.Contains(Main::text(keys.Get(i)));
         }
         return ok;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var str out = type(Main).run(type(HashTrieMap)[char, int].New(), false){str} + " ";
-        out = out + type(Main).run(type(TreeTrieMap)[char, int].New(), true){str} + " ";
-        out = out + type(Main).runSet(type(HashTrieSet)[char].New()){str} + " ";
-        out = out + type(Main).runSet(type(TreeTrieSet)[char].New()){str} + "\n";
+        var str out = Main::run(HashTrieMap::[char, int]New(), false){str} + " ";
+        out = out + Main::run(TreeTrieMap::[char, int]New(), true){str} + " ";
+        out = out + Main::runSet(HashTrieSet::[char]New()){str} + " ";
+        out = out + Main::runSet(TreeTrieSet::[char]New()){str} + "\n";
 
         var char* k = new(char, 3U);
         k[0] = 'b';
         k[1] = 'a';
         k[2] = 'd';
-        var TreeTrieSet[char]* ts = type(TreeTrieSet)[char].New();
-        var HashTrieSet[char]* hs = type(HashTrieSet)[char].New();
+        var TreeTrieSet[char]* ts = TreeTrieSet::[char]New();
+        var HashTrieSet[char]* hs = HashTrieSet::[char]New();
         ts.Add(3U, k);
         ts.Add(2U, k);
         ts.Add(1U, k);
@@ -143,7 +143,7 @@ namespace Main {
         k[0] = 'a';
         ts.Add(1U, k);
         out = out + ts{str} + " " + (ts.Add(1U, k) == false){str} + " " + ts.Remove(3U, k){str} + " " + hs.Contains(3U, k){str} + " " + ts.Len(){str} + "\n";
-        type(File).StdOut.WriteStr(out);
+        File::StdOut.WriteStr(out);
     }
 }
 `)

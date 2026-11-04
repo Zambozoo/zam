@@ -18,12 +18,12 @@ public class Vector <: Arr[flt]* {
         for(var uint i = 0U; i < len; i++) {
             a[i] = 0.0;
         }
-        return type(Vector).New(len, a...);
+        return Vector::New(len, a...);
     }
 
     private fun void(Vector*) check = (o) {
         if(o.len != this.len) {
-            type(System).Panic("Vector lengths differ");
+            System::Panic("Vector lengths differ");
         }
     }
 
@@ -32,12 +32,12 @@ public class Vector <: Arr[flt]* {
         for(var uint i = 0U; i < this.len; i++) {
             a[i] = this.arr[i];
         }
-        return type(Vector).New(this.len, a...);
+        return Vector::New(this.len, a...);
     }
 
     public fun Vector*(Vector*) Add = (o) {
         this.check(o);
-        var Vector* r = type(Vector).Zero(this.len);
+        var Vector* r = Vector::Zero(this.len);
         for(var uint i = 0U; i < this.len; i++) {
             r.arr[i] = this.arr[i] + o.arr[i];
         }
@@ -46,7 +46,7 @@ public class Vector <: Arr[flt]* {
 
     public fun Vector*(Vector*) Sub = (o) {
         this.check(o);
-        var Vector* r = type(Vector).Zero(this.len);
+        var Vector* r = Vector::Zero(this.len);
         for(var uint i = 0U; i < this.len; i++) {
             r.arr[i] = this.arr[i] - o.arr[i];
         }
@@ -54,7 +54,7 @@ public class Vector <: Arr[flt]* {
     }
 
     public fun Vector*(flt) Scale = (k) {
-        var Vector* r = type(Vector).Zero(this.len);
+        var Vector* r = Vector::Zero(this.len);
         for(var uint i = 0U; i < this.len; i++) {
             r.arr[i] = this.arr[i] * k;
         }
@@ -76,7 +76,7 @@ public class Vector <: Arr[flt]* {
 
     // Norm returns the Euclidean length.
     public fun flt() Norm = () {
-        return type(Math).Sqrt(this.Dot(this));
+        return Math::Sqrt(this.Dot(this));
     }
 
     // Normalize returns the vector of length one in the same direction.
@@ -91,11 +91,11 @@ public class Vector <: Arr[flt]* {
     // Cross returns the cross product of two vectors of length three.
     public fun Vector*(Vector*) Cross = (o) {
         if(this.len != 3U || o.len != 3U) {
-            type(System).Panic("Vector.Cross needs vectors of length three");
+            System::Panic("Vector.Cross needs vectors of length three");
         }
         var flt* a = this.arr;
         var flt* b = o.arr;
-        return type(Vector).New(3U, a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]);
+        return Vector::New(3U, a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]);
     }
 
     public fun bool(Obj*) Eq = (o) {
@@ -112,9 +112,9 @@ public class Vector <: Arr[flt]* {
     }
 
     public fun int() Hash = () {
-        var uint h = type(Hash).Int(this.len{int});
+        var uint h = Hash::Int(this.len{int});
         for(var uint i = 0U; i < this.len; i++) {
-            h = type(Hash).Combine(h, type(Hash).Flt(this.arr[i]));
+            h = Hash::Combine(h, Hash::Flt(this.arr[i]));
         }
         return h{int};
     }

@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "AEAD.zam";
 
@@ -11,27 +10,27 @@ public namespace Salsa20 {
     // XOR encrypts or decrypts n bytes at b from block counter of the
     // keystream, with an 8-byte nonce for Salsa20 or a 24-byte one for
     // XSalsa20. It does not authenticate.
-    public static fun Pair[Arr[byte]*, Err*](byte*, uint, byte*, uint, uint, byte*, uint) XOR = (key, keyLen, nonce, nonceLen, counter, b, n) {
-        var Pair[Arr[byte]*, Err*] r;
-        r.first = null;
-        r.second = null;
-        if(keyLen != type(Salsa20).KeySize) {
-            r.second = type(StrErr).New("Salsa20 needs a 32-byte key, not " + keyLen{str});
+    public static fun (Arr[byte]*, Err*)(byte*, uint, byte*, uint, uint, byte*, uint) XOR = (key, keyLen, nonce, nonceLen, counter, b, n) {
+        var (Arr[byte]*, Err*) r;
+        r.0 = null;
+        r.1 = null;
+        if(keyLen != Salsa20::KeySize) {
+            r.1 = StrErr::New("Salsa20 needs a 32-byte key, not " + keyLen{str});
             return r;
         }
         if(nonceLen != 8U && nonceLen != 24U) {
-            r.second = type(StrErr).New("Salsa20 needs an 8 or 24-byte nonce, not " + nonceLen{str});
+            r.1 = StrErr::New("Salsa20 needs an 8 or 24-byte nonce, not " + nonceLen{str});
             return r;
         }
         var byte* out = new(byte, n + 1U);
         native(STD_SALSA20){void(byte*, byte*, int, uint, byte*, int, byte*)}(key, nonce, nonceLen{int}, counter, b, n{int}, out);
-        r.first = type(Arr)[byte].New(n, out...);
+        r.0 = Arr::[byte]New(n, out...);
         return r;
     }
 
     // SecretBox returns an XSalsa20-Poly1305 key, as NaCl's secretbox, with
     // 24-byte nonces safe to draw at random. It takes no associated data.
-    public static fun Pair[AEAD*, Err*](byte*, uint) SecretBox = (key, keyLen) {
-        return type(AEAD).New(type(AEAD.Kind).XSALSA20_POLY1305, key, keyLen, type(Salsa20).KeySize, 24U, 16U);
+    public static fun (AEAD*, Err*)(byte*, uint) SecretBox = (key, keyLen) {
+        return AEAD::New(AEAD.Kind::XSALSA20_POLY1305, key, keyLen, Salsa20::KeySize, 24U, 16U);
     }
 }

@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "Digest.zam";
 
 // BLAKE2s, of any length from 1 to 32 bytes
@@ -8,12 +7,12 @@ public namespace BLAKE2S {
     public var uint$ MaxSize = 32U;
 
     // New starts a BLAKE2s digest size bytes long.
-    public static fun Pair[Digest*, Err*](uint) New = (size) {
-        return type(Digest).New(type(Digest.Kind).BLAKE2S, size);
+    public static fun (Digest*, Err*)(uint) New = (size) {
+        return Digest::New(Digest.Kind::BLAKE2S, size);
     }
 
     // Sum returns the 32-byte BLAKE2s digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).BLAKE2S, 0U, b, n);
+        return Digest::Of(Digest.Kind::BLAKE2S, 0U, b, n);
     }
 }

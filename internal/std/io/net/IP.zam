@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 
@@ -12,33 +11,33 @@ public struct IP {
     var bool v6;
 
     // Parse reads an IPv4 or IPv6 address in any of its written forms.
-    public static fun Pair[IP, Err*](str) Parse = (s) {
-        var Pair[IP, Err*] out;
+    public static fun (IP, Err*)(str) Parse = (s) {
+        var (IP, Err*) out;
         var str errStr;
-        native(STD_IP_PARSE){void(str, uint*, uint*, bool*, str*)}(s, &(out.first.hi), &(out.first.lo), &(out.first.v6), &errStr);
-        out.second = null;
+        native(STD_IP_PARSE){void(str, uint*, uint*, bool*, str*)}(s, &(out.0.hi), &(out.0.lo), &(out.0.v6), &errStr);
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr + ": " + s);
+            out.1 = StrErr::New(errStr + ": " + s);
         }
         return out;
     }
 
     // Lookup resolves a host name, or an address, to its addresses.
-    public static fun Pair[Arr[IP]*, Err*](str) Lookup = (host) {
-        var Pair[Arr[IP]*, Err*] out;
+    public static fun (Arr[IP]*, Err*)(str) Lookup = (host) {
+        var (Arr[IP]*, Err*) out;
         var str joined;
         var str errStr;
         native(STD_IP_LOOKUP){void(str, str*, str*)}(host, &joined, &errStr);
-        out.first = null;
-        out.second = null;
+        out.0 = null;
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(host + ": " + errStr);
+            out.1 = StrErr::New(host + ": " + errStr);
             return out;
         }
-        var Arr[str]* texts = type(Strs).Split(joined, 0{byte});
-        out.first = type(Arr)[IP].New(texts.Len(), new(IP, texts.Len())...);
+        var Arr[str]* texts = Strs::Split(joined, 0{byte});
+        out.0 = Arr::[IP]New(texts.Len(), new(IP, texts.Len())...);
         for(var uint i = 0U; i < texts.Len(); i++) {
-            out.first.Set(i, type(IP).Parse(texts.Get(i)).first);
+            out.0.Set(i, IP::Parse(texts.Get(i)).0);
         }
         return out;
     }

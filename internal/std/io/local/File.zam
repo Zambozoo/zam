@@ -1,5 +1,4 @@
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 import "../../lang/Objs.zam";
@@ -48,35 +47,35 @@ public class File {
         if(msg == null) {
             return null;
         }
-        return type(StrErr).New(msg);
+        return StrErr::New(msg);
     }
 
     // New opens path with mode, the Flags it is opened with or'd together.
-    public static fun Pair[File*, Err*](str, int) New = (path, mode) {
+    public static fun (File*, Err*)(str, int) New = (path, mode) {
         var File* f = new(File);
-        var Pair[File*, Err*] p;
-        p.second = f.Init(path, mode);
-        if (p.second == null) {
-            p.first = f;
+        var (File*, Err*) p;
+        p.1 = f.Init(path, mode);
+        if (p.1 == null) {
+            p.0 = f;
         }
         return p;
     }
 
     // Open opens path for reading.
-    public static fun Pair[File*, Err*](str) Open = (path) {
-        return type(File).New(path, type(File.Flag).ReadOnly{int});
+    public static fun (File*, Err*)(str) Open = (path) {
+        return File::New(path, File.Flag::ReadOnly{int});
     }
 
     // Create opens path for writing, creating it or emptying what is there.
-    public static fun Pair[File*, Err*](str) Create = (path) {
-        return type(File).New(path, type(File.Flag).WriteOnly{int} | type(File.Flag).Create{int} | type(File.Flag).Truncate{int});
+    public static fun (File*, Err*)(str) Create = (path) {
+        return File::New(path, File.Flag::WriteOnly{int} | File.Flag::Create{int} | File.Flag::Truncate{int});
     }
 
     public fun Err*(str, int) Init = (path, mode) {
         var str errStr;
         this.fd = -1;
         native(STD_FILE_INIT){void(str, int, int*, str*)}(path, mode, &(this.fd), &errStr);
-        return type(File).err(errStr);
+        return File::err(errStr);
     }
 
     public fun int() FD = () {
@@ -89,49 +88,49 @@ public class File {
         this.fd = fd;
     }
 
-    public fun Pair[int, Err*](byte*, int) Write = (buffer, count) {
-        var Pair[int, Err*] p;
+    public fun (int, Err*)(byte*, int) Write = (buffer, count) {
+        var (int, Err*) p;
         var str errStr;
-        native(STD_FILE_WRITE){void(int*, byte*, int, int*, str*)}(&(this.fd), buffer, count, &(p.first), &errStr);
-        p.second = type(File).err(errStr);
+        native(STD_FILE_WRITE){void(int*, byte*, int, int*, str*)}(&(this.fd), buffer, count, &(p.0), &errStr);
+        p.1 = File::err(errStr);
         return p;
     }
 
-    public fun Pair[int, Err*](str) WriteStr = (s) {
-        var Pair[byte*, int] bytes = type(Strs).ToBytes(s);
-        return this.Write(bytes.first, bytes.second);
+    public fun (int, Err*)(str) WriteStr = (s) {
+        var (byte*, int) bytes = Strs::ToBytes(s);
+        return this.Write(bytes.0, bytes.1);
     }
 
     // Read reads up to count bytes into buffer, returning how many it read,
     // zero at the end of the file.
-    public fun Pair[int, Err*](byte*, int) Read = (buffer, count) {
-        var Pair[int, Err*] p;
+    public fun (int, Err*)(byte*, int) Read = (buffer, count) {
+        var (int, Err*) p;
         var str errStr;
-        native(STD_FILE_READ){void(int*, byte*, int, int*, str*)}(&(this.fd), buffer, count, &(p.first), &errStr);
-        p.second = type(File).err(errStr);
+        native(STD_FILE_READ){void(int*, byte*, int, int*, str*)}(&(this.fd), buffer, count, &(p.0), &errStr);
+        p.1 = File::err(errStr);
         return p;
     }
 
     // ReadAll reads up to the end of the file.
-    public fun Pair[str, Err*]() ReadAll = () {
-        return type(Streams).ReadAll(this);
+    public fun (str, Err*)() ReadAll = () {
+        return Streams::ReadAll(this);
     }
 
     // Seek moves the offset the next read or write begins at, returning the
     // new offset from the start.
-    public fun Pair[int, Err*](int, File.Whence) Seek = (offset, whence) {
-        var Pair[int, Err*] p;
+    public fun (int, Err*)(int, File.Whence) Seek = (offset, whence) {
+        var (int, Err*) p;
         var str errStr;
-        native(STD_FILE_SEEK){void(int*, int, int, int*, str*)}(&(this.fd), offset, whence{int}, &(p.first), &errStr);
-        p.second = type(File).err(errStr);
+        native(STD_FILE_SEEK){void(int*, int, int, int*, str*)}(&(this.fd), offset, whence{int}, &(p.0), &errStr);
+        p.1 = File::err(errStr);
         return p;
     }
 
-    public fun Pair[int, Err*]() Size = () {
-        var Pair[int, Err*] p;
+    public fun (int, Err*)() Size = () {
+        var (int, Err*) p;
         var str errStr;
-        native(STD_FILE_SIZE){void(int*, int*, str*)}(&(this.fd), &(p.first), &errStr);
-        p.second = type(File).err(errStr);
+        native(STD_FILE_SIZE){void(int*, int*, str*)}(&(this.fd), &(p.0), &errStr);
+        p.1 = File::err(errStr);
         return p;
     }
 
@@ -139,23 +138,23 @@ public class File {
     public fun Err*() Sync = () {
         var str errStr;
         native(STD_FILE_SYNC){void(int*, str*)}(&(this.fd), &errStr);
-        return type(File).err(errStr);
+        return File::err(errStr);
     }
 
     public fun Err*() Close = () {
         if(this.fd < 0) {
-            return type(StrErr).New("file already closed");
+            return StrErr::New("file already closed");
         }
         var str errStr;
         native(STD_FILE_CLOSE){void(int*, str*)}(&(this.fd), &errStr);
         this.fd = -1;
-        return type(File).err(errStr);
+        return File::err(errStr);
     }
 
     public fun void() Delete = () {
         if(this.fd >= 0) {
             this.Close();
         }
-        type(Objs).Delete(this);
+        Objs::Delete(this);
     }
 }

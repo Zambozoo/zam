@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "Key.zam";
 
@@ -15,22 +14,22 @@ public namespace MLKEM {
     }
 
     // Generate makes a private key of a parameter set.
-    public static fun Pair[Key*, Err*](Key.Kind) Generate = (kind) {
-        if(kind{byte} < type(Key.Kind).ML_KEM_512{byte} || kind{byte} > type(Key.Kind).ML_KEM_1024{byte}) {
-            var Pair[Key*, Err*] out;
-            out.first = null;
-            out.second = type(StrErr).New("ML-KEM needs an ML_KEM_512, ML_KEM_768 or ML_KEM_1024 kind");
+    public static fun (Key*, Err*)(Key.Kind) Generate = (kind) {
+        if(kind{byte} < Key.Kind::ML_KEM_512{byte} || kind{byte} > Key.Kind::ML_KEM_1024{byte}) {
+            var (Key*, Err*) out;
+            out.0 = null;
+            out.1 = StrErr::New("ML-KEM needs an ML_KEM_512, ML_KEM_768 or ML_KEM_1024 kind");
             return out;
         }
-        return type(Key).Generate(kind);
+        return Key::Generate(kind);
     }
 
     // Encapsulate makes a shared secret for the holder of key's private half.
-    public static fun Pair[MLKEM.Encapsulation*, Err*](Key*) Encapsulate = (key) {
-        var Pair[MLKEM.Encapsulation*, Err*] out;
-        out.first = null;
-        out.second = type(Key).check(key, type(Key.Kind).ML_KEM_512, type(Key.Kind).ML_KEM_1024, "ML-KEM");
-        if(out.second != null) {
+    public static fun (MLKEM.Encapsulation*, Err*)(Key*) Encapsulate = (key) {
+        var (MLKEM.Encapsulation*, Err*) out;
+        out.0 = null;
+        out.1 = Key::check(key, Key.Kind::ML_KEM_512, Key.Kind::ML_KEM_1024, "ML-KEM");
+        if(out.1 != null) {
             return out;
         }
         var uint ctH = 0U;
@@ -40,29 +39,29 @@ public namespace MLKEM {
         var str errStr;
         native(STD_PKEY_ENCAPSULATE){void(uint, uint*, int*, uint*, int*, str*)}(key.handle, &ctH, &ctN, &secretH, &secretN, &errStr);
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
             return out;
         }
         var MLKEM.Encapsulation* enc = new(MLKEM.Encapsulation);
-        enc.ciphertext = type(Key).take(ctH, ctN, null).first;
-        enc.secret = type(Key).take(secretH, secretN, null).first;
-        out.first = enc;
+        enc.ciphertext = Key::take(ctH, ctN, null).0;
+        enc.secret = Key::take(secretH, secretN, null).0;
+        out.0 = enc;
         return out;
     }
 
     // Decapsulate recovers the shared secret n bytes of ciphertext at b carry.
-    public static fun Pair[Arr[byte]*, Err*](Key*, byte*, uint) Decapsulate = (key, b, n) {
-        var Err* e = type(Key).checkPrivate(key, type(Key.Kind).ML_KEM_512, type(Key.Kind).ML_KEM_1024, "ML-KEM");
+    public static fun (Arr[byte]*, Err*)(Key*, byte*, uint) Decapsulate = (key, b, n) {
+        var Err* e = Key::checkPrivate(key, Key.Kind::ML_KEM_512, Key.Kind::ML_KEM_1024, "ML-KEM");
         if(e != null) {
-            var Pair[Arr[byte]*, Err*] out;
-            out.first = null;
-            out.second = e;
+            var (Arr[byte]*, Err*) out;
+            out.0 = null;
+            out.1 = e;
             return out;
         }
         var uint h = 0U;
         var int len = 0;
         var str errStr;
         native(STD_PKEY_DECAPSULATE){void(uint, byte*, int, uint*, int*, str*)}(key.handle, b, n{int}, &h, &len, &errStr);
-        return type(Key).take(h, len, errStr);
+        return Key::take(h, len, errStr);
     }
 }

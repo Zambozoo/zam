@@ -1,7 +1,6 @@
 import "../lang/Uints.zam";
 import "../lang/Flts.zam";
 import "../lang/Strs.zam";
-import "../lang/Pair.zam";
 
 // Non-cryptographic hashes over byte runs, and helpers for writing Hash
 public namespace Hash {
@@ -34,13 +33,13 @@ public namespace Hash {
     }
 
     private static fun uint(uint, uint) xxRound = (acc, v) {
-        acc = acc + v * type(Hash).xxPrime2;
-        return type(Uints).RotateLeft(acc, 31U) * type(Hash).xxPrime1;
+        acc = acc + v * Hash::xxPrime2;
+        return Uints::RotateLeft(acc, 31U) * Hash::xxPrime1;
     }
 
     private static fun uint(uint, uint) xxMerge = (acc, v) {
-        acc = acc ^ type(Hash).xxRound(0U, v);
-        return acc * type(Hash).xxPrime1 + type(Hash).xxPrime4;
+        acc = acc ^ Hash::xxRound(0U, v);
+        return acc * Hash::xxPrime1 + Hash::xxPrime4;
     }
 
     // XXHash64 returns the 64-bit xxHash of n bytes at b under seed.
@@ -48,64 +47,64 @@ public namespace Hash {
         var uint i = 0U;
         var uint h;
         if(n >= 32U) {
-            var uint v1 = seed + type(Hash).xxPrime1 + type(Hash).xxPrime2;
-            var uint v2 = seed + type(Hash).xxPrime2;
+            var uint v1 = seed + Hash::xxPrime1 + Hash::xxPrime2;
+            var uint v2 = seed + Hash::xxPrime2;
             var uint v3 = seed;
-            var uint v4 = seed - type(Hash).xxPrime1;
+            var uint v4 = seed - Hash::xxPrime1;
             for(; i + 32U <= n; i = i + 32U) {
-                v1 = type(Hash).xxRound(v1, type(Hash).read64(b, i));
-                v2 = type(Hash).xxRound(v2, type(Hash).read64(b, i + 8U));
-                v3 = type(Hash).xxRound(v3, type(Hash).read64(b, i + 16U));
-                v4 = type(Hash).xxRound(v4, type(Hash).read64(b, i + 24U));
+                v1 = Hash::xxRound(v1, Hash::read64(b, i));
+                v2 = Hash::xxRound(v2, Hash::read64(b, i + 8U));
+                v3 = Hash::xxRound(v3, Hash::read64(b, i + 16U));
+                v4 = Hash::xxRound(v4, Hash::read64(b, i + 24U));
             }
-            h = type(Uints).RotateLeft(v1, 1U) + type(Uints).RotateLeft(v2, 7U) + type(Uints).RotateLeft(v3, 12U) + type(Uints).RotateLeft(v4, 18U);
-            h = type(Hash).xxMerge(h, v1);
-            h = type(Hash).xxMerge(h, v2);
-            h = type(Hash).xxMerge(h, v3);
-            h = type(Hash).xxMerge(h, v4);
+            h = Uints::RotateLeft(v1, 1U) + Uints::RotateLeft(v2, 7U) + Uints::RotateLeft(v3, 12U) + Uints::RotateLeft(v4, 18U);
+            h = Hash::xxMerge(h, v1);
+            h = Hash::xxMerge(h, v2);
+            h = Hash::xxMerge(h, v3);
+            h = Hash::xxMerge(h, v4);
         } else {
-            h = seed + type(Hash).xxPrime5;
+            h = seed + Hash::xxPrime5;
         }
         h = h + n;
         for(; i + 8U <= n; i = i + 8U) {
-            h = h ^ type(Hash).xxRound(0U, type(Hash).read64(b, i));
-            h = type(Uints).RotateLeft(h, 27U) * type(Hash).xxPrime1 + type(Hash).xxPrime4;
+            h = h ^ Hash::xxRound(0U, Hash::read64(b, i));
+            h = Uints::RotateLeft(h, 27U) * Hash::xxPrime1 + Hash::xxPrime4;
         }
         if(i + 4U <= n) {
-            h = h ^ (type(Hash).read32(b, i) * type(Hash).xxPrime1);
-            h = type(Uints).RotateLeft(h, 23U) * type(Hash).xxPrime2 + type(Hash).xxPrime3;
+            h = h ^ (Hash::read32(b, i) * Hash::xxPrime1);
+            h = Uints::RotateLeft(h, 23U) * Hash::xxPrime2 + Hash::xxPrime3;
             i = i + 4U;
         }
         for(; i < n; i++) {
-            h = h ^ (b[i]{uint} * type(Hash).xxPrime5);
-            h = type(Uints).RotateLeft(h, 11U) * type(Hash).xxPrime1;
+            h = h ^ (b[i]{uint} * Hash::xxPrime5);
+            h = Uints::RotateLeft(h, 11U) * Hash::xxPrime1;
         }
         h = h ^ (h >> 33U);
-        h = h * type(Hash).xxPrime2;
+        h = h * Hash::xxPrime2;
         h = h ^ (h >> 29U);
-        h = h * type(Hash).xxPrime3;
+        h = h * Hash::xxPrime3;
         return h ^ (h >> 32U);
     }
 
     private static fun uint(uint, uint) rotl32 = (x, k) {
-        return ((x << k) | (x >> (32U - k))) & type(Hash).low32;
+        return ((x << k) | (x >> (32U - k))) & Hash::low32;
     }
 
     private static fun uint(uint) murmurBlock = (k) {
-        k = (k * 3432918353U) & type(Hash).low32;
-        k = type(Hash).rotl32(k, 15U);
-        return (k * 461845907U) & type(Hash).low32;
+        k = (k * 3432918353U) & Hash::low32;
+        k = Hash::rotl32(k, 15U);
+        return (k * 461845907U) & Hash::low32;
     }
 
     // Murmur3 returns the 32-bit MurmurHash3 (x86_32) of n bytes at b under
     // the low 32 bits of seed.
     public static fun uint(byte*, uint, uint) Murmur3 = (b, n, seed) {
-        var uint h = seed & type(Hash).low32;
+        var uint h = seed & Hash::low32;
         var uint i = 0U;
         for(; i + 4U <= n; i = i + 4U) {
-            h = h ^ type(Hash).murmurBlock(type(Hash).read32(b, i));
-            h = type(Hash).rotl32(h, 13U);
-            h = (h * 5U + 3864292196U) & type(Hash).low32;
+            h = h ^ Hash::murmurBlock(Hash::read32(b, i));
+            h = Hash::rotl32(h, 13U);
+            h = (h * 5U + 3864292196U) & Hash::low32;
         }
         var uint k = 0U;
         var uint rest = n - i;
@@ -117,20 +116,20 @@ public namespace Hash {
         }
         if(rest >= 1U) {
             k = k ^ b[i]{uint};
-            h = h ^ type(Hash).murmurBlock(k);
+            h = h ^ Hash::murmurBlock(k);
         }
-        h = h ^ (n & type(Hash).low32);
+        h = h ^ (n & Hash::low32);
         h = h ^ (h >> 16U);
-        h = (h * 2246822507U) & type(Hash).low32;
+        h = (h * 2246822507U) & Hash::low32;
         h = h ^ (h >> 13U);
-        h = (h * 3266489909U) & type(Hash).low32;
+        h = (h * 3266489909U) & Hash::low32;
         return h ^ (h >> 16U);
     }
 
     // Str returns the XXHash64 of the bytes of s.
     public static fun uint(str) Str = (s) {
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        return type(Hash).XXHash64(p.first, p.second{uint}, 0U);
+        var (byte*, int) p = Strs::ToBytes(s);
+        return Hash::XXHash64(p.0, p.1{uint}, 0U);
     }
 
     // Mix scrambles the bits of x so that every input bit affects every
@@ -143,19 +142,19 @@ public namespace Hash {
 
     // Combine folds the hash v into the running hash h, depending on order.
     public static fun uint(uint, uint) Combine = (h, v) {
-        return type(Hash).Mix(h ^ (type(Hash).Mix(v) + 11400714819323198485U + (h << 6U) + (h >> 2U)));
+        return Hash::Mix(h ^ (Hash::Mix(v) + 11400714819323198485U + (h << 6U) + (h >> 2U)));
     }
 
     public static fun uint(int) Int = (x) {
-        return type(Hash).Mix(x{uint});
+        return Hash::Mix(x{uint});
     }
 
     // Flt hashes x by its bits, with -0 hashing as 0 so that equal values
     // hash alike.
     public static fun uint(flt) Flt = (x) {
         if(x == 0.0) {
-            return type(Hash).Mix(0U);
+            return Hash::Mix(0U);
         }
-        return type(Hash).Mix(type(Flts).ToBits(x));
+        return Hash::Mix(Flts::ToBits(x));
     }
 }

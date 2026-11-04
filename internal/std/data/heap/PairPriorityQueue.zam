@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 import "../../lang/Struct.zam";
 
@@ -25,24 +24,24 @@ public class PairPriorityQueue[A, B] {
     var uint len;
     var Node[A, B]*[2] roots;
 
-    public static fun[A, B] PairPriorityQueue[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+    public static fun[A, B] PairPriorityQueue[A, B]*(uint, (A, B)...) New = (len, args) {
         var PairPriorityQueue[A, B]* h = new(PairPriorityQueue[A, B]);
         h.Init(len, args...);
         return h;
     }
 
-    public fun void(uint, Pair[A, B]...) Init = (len, args) {
+    public fun void(uint, (A, B)...) Init = (len, args) {
         this.len = 0U;
         this.roots[0] = null;
         this.roots[1] = null;
         for(var uint i = 0U; i < len; i++) {
-            this.Add(args[i].first, args[i].second);
+            this.Add(args[i].0, args[i].1);
         }
     }
 
     // before reports whether a belongs above b in the tree for side s.
     private fun bool(Node[A, B]*, Node[A, B]*, uint) before = (a, b, s) {
-        if(s == type(PairPriorityQueue).minSide) {
+        if(s == PairPriorityQueue::minSide) {
             return a.key < b.key;
         }
         return b.key < a.key;
@@ -78,9 +77,9 @@ public class PairPriorityQueue[A, B] {
     private fun void(Node[A, B]*, uint, Node[A, B]**) combine = (c, s, out) {
         var void(Node[A, B]*) chain = null;
         var void(Node[A, B]*) tree = null;
-        if(s == type(PairPriorityQueue).minSide) {
-            chain = type(PairPriorityQueue)[A, B].markChain;
-            tree = type(PairPriorityQueue)[A, B].markFrom;
+        if(s == PairPriorityQueue::minSide) {
+            chain = PairPriorityQueue::[A, B]markChain;
+            tree = PairPriorityQueue::[A, B]markFrom;
         }
         var Struct[Node[A, B]*] rest;
         rest.Init(c, chain, null);
@@ -127,8 +126,8 @@ public class PairPriorityQueue[A, B] {
     // unlink takes n out of the tree for side s, melding its children back in.
     private fun void(Node[A, B]*, uint) unlink = (n, s) {
         var void(Node[A, B]*) tree = null;
-        if(s == type(PairPriorityQueue).minSide) {
-            tree = type(PairPriorityQueue)[A, B].markFrom;
+        if(s == PairPriorityQueue::minSide) {
+            tree = PairPriorityQueue::[A, B]markFrom;
         }
         var Struct[Node[A, B]*] kids;
         kids.Init(null, tree, null);
@@ -155,16 +154,16 @@ public class PairPriorityQueue[A, B] {
         kids.s = null;
     }
 
-    private fun Pair[A, B](Node[A, B]*) entry = (n) {
-        var Pair[A, B] p;
-        p.first = n.key;
-        p.second = n.val;
+    private fun (A, B)(Node[A, B]*) entry = (n) {
+        var (A, B) p;
+        p.0 = n.key;
+        p.1 = n.val;
         return p;
     }
 
-    private fun Pair[A, B](uint) removeRoot = (s) {
+    private fun (A, B)(uint) removeRoot = (s) {
         var Node[A, B]* n = this.roots[s];
-        var Pair[A, B] v = this.entry(n);
+        var (A, B) v = this.entry(n);
         this.unlink(n, s);
         this.unlink(n, 1U - s);
         free(n);
@@ -222,13 +221,13 @@ public class PairPriorityQueue[A, B] {
 
     // markFrom marks n and everything beneath it in the min tree.
     private static fun[A, B] void(Node[A, B]*) markFrom = (n) {
-        type(PairPriorityQueue)[A, B].markWalk(n, false);
+        PairPriorityQueue::[A, B]markWalk(n, false);
     }
 
     // markChain marks n, the siblings that follow it, and everything beneath
     // them in the min tree.
     private static fun[A, B] void(Node[A, B]*) markChain = (n) {
-        type(PairPriorityQueue)[A, B].markWalk(n, true);
+        PairPriorityQueue::[A, B]markWalk(n, true);
     }
 
     // nodes returns every node, which the caller frees.
@@ -272,38 +271,38 @@ public class PairPriorityQueue[A, B] {
         this.len++;
     }
 
-    public fun Pair[A, B]() GetMin = () {
+    public fun (A, B)() GetMin = () {
         if(this.len == 0U) {
-            type(System).Panic("PairPriorityQueue is empty");
+            System::Panic("PairPriorityQueue is empty");
         }
-        return this.entry(this.roots[type(PairPriorityQueue).minSide]);
+        return this.entry(this.roots[PairPriorityQueue::minSide]);
     }
 
-    public fun Pair[A, B]() GetMax = () {
+    public fun (A, B)() GetMax = () {
         if(this.len == 0U) {
-            type(System).Panic("PairPriorityQueue is empty");
+            System::Panic("PairPriorityQueue is empty");
         }
-        return this.entry(this.roots[type(PairPriorityQueue).maxSide]);
+        return this.entry(this.roots[PairPriorityQueue::maxSide]);
     }
 
-    public fun Pair[A, B]() RemoveMin = () {
+    public fun (A, B)() RemoveMin = () {
         if(this.len == 0U) {
-            type(System).Panic("PairPriorityQueue is empty");
+            System::Panic("PairPriorityQueue is empty");
         }
-        return this.removeRoot(type(PairPriorityQueue).minSide);
+        return this.removeRoot(PairPriorityQueue::minSide);
     }
 
-    public fun Pair[A, B]() RemoveMax = () {
+    public fun (A, B)() RemoveMax = () {
         if(this.len == 0U) {
-            type(System).Panic("PairPriorityQueue is empty");
+            System::Panic("PairPriorityQueue is empty");
         }
-        return this.removeRoot(type(PairPriorityQueue).maxSide);
+        return this.removeRoot(PairPriorityQueue::maxSide);
     }
 
     // Merge moves every entry of other into this queue, leaving other empty.
     public fun void(PairPriorityQueue[A, B]*) Merge = (other) {
         if(other{void*} == this{void*}) {
-            type(System).Panic("PairPriorityQueue merged with itself");
+            System::Panic("PairPriorityQueue merged with itself");
         }
         this.roots[0] = this.link(this.roots[0], other.roots[0], 0U);
         this.roots[1] = this.link(this.roots[1], other.roots[1], 1U);
@@ -318,15 +317,15 @@ public class PairPriorityQueue[A, B] {
     }
 
     // Arr returns the entries in no particular order.
-    public fun Arr[Pair[A, B]]*() Arr = () {
+    public fun Arr[(A, B)]*() Arr = () {
         var Node[A, B]** ns = this.nodes();
-        var Pair[A, B]* a = new(Pair[A, B], this.len);
+        var (A, B)* a = new((A, B), this.len);
         for(var uint i = 0U; i < this.len; i++) {
-            a[i].first = ns[i].key;
-            a[i].second = ns[i].val;
+            a[i].0 = ns[i].key;
+            a[i].1 = ns[i].val;
         }
         free(ns);
-        return type(Arr)[Pair[A, B]].New(this.len, a...);
+        return Arr::[(A, B)]New(this.len, a...);
     }
 
     // Iter visits the entries in no particular order, as they stood when it
@@ -339,11 +338,11 @@ public class PairPriorityQueue[A, B] {
     }
 
     public fun str() Str = () {
-        var Arr[Pair[A, B]]* a = this.Arr();
+        var Arr[(A, B)]* a = this.Arr();
         var str s = "[";
         var str spacer = "";
         for(var uint i = 0U; i < a.Len(); i++) {
-            s = s + spacer + a.Get(i).first{str} + ": " + a.Get(i).second{str};
+            s = s + spacer + a.Get(i).0{str} + ": " + a.Get(i).1{str};
             spacer = ", ";
         }
         return s + "]";
@@ -361,39 +360,39 @@ public class PairPriorityQueue[A, B] {
     }
 
     public fun void() Mark = () {
-        if(!type(System.GC).Markable(@{A}) && !type(System.GC).Markable(@{B})) {
+        if(!System.GC::Markable(@{A}) && !System.GC::Markable(@{B})) {
             return;
         }
         if(this.roots[0] != null) {
-            type(PairPriorityQueue)[A, B].markFrom(this.roots[0]);
+            PairPriorityQueue::[A, B]markFrom(this.roots[0]);
         }
     }
 
     private class Iter[A, B] {
-        var Arr[Pair[A, B]]* items;
+        var Arr[(A, B)]* items;
         var uint i;
 
-        public fun Pair[Pair[A, B], bool]() Next = () {
-            var Pair[Pair[A, B], bool] p;
+        public fun ((A, B), bool)() Next = () {
+            var ((A, B), bool) p;
             if(this.i >= this.items.Len()) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.items.Get(this.i);
-            p.second = true;
+            p.0 = this.items.Get(this.i);
+            p.1 = true;
             this.i++;
             return p;
         }
 
-        public fun Pair[Pair[A, B], bool]() Prev = () {
-            var Pair[Pair[A, B], bool] p;
+        public fun ((A, B), bool)() Prev = () {
+            var ((A, B), bool) p;
             if(this.i == 0U) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
             this.i--;
-            p.first = this.items.Get(this.i);
-            p.second = true;
+            p.0 = this.items.Get(this.i);
+            p.1 = true;
             return p;
         }
     }

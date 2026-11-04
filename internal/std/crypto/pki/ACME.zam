@@ -3,7 +3,6 @@ import "../../codec/text/Base64.zam";
 import "../../io/web/HTTP.zam";
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 import "../../lang/time/Duration.zam";
@@ -66,71 +65,71 @@ public class ACME {
     var str nonce;
 
     static fun Err*(str) fail = (s) {
-        return type(StrErr).New("ACME: " + s);
+        return StrErr::New("ACME: " + s);
     }
 
     static fun str(str) b64 = (s) {
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        return type(Base64).EncodeURL(p.first, p.second{uint});
+        var (byte*, int) p = Strs::ToBytes(s);
+        return Base64::EncodeURL(p.0, p.1{uint});
     }
 
     static fun str(str) quote = (s) {
-        return type(JSON).NewStr(s).Encode(false);
+        return JSON::NewStr(s).Encode(false);
     }
 
     static fun str(JSON*, str) field = (j, name) {
-        var Pair[JSON*, bool] f = j.Get(name);
-        if(!f.second || f.first.Kind() != type(JSON.Kind).String) {
+        var (JSON*, bool) f = j.Get(name);
+        if(!f.1 || f.0.Kind() != JSON.Kind::String) {
             return "";
         }
-        return f.first.AsStr();
+        return f.0.AsStr();
     }
 
     // New starts a client of the server whose directory is at directoryURL,
     // under accountKey.
-    public static fun Pair[ACME*, Err*](str, Key*) New = (directoryURL, accountKey) {
-        var Pair[ACME*, Err*] out;
-        out.first = null;
-        out.second = null;
-        if(!accountKey.IsPrivate() || accountKey.Kind() != type(Key.Kind).P256) {
-            out.second = type(ACME).fail("the account key must be a private P256 key");
+    public static fun (ACME*, Err*)(str, Key*) New = (directoryURL, accountKey) {
+        var (ACME*, Err*) out;
+        out.0 = null;
+        out.1 = null;
+        if(!accountKey.IsPrivate() || accountKey.Kind() != Key.Kind::P256) {
+            out.1 = ACME::fail("the account key must be a private P256 key");
             return out;
         }
-        var Pair[HTTP.Response*, Err*] resp = type(HTTP).Do(type(HTTP.Request).New("GET", directoryURL));
-        if(resp.second != null) {
-            out.second = resp.second;
+        var (HTTP.Response*, Err*) resp = HTTP::Do(HTTP.Request::New("GET", directoryURL));
+        if(resp.1 != null) {
+            out.1 = resp.1;
             return out;
         }
-        var Pair[str, Err*] body = resp.first.ReadBody();
-        if(body.second != null) {
-            out.second = body.second;
+        var (str, Err*) body = resp.0.ReadBody();
+        if(body.1 != null) {
+            out.1 = body.1;
             return out;
         }
-        var Pair[JSON*, Err*] dir = type(JSON).Parse(body.first);
-        if(dir.second != null || resp.first.status != 200U) {
-            out.second = type(ACME).fail("no directory at " + directoryURL);
+        var (JSON*, Err*) dir = JSON::Parse(body.0);
+        if(dir.1 != null || resp.0.status != 200U) {
+            out.1 = ACME::fail("no directory at " + directoryURL);
             return out;
         }
         var ACME* a = new(ACME);
-        a.newNonce = type(ACME).field(dir.first, "newNonce");
-        a.newAccount = type(ACME).field(dir.first, "newAccount");
-        a.newOrder = type(ACME).field(dir.first, "newOrder");
+        a.newNonce = ACME::field(dir.0, "newNonce");
+        a.newAccount = ACME::field(dir.0, "newAccount");
+        a.newOrder = ACME::field(dir.0, "newOrder");
         a.key = accountKey;
         a.kid = "";
         a.nonce = "";
         a.pollMs = 1000U;
         a.attempts = 60U;
-        var Arr[byte]* der = accountKey.Public().DER().first;
+        var Arr[byte]* der = accountKey.Public().DER().0;
         var byte* point = der.Arr() + (der.Len() - 64U);
-        a.jwk = "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"" + type(Base64).EncodeURL(point, 32U) + "\",\"y\":\"" + type(Base64).EncodeURL(point + 32U, 32U) + "\"}";
-        var Pair[byte*, int] j = type(Strs).ToBytes(a.jwk);
-        var Arr[byte]* sum = type(SHA256).Sum(j.first, j.second{uint});
-        a.thumbprint = type(Base64).EncodeURL(sum.Arr(), sum.Len());
+        a.jwk = "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"" + Base64::EncodeURL(point, 32U) + "\",\"y\":\"" + Base64::EncodeURL(point + 32U, 32U) + "\"}";
+        var (byte*, int) j = Strs::ToBytes(a.jwk);
+        var Arr[byte]* sum = SHA256::Sum(j.0, j.1{uint});
+        a.thumbprint = Base64::EncodeURL(sum.Arr(), sum.Len());
         if(a.newNonce == "" || a.newAccount == "" || a.newOrder == "") {
-            out.second = type(ACME).fail("the directory at " + directoryURL + " is incomplete");
+            out.1 = ACME::fail("the directory at " + directoryURL + " is incomplete");
             return out;
         }
-        out.first = a;
+        out.0 = a;
         return out;
     }
 
@@ -152,106 +151,106 @@ public class ACME {
             }
             at = start + len;
         }
-        var str s = type(Base64).EncodeURL(out, 64U);
+        var str s = Base64::EncodeURL(out, 64U);
         free(out);
         return s;
     }
 
     fun Err*() fetchNonce = () {
-        var Pair[HTTP.Response*, Err*] resp = type(HTTP).Do(type(HTTP.Request).New("GET", this.newNonce));
-        if(resp.second != null) {
-            return resp.second;
+        var (HTTP.Response*, Err*) resp = HTTP::Do(HTTP.Request::New("GET", this.newNonce));
+        if(resp.1 != null) {
+            return resp.1;
         }
-        var Pair[str, bool] n = resp.first.headers.Value("Replay-Nonce");
-        if(!n.second) {
-            return type(ACME).fail("the server gave no nonce");
+        var (str, bool) n = resp.0.headers.Value("Replay-Nonce");
+        if(!n.1) {
+            return ACME::fail("the server gave no nonce");
         }
-        this.nonce = n.first;
+        this.nonce = n.0;
         return null;
     }
 
     // post sends payload, or nothing for "" as a POST-as-GET, to url signed
     // as a JWS, naming the account by its key until it has an id.
-    fun Pair[ACME.Reply*, Err*](str, str) post = (url, payload) {
-        var Pair[ACME.Reply*, Err*] out;
-        out.first = null;
-        out.second = null;
+    fun (ACME.Reply*, Err*)(str, str) post = (url, payload) {
+        var (ACME.Reply*, Err*) out;
+        out.0 = null;
+        out.1 = null;
         for(var int attempt = 0; attempt < 2; attempt++) {
             if(this.nonce == "") {
-                out.second = this.fetchNonce();
-                if(out.second != null) {
+                out.1 = this.fetchNonce();
+                if(out.1 != null) {
                     return out;
                 }
             }
             var str who = "\"jwk\":" + this.jwk;
             if(this.kid != "") {
-                who = "\"kid\":" + type(ACME).quote(this.kid);
+                who = "\"kid\":" + ACME::quote(this.kid);
             }
-            var str header = type(ACME).b64("{\"alg\":\"ES256\"," + who + ",\"nonce\":" + type(ACME).quote(this.nonce) + ",\"url\":" + type(ACME).quote(url) + "}");
+            var str header = ACME::b64("{\"alg\":\"ES256\"," + who + ",\"nonce\":" + ACME::quote(this.nonce) + ",\"url\":" + ACME::quote(url) + "}");
             var str body = "";
             if(payload != "") {
-                body = type(ACME).b64(payload);
+                body = ACME::b64(payload);
             }
-            var Pair[byte*, int] input = type(Strs).ToBytes(header + "." + body);
-            var Pair[Arr[byte]*, Err*] sig = type(ECDSA).Sign(this.key, type(Digest.Kind).SHA256, input.first, input.second{uint});
-            if(sig.second != null) {
-                out.second = sig.second;
+            var (byte*, int) input = Strs::ToBytes(header + "." + body);
+            var (Arr[byte]*, Err*) sig = ECDSA::Sign(this.key, Digest.Kind::SHA256, input.0, input.1{uint});
+            if(sig.1 != null) {
+                out.1 = sig.1;
                 return out;
             }
-            var HTTP.Request* r = type(HTTP.Request).New("POST", url);
+            var HTTP.Request* r = HTTP.Request::New("POST", url);
             r.headers.Set("Content-Type", "application/jose+json");
-            r.SetBody("{\"protected\":\"" + header + "\",\"payload\":\"" + body + "\",\"signature\":\"" + type(ACME).rawSignature(sig.first) + "\"}");
+            r.SetBody("{\"protected\":\"" + header + "\",\"payload\":\"" + body + "\",\"signature\":\"" + ACME::rawSignature(sig.0) + "\"}");
             this.nonce = "";
-            var Pair[HTTP.Response*, Err*] resp = type(HTTP).Do(r);
-            if(resp.second != null) {
-                out.second = resp.second;
+            var (HTTP.Response*, Err*) resp = HTTP::Do(r);
+            if(resp.1 != null) {
+                out.1 = resp.1;
                 return out;
             }
-            var Pair[str, bool] n = resp.first.headers.Value("Replay-Nonce");
-            if(n.second) {
-                this.nonce = n.first;
+            var (str, bool) n = resp.0.headers.Value("Replay-Nonce");
+            if(n.1) {
+                this.nonce = n.0;
             }
-            var Pair[str, Err*] text = resp.first.ReadBody();
-            if(text.second != null) {
-                out.second = text.second;
+            var (str, Err*) text = resp.0.ReadBody();
+            if(text.1 != null) {
+                out.1 = text.1;
                 return out;
             }
-            if(resp.first.status >= 400U) {
+            if(resp.0.status >= 400U) {
                 var str kind = "";
-                var str detail = text.first;
-                var Pair[JSON*, Err*] problem = type(JSON).Parse(text.first);
-                if(problem.second == null && problem.first.Kind() == type(JSON.Kind).Object) {
-                    kind = type(ACME).field(problem.first, "type");
-                    detail = type(ACME).field(problem.first, "detail");
+                var str detail = text.0;
+                var (JSON*, Err*) problem = JSON::Parse(text.0);
+                if(problem.1 == null && problem.0.Kind() == JSON.Kind::Object) {
+                    kind = ACME::field(problem.0, "type");
+                    detail = ACME::field(problem.0, "detail");
                 }
                 if(kind == "urn:ietf:params:acme:error:badNonce" && attempt == 0) {
                     continue;
                 }
-                out.second = type(ACME).fail(url + " answered " + resp.first.status{str} + ": " + detail);
+                out.1 = ACME::fail(url + " answered " + resp.0.status{str} + ": " + detail);
                 return out;
             }
             var ACME.Reply* reply = new(ACME.Reply);
-            reply.status = resp.first.status;
-            reply.headers = resp.first.headers;
-            reply.body = text.first;
-            out.first = reply;
+            reply.status = resp.0.status;
+            reply.headers = resp.0.headers;
+            reply.body = text.0;
+            out.0 = reply;
             return out;
         }
         return out;
     }
 
-    fun Pair[JSON*, Err*](str, str) postJSON = (url, payload) {
-        var Pair[JSON*, Err*] out;
-        out.first = null;
-        var Pair[ACME.Reply*, Err*] reply = this.post(url, payload);
-        out.second = reply.second;
-        if(reply.second != null) {
+    fun (JSON*, Err*)(str, str) postJSON = (url, payload) {
+        var (JSON*, Err*) out;
+        out.0 = null;
+        var (ACME.Reply*, Err*) reply = this.post(url, payload);
+        out.1 = reply.1;
+        if(reply.1 != null) {
             return out;
         }
-        out = type(JSON).Parse(reply.first.body);
-        if(out.second != null || out.first.Kind() != type(JSON.Kind).Object) {
-            out.first = null;
-            out.second = type(ACME).fail(url + " did not answer with an object");
+        out = JSON::Parse(reply.0.body);
+        if(out.1 != null || out.0.Kind() != JSON.Kind::Object) {
+            out.0 = null;
+            out.1 = ACME::fail(url + " did not answer with an object");
         }
         return out;
     }
@@ -260,143 +259,143 @@ public class ACME {
     // with email as its contact unless it is "", agreeing to the terms of
     // service when told to.
     public fun Err*(str, bool) Register = (email, agree) {
-        var JSON* payload = type(JSON).NewObject();
-        payload.Set("termsOfServiceAgreed", type(JSON).NewBool(agree));
+        var JSON* payload = JSON::NewObject();
+        payload.Set("termsOfServiceAgreed", JSON::NewBool(agree));
         if(email != "") {
-            var JSON* contact = type(JSON).NewArray();
-            contact.Append(type(JSON).NewStr("mailto:" + email));
+            var JSON* contact = JSON::NewArray();
+            contact.Append(JSON::NewStr("mailto:" + email));
             payload.Set("contact", contact);
         }
-        var Pair[ACME.Reply*, Err*] reply = this.post(this.newAccount, payload.Encode(false));
-        if(reply.second != null) {
-            return reply.second;
+        var (ACME.Reply*, Err*) reply = this.post(this.newAccount, payload.Encode(false));
+        if(reply.1 != null) {
+            return reply.1;
         }
-        var Pair[str, bool] location = reply.first.headers.Value("Location");
-        if(!location.second) {
-            return type(ACME).fail("the server gave no account URL");
+        var (str, bool) location = reply.0.headers.Value("Location");
+        if(!location.1) {
+            return ACME::fail("the server gave no account URL");
         }
-        this.kid = location.first;
+        this.kid = location.0;
         return null;
     }
 
     fun void(ACME.Order*, JSON*) read = (o, j) {
-        o.status = type(ACME).field(j, "status");
-        o.finalize = type(ACME).field(j, "finalize");
-        o.certificate = type(ACME).field(j, "certificate");
-        var Pair[JSON*, bool] auths = j.Get("authorizations");
+        o.status = ACME::field(j, "status");
+        o.finalize = ACME::field(j, "finalize");
+        o.certificate = ACME::field(j, "certificate");
+        var (JSON*, bool) auths = j.Get("authorizations");
         var uint n = 0U;
-        if(auths.second) {
-            n = auths.first.Len();
+        if(auths.1) {
+            n = auths.0.Len();
         }
-        o.authorizations = type(Arr)[str].New(n, new(str, n + 1U)...);
+        o.authorizations = Arr::[str]New(n, new(str, n + 1U)...);
         for(var uint i = 0U; i < n; i++) {
-            o.authorizations.Set(i, auths.first.At(i).AsStr());
+            o.authorizations.Set(i, auths.0.At(i).AsStr());
         }
     }
 
     // NewOrder orders a certificate for domains.
-    public fun Pair[ACME.Order*, Err*](Arr[str]*) NewOrder = (domains) {
-        var Pair[ACME.Order*, Err*] out;
-        out.first = null;
+    public fun (ACME.Order*, Err*)(Arr[str]*) NewOrder = (domains) {
+        var (ACME.Order*, Err*) out;
+        out.0 = null;
         if(this.kid == "") {
-            out.second = type(ACME).fail("register before ordering");
+            out.1 = ACME::fail("register before ordering");
             return out;
         }
-        var JSON* ids = type(JSON).NewArray();
+        var JSON* ids = JSON::NewArray();
         for(var uint i = 0U; i < domains.Len(); i++) {
-            var JSON* id = type(JSON).NewObject();
-            id.Set("type", type(JSON).NewStr("dns"));
-            id.Set("value", type(JSON).NewStr(domains.Get(i)));
+            var JSON* id = JSON::NewObject();
+            id.Set("type", JSON::NewStr("dns"));
+            id.Set("value", JSON::NewStr(domains.Get(i)));
             ids.Append(id);
         }
-        var JSON* payload = type(JSON).NewObject();
+        var JSON* payload = JSON::NewObject();
         payload.Set("identifiers", ids);
-        var Pair[ACME.Reply*, Err*] reply = this.post(this.newOrder, payload.Encode(false));
-        out.second = reply.second;
-        if(reply.second != null) {
+        var (ACME.Reply*, Err*) reply = this.post(this.newOrder, payload.Encode(false));
+        out.1 = reply.1;
+        if(reply.1 != null) {
             return out;
         }
-        var Pair[str, bool] location = reply.first.headers.Value("Location");
-        var Pair[JSON*, Err*] j = type(JSON).Parse(reply.first.body);
-        if(!location.second || j.second != null) {
-            out.second = type(ACME).fail("the server's order is unreadable");
+        var (str, bool) location = reply.0.headers.Value("Location");
+        var (JSON*, Err*) j = JSON::Parse(reply.0.body);
+        if(!location.1 || j.1 != null) {
+            out.1 = ACME::fail("the server's order is unreadable");
             return out;
         }
         var ACME.Order* o = new(ACME.Order);
-        o.url = location.first;
-        this.read(o, j.first);
-        out.first = o;
+        o.url = location.0;
+        this.read(o, j.0);
+        out.0 = o;
         return out;
     }
 
     // Challenges returns the challenge of kind, such as http-01 or dns-01,
     // for each domain of an order.
-    public fun Pair[Arr[ACME.Challenge*]*, Err*](ACME.Order*, str) Challenges = (o, kind) {
-        var Pair[Arr[ACME.Challenge*]*, Err*] out;
-        out.first = null;
-        out.second = null;
+    public fun (Arr[ACME.Challenge*]*, Err*)(ACME.Order*, str) Challenges = (o, kind) {
+        var (Arr[ACME.Challenge*]*, Err*) out;
+        out.0 = null;
+        out.1 = null;
         var uint n = o.authorizations.Len();
-        var Arr[ACME.Challenge*]* list = type(Arr)[ACME.Challenge*].New(n, new(ACME.Challenge*, n + 1U)...);
+        var Arr[ACME.Challenge*]* list = Arr::[ACME.Challenge*]New(n, new(ACME.Challenge*, n + 1U)...);
         for(var uint i = 0U; i < n; i++) {
-            var Pair[JSON*, Err*] auth = this.postJSON(o.authorizations.Get(i), "");
-            if(auth.second != null) {
-                out.second = auth.second;
+            var (JSON*, Err*) auth = this.postJSON(o.authorizations.Get(i), "");
+            if(auth.1 != null) {
+                out.1 = auth.1;
                 return out;
             }
             var str domain = "";
-            var Pair[JSON*, bool] id = auth.first.Get("identifier");
-            if(id.second) {
-                domain = type(ACME).field(id.first, "value");
+            var (JSON*, bool) id = auth.0.Get("identifier");
+            if(id.1) {
+                domain = ACME::field(id.0, "value");
             }
-            var Pair[JSON*, bool] all = auth.first.Get("challenges");
+            var (JSON*, bool) all = auth.0.Get("challenges");
             var ACME.Challenge* found = null;
-            for(var uint k = 0U; all.second && found == null && k < all.first.Len(); k++) {
-                var JSON* c = all.first.At(k);
-                if(type(ACME).field(c, "type") == kind) {
+            for(var uint k = 0U; all.1 && found == null && k < all.0.Len(); k++) {
+                var JSON* c = all.0.At(k);
+                if(ACME::field(c, "type") == kind) {
                     found = new(ACME.Challenge);
                     found.domain = domain;
                     found.kind = kind;
-                    found.token = type(ACME).field(c, "token");
-                    found.url = type(ACME).field(c, "url");
+                    found.token = ACME::field(c, "token");
+                    found.url = ACME::field(c, "url");
                     found.keyAuthorization = found.token + "." + this.thumbprint;
-                    var Pair[byte*, int] ka = type(Strs).ToBytes(found.keyAuthorization);
-                    var Arr[byte]* sum = type(SHA256).Sum(ka.first, ka.second{uint});
-                    found.dnsValue = type(Base64).EncodeURL(sum.Arr(), sum.Len());
+                    var (byte*, int) ka = Strs::ToBytes(found.keyAuthorization);
+                    var Arr[byte]* sum = SHA256::Sum(ka.0, ka.1{uint});
+                    found.dnsValue = Base64::EncodeURL(sum.Arr(), sum.Len());
                 }
             }
             if(found == null) {
-                out.second = type(ACME).fail("no " + kind + " challenge for " + domain);
+                out.1 = ACME::fail("no " + kind + " challenge for " + domain);
                 return out;
             }
             list.Set(i, found);
         }
-        out.first = list;
+        out.0 = list;
         return out;
     }
 
     // Accept tells the server a challenge is ready to be checked.
     public fun Err*(ACME.Challenge*) Accept = (c) {
-        return this.postJSON(c.url, "{}").second;
+        return this.postJSON(c.url, "{}").1;
     }
 
     // poll reads the order until its status is want, failing if it turns
     // invalid or attempts run out.
     fun Err*(ACME.Order*, str) poll = (o, want) {
         for(var uint i = 0U; i < this.attempts; i++) {
-            var Pair[JSON*, Err*] j = this.postJSON(o.url, "");
-            if(j.second != null) {
-                return j.second;
+            var (JSON*, Err*) j = this.postJSON(o.url, "");
+            if(j.1 != null) {
+                return j.1;
             }
-            this.read(o, j.first);
+            this.read(o, j.0);
             if(o.status == want || o.status == "valid") {
                 return null;
             }
             if(o.status == "invalid") {
-                return type(ACME).fail("the order turned invalid");
+                return ACME::fail("the order turned invalid");
             }
-            type(Timer).Sleep(type(Duration).Milliseconds(this.pollMs{int}));
+            Timer::Sleep(Duration::Milliseconds(this.pollMs{int}));
         }
-        return type(ACME).fail("the order is still " + o.status);
+        return ACME::fail("the order is still " + o.status);
     }
 
     // Wait waits for every challenge of an order to be met.
@@ -407,26 +406,26 @@ public class ACME {
     // Finalize submits a certificate request in DER for a ready order and
     // waits for the certificate to be issued.
     public fun Err*(ACME.Order*, Arr[byte]*) Finalize = (o, csr) {
-        var Pair[JSON*, Err*] j = this.postJSON(o.finalize, "{\"csr\":\"" + type(Base64).EncodeURL(csr.Arr(), csr.Len()) + "\"}");
-        if(j.second != null) {
-            return j.second;
+        var (JSON*, Err*) j = this.postJSON(o.finalize, "{\"csr\":\"" + Base64::EncodeURL(csr.Arr(), csr.Len()) + "\"}");
+        if(j.1 != null) {
+            return j.1;
         }
-        this.read(o, j.first);
+        this.read(o, j.0);
         return this.poll(o, "valid");
     }
 
     // Certificate downloads a valid order's certificate chain, in PEM.
-    public fun Pair[str, Err*](ACME.Order*) Certificate = (o) {
-        var Pair[str, Err*] out;
-        out.first = "";
+    public fun (str, Err*)(ACME.Order*) Certificate = (o) {
+        var (str, Err*) out;
+        out.0 = "";
         if(o.certificate == "") {
-            out.second = type(ACME).fail("the order has no certificate yet");
+            out.1 = ACME::fail("the order has no certificate yet");
             return out;
         }
-        var Pair[ACME.Reply*, Err*] reply = this.post(o.certificate, "");
-        out.second = reply.second;
-        if(reply.second == null) {
-            out.first = reply.first.body;
+        var (ACME.Reply*, Err*) reply = this.post(o.certificate, "");
+        out.1 = reply.1;
+        if(reply.1 == null) {
+            out.0 = reply.0.body;
         }
         return out;
     }

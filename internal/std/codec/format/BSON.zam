@@ -1,7 +1,6 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
 import "../../lang/Obj.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 import "../../lang/time/Time.zam";
@@ -36,14 +35,14 @@ public class BSON {
         return b;
     }
 
-    private static fun Pair[BSON*, Err*](uint, str) result = (h, errStr) {
-        var Pair[BSON*, Err*] out;
-        out.first = null;
-        out.second = null;
+    private static fun (BSON*, Err*)(uint, str) result = (h, errStr) {
+        var (BSON*, Err*) out;
+        out.0 = null;
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
         } else {
-            out.first = type(BSON).wrap(h);
+            out.0 = BSON::wrap(h);
         }
         return out;
     }
@@ -51,23 +50,23 @@ public class BSON {
     public static fun BSON*() New = () {
         var uint h;
         native(STD_BSON_NEW){void(uint*)}(&h);
-        return type(BSON).wrap(h);
+        return BSON::wrap(h);
     }
 
     // FromBytes reads and validates a document in BSON's binary form.
-    public static fun Pair[BSON*, Err*](byte*, uint) FromBytes = (b, n) {
+    public static fun (BSON*, Err*)(byte*, uint) FromBytes = (b, n) {
         var uint h = 0U;
         var str errStr;
         native(STD_BSON_FROM_BYTES){void(byte*, int, uint*, str*)}(b, n{int}, &h, &errStr);
-        return type(BSON).result(h, errStr);
+        return BSON::result(h, errStr);
     }
 
     // FromJSON reads MongoDB extended JSON, canonical or relaxed.
-    public static fun Pair[BSON*, Err*](str) FromJSON = (s) {
+    public static fun (BSON*, Err*)(str) FromJSON = (s) {
         var uint h = 0U;
         var str errStr;
         native(STD_BSON_FROM_JSON){void(str, uint*, str*)}(s, &h, &errStr);
-        return type(BSON).result(h, errStr);
+        return BSON::result(h, errStr);
     }
 
     // NewObjectId returns a fresh ObjectId as 24 hex digits.
@@ -90,7 +89,7 @@ public class BSON {
         native(STD_BSON_BYTE_LEN){void(uint, int*)}(this.handle, &n);
         var byte* b = new(byte, n{uint});
         native(STD_BSON_COPY_BYTES){void(uint, byte*)}(this.handle, b);
-        return type(Arr)[byte].New(n{uint}, b...);
+        return Arr::[byte]New(n{uint}, b...);
     }
 
     public fun uint() Len = () {
@@ -104,9 +103,9 @@ public class BSON {
         var str joined;
         native(STD_BSON_KEYS){void(uint, str*)}(this.handle, &joined);
         if(this.Len() == 0U) {
-            return type(Arr)[str].New(0U, new(str, 0U)...);
+            return Arr::[str]New(0U, new(str, 0U)...);
         }
-        return type(Strs).Split(joined, 0{byte});
+        return Strs::Split(joined, 0{byte});
     }
 
     // Kind returns the type of a member, Missing when there is none.
@@ -114,52 +113,52 @@ public class BSON {
         var int t;
         native(STD_BSON_TYPE){void(uint, str, int*)}(this.handle, key, &t);
         if(t == 0) {
-            return type(BSON.Kind).Missing;
+            return BSON.Kind::Missing;
         }
         if(t == 1) {
-            return type(BSON.Kind).Double;
+            return BSON.Kind::Double;
         }
         if(t == 2) {
-            return type(BSON.Kind).String;
+            return BSON.Kind::String;
         }
         if(t == 3) {
-            return type(BSON.Kind).Document;
+            return BSON.Kind::Document;
         }
         if(t == 4) {
-            return type(BSON.Kind).Array;
+            return BSON.Kind::Array;
         }
         if(t == 5) {
-            return type(BSON.Kind).Binary;
+            return BSON.Kind::Binary;
         }
         if(t == 7) {
-            return type(BSON.Kind).ObjectId;
+            return BSON.Kind::ObjectId;
         }
         if(t == 8) {
-            return type(BSON.Kind).Bool;
+            return BSON.Kind::Bool;
         }
         if(t == 9) {
-            return type(BSON.Kind).DateTime;
+            return BSON.Kind::DateTime;
         }
         if(t == 10) {
-            return type(BSON.Kind).Null;
+            return BSON.Kind::Null;
         }
         if(t == 16) {
-            return type(BSON.Kind).Int32;
+            return BSON.Kind::Int32;
         }
         if(t == 17) {
-            return type(BSON.Kind).Timestamp;
+            return BSON.Kind::Timestamp;
         }
         if(t == 18) {
-            return type(BSON.Kind).Int64;
+            return BSON.Kind::Int64;
         }
         if(t == 19) {
-            return type(BSON.Kind).Decimal128;
+            return BSON.Kind::Decimal128;
         }
-        return type(BSON.Kind).Other;
+        return BSON.Kind::Other;
     }
 
     public fun bool(str) Has = (key) {
-        return this.Kind(key) != type(BSON.Kind).Missing;
+        return this.Kind(key) != BSON.Kind::Missing;
     }
 
     public fun str(str) GetStr = (key) {
@@ -191,14 +190,14 @@ public class BSON {
     public fun BSON*(str) GetDoc = (key) {
         var uint h;
         native(STD_BSON_GET_DOC){void(uint, str, uint*)}(this.handle, key, &h);
-        return type(BSON).wrap(h);
+        return BSON::wrap(h);
     }
 
     // GetDateTime returns a date-time, which BSON holds to the millisecond.
     public fun Time(str) GetDateTime = (key) {
         var int ms;
         native(STD_BSON_GET_DATE_TIME){void(uint, str, int*)}(this.handle, key, &ms);
-        return type(Time).FromUnixMilli(ms);
+        return Time::FromUnixMilli(ms);
     }
 
     // GetObjectId returns an ObjectId as 24 hex digits.
@@ -213,7 +212,7 @@ public class BSON {
         native(STD_BSON_BINARY_LEN){void(uint, str, int*)}(this.handle, key, &n);
         var byte* b = new(byte, n{uint});
         native(STD_BSON_BINARY_COPY){void(uint, str, byte*)}(this.handle, key, b);
-        return type(Arr)[byte].New(n{uint}, b...);
+        return Arr::[byte]New(n{uint}, b...);
     }
 
     public fun void(str, str) AppendStr = (key, s) {

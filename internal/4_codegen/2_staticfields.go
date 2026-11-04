@@ -470,13 +470,8 @@ func (p *typeResolver) typeInstanceShortOf(t syntax.Type) typeInstanceShort {
 		return typeInstanceShort{typeID: uint16(tt.Kind())}
 	case *syntax.TypeFunction:
 		return typeInstanceShort{typeID: p.internedTypeID(tt)}
-	// A thread is interned by the type it runs, a pointer by the whole type.
 	case *syntax.TypeWrapped:
-		key := syntax.Type(tt)
-		if tt.Kind() == syntax.TypeKindThread {
-			key = tt.Type
-		}
-		return typeInstanceShort{typeID: p.internedTypeID(key)}
+		return typeInstanceShort{typeID: p.internedTypeID(tt)}
 	// A tailed type names the declaration a reference to it would, the tail
 	// saying how much of it was allocated rather than which one it is.
 	case *syntax.TypeReference:
@@ -485,6 +480,8 @@ func (p *typeResolver) typeInstanceShortOf(t syntax.Type) typeInstanceShort {
 		return p.declTypeInstanceShort(tt.Decl())
 	case *syntax.TypeGeneric:
 		return p.genericTypeInstanceShort(tt)
+	case *syntax.TypeTuple:
+		return typeInstanceShort{typeID: p.internedTypeID(tt)}
 	}
 	panic("unreachable")
 }
@@ -601,8 +598,8 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) fillMethods(dst []method
 	}
 }
 
-// internedTypeID returns the global type id of a thread, function or pointer
-// type, all of which are numbered by the semantic pass that collects them.
+// internedTypeID returns the global type id of a thread, function, pointer or
+// tuple type, all of which are numbered by the semantic pass that collects them.
 //
 // A type reached here that was never collected is a hole in that pass, not a
 // type without an id, and it has to be said out loud: the miss would otherwise
@@ -1025,8 +1022,30 @@ func fieldByteInfo(t syntax.Type) (size, align uint64) {
 		return declFieldByteInfo(tt.Decl())
 	case *syntax.TypeFunction:
 		return wordByteSize, wordByteSize
+	case *syntax.TypeTuple:
+		size, align, _ := tupleLayout(tt)
+		return size, align
 	}
 	return wordByteSize, wordByteSize
+}
+
+// tupleLayout lays a tuple's elements out the way [layoutOf] lays out a
+// struct's members: each at the next offset its alignment allows, the whole
+// padded to the widest alignment among them. A tuple carries no header.
+func tupleLayout(t *syntax.TypeTuple) (size, align uint64, offsets []uint64) {
+	var offset uint64
+	align = 1
+	offsets = make([]uint64, len(t.Types))
+	for i, element := range t.Types {
+		sz, al := fieldByteInfo(element)
+		if al > align {
+			align = al
+		}
+		offset = alignUp(offset, al)
+		offsets[i] = offset
+		offset += sz
+	}
+	return alignUp(offset, align), align, offsets
 }
 
 // stackWords is how many operand stack slots a value of the given type occupies.

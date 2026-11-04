@@ -35,6 +35,6 @@ public class Cond {
     public fun void() Delete = () {
         native(STD_COND_DELETE){void(uint)}(this.handle);
         this.handle = 0U;
-        type(Objs).Delete(this);
+        Objs::Delete(this);
     }
 }

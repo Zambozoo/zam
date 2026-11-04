@@ -346,3 +346,22 @@ func TestLexReportsWhereEachTokenEnds(t *testing.T) {
 	assert.ErrorIs(t, err, errUnterminatedStringLiteral)
 	assert.Len(t, tokens, 1)
 }
+
+// TestLexerCountsLinesPastComments pins that a line comment's newline and a
+// block comment's newlines each begin a line, so a token after them is placed
+// on the line it is written on.
+func TestLexerCountsLinesPastComments(t *testing.T) {
+	lexer, err := NewLexer(newRuneReader(io.NopCloser(strings.NewReader("a // one\n// two\n/* three\nfour */ b\nc"))))
+	assert.NoError(t, err)
+
+	var lines []int
+	for {
+		tok, err := lexer.Next()
+		assert.NoError(t, err)
+		if tok.Kind == TTEOF {
+			break
+		}
+		lines = append(lines, tok.Position(lexer.LineStarts).Line)
+	}
+	assert.Equal(t, []int{1, 4, 5}, lines)
+}

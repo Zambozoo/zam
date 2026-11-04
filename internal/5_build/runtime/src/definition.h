@@ -415,6 +415,25 @@ static inline ZamTypeID zam_pointer_pointee(const ZamPointerDefinition *d) {
     return zam_type_id_read(&d->typeWord);
 }
 
+// A tuple is how much room an instance takes, the routine that fills a fresh
+// one in, and its element types as a type list, which is the same run a
+// function's signature is written as. Where each element lies follows the list,
+// one word apiece, so an element is reached by arithmetic on the head.
+typedef struct ZamTupleDefinition {
+    uint64_t instanceByteSize;
+    uint64_t initializerInstruction;
+    uint64_t elementCount;
+   ZamWord body[];
+} ZamTupleDefinition;
+
+static inline const ZamTypeList *zam_tuple_types(const ZamTupleDefinition *d) {
+    return (const ZamTypeList *)&d->elementCount;
+}
+
+static inline const ZamWord *zam_tuple_offsets(const ZamTupleDefinition *d) {
+    return d->body + d->elementCount * ZAMTYPE_ID_WORDS;
+}
+
 // Each reader hands back a pointer into the image and dies unless the id falls
 // in the bucket the reader is for. Nothing on the wire says which kind a
 // definition is, so reading one as the wrong kind would not fail, it would
@@ -443,6 +462,8 @@ const ZamGenericInterfaceDefinition *
 zam_generic_interface_definition(const ZamImage *image, uint16_t declID);
 const ZamPointerDefinition *zam_pointer_definition(const ZamImage *image,
                                                    uint16_t declID);
+const ZamTupleDefinition *zam_tuple_definition(const ZamImage *image,
+                                               uint16_t declID);
 
 // A thread type's definition is the one type it yields and a function type's is
 // its signature, so neither has a definition struct of its own: the type id and
@@ -475,9 +496,11 @@ zam_generic_interface_concrete(const ZamGenericInterfaceDefinition *definition,
 // A generic declaration holds bare instruction words rather than method
 // definitions, its signatures being the instantiation's and held on the map
 // entry, so the signature comes back as the id of no function type.
-const ZamMemberDefinition *zam_type_member(const ZamImage *image,
-                                          ZamTypeShort shortID,
-                                           uint64_t index);
+//
+// A member comes back by value because a tuple holds no member run to point
+// into: its element's offset and type lie in two runs of their own.
+ZamMemberDefinition zam_type_member(const ZamImage *image, ZamTypeShort shortID,
+                                    uint64_t index);
 ZamMethodDefinition zam_type_method(const ZamImage *image, ZamTypeShort shortID,
                                     uint64_t index);
 

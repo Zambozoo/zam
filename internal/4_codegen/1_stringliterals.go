@@ -248,6 +248,13 @@ func (v *stringLiteralVisitor) VisitStmtVariable(s *syntax.StmtVariable) error {
 	return nil
 }
 
+func (v *stringLiteralVisitor) VisitStmtUnpack(s *syntax.StmtUnpack) error {
+	if s.Expr != nil {
+		return s.Expr.Accept(v)
+	}
+	return nil
+}
+
 func (v *stringLiteralVisitor) VisitStmtIf(s *syntax.StmtIf) error {
 	s.Condition.Accept(v)
 	s.Then.Accept(v)
@@ -283,7 +290,10 @@ func (v *stringLiteralVisitor) VisitExprNAry(e *syntax.ExprNAry) error {
 }
 
 func (v *stringLiteralVisitor) VisitExprField(e *syntax.ExprField) error { return e.Expr.Accept(v) }
-func (v *stringLiteralVisitor) VisitExprCast(e *syntax.ExprCast) error   { return e.Expr.Accept(v) }
+func (v *stringLiteralVisitor) VisitExprFields(e *syntax.ExprFields) error {
+	return e.Head.Accept(v)
+}
+func (v *stringLiteralVisitor) VisitExprCast(e *syntax.ExprCast) error { return e.Expr.Accept(v) }
 
 func (v *stringLiteralVisitor) VisitExprNew(e *syntax.ExprNew) error {
 	if e.Size != nil {

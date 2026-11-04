@@ -351,7 +351,7 @@ func (v *staticSemanticsValidatorVisitor) VisitFieldEnum(f *syntax.FieldEnum) er
 			return nil
 		}
 		if !v.lastExprType.IsSubtypeOf(initTarget(primitive)) {
-			v.errf("enum value %s.%s is not a subtype of %s", outerDecl.Name(), f.Name(), primitive.String())
+			v.errf("enum value %s::%s is not a subtype of %s", outerDecl.Name(), f.Name(), primitive.String())
 		}
 		return nil
 	}
@@ -400,8 +400,8 @@ func (v *staticSemanticsValidatorVisitor) VisitFieldMember(f *syntax.FieldMember
 			return nil
 		}
 
-		if !v.lastExprType.IsSubtypeOf(initTarget(f.FieldType())) {
-			v.errf("field %s.%s expression is not a subtype of %s", f.OuterDecl().Name(), f.Name(), f.FieldType().String())
+		if !packs(f.Expr, v.lastExprType, initTarget(f.FieldType())) {
+			v.errfOn(f.Expr, "field %s.%s expression is not a subtype of %s", f.OuterDecl().Name(), f.Name(), f.FieldType().String())
 		}
 	}
 	return nil
@@ -485,8 +485,8 @@ func (v *staticSemanticsValidatorVisitor) VisitStmtExpr(s *syntax.StmtExpr) erro
 			if v.expectedReturnType.Kind() != syntax.TypeKindVoid {
 				v.errf("return without a value in a method returning %s", v.expectedReturnType.String())
 			}
-		} else if !v.lastExprType.IsSubtypeOf(initTarget(v.expectedReturnType)) {
-			v.errf("return expression is not a subtype of %s", v.expectedReturnType.String())
+		} else if !packs(s.Expr, v.lastExprType, initTarget(v.expectedReturnType)) {
+			v.errfOn(s.Expr, "return expression is not a subtype of %s", v.expectedReturnType.String())
 		}
 	}
 	return nil
@@ -794,11 +794,91 @@ func (v *staticSemanticsValidatorVisitor) VisitStmtVariable(s *syntax.StmtVariab
 	v.requireDeclarable(s.Type, "variable", name)
 	s.Type.Accept(v)
 	if s.Expr != nil {
-		if err := s.Expr.Accept(v); err == nil && !v.lastExprType.IsSubtypeOf(initTarget(s.Type)) {
-			v.errf("variable expression is not a subtype of %s", s.Type.String())
+		if err := s.Expr.Accept(v); err == nil && !packs(s.Expr, v.lastExprType, initTarget(s.Type)) {
+			v.errfOn(s.Expr, "variable expression is not a subtype of %s", s.Type.String())
 		}
 	}
 	return nil
+}
+
+// VisitStmtUnpack implements [syntax.StmtVisitor]. The expression is validated
+// before any of the variables is in scope, so a name it writes reaches whatever
+// it reached before the declaration.
+func (v *staticSemanticsValidatorVisitor) VisitStmtUnpack(s *syntax.StmtUnpack) error {
+	defer v.at(s)()
+	for _, variable := range s.Variables {
+		v.requireDeclarable(variable.Type, "variable", variable.Name())
+		variable.Type.Accept(v)
+	}
+	if s.Expr != nil {
+		if err := s.Expr.Accept(v); err == nil {
+			v.checkUnpack(s, v.lastExprType)
+		}
+	}
+
+	for _, variable := range s.Variables {
+		name := variable.Name()
+		if name == syntax.BlankName {
+			continue
+		}
+		if _, ok := v.variableScopes.Peek()[name]; ok {
+			v.errf("variable %s already declared", name)
+		}
+		target := syntax.Target{File: v.currentDecl.File(), Name: variable.NameToken(), Start: variable.Start()}
+		v.variableScopes.Peek()[name] = localBinding{typ: variable.Type, target: target}
+		v.reference(variable.NameToken(), target, variable.Type)
+	}
+	return nil
+}
+
+// checkUnpack checks that the expression of s, of type t, has an element for
+// each variable that may land in it. A tuple written out is unpacked element by
+// element, and anything else has to be a tuple of as many elements.
+func (v *staticSemanticsValidatorVisitor) checkUnpack(s *syntax.StmtUnpack, t syntax.Type) {
+	if literal, ok := tupleLiteral(s.Expr); ok && len(literal.Exprs) == len(s.Variables) {
+		for i, variable := range s.Variables {
+			element := literal.Exprs[i]
+			if !packs(element, element.ResolvedType(), initTarget(variable.Type)) {
+				v.errfOn(element, "element %d is not a subtype of %s", i, variable.Type.String())
+			}
+		}
+		return
+	}
+
+	tuple, ok := syntax.StripConst(t).(*syntax.TypeTuple)
+	if !ok || len(tuple.Types) != len(s.Variables) {
+		v.errfOn(s.Expr, "cannot unpack %s into %d variables", t.String(), len(s.Variables))
+		return
+	}
+	for i, variable := range s.Variables {
+		if !tuple.Types[i].IsSubtypeOf(initTarget(variable.Type)) {
+			v.errfOn(s.Expr, "element %d of %s is not a subtype of %s", i, t.String(), variable.Type.String())
+		}
+	}
+}
+
+// packs reports whether a value of type t, written as e, may land in a slot of
+// target. A tuple written out lands element by element, so each element is held
+// to the slot's element as a value of its own would be; a tuple already built
+// is only ever a tuple of its own type.
+func packs(e syntax.Expr, t, target syntax.Type) bool {
+	if literal, ok := tupleLiteral(e); ok {
+		if tuple, ok := syntax.StripConst(target).(*syntax.TypeTuple); ok && len(tuple.Types) == len(literal.Exprs) {
+			for i, element := range literal.Exprs {
+				if !packs(element, element.ResolvedType(), initTarget(tuple.Types[i])) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	return t.IsSubtypeOf(target)
+}
+
+// tupleLiteral reports whether e is a tuple written out element by element.
+func tupleLiteral(e syntax.Expr) (*syntax.ExprNAry, bool) {
+	nary, ok := e.(*syntax.ExprNAry)
+	return nary, ok && nary.Kind() == syntax.ExprKindTuple
 }
 
 // VisitExprCast implements [syntax.ExprVisitor].
@@ -994,6 +1074,12 @@ func bareReferenceUnder(t syntax.Type, pointedAt bool) (syntax.Type, bool) {
 		}
 	case *syntax.TypeArray:
 		return bareReferenceUnder(t.Type, false)
+	case *syntax.TypeTuple:
+		for _, element := range t.Types {
+			if bad, found := bareReferenceUnder(element, false); found {
+				return bad, true
+			}
+		}
 	case *syntax.TypeWrapped:
 		switch t.Kind() {
 		case syntax.TypeKindPointer:
@@ -1034,25 +1120,61 @@ func (v *staticSemanticsValidatorVisitor) VisitExprField(e *syntax.ExprField) er
 	if err := e.Expr.Accept(v); err != nil {
 		return err
 	}
+	t, err := v.selectField(v.lastExprType, e.Field, e.FieldToken)
+	if err != nil {
+		return err
+	}
+	e.ComputedType = t
+	v.lastExprType = t
+	return nil
+}
 
-	rt, ok := syntax.SelectionTarget(v.lastExprType)
-	if !ok {
-		return v.errf("expression %s is not a resolvable type", v.lastExprType.String())
+// VisitExprFields implements [syntax.ExprVisitor]. Each field is selected out
+// of what the one before it named, as a chain of [syntax.ExprField] would be.
+func (v *staticSemanticsValidatorVisitor) VisitExprFields(e *syntax.ExprFields) error {
+	defer v.at(e)()
+	if err := e.Head.Accept(v); err != nil {
+		return err
+	}
+	e.ComputedTypes = make([]syntax.Type, len(e.Fields))
+	for i, name := range e.Fields {
+		t, err := v.selectField(v.lastExprType, name, e.FieldTokens[i])
+		if err != nil {
+			return err
+		}
+		e.ComputedTypes[i] = t
+		v.lastExprType = t
+	}
+	return nil
+}
+
+// selectField resolves the field name, written at tok, selected out of a value
+// of objectType, and answers the field's type.
+func (v *staticSemanticsValidatorVisitor) selectField(objectType syntax.Type, name string, tok *syntax.Token) (syntax.Type, error) {
+	if tuple, ok := syntax.TupleSelectionTarget(objectType); ok {
+		element, ok := syntax.TupleElement(tuple, name)
+		if !ok {
+			return nil, v.errfAtToken(tok, "tuple %s has no element %s", tuple.String(), name)
+		}
+		return element, nil
 	}
 
-	f, ok := rt.Decl().GetInstanceField(e.Field)
+	rt, ok := syntax.SelectionTarget(objectType)
 	if !ok {
-		return v.errf("field %s.%s not found", rt.Decl().Name(), e.Field)
+		return nil, v.errf("expression %s is not a resolvable type", objectType.String())
+	}
+
+	f, ok := rt.Decl().GetInstanceField(name)
+	if !ok {
+		return nil, v.errfAtToken(tok, "field %s.%s not found", rt.Decl().Name(), name)
 	}
 
 	if !v.accessible(f.Modifiers(), f.OuterDecl()) {
-		return v.errf("field %s.%s is not accessible", f.OuterDecl().Name(), f.Name())
+		return nil, v.errfAtToken(tok, "field %s.%s is not accessible", f.OuterDecl().Name(), f.Name())
 	}
 
-	e.ComputedType = f.FieldType()
-	v.lastExprType = e.ComputedType
-	v.reference(e.FieldToken, syntax.TargetOf(f), e.ComputedType)
-	return nil
+	v.reference(tok, syntax.TargetOf(f), f.FieldType())
+	return f.FieldType(), nil
 }
 
 // VisitExprLambda implements [syntax.ExprVisitor]. The enclosing variables stay
@@ -1133,8 +1255,8 @@ func (v *staticSemanticsValidatorVisitor) VisitExprNAry(e *syntax.ExprNAry) erro
 		if syntax.IsConst(ts[0]) {
 			return v.errf("cannot assign to const %s", ts[0].String())
 		}
-		if !ts[1].IsSubtypeOf(ts[0]) {
-			return v.errf("cannot assign %s to %s", ts[1].String(), ts[0].String())
+		if !packs(e.Exprs[1], ts[1], ts[0]) {
+			return v.errfOn(e.Exprs[1], "cannot assign %s to %s", ts[1].String(), ts[0].String())
 		}
 		v.lastExprType = ts[0]
 
@@ -1284,6 +1406,14 @@ func (v *staticSemanticsValidatorVisitor) VisitExprNAry(e *syntax.ExprNAry) erro
 		}
 		v.lastExprType = syntax.NewWrappedType(syntax.TypeKindPointer, ts[0])
 
+	// A tuple of whatever its elements are, each a fresh copy no slot holds.
+	case syntax.ExprKindTuple:
+		elements := make([]syntax.Type, len(ts))
+		for i, t := range ts {
+			elements[i] = syntax.StripConst(t)
+		}
+		v.lastExprType = syntax.NewTypeTuple(v.currentDecl, elements)
+
 	// Anything
 	case syntax.ExprKindHash:
 		v.lastExprType = syntax.TypeInt
@@ -1309,7 +1439,22 @@ func (v *staticSemanticsValidatorVisitor) at(n node) func() {
 
 // errf records a new error and returns it so callers can bubble it up.
 func (v *staticSemanticsValidatorVisitor) errf(format string, args ...any) error {
-	err := errfAt(v.currentDecl, v.currentStart, format, args...)
+	return v.errfAtToken(v.currentStart, format, args...)
+}
+
+// errfOn is errf reported where n starts, for an error that is about n rather
+// than the node being validated.
+func (v *staticSemanticsValidatorVisitor) errfOn(n node, format string, args ...any) error {
+	return v.errfAtToken(n.Start(), format, args...)
+}
+
+// errfAtToken is errf reported where tok was written, or where the node being
+// validated starts if tok is nil.
+func (v *staticSemanticsValidatorVisitor) errfAtToken(tok *syntax.Token, format string, args ...any) error {
+	if tok == nil {
+		tok = v.currentStart
+	}
+	err := errfAt(v.currentDecl, tok, format, args...)
 	v.errs = append(v.errs, err)
 	return err
 }
@@ -1483,10 +1628,10 @@ func (v *staticSemanticsValidatorVisitor) checkCallArgs(ft *syntax.TypeFunction,
 
 	for i, p := range params {
 		if spreadInner(args[i]) != nil {
-			return v.errf("argument %d of %s is a spread, which may only feed a variadic parameter", i+1, op)
+			return v.errfOn(args[i], "argument %d of %s is a spread, which may only feed a variadic parameter", i+1, op)
 		}
-		if !ts[i].IsSubtypeOf(initTarget(p)) {
-			return v.errf("argument %d of %s is not a subtype of %s", i+1, op, p.String())
+		if !packs(args[i], ts[i], initTarget(p)) {
+			return v.errfOn(args[i], "argument %d of %s is not a subtype of %s", i+1, op, p.String())
 		}
 	}
 	if variadic == nil {
@@ -1508,9 +1653,9 @@ func (v *staticSemanticsValidatorVisitor) checkCallArgs(ft *syntax.TypeFunction,
 		}
 		return v.checkSpreadArg(spreadInner(trailing[0]), trailingTypes[0], variadic, op)
 	}
-	for _, t := range trailingTypes {
-		if !t.IsSubtypeOf(initTarget(variadic)) {
-			return v.errf("variadic argument of %s is not a subtype of %s", op, variadic.String())
+	for i, t := range trailingTypes {
+		if !packs(trailing[i], t, initTarget(variadic)) {
+			return v.errfOn(trailing[i], "variadic argument of %s is not a subtype of %s", op, variadic.String())
 		}
 	}
 	return nil
@@ -1562,15 +1707,10 @@ func (v *staticSemanticsValidatorVisitor) isLValue(e syntax.Expr) bool {
 		return true
 	case syntax.ExprKindField:
 		field := e.(*syntax.ExprField)
-		resolvable, ok := syntax.SelectionTarget(field.Expr.ResolvedType())
-		if !ok {
-			return false
-		}
-		f, _ := resolvable.Decl().GetInstanceField(field.Field)
-		if _, isMember := f.(*syntax.FieldMember); !isMember {
-			return false
-		}
-		return v.hasHome(field.Expr)
+		return v.memberHasHome(field.Expr, field.Field)
+	case syntax.ExprKindFields:
+		fields := e.(*syntax.ExprFields)
+		return v.memberHasHome(fields.Receiver(), fields.Field())
 	case syntax.ExprKindType:
 		// A static lies in a slot of the static region for the length of the
 		// run, which is as much a location as a frame slot is. Naming a type
@@ -1599,12 +1739,29 @@ func (v *staticSemanticsValidatorVisitor) hasHome(e syntax.Expr) bool {
 	case syntax.ExprKindIdentifier, syntax.ExprKindDereference,
 		syntax.ExprKindThis, syntax.ExprKindSuper, syntax.ExprKindAssign:
 		return true
-	case syntax.ExprKindField:
+	case syntax.ExprKindField, syntax.ExprKindFields:
 		return v.isLValue(e)
 	case syntax.ExprKindType:
 		return e.(*syntax.ExprType).Field != ""
 	}
 	return false
+}
+
+// memberHasHome reports whether the field name selected out of object is a
+// member lying somewhere: a member, not a method, of an object that has a home.
+func (v *staticSemanticsValidatorVisitor) memberHasHome(object syntax.Expr, name string) bool {
+	if _, ok := syntax.TupleSelectionTarget(object.ResolvedType()); ok {
+		return v.hasHome(object)
+	}
+	resolvable, ok := syntax.SelectionTarget(object.ResolvedType())
+	if !ok {
+		return false
+	}
+	f, _ := resolvable.Decl().GetInstanceField(name)
+	if _, isMember := f.(*syntax.FieldMember); !isMember {
+		return false
+	}
+	return v.hasHome(object)
 }
 
 // isInteger reports whether t is an int or a uint, const or not.
@@ -1728,7 +1885,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprSymbol(e *syntax.ExprSymbol) 
 		// An instance field written on its own is written on the receiver, and a
 		// static field has none to be written on.
 		if _, isInstance := b.(instanceBinding); isInstance && v.currentStaticField != nil {
-			return v.errf("instance field %s cannot be named in static %s.%s",
+			return v.errf("instance field %s cannot be named in static %s::%s",
 				name, v.currentDecl.Name(), v.currentStaticField.Name())
 		}
 		v.lastExprType = b.bindingType()
@@ -1798,10 +1955,10 @@ func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) erro
 
 	fi, ok := tr.Decl().GetStaticField(e.Field)
 	if !ok {
-		return v.errf("static field %s.%s not found", tr.Decl().Name(), e.Field)
+		return v.errfAtToken(e.FieldToken, "static field %s::%s not found", tr.Decl().Name(), e.Field)
 	}
 	if !v.accessible(fi.Modifiers(), fi.OuterDecl()) {
-		return v.errf("static field %s.%s is not accessible", tr.Decl().Name(), e.Field)
+		return v.errfAtToken(e.FieldToken, "static field %s::%s is not accessible", tr.Decl().Name(), e.Field)
 	}
 	fieldType, _ := staticFieldType(fi)
 	v.reference(e.FieldToken, syntax.TargetOf(fi), fieldType)
@@ -1814,13 +1971,13 @@ func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) erro
 		}
 		method, ok := fi.(*syntax.FieldMethod)
 		if !ok {
-			return v.errf("type arguments can only be given to a method, got %s.%s", tr.Decl().Name(), e.Field)
+			return v.errf("type arguments can only be given to a method, got %s::%s", tr.Decl().Name(), e.Field)
 		}
 		if method.Generics() == nil {
-			return v.errf("method %s.%s is not generic", tr.Decl().Name(), e.Field)
+			return v.errf("method %s::%s is not generic", tr.Decl().Name(), e.Field)
 		}
 		if method.Generics().Len() != len(e.TypeArgs) {
-			return v.errf("method %s.%s expects %d type arguments, got %d",
+			return v.errf("method %s::%s expects %d type arguments, got %d",
 				tr.Decl().Name(), e.Field, method.Generics().Len(), len(e.TypeArgs))
 		}
 		bindings := make(map[syntax.GenericArgKey]syntax.Type, len(e.TypeArgs))
@@ -1835,15 +1992,15 @@ func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) erro
 	// A generic static method must be named with its arguments: without them the
 	// field type still carries open generic parameters, and the call that
 	// follows would try to work on parameters nothing has bound. The user has to
-	// write type(Decl)[A,...].Field rather than type(Decl).Field.
+	// write Decl::[A,...]Field rather than Decl::Field.
 	if method, isMethod := fi.(*syntax.FieldMethod); isMethod && method.Generics() != nil {
-		return v.errf("method %s.%s is generic over %d parameter(s); name it with its type arguments",
+		return v.errf("method %s::%s is generic over %d parameter(s); name it with its type arguments",
 			tr.Decl().Name(), e.Field, method.Generics().Len())
 	}
 
 	ct, ok := staticFieldType(fi)
 	if !ok {
-		return v.errf("static field %s.%s is not typeable", tr.Decl().Name(), e.Field)
+		return v.errf("static field %s::%s is not typeable", tr.Decl().Name(), e.Field)
 	}
 	e.ComputedType = ct
 	v.lastExprType = e.ComputedType
@@ -1909,7 +2066,7 @@ func (v *staticSemanticsValidatorVisitor) VisitTypeGenericArg(t *syntax.TypeGene
 		if method, ok := f.(*syntax.FieldMethod); ok && method == t.Owner() {
 			return nil
 		}
-		v.errf("static field %s.%s cannot name generic argument %s",
+		v.errf("static field %s::%s cannot name generic argument %s",
 			f.OuterDecl().Name(), f.Name(), t.String())
 	}
 	return nil
@@ -1996,6 +2153,15 @@ func descends(d, ancestor syntax.Decl) bool {
 func (v *staticSemanticsValidatorVisitor) VisitTypeTailed(t *syntax.TypeTailed) error {
 	defer v.at(t)()
 	t.Type.Accept(v)
+	return nil
+}
+
+// VisitTypeTuple implements [syntax.TypeVisitor].
+func (v *staticSemanticsValidatorVisitor) VisitTypeTuple(t *syntax.TypeTuple) error {
+	defer v.at(t)()
+	for _, element := range t.Types {
+		element.Accept(v)
+	}
 	return nil
 }
 

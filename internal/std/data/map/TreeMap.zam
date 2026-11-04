@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 import "../../lang/Struct.zam";
 
@@ -17,17 +16,17 @@ public class TreeMap[A, B] {
     var Node[A, B]* root;
     var bool changed;
 
-    public static fun[A, B] TreeMap[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+    public static fun[A, B] TreeMap[A, B]*(uint, (A, B)...) New = (len, args) {
         var TreeMap[A, B]* m = new(TreeMap[A, B]);
         m.Init(len, args...);
         return m;
     }
 
-    public fun void(uint, Pair[A, B]...) Init = (len, args) {
+    public fun void(uint, (A, B)...) Init = (len, args) {
         this.len = 0U;
         this.root = null;
         for(var uint i = 0U; i < len; i++) {
-            this.Put(args[i].first, args[i].second);
+            this.Put(args[i].0, args[i].1);
         }
     }
 
@@ -41,7 +40,7 @@ public class TreeMap[A, B] {
         var Node[A, B]* h = *link;
         var Node[A, B]* x = h.right;
         var Struct[Node[A, B]*] pin;
-        pin.Init(x, type(TreeMap)[A, B].markTree, null);
+        pin.Init(x, TreeMap::[A, B]markTree, null);
         h.right = x.left;
         x.left = h;
         x.red = h.red;
@@ -54,7 +53,7 @@ public class TreeMap[A, B] {
         var Node[A, B]* h = *link;
         var Node[A, B]* x = h.left;
         var Struct[Node[A, B]*] pin;
-        pin.Init(x, type(TreeMap)[A, B].markTree, null);
+        pin.Init(x, TreeMap::[A, B]markTree, null);
         h.left = x.right;
         x.right = h;
         x.red = h.red;
@@ -229,20 +228,20 @@ public class TreeMap[A, B] {
         return n;
     }
 
-    private fun Pair[A, B](Node[A, B]*) entry = (n) {
-        var Pair[A, B] p;
-        p.first = n.key;
-        p.second = n.val;
+    private fun (A, B)(Node[A, B]*) entry = (n) {
+        var (A, B) p;
+        p.0 = n.key;
+        p.1 = n.val;
         return p;
     }
 
-    private fun uint(Node[A, B]*, Pair[A, B]*, uint) fill = (n, a, i) {
+    private fun uint(Node[A, B]*, (A, B)*, uint) fill = (n, a, i) {
         if(n == null) {
             return i;
         }
         i = this.fill(n.left, a, i);
-        a[i].first = n.key;
-        a[i].second = n.val;
+        a[i].0 = n.key;
+        a[i].1 = n.val;
         return this.fill(n.right, a, i + 1U);
     }
 
@@ -264,8 +263,8 @@ public class TreeMap[A, B] {
         }
         mark(n.key);
         mark(n.val);
-        type(TreeMap)[A, B].markTree(n.left);
-        type(TreeMap)[A, B].markTree(n.right);
+        TreeMap::[A, B]markTree(n.left);
+        TreeMap::[A, B]markTree(n.right);
     }
 
     private fun void(Node[A, B]*) freeAll = (n) {
@@ -285,15 +284,15 @@ public class TreeMap[A, B] {
         return this.find(k) != null;
     }
 
-    public fun Pair[B, bool](A) Get = (k) {
-        var Pair[B, bool] p;
+    public fun (B, bool)(A) Get = (k) {
+        var (B, bool) p;
         var Node[A, B]* n = this.find(k);
         if(n == null) {
-            p.second = false;
+            p.1 = false;
             return p;
         }
-        p.first = n.val;
-        p.second = true;
+        p.0 = n.val;
+        p.1 = true;
         return p;
     }
 
@@ -307,15 +306,15 @@ public class TreeMap[A, B] {
         return this.changed;
     }
 
-    public fun Pair[B, bool](A) Remove = (k) {
-        var Pair[B, bool] p;
+    public fun (B, bool)(A) Remove = (k) {
+        var (B, bool) p;
         var Node[A, B]* n = this.find(k);
         if(n == null) {
-            p.second = false;
+            p.1 = false;
             return p;
         }
-        p.first = n.val;
-        p.second = true;
+        p.0 = n.val;
+        p.1 = true;
         if(!this.isRed(this.root.left) && !this.isRed(this.root.right)) {
             this.root.red = true;
         }
@@ -327,16 +326,16 @@ public class TreeMap[A, B] {
         return p;
     }
 
-    public fun Pair[A, B]() GetFirst = () {
+    public fun (A, B)() GetFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("TreeMap is empty");
+            System::Panic("TreeMap is empty");
         }
         return this.entry(this.first());
     }
 
-    public fun Pair[A, B]() GetLast = () {
+    public fun (A, B)() GetLast = () {
         if(this.len == 0U) {
-            type(System).Panic("TreeMap is empty");
+            System::Panic("TreeMap is empty");
         }
         return this.entry(this.last());
     }
@@ -345,25 +344,25 @@ public class TreeMap[A, B] {
         if(n == null) {
             return;
         }
-        type(TreeMap)[A, B].eachFrom(n.left, f);
+        TreeMap::[A, B]eachFrom(n.left, f);
         f(n.val);
-        type(TreeMap)[A, B].eachFrom(n.right, f);
+        TreeMap::[A, B]eachFrom(n.right, f);
     }
 
     // EachValue calls f with every value in key order. It allocates nothing,
     // so a Mark can use it to reach values the map holds.
     public fun void(void(B)) EachValue = (f) {
-        type(TreeMap)[A, B].eachFrom(this.root, f);
+        TreeMap::[A, B]eachFrom(this.root, f);
     }
 
     public fun void() Clear = () {
         this.Delete();
     }
 
-    public fun Arr[Pair[A, B]]*() Arr = () {
-        var Pair[A, B]* a = new(Pair[A, B], this.len);
+    public fun Arr[(A, B)]*() Arr = () {
+        var (A, B)* a = new((A, B), this.len);
         this.fill(this.root, a, 0U);
-        return type(Arr)[Pair[A, B]].New(this.len, a...);
+        return Arr::[(A, B)]New(this.len, a...);
     }
 
     public fun Iter[A, B]*() Iter = () {
@@ -386,10 +385,10 @@ public class TreeMap[A, B] {
     }
 
     public fun void() Mark = () {
-        if(!type(System.GC).Markable(@{A}) && !type(System.GC).Markable(@{B})) {
+        if(!System.GC::Markable(@{A}) && !System.GC::Markable(@{B})) {
             return;
         }
-        type(TreeMap)[A, B].markTree(this.root);
+        TreeMap::[A, B]markTree(this.root);
     }
 
     private class Iter[A, B] {
@@ -401,30 +400,30 @@ public class TreeMap[A, B] {
             this.cur = m.first();
         }
 
-        public fun Pair[Pair[A, B], bool]() Next = () {
-            var Pair[Pair[A, B], bool] p;
+        public fun ((A, B), bool)() Next = () {
+            var ((A, B), bool) p;
             if(this.cur == null) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.m.entry(this.cur);
-            p.second = true;
+            p.0 = this.m.entry(this.cur);
+            p.1 = true;
             this.cur = this.m.after(this.cur.key);
             return p;
         }
 
-        public fun Pair[Pair[A, B], bool]() Prev = () {
-            var Pair[Pair[A, B], bool] p;
+        public fun ((A, B), bool)() Prev = () {
+            var ((A, B), bool) p;
             var Node[A, B]* prev = this.m.last();
             if(this.cur != null) {
                 prev = this.m.before(this.cur.key);
             }
             if(prev == null) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.m.entry(prev);
-            p.second = true;
+            p.0 = this.m.entry(prev);
+            p.1 = true;
             this.cur = prev;
             return p;
         }

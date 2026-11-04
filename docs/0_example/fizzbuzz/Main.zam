@@ -13,7 +13,7 @@ namespace Main {
             if(s == "") {
                 s = i{str};
             }
-            type(File).StdOut.WriteStr(s + "\n");
+            File::StdOut.WriteStr(s + "\n");
         }
     }
 }

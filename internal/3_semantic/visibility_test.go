@@ -34,7 +34,7 @@ class Pkg {
     var int kept;
 }
 `},
-			body: `var int a = type(Pkg).hidden() + new(Pkg).kept;`,
+			body: `var int a = Pkg::hidden() + new(Pkg).kept;`,
 		},
 		"package class from another directory": {
 			files: map[string]string{"lib/Pkg.zam": `
@@ -42,21 +42,21 @@ class Pkg {
     public static fun int() Open = () { return 1; }
 }
 `},
-			body: `var int a = type(Pkg).Open();`,
+			body: `var int a = Pkg::Open();`,
 			want: "type Pkg is not accessible",
 		},
 		"public members from another directory": {
 			files: map[string]string{"lib/Lib.zam": lib},
-			body:  `var int a = type(Lib).Open() + type(Lib).New().shown;`,
+			body:  `var int a = Lib::Open() + Lib::New().shown;`,
 		},
 		"package static from another directory": {
 			files: map[string]string{"lib/Lib.zam": lib},
-			body:  `var int a = type(Lib).hidden();`,
-			want:  "static field Lib.hidden is not accessible",
+			body:  `var int a = Lib::hidden();`,
+			want:  "static field Lib::hidden is not accessible",
 		},
 		"package field from another directory": {
 			files: map[string]string{"lib/Lib.zam": lib},
-			body:  `var int a = type(Lib).New().kept;`,
+			body:  `var int a = Lib::New().kept;`,
 			want:  "field Lib.kept is not accessible",
 		},
 		"virtual members from another directory": {
@@ -75,7 +75,7 @@ public class Square {
 }
 `,
 			},
-			body: `var int a = type(Square).New().Sides();`,
+			body: `var int a = Square::New().Sides();`,
 		},
 		"enum values from another directory": {
 			files: map[string]string{"lib/Color.zam": `
@@ -84,7 +84,7 @@ public enum Color {
     Blue;
 }
 `},
-			body: `var Color c = type(Color).Red;`,
+			body: `var Color c = Color::Red;`,
 		},
 		"private member from the same directory": {
 			files: map[string]string{"Pkg.zam": `
@@ -92,8 +92,8 @@ class Pkg {
     private static fun int() secret = () { return 2; }
 }
 `},
-			body: `var int a = type(Pkg).secret();`,
-			want: "static field Pkg.secret is not accessible",
+			body: `var int a = Pkg::secret();`,
+			want: "static field Pkg::secret is not accessible",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

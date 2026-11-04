@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 
@@ -11,7 +10,7 @@ public namespace Base64 {
     var str$ url = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
     private static fun str(byte*, uint, str, bool) encode = (b, n, alphabet, pad) {
-        var Pair[byte*, int] a = type(Strs).ToBytes(alphabet);
+        var (byte*, int) a = Strs::ToBytes(alphabet);
         var uint cap = (n + 2U) / 3U * 4U;
         var byte* out = new(byte, cap + 1U);
         var uint o = 0U;
@@ -23,25 +22,25 @@ public namespace Base64 {
             if(i + 2U < n) {
                 v = v | b[i + 2U]{uint};
             }
-            out[o] = a.first[(v >> 18U) & 63U];
-            out[o + 1U] = a.first[(v >> 12U) & 63U];
+            out[o] = a.0[(v >> 18U) & 63U];
+            out[o + 1U] = a.0[(v >> 12U) & 63U];
             o = o + 2U;
             if(i + 1U < n) {
-                out[o] = a.first[(v >> 6U) & 63U];
+                out[o] = a.0[(v >> 6U) & 63U];
                 o++;
             } else if(pad) {
                 out[o] = '='{int}{byte};
                 o++;
             }
             if(i + 2U < n) {
-                out[o] = a.first[v & 63U];
+                out[o] = a.0[v & 63U];
                 o++;
             } else if(pad) {
                 out[o] = '='{int}{byte};
                 o++;
             }
         }
-        var str s = type(Strs).FromBytes(out, o{int});
+        var str s = Strs::FromBytes(out, o{int});
         free(out);
         return s;
     }
@@ -67,16 +66,16 @@ public namespace Base64 {
     }
 
     // decode reads s, whose padding is optional, into bytes.
-    private static fun Pair[Arr[byte]*, Err*](str, bool) decode = (s, urlSafe) {
-        var Pair[Arr[byte]*, Err*] out;
-        out.first = null;
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        var uint n = p.second{uint};
-        for(; n > 0U && p.first[n - 1U]{int} == '='{int};) {
+    private static fun (Arr[byte]*, Err*)(str, bool) decode = (s, urlSafe) {
+        var (Arr[byte]*, Err*) out;
+        out.0 = null;
+        var (byte*, int) p = Strs::ToBytes(s);
+        var uint n = p.1{uint};
+        for(; n > 0U && p.0[n - 1U]{int} == '='{int};) {
             n--;
         }
-        if(n % 4U == 1U || p.second{uint} - n > 2U) {
-            out.second = type(StrErr).New("invalid base64 length");
+        if(n % 4U == 1U || p.1{uint} - n > 2U) {
+            out.1 = StrErr::New("invalid base64 length");
             return out;
         }
         var uint len = n / 4U * 3U;
@@ -88,10 +87,10 @@ public namespace Base64 {
         var uint acc = 0U;
         var uint bits = 0U;
         for(var uint i = 0U; i < n; i++) {
-            var int v = type(Base64).value(p.first[i]{int}, urlSafe);
+            var int v = Base64::value(p.0[i]{int}, urlSafe);
             if(v < 0) {
                 free(b);
-                out.second = type(StrErr).New("invalid base64 byte at offset " + i{str});
+                out.1 = StrErr::New("invalid base64 byte at offset " + i{str});
                 return out;
             }
             acc = (acc << 6U) | v{uint};
@@ -102,40 +101,40 @@ public namespace Base64 {
                 o++;
             }
         }
-        out.first = type(Arr)[byte].New(len, b...);
-        out.second = null;
+        out.0 = Arr::[byte]New(len, b...);
+        out.1 = null;
         return out;
     }
 
     public static fun str(byte*, uint) Encode = (b, n) {
-        return type(Base64).encode(b, n, type(Base64).std, true);
+        return Base64::encode(b, n, Base64::std, true);
     }
 
     public static fun str(str) EncodeStr = (s) {
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        return type(Base64).encode(p.first, p.second{uint}, type(Base64).std, true);
+        var (byte*, int) p = Strs::ToBytes(s);
+        return Base64::encode(p.0, p.1{uint}, Base64::std, true);
     }
 
     // EncodeURL encodes in the URL-safe alphabet, without padding.
     public static fun str(byte*, uint) EncodeURL = (b, n) {
-        return type(Base64).encode(b, n, type(Base64).url, false);
+        return Base64::encode(b, n, Base64::url, false);
     }
 
-    public static fun Pair[Arr[byte]*, Err*](str) Decode = (s) {
-        return type(Base64).decode(s, false);
+    public static fun (Arr[byte]*, Err*)(str) Decode = (s) {
+        return Base64::decode(s, false);
     }
 
-    public static fun Pair[Arr[byte]*, Err*](str) DecodeURL = (s) {
-        return type(Base64).decode(s, true);
+    public static fun (Arr[byte]*, Err*)(str) DecodeURL = (s) {
+        return Base64::decode(s, true);
     }
 
-    public static fun Pair[str, Err*](str) DecodeStr = (s) {
-        var Pair[str, Err*] out;
-        var Pair[Arr[byte]*, Err*] d = type(Base64).decode(s, false);
-        out.second = d.second;
-        out.first = "";
-        if(d.second == null) {
-            out.first = type(Strs).FromBytes(d.first.Arr(), d.first.Len(){int});
+    public static fun (str, Err*)(str) DecodeStr = (s) {
+        var (str, Err*) out;
+        var (Arr[byte]*, Err*) d = Base64::decode(s, false);
+        out.1 = d.1;
+        out.0 = "";
+        if(d.1 == null) {
+            out.0 = Strs::FromBytes(d.0.Arr(), d.0.Len(){int});
         }
         return out;
     }

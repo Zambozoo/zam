@@ -309,6 +309,26 @@ func TestNewASTExpandsGlobImportFromStd(t *testing.T) {
 	}
 }
 
+// A bare * globs the directory the importing file sits in, as ./* does, the
+// importing file among them.
+func TestNewASTGlobsTheImportingDirectoryForABareStar(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir)
+	other := writeFile(t, dir, "Other.zam", "namespace Other {}\n")
+	entry := writeFile(t, dir, "Main.zam", "import \"*\";\n"+mainSource)
+
+	ast, errs := NewAST(
+		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
+		&base.FileProvider{}, &mock_GitProvider{})
+
+	require.Empty(t, errs)
+	outers := map[string]bool{}
+	for _, entry := range ast.CodeFiles.All() {
+		outers[entry.Key.Outer] = true
+	}
+	assert.True(t, outers[other], "expected %q in CodeFiles, got %v", other, outers)
+}
+
 // A glob matching nothing is refused rather than treated as an empty import.
 // The user asked for files that are not there — either the directory is
 // wrong or the files are, and the next build is as likely to find them as
@@ -486,7 +506,7 @@ namespace Main {
     static fun void(int, str...) main = (argc, argv) { return; }
 }
 `,
-			expected: "enum value Flag.A must be written with a int value",
+			expected: "enum value Flag::A must be written with a int value",
 		},
 		"bare value in a primitive enum": {
 			source: `
@@ -495,7 +515,7 @@ namespace Main {
     static fun void(int, str...) main = (argc, argv) { return; }
 }
 `,
-			expected: "enum value Flag.A must be written with a int value",
+			expected: "enum value Flag::A must be written with a int value",
 		},
 		"value in an enum without a primitive": {
 			source: `
@@ -504,7 +524,7 @@ namespace Main {
     static fun void(int, str...) main = (argc, argv) { return; }
 }
 `,
-			expected: "enum value Flag.A cannot be written with a value",
+			expected: "enum value Flag::A cannot be written with a value",
 		},
 		"backed by a declaration": {
 			source: `
@@ -979,6 +999,51 @@ func TestNewASTTakesOnlyPublicOnATopLevelDecl(t *testing.T) {
 			errs := parseEntry(t, modifier+body)
 			require.NotEmpty(t, errs)
 			assert.Contains(t, errs[0].Error(), "a top-level declaration can only be public")
+		})
+	}
+}
+
+// TestNewASTReadsStaticPaths pins what may follow an identifier: a dotted name
+// and :: lead to a static, with type arguments between them for a generic
+// method, and a dotted name with no :: is a variable's fields. Anything else
+// before or after :: is a parse error.
+func TestNewASTReadsStaticPaths(t *testing.T) {
+	source := func(body string) string {
+		return `
+namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        ` + body + `
+        return;
+    }
+}
+`
+	}
+	for name, body := range map[string]string{
+		"static":         `var int x = Main::y;`,
+		"nested path":    `var int x = A.B::y;`,
+		"type arguments": `Arrs::[int, (int, str)]Copy(1U, null, null);`,
+		"then selection": `File::StdOut.WriteStr("x");`,
+		"then index":     `var int x = Main::table[3];`,
+		"then call":      `Main::f(1)(2);`,
+		"fields":         `var int x = a.b.c;`,
+		"type value":     `native(N){void(type)}(type(A.B));`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Empty(t, parseEntry(t, source(body)))
+		})
+	}
+	for name, body := range map[string]string{
+		"after a call":       `var int x = f()::m;`,
+		"after an index":     `var int x = a[0]::m;`,
+		"after this":         `var int x = this::m;`,
+		"twice":              `var int x = A::b::c;`,
+		"no member":          `var int x = A::;`,
+		"no member after []": `var int x = A::[int];`,
+		"type selector":      `var int x = type(A).b;`,
+		"type type args":     `var int x = type(A)[int].b;`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.NotEmpty(t, parseEntry(t, source(body)))
 		})
 	}
 }

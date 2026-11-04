@@ -1,7 +1,6 @@
 import "../../lang/Arr.zam";
 import "../../lang/Arrs.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/System.zam";
 
@@ -23,11 +22,11 @@ public class AEAD {
     var uint overhead;
 
     private static fun str(AEAD.Kind) nameOf = (kind) {
-        if(kind == type(AEAD.Kind).AES_GCM) {
+        if(kind == AEAD.Kind::AES_GCM) {
             return "AES-GCM";
-        } else if(kind == type(AEAD.Kind).CHACHA20_POLY1305) {
+        } else if(kind == AEAD.Kind::CHACHA20_POLY1305) {
             return "ChaCha20-Poly1305";
-        } else if(kind == type(AEAD.Kind).XCHACHA20_POLY1305) {
+        } else if(kind == AEAD.Kind::XCHACHA20_POLY1305) {
             return "XChaCha20-Poly1305";
         }
         return "XSalsa20-Poly1305";
@@ -35,22 +34,22 @@ public class AEAD {
 
     // New keeps a copy of a key of keyLen bytes for kind, which must be
     // keySize bytes long.
-    static fun Pair[AEAD*, Err*](AEAD.Kind, byte*, uint, uint, uint, uint) New = (kind, key, keyLen, keySize, nonceSize, overhead) {
-        var Pair[AEAD*, Err*] out;
-        out.first = null;
-        out.second = null;
+    static fun (AEAD*, Err*)(AEAD.Kind, byte*, uint, uint, uint, uint) New = (kind, key, keyLen, keySize, nonceSize, overhead) {
+        var (AEAD*, Err*) out;
+        out.0 = null;
+        out.1 = null;
         if(keyLen != keySize) {
-            out.second = type(StrErr).New(type(AEAD).nameOf(kind) + " needs a " + keySize{str} + "-byte key, not " + keyLen{str});
+            out.1 = StrErr::New(AEAD::nameOf(kind) + " needs a " + keySize{str} + "-byte key, not " + keyLen{str});
             return out;
         }
         var AEAD* a = new(AEAD);
         a.kind = kind;
         a.key = new(byte, keyLen);
-        type(Arrs)[byte].Copy(keyLen, key, a.key);
+        Arrs::[byte]Copy(keyLen, key, a.key);
         a.keyLen = keyLen;
         a.nonceSize = nonceSize;
         a.overhead = overhead;
-        out.first = a;
+        out.0 = a;
         return out;
     }
 
@@ -71,17 +70,17 @@ public class AEAD {
         native(STD_AEAD){void(byte, bool, byte*, int, byte*, int, byte*, int, byte*, int, byte*, bool*)}(this.kind{byte}, true, this.key, this.keyLen{int}, nonce, this.nonceSize{int}, b, n{int}, aad, aadLen{int}, out, &ok);
         if(!ok) {
             free(out);
-            type(System).Panic(type(AEAD).nameOf(this.kind) + " cannot seal this message");
+            System::Panic(AEAD::nameOf(this.kind) + " cannot seal this message");
         }
-        return type(Arr)[byte].New(length, out...);
+        return Arr::[byte]New(length, out...);
     }
 
     // Open decrypts n sealed bytes at b, failing unless they and aadLen bytes
     // at aad are as sealed.
-    public fun Pair[Arr[byte]*, Err*](byte*, byte*, uint, byte*, uint) Open = (nonce, b, n, aad, aadLen) {
-        var Pair[Arr[byte]*, Err*] r;
-        r.first = null;
-        r.second = null;
+    public fun (Arr[byte]*, Err*)(byte*, byte*, uint, byte*, uint) Open = (nonce, b, n, aad, aadLen) {
+        var (Arr[byte]*, Err*) r;
+        r.0 = null;
+        r.1 = null;
         var bool ok = false;
         var byte* out = null;
         var uint length = 0U;
@@ -92,10 +91,10 @@ public class AEAD {
         }
         if(!ok) {
             free(out);
-            r.second = type(StrErr).New(type(AEAD).nameOf(this.kind) + ": message authentication failed");
+            r.1 = StrErr::New(AEAD::nameOf(this.kind) + ": message authentication failed");
             return r;
         }
-        r.first = type(Arr)[byte].New(length, out...);
+        r.0 = Arr::[byte]New(length, out...);
         return r;
     }
 

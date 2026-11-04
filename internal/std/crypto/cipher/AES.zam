@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "AEAD.zam";
 
@@ -15,48 +14,48 @@ public namespace AES {
     }
 
     // GCM returns an AES-GCM key with 12-byte nonces and 16-byte tags.
-    public static fun Pair[AEAD*, Err*](byte*, uint) GCM = (key, keyLen) {
+    public static fun (AEAD*, Err*)(byte*, uint) GCM = (key, keyLen) {
         var uint size = 32U;
         if(keyLen == 16U || keyLen == 24U) {
             size = keyLen;
         }
-        return type(AEAD).New(type(AEAD.Kind).AES_GCM, key, keyLen, size, 12U, 16U);
+        return AEAD::New(AEAD.Kind::AES_GCM, key, keyLen, size, 12U, 16U);
     }
 
-    private static fun Pair[Arr[byte]*, Err*](AES.Mode, bool, byte*, uint, byte*, byte*, uint) run = (mode, encrypt, key, keyLen, iv, b, n) {
-        var Pair[Arr[byte]*, Err*] r;
-        r.first = null;
-        r.second = null;
+    private static fun (Arr[byte]*, Err*)(AES.Mode, bool, byte*, uint, byte*, byte*, uint) run = (mode, encrypt, key, keyLen, iv, b, n) {
+        var (Arr[byte]*, Err*) r;
+        r.0 = null;
+        r.1 = null;
         if(keyLen != 16U && keyLen != 24U && keyLen != 32U) {
-            r.second = type(StrErr).New("AES needs a 16, 24 or 32-byte key, not " + keyLen{str});
+            r.1 = StrErr::New("AES needs a 16, 24 or 32-byte key, not " + keyLen{str});
             return r;
         }
-        var byte* out = new(byte, n + type(AES).BlockSize);
+        var byte* out = new(byte, n + AES::BlockSize);
         var int written = 0;
         var str errStr;
         native(STD_AES){void(byte, bool, byte*, int, byte*, byte*, int, byte*, int*, str*)}(mode{byte}, encrypt, key, keyLen{int}, iv, b, n{int}, out, &written, &errStr);
         if(errStr != null) {
             free(out);
-            r.second = type(StrErr).New(errStr);
+            r.1 = StrErr::New(errStr);
             return r;
         }
-        r.first = type(Arr)[byte].New(written{uint}, out...);
+        r.0 = Arr::[byte]New(written{uint}, out...);
         return r;
     }
 
     // EncryptCBC encrypts n bytes at b in CBC mode, padded with PKCS #7.
-    public static fun Pair[Arr[byte]*, Err*](byte*, uint, byte*, byte*, uint) EncryptCBC = (key, keyLen, iv, b, n) {
-        return type(AES).run(type(AES.Mode).CBC, true, key, keyLen, iv, b, n);
+    public static fun (Arr[byte]*, Err*)(byte*, uint, byte*, byte*, uint) EncryptCBC = (key, keyLen, iv, b, n) {
+        return AES::run(AES.Mode::CBC, true, key, keyLen, iv, b, n);
     }
 
     // DecryptCBC decrypts n bytes at b in CBC mode, removing PKCS #7 padding.
-    public static fun Pair[Arr[byte]*, Err*](byte*, uint, byte*, byte*, uint) DecryptCBC = (key, keyLen, iv, b, n) {
-        return type(AES).run(type(AES.Mode).CBC, false, key, keyLen, iv, b, n);
+    public static fun (Arr[byte]*, Err*)(byte*, uint, byte*, byte*, uint) DecryptCBC = (key, keyLen, iv, b, n) {
+        return AES::run(AES.Mode::CBC, false, key, keyLen, iv, b, n);
     }
 
     // CTR encrypts or decrypts n bytes at b in CTR mode, the IV being the
     // initial counter block.
-    public static fun Pair[Arr[byte]*, Err*](byte*, uint, byte*, byte*, uint) CTR = (key, keyLen, iv, b, n) {
-        return type(AES).run(type(AES.Mode).CTR, true, key, keyLen, iv, b, n);
+    public static fun (Arr[byte]*, Err*)(byte*, uint, byte*, byte*, uint) CTR = (key, keyLen, iv, b, n) {
+        return AES::run(AES.Mode::CTR, true, key, keyLen, iv, b, n);
     }
 }

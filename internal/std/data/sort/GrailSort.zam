@@ -19,10 +19,10 @@ public namespace GrailSort {
             if (leftOrigin == 0U) {
                 for (;left != middle && right != end;) {
                     if ((arr[left] <=> arr[right]) <= 0) {
-                        type(GrailSort)[A].swap(&arr[buffer], &arr[left]);
+                        GrailSort::[A]swap(&arr[buffer], &arr[left]);
                         left = left + 1U;
                     } else {
-                        type(GrailSort)[A].swap(&arr[buffer], &arr[right]);
+                        GrailSort::[A]swap(&arr[buffer], &arr[right]);
                         right = right + 1U;
                     }
                     buffer = buffer + 1U;
@@ -30,10 +30,10 @@ public namespace GrailSort {
             } else {
                 for (;left != middle && right != end;) {
                     if ((arr[left] <=> arr[right]) < 0) {
-                        type(GrailSort)[A].swap(&arr[buffer], &arr[left]);
+                        GrailSort::[A]swap(&arr[buffer], &arr[left]);
                         left = left + 1U;
                     } else {
-                        type(GrailSort)[A].swap(&arr[buffer], &arr[right]);
+                        GrailSort::[A]swap(&arr[buffer], &arr[right]);
                         right = right + 1U;
                     }
                     buffer = buffer + 1U;
@@ -42,7 +42,7 @@ public namespace GrailSort {
 
             if (left < middle) {
                 this.currBlockLen = middle - left;
-                type(GrailSort)[A].inPlaceBufferRewind(arr, left, middle - 1U, end - 1U);
+                GrailSort::[A]inPlaceBufferRewind(arr, left, middle - 1U, end - 1U);
             } else {
                 this.currBlockLen = end - right;
                 this.currBlockOrigin = leftOrigin == 0U ? 1U : 0U;
@@ -56,10 +56,10 @@ public namespace GrailSort {
             if (leftOrigin == 0U) {
                 if ((arr[middle - 1U] <=> arr[middle]) > 0) {
                     for (;leftLen != 0U;) {
-                        var uint mergeLen = type(GrailSort)[A].binarySearchLeft(arr, middle, rightLen, arr[start]);
+                        var uint mergeLen = GrailSort::[A]binarySearchLeft(arr, middle, rightLen, arr[start]);
 
                         if (mergeLen != 0U) {
-                            type(GrailSort)[A].rotate(arr, start, leftLen, mergeLen);
+                            GrailSort::[A]rotate(arr, start, leftLen, mergeLen);
                             start = start + mergeLen;
                             rightLen = rightLen - mergeLen;
                         }
@@ -83,10 +83,10 @@ public namespace GrailSort {
             } else {
                 if ((arr[middle - 1U] <=> arr[middle]) >= 0) {
                     for (;leftLen != 0U;) {
-                        var uint mergeLen = type(GrailSort)[A].binarySearchRight(arr, start + leftLen, rightLen, arr[start]);
+                        var uint mergeLen = GrailSort::[A]binarySearchRight(arr, start + leftLen, rightLen, arr[start]);
 
                         if (mergeLen != 0U) {
-                            type(GrailSort)[A].rotate(arr, start, leftLen, mergeLen);
+                            GrailSort::[A]rotate(arr, start, leftLen, mergeLen);
                             start = start + mergeLen;
                             rightLen = rightLen - mergeLen;
                         }
@@ -120,15 +120,15 @@ public namespace GrailSort {
             var uint nextBlock = start + blockLen;
 
             this.currBlockLen = blockLen;
-            this.currBlockOrigin = type(GrailSort)[A].getSubarray(arr, firstKey, medianKey);
+            this.currBlockOrigin = GrailSort::[A]getSubarray(arr, firstKey, medianKey);
 
             for (var uint keyIndex = 1U; keyIndex < blockCount; keyIndex = keyIndex + 1U) {
                 currBlock = nextBlock - this.currBlockLen;
-                var uint nextBlockOrigin = type(GrailSort)[A].getSubarray(arr, firstKey + keyIndex, medianKey);
+                var uint nextBlockOrigin = GrailSort::[A]getSubarray(arr, firstKey + keyIndex, medianKey);
 
                 if (nextBlockOrigin == this.currBlockOrigin) {
                     buffer = currBlock - blockLen;
-                    type(GrailSort)[A].blockSwap(arr, buffer, currBlock, this.currBlockLen);
+                    GrailSort::[A]blockSwap(arr, buffer, currBlock, this.currBlockLen);
                     this.currBlockLen = blockLen;
                 } else {
                     this.smartMerge(arr, currBlock, this.currBlockLen, this.currBlockOrigin, blockLen, blockLen);
@@ -141,16 +141,16 @@ public namespace GrailSort {
 
             if (lastLen != 0U) {
                 if (this.currBlockOrigin == 1U) {
-                    type(GrailSort)[A].blockSwap(arr, buffer, currBlock, this.currBlockLen);
+                    GrailSort::[A]blockSwap(arr, buffer, currBlock, this.currBlockLen);
                     currBlock = nextBlock;
                     this.currBlockLen = blockLen * lastMergeBlocks;
                     this.currBlockOrigin = 0U;
                 } else {
                     this.currBlockLen = this.currBlockLen + blockLen * lastMergeBlocks;
                 }
-                type(GrailSort)[A].mergeForwards(arr, currBlock, this.currBlockLen, lastLen, blockLen);
+                GrailSort::[A]mergeForwards(arr, currBlock, this.currBlockLen, lastLen, blockLen);
             } else {
-                type(GrailSort)[A].blockSwap(arr, buffer, currBlock, this.currBlockLen);
+                GrailSort::[A]blockSwap(arr, buffer, currBlock, this.currBlockLen);
             }
         }
 
@@ -160,11 +160,11 @@ public namespace GrailSort {
             var uint nextBlock = start + blockLen;
 
             this.currBlockLen = blockLen;
-            this.currBlockOrigin = type(GrailSort)[A].getSubarray(arr, firstKey, medianKey);
+            this.currBlockOrigin = GrailSort::[A]getSubarray(arr, firstKey, medianKey);
 
             for (var uint keyIndex = 1U; keyIndex < blockCount; keyIndex = keyIndex + 1U) {
                 currBlock = nextBlock - this.currBlockLen;
-                var uint nextBlockOrigin = type(GrailSort)[A].getSubarray(arr, firstKey + keyIndex, medianKey);
+                var uint nextBlockOrigin = GrailSort::[A]getSubarray(arr, firstKey + keyIndex, medianKey);
 
                 if (nextBlockOrigin == this.currBlockOrigin) {
                     this.currBlockLen = blockLen;
@@ -186,7 +186,7 @@ public namespace GrailSort {
                 } else {
                     this.currBlockLen = this.currBlockLen + blockLen * lastMergeBlocks;
                 }
-                type(GrailSort)[A].lazyMerge(arr, currBlock, this.currBlockLen, lastLen);
+                GrailSort::[A]lazyMerge(arr, currBlock, this.currBlockLen, lastLen);
             }
         }
 
@@ -198,10 +198,10 @@ public namespace GrailSort {
             for (var uint mergeIndex = 0U; mergeIndex < mergeCount; mergeIndex = mergeIndex + 1U) {
                 var uint offset = start + (mergeIndex * fullMerge);
 
-                type(GrailSort)[A].insertSort(arr, firstKey, blockCount);
+                GrailSort::[A]insertSort(arr, firstKey, blockCount);
 
                 var uint medianKey = subarrayLen / blockLen;
-                medianKey = type(GrailSort)[A].blockSelectSort(arr, firstKey, offset, medianKey, blockCount, blockLen);
+                medianKey = GrailSort::[A]blockSelectSort(arr, firstKey, offset, medianKey, blockCount, blockLen);
 
                 if (buffer) {
                     this.mergeBlocks(arr, firstKey, firstKey + medianKey, offset, blockCount, blockLen, 0U, 0U);
@@ -214,14 +214,14 @@ public namespace GrailSort {
                 var uint offset = start + (mergeCount * fullMerge);
                 blockCount = lastSubarrays / blockLen;
 
-                type(GrailSort)[A].insertSort(arr, firstKey, blockCount + 1U);
+                GrailSort::[A]insertSort(arr, firstKey, blockCount + 1U);
 
                 var uint medianKey = subarrayLen / blockLen;
-                medianKey = type(GrailSort)[A].blockSelectSort(arr, firstKey, offset, medianKey, blockCount, blockLen);
+                medianKey = GrailSort::[A]blockSelectSort(arr, firstKey, offset, medianKey, blockCount, blockLen);
 
                 var uint lastFragment = lastSubarrays - (blockCount * blockLen);
                 var uint lastMergeBlocks = lastFragment != 0U
-                    ? type(GrailSort)[A].countLastMergeBlocks(arr, offset, blockCount, blockLen)
+                    ? GrailSort::[A]countLastMergeBlocks(arr, offset, blockCount, blockLen)
                     : 0U;
 
                 var uint smartMerges = blockCount - lastMergeBlocks;
@@ -229,9 +229,9 @@ public namespace GrailSort {
                 if (smartMerges == 0U) {
                     var uint leftLen = lastMergeBlocks * blockLen;
                     if (buffer) {
-                        type(GrailSort)[A].mergeForwards(arr, offset, leftLen, lastFragment, blockLen);
+                        GrailSort::[A]mergeForwards(arr, offset, leftLen, lastFragment, blockLen);
                     } else {
-                        type(GrailSort)[A].lazyMerge(arr, offset, leftLen, lastFragment);
+                        GrailSort::[A]lazyMerge(arr, offset, leftLen, lastFragment);
                     }
                 } else {
                     if (buffer) {
@@ -245,7 +245,7 @@ public namespace GrailSort {
             }
 
             if (buffer) {
-                type(GrailSort)[A].inPlaceBufferReset(arr, start, length, blockLen);
+                GrailSort::[A]inPlaceBufferReset(arr, start, length, blockLen);
             }
         }
 
@@ -264,7 +264,7 @@ public namespace GrailSort {
 
         fun void(A*, uint, uint) commonSort = (arr, start, length) {
             if (length < 16U) {
-                type(GrailSort)[A].insertSort(arr, start, length);
+                GrailSort::[A]insertSort(arr, start, length);
                 return;
             }
 
@@ -276,7 +276,7 @@ public namespace GrailSort {
             var uint keyLen = ((length - 1U) / blockLen) + 1U;
             var uint idealKeys = keyLen + blockLen;
 
-            var uint keysFound = type(GrailSort)[A].collectKeys(arr, start, length, idealKeys);
+            var uint keysFound = GrailSort::[A]collectKeys(arr, start, length, idealKeys);
 
             var bool idealBuffer;
             if (keysFound < idealKeys) {
@@ -285,7 +285,7 @@ public namespace GrailSort {
                 }
                 if (keysFound < 4U) {
                     // Strategy 3: lazy stable sort.
-                    type(GrailSort)[A].lazyStableSort(arr, start, length);
+                    GrailSort::[A]lazyStableSort(arr, start, length);
                     return;
                 } else {
                     // Strategy 2: block swaps with small scrolling buffer / lazy merges.
@@ -304,7 +304,7 @@ public namespace GrailSort {
             var uint bufferEnd = blockLen + keyLen;
             var uint subarrayLen = idealBuffer ? blockLen : keyLen;
 
-            type(GrailSort)[A].buildBlocks(arr, start + bufferEnd, length - bufferEnd, subarrayLen);
+            GrailSort::[A]buildBlocks(arr, start + bufferEnd, length - bufferEnd, subarrayLen);
 
             for (;(length - bufferEnd) > (2U * subarrayLen);) {
                 subarrayLen = subarrayLen * 2U;
@@ -326,8 +326,8 @@ public namespace GrailSort {
                                    subarrayLen, currBlockLen, scrollingBuffer);
             }
 
-            type(GrailSort)[A].insertSort(arr, start, bufferEnd);
-            type(GrailSort)[A].lazyMerge(arr, start, bufferEnd, length - bufferEnd);
+            GrailSort::[A]insertSort(arr, start, bufferEnd);
+            GrailSort::[A]lazyMerge(arr, start, bufferEnd, length - bufferEnd);
         }
     }
 
@@ -340,7 +340,7 @@ public namespace GrailSort {
     // Swap blockLen elements between arr[a..) and arr[b..). Ranges must not overlap
     fun[A] void(A*, uint, uint, uint) blockSwap = (arr, a, b, blockLen) {
         for (var uint i = 0U; i < blockLen; i = i + 1U) {
-            type(GrailSort)[A].swap(&arr[a + i], &arr[b + i]);
+            GrailSort::[A]swap(&arr[a + i], &arr[b + i]);
         }
     }
 
@@ -348,11 +348,11 @@ public namespace GrailSort {
     fun[A] void(A*, uint, uint, uint) rotate = (arr, start, leftLen, rightLen) {
         for (;leftLen > 0U && rightLen > 0U;) {
             if (leftLen <= rightLen) {
-                type(GrailSort)[A].blockSwap(arr, start, start + leftLen, leftLen);
+                GrailSort::[A]blockSwap(arr, start, start + leftLen, leftLen);
                 start = start + leftLen;
                 rightLen = rightLen - leftLen;
             } else {
-                type(GrailSort)[A].blockSwap(arr, start + leftLen - rightLen, start + leftLen, rightLen);
+                GrailSort::[A]blockSwap(arr, start + leftLen - rightLen, start + leftLen, rightLen);
                 leftLen = leftLen - rightLen;
             }
         }
@@ -365,7 +365,7 @@ public namespace GrailSort {
             var uint right = start + item;
 
             for (;(arr[left] <=> arr[right]) > 0;) {
-                type(GrailSort)[A].swap(&arr[left], &arr[right]);
+                GrailSort::[A]swap(&arr[left], &arr[right]);
                 if (left == start) {
                     break;
                 }
@@ -410,18 +410,18 @@ public namespace GrailSort {
         var uint currKey = 1U;
 
         for (;currKey < length && keysFound < idealKeys;) {
-            var uint insertPos = type(GrailSort)[A].binarySearchLeft(arr, start + firstKey, keysFound, arr[start + currKey]);
+            var uint insertPos = GrailSort::[A]binarySearchLeft(arr, start + firstKey, keysFound, arr[start + currKey]);
 
             if (insertPos == keysFound || (arr[start + currKey] <=> arr[start + firstKey + insertPos]) != 0) {
-                type(GrailSort)[A].rotate(arr, start + firstKey, keysFound, currKey - (firstKey + keysFound));
+                GrailSort::[A]rotate(arr, start + firstKey, keysFound, currKey - (firstKey + keysFound));
                 firstKey = currKey - keysFound;
-                type(GrailSort)[A].rotate(arr, start + firstKey + insertPos, keysFound - insertPos, 1U);
+                GrailSort::[A]rotate(arr, start + firstKey + insertPos, keysFound - insertPos, 1U);
                 keysFound = keysFound + 1U;
             }
             currKey = currKey + 1U;
         }
 
-        type(GrailSort)[A].rotate(arr, start, firstKey, keysFound);
+        GrailSort::[A]rotate(arr, start, firstKey, keysFound);
         return keysFound;
     }
 
@@ -434,17 +434,17 @@ public namespace GrailSort {
             var uint right = start + index;
 
             if ((arr[left] <=> arr[right]) > 0) {
-                type(GrailSort)[A].swap(&arr[left - 2U], &arr[right]);
-                type(GrailSort)[A].swap(&arr[right - 2U], &arr[left]);
+                GrailSort::[A]swap(&arr[left - 2U], &arr[right]);
+                GrailSort::[A]swap(&arr[right - 2U], &arr[left]);
             } else {
-                type(GrailSort)[A].swap(&arr[left - 2U], &arr[left]);
-                type(GrailSort)[A].swap(&arr[right - 2U], &arr[right]);
+                GrailSort::[A]swap(&arr[left - 2U], &arr[left]);
+                GrailSort::[A]swap(&arr[right - 2U], &arr[right]);
             }
         }
 
         var uint left = start + index - 1U;
         if (left < start + length) {
-            type(GrailSort)[A].swap(&arr[left - 2U], &arr[left]);
+            GrailSort::[A]swap(&arr[left - 2U], &arr[left]);
         }
     }
 
@@ -458,10 +458,10 @@ public namespace GrailSort {
 
         for (;right != end;) {
             if (left == middle || (arr[left] <=> arr[right]) > 0) {
-                type(GrailSort)[A].swap(&arr[buffer], &arr[right]);
+                GrailSort::[A]swap(&arr[buffer], &arr[right]);
                 right = right + 1U;
             } else {
-                type(GrailSort)[A].swap(&arr[buffer], &arr[left]);
+                GrailSort::[A]swap(&arr[buffer], &arr[left]);
                 left = left + 1U;
             }
             buffer = buffer + 1U;
@@ -469,7 +469,7 @@ public namespace GrailSort {
 
         if (buffer != left) {
             for (;left != middle;) {
-                type(GrailSort)[A].swap(&arr[buffer], &arr[left]);
+                GrailSort::[A]swap(&arr[buffer], &arr[left]);
                 buffer = buffer + 1U;
                 left = left + 1U;
             }
@@ -484,11 +484,11 @@ public namespace GrailSort {
 
         for (;leftLen > 0U;) {
             if (rightLen == 0U || (arr[leftEnd - 1U] <=> arr[rightEnd - 1U]) > 0) {
-                type(GrailSort)[A].swap(&arr[bufEnd - 1U], &arr[leftEnd - 1U]);
+                GrailSort::[A]swap(&arr[bufEnd - 1U], &arr[leftEnd - 1U]);
                 leftEnd = leftEnd - 1U;
                 leftLen = leftLen - 1U;
             } else {
-                type(GrailSort)[A].swap(&arr[bufEnd - 1U], &arr[rightEnd - 1U]);
+                GrailSort::[A]swap(&arr[bufEnd - 1U], &arr[rightEnd - 1U]);
                 rightEnd = rightEnd - 1U;
                 rightLen = rightLen - 1U;
             }
@@ -497,7 +497,7 @@ public namespace GrailSort {
 
         if (rightEnd != bufEnd) {
             for (;rightLen > 0U;) {
-                type(GrailSort)[A].swap(&arr[bufEnd - 1U], &arr[rightEnd - 1U]);
+                GrailSort::[A]swap(&arr[bufEnd - 1U], &arr[rightEnd - 1U]);
                 bufEnd = bufEnd - 1U;
                 rightEnd = rightEnd - 1U;
                 rightLen = rightLen - 1U;
@@ -515,15 +515,15 @@ public namespace GrailSort {
 
             var uint mergeIndex = start;
             for (;mergeIndex <= mergeEnd; mergeIndex = mergeIndex + fullMerge) {
-                type(GrailSort)[A].mergeForwards(arr, mergeIndex, mergeLen, mergeLen, bufferOffset);
+                GrailSort::[A]mergeForwards(arr, mergeIndex, mergeLen, mergeLen, bufferOffset);
             }
 
             var uint leftOver = length - (mergeIndex - start);
 
             if (leftOver > mergeLen) {
-                type(GrailSort)[A].mergeForwards(arr, mergeIndex, mergeLen, leftOver - mergeLen, bufferOffset);
+                GrailSort::[A]mergeForwards(arr, mergeIndex, mergeLen, leftOver - mergeLen, bufferOffset);
             } else {
-                type(GrailSort)[A].rotate(arr, mergeIndex - mergeLen, mergeLen, leftOver);
+                GrailSort::[A]rotate(arr, mergeIndex - mergeLen, mergeLen, leftOver);
             }
 
             start = start - mergeLen;
@@ -534,15 +534,15 @@ public namespace GrailSort {
         var uint lastOffset = start + length - lastBlock;
 
         if (lastBlock <= bufferLen) {
-            type(GrailSort)[A].rotate(arr, lastOffset, lastBlock, bufferLen);
+            GrailSort::[A]rotate(arr, lastOffset, lastBlock, bufferLen);
         } else {
-            type(GrailSort)[A].mergeBackwards(arr, lastOffset, bufferLen, lastBlock - bufferLen, bufferLen);
+            GrailSort::[A]mergeBackwards(arr, lastOffset, bufferLen, lastBlock - bufferLen, bufferLen);
         }
 
         if (lastOffset >= start + fullMerge) {
             var uint mergeIndex = lastOffset - fullMerge;
             for (;;) {
-                type(GrailSort)[A].mergeBackwards(arr, mergeIndex, bufferLen, bufferLen, bufferLen);
+                GrailSort::[A]mergeBackwards(arr, mergeIndex, bufferLen, bufferLen, bufferLen);
                 if (mergeIndex < start + fullMerge) {
                     break;
                 }
@@ -553,8 +553,8 @@ public namespace GrailSort {
 
     // Entry point for the block-building phase
     fun[A] void(A*, uint, uint, uint) buildBlocks = (arr, start, length, bufferLen) {
-        type(GrailSort)[A].pairwiseSwaps(arr, start, length);
-        type(GrailSort)[A].buildInPlace(arr, start - 2U, length, 2U, bufferLen);
+        GrailSort::[A]pairwiseSwaps(arr, start, length);
+        GrailSort::[A]buildInPlace(arr, start - 2U, length, 2U, bufferLen);
     }
 
     // Selection sort over the block tags
@@ -570,8 +570,8 @@ public namespace GrailSort {
             }
 
             if (selectBlock != firstBlock) {
-                type(GrailSort)[A].blockSwap(arr, start + (firstBlock * blockLen), start + (selectBlock * blockLen), blockLen);
-                type(GrailSort)[A].swap(&arr[firstKey + firstBlock], &arr[firstKey + selectBlock]);
+                GrailSort::[A]blockSwap(arr, start + (firstBlock * blockLen), start + (selectBlock * blockLen), blockLen);
+                GrailSort::[A]swap(&arr[firstKey + firstBlock], &arr[firstKey + selectBlock]);
 
                 if (medianKey == firstBlock) {
                     medianKey = selectBlock;
@@ -592,7 +592,7 @@ public namespace GrailSort {
         var uint index = start + length - 1U;
         var uint buffer = index - bufferOffset;
         for (;;) {
-            type(GrailSort)[A].swap(&arr[index], &arr[buffer]);
+            GrailSort::[A]swap(&arr[index], &arr[buffer]);
             if (index == start) {
                 return;
             }
@@ -604,7 +604,7 @@ public namespace GrailSort {
     // Rewind the scrolling buffer leftward past leftover items from a smarts merge that ran out of buffer space.
     fun[A] void(A*, uint, uint, uint) inPlaceBufferRewind = (arr, start, leftBlock, buffer) {
         for (;;) {
-            type(GrailSort)[A].swap(&arr[buffer], &arr[leftBlock]);
+            GrailSort::[A]swap(&arr[buffer], &arr[leftBlock]);
             if (leftBlock == start) {
                 return;
             }
@@ -638,10 +638,10 @@ public namespace GrailSort {
             var uint middle = start + leftLen;
 
             for (;leftLen != 0U;) {
-                var uint mergeLen = type(GrailSort)[A].binarySearchLeft(arr, middle, rightLen, arr[start]);
+                var uint mergeLen = GrailSort::[A]binarySearchLeft(arr, middle, rightLen, arr[start]);
 
                 if (mergeLen != 0U) {
-                    type(GrailSort)[A].rotate(arr, start, leftLen, mergeLen);
+                    GrailSort::[A]rotate(arr, start, leftLen, mergeLen);
                     start = start + mergeLen;
                     rightLen = rightLen - mergeLen;
                 }
@@ -664,10 +664,10 @@ public namespace GrailSort {
             var uint end = start + leftLen + rightLen - 1U;
 
             for (;rightLen != 0U;) {
-                var uint mergeLen = type(GrailSort)[A].binarySearchRight(arr, start, leftLen, arr[end]);
+                var uint mergeLen = GrailSort::[A]binarySearchRight(arr, start, leftLen, arr[end]);
 
                 if (mergeLen != leftLen) {
-                    type(GrailSort)[A].rotate(arr, start + mergeLen, leftLen - mergeLen, rightLen);
+                    GrailSort::[A]rotate(arr, start + mergeLen, leftLen - mergeLen, rightLen);
                     end = end - (leftLen - mergeLen);
                     leftLen = mergeLen;
                 }
@@ -697,7 +697,7 @@ public namespace GrailSort {
             var uint left = start + index - 1U;
             var uint right = start + index;
             if ((arr[left] <=> arr[right]) > 0) {
-                type(GrailSort)[A].swap(&arr[left], &arr[right]);
+                GrailSort::[A]swap(&arr[left], &arr[right]);
             }
         }
         for (var uint mergeLen = 2U; mergeLen < length; mergeLen = mergeLen * 2U) {
@@ -705,11 +705,11 @@ public namespace GrailSort {
             var uint mergeEnd = length - fullMerge;
             var uint mergeIndex = 0U;
             for (;mergeIndex <= mergeEnd; mergeIndex = mergeIndex + fullMerge) {
-                type(GrailSort)[A].lazyMerge(arr, start + mergeIndex, mergeLen, mergeLen);
+                GrailSort::[A]lazyMerge(arr, start + mergeIndex, mergeLen, mergeLen);
             }
             var uint leftOver = length - mergeIndex;
             if (leftOver > mergeLen) {
-                type(GrailSort)[A].lazyMerge(arr, start + mergeIndex, mergeLen, leftOver - mergeLen);
+                GrailSort::[A]lazyMerge(arr, start + mergeIndex, mergeLen, leftOver - mergeLen);
             }
         }
     }
@@ -722,6 +722,6 @@ public namespace GrailSort {
     }
 
     public fun[A] void(Arr[A]*) SortArr = (arr) {
-        type(GrailSort)[A].Sort(arr.Len(), arr.Arr()...);
+        GrailSort::[A]Sort(arr.Len(), arr.Arr()...);
     }
 }

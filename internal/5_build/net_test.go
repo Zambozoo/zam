@@ -59,20 +59,20 @@ import std("io/net/*");
 
 namespace Main {
     static fun int(Socket.Listener*) echo = (l) {
-        var Pair[Socket*, Err*] a = l.Accept();
-        if(a.second != null) {
+        var (Socket*, Err*) a = l.Accept();
+        if(a.1 != null) {
             return -1;
         }
-        var Socket* c = a.first;
+        var Socket* c = a.0;
         var byte* buf = new(byte, 64U);
         var int total = 0;
         for(;;) {
-            var Pair[int, Err*] r = c.Read(buf, 64);
-            if(r.second != null || r.first == 0) {
+            var (int, Err*) r = c.Read(buf, 64);
+            if(r.1 != null || r.0 == 0) {
                 break;
             }
-            c.Write(buf, r.first);
-            total = total + r.first;
+            c.Write(buf, r.0);
+            total = total + r.0;
         }
         free(buf);
         c.Close();
@@ -80,99 +80,99 @@ namespace Main {
     }
 
     static fun int(Socket.Listener*, TLS.Context*) tlsServe = (l, ctx) {
-        var Pair[Socket*, Err*] a = l.Accept();
-        if(a.second != null) {
+        var (Socket*, Err*) a = l.Accept();
+        if(a.1 != null) {
             return -1;
         }
-        var Pair[TLS*, Err*] t = type(TLS).Server(a.first, ctx);
-        if(t.second != null) {
-            a.first.Close();
+        var (TLS*, Err*) t = TLS::Server(a.0, ctx);
+        if(t.1 != null) {
+            a.0.Close();
             return 0;
         }
         var byte* buf = new(byte, 64U);
-        var Pair[int, Err*] r = t.first.Read(buf, 64);
-        t.first.WriteStr("re:" + type(Strs).FromBytes(buf, r.first));
+        var (int, Err*) r = t.0.Read(buf, 64);
+        t.0.WriteStr("re:" + Strs::FromBytes(buf, r.0));
         free(buf);
-        t.first.Close();
+        t.0.Close();
         return 1;
     }
 
-    static fun str(Pair[TLS*, Err*]) tlsTry = (t) {
-        if(t.second != null) {
+    static fun str((TLS*, Err*)) tlsTry = (t) {
+        if(t.1 != null) {
             return "rejected";
         }
-        t.first.WriteStr("hi");
-        var str reply = t.first.ReadAll().first;
-        t.first.Close();
+        t.0.WriteStr("hi");
+        var str reply = t.0.ReadAll().0;
+        t.0.Close();
         return reply;
     }
 
     fun void(uint, str...) main = (argC, argV) {
         var str dir = argV[0];
-        var IP six = type(IP).Parse("0:0:0:0:0:0:0:1").first;
-        var str s = six.Str() + " " + six.IsV6(){str} + " " + six.IsLoopback(){str} + " " + type(IP).Parse("10.1.2.3").first.IsLoopback(){str};
-        s = s + " " + (type(IP).Parse("nope").second != null){str};
-        var Arr[IP]* local = type(IP).Lookup("localhost").first;
+        var IP six = IP::Parse("0:0:0:0:0:0:0:1").0;
+        var str s = six.Str() + " " + six.IsV6(){str} + " " + six.IsLoopback(){str} + " " + IP::Parse("10.1.2.3").0.IsLoopback(){str};
+        s = s + " " + (IP::Parse("nope").1 != null){str};
+        var Arr[IP]* local = IP::Lookup("localhost").0;
         var bool loop = local.Len() > 0U;
         for(var uint i = 0U; i < local.Len(); i++) {
             loop = loop && local.Get(i).IsLoopback();
         }
         s = s + " " + loop{str} + "\n";
 
-        var Socket.Listener* l = type(TCP).Listen("127.0.0.1", 0U).first;
-        var uint port = l.Addr().first.second;
-        var thread[int] server = async(type(Main).echo(l));
-        var Socket* c = type(TCP).Dial("127.0.0.1", port).first;
-        var Pair[IP, uint] peer = c.RemoteAddr().first;
+        var Socket.Listener* l = TCP::Listen("127.0.0.1", 0U).0;
+        var uint port = l.Addr().0.1;
+        var thread[int] server = async(Main::echo(l));
+        var Socket* c = TCP::Dial("127.0.0.1", port).0;
+        var (IP, uint) peer = c.RemoteAddr().0;
         c.WriteStr("hello tcp");
         c.CloseWrite();
-        s = s + c.ReadAll().first + " " + (peer.second == port){str} + " " + peer.first.Str();
+        s = s + c.ReadAll().0 + " " + (peer.1 == port){str} + " " + peer.0.Str();
         c.Close();
-        s = s + " " + wait(server){str} + " " + l.Close(){str} + " " + l.Close(){str} + " " + l.Accept().second.Err();
-        s = s + " " + (type(TCP).Dial("127.0.0.1", port).second != null){str} + "\n";
+        s = s + " " + wait(server){str} + " " + l.Close(){str} + " " + l.Close(){str} + " " + l.Accept().1.Err();
+        s = s + " " + (TCP::Dial("127.0.0.1", port).1 != null){str} + "\n";
 
-        var UDP.Conn* ua = type(UDP).Bind("127.0.0.1", 0U).first;
-        var UDP.Conn* ub = type(UDP).Bind("127.0.0.1", 0U).first;
-        var uint aport = ua.LocalAddr().first.second;
-        var Pair[byte*, int] ping = type(Strs).ToBytes("ping");
-        ub.SendTo(ping.first, 4U, type(IP).Parse("127.0.0.1").first, aport);
+        var UDP.Conn* ua = UDP::Bind("127.0.0.1", 0U).0;
+        var UDP.Conn* ub = UDP::Bind("127.0.0.1", 0U).0;
+        var uint aport = ua.LocalAddr().0.1;
+        var (byte*, int) ping = Strs::ToBytes("ping");
+        ub.SendTo(ping.0, 4U, IP::Parse("127.0.0.1").0, aport);
         var byte* got = new(byte, 16U);
-        var Pair[UDP.Packet, Err*] packet = ua.RecvFrom(got, 16U);
-        s = s + type(Strs).FromBytes(got, packet.first.len{int}) + " " + (packet.first.port == ub.LocalAddr().first.second){str} + " " + packet.first.ip.Str() + "\n";
+        var (UDP.Packet, Err*) packet = ua.RecvFrom(got, 16U);
+        s = s + Strs::FromBytes(got, packet.0.len{int}) + " " + (packet.0.port == ub.LocalAddr().0.1){str} + " " + packet.0.ip.Str() + "\n";
         free(got);
         ua.Close();
         ub.Close();
 
-        var TLS.Context* sctx = type(TLS.Context).Server(type(FS).Join(dir, "cert.pem"), type(FS).Join(dir, "key.pem")).first;
-        var TLS.Context* trusting = type(TLS.Context).Client(type(FS).Join(dir, "cert.pem"), true).first;
-        var TLS.Context* system = type(TLS.Context).Client("", true).first;
-        var TLS.Context* lax = type(TLS.Context).Client("", false).first;
-        var Socket.Listener* tl = type(TCP).Listen("127.0.0.1", 0U).first;
-        var uint tport = tl.Addr().first.second;
-        var thread[int] ts = async(type(Main).tlsServe(tl, sctx));
-        s = s + type(Main).tlsTry(type(TLS).Client(type(TCP).Dial("127.0.0.1", tport).first, trusting, "localhost")) + " " + wait(ts){str};
-        ts = async(type(Main).tlsServe(tl, sctx));
-        s = s + " " + type(Main).tlsTry(type(TLS).Client(type(TCP).Dial("127.0.0.1", tport).first, trusting, "127.0.0.1")) + " " + wait(ts){str};
-        ts = async(type(Main).tlsServe(tl, sctx));
-        s = s + " " + type(Main).tlsTry(type(TLS).Client(type(TCP).Dial("127.0.0.1", tport).first, trusting, "example.com")) + " " + wait(ts){str};
-        ts = async(type(Main).tlsServe(tl, sctx));
-        s = s + " " + type(Main).tlsTry(type(TLS).Client(type(TCP).Dial("127.0.0.1", tport).first, system, "localhost")) + " " + wait(ts){str};
-        ts = async(type(Main).tlsServe(tl, sctx));
-        s = s + " " + type(Main).tlsTry(type(TLS).Client(type(TCP).Dial("127.0.0.1", tport).first, lax, "example.com")) + " " + wait(ts){str};
+        var TLS.Context* sctx = TLS.Context::Server(FS::Join(dir, "cert.pem"), FS::Join(dir, "key.pem")).0;
+        var TLS.Context* trusting = TLS.Context::Client(FS::Join(dir, "cert.pem"), true).0;
+        var TLS.Context* system = TLS.Context::Client("", true).0;
+        var TLS.Context* lax = TLS.Context::Client("", false).0;
+        var Socket.Listener* tl = TCP::Listen("127.0.0.1", 0U).0;
+        var uint tport = tl.Addr().0.1;
+        var thread[int] ts = async(Main::tlsServe(tl, sctx));
+        s = s + Main::tlsTry(TLS::Client(TCP::Dial("127.0.0.1", tport).0, trusting, "localhost")) + " " + wait(ts){str};
+        ts = async(Main::tlsServe(tl, sctx));
+        s = s + " " + Main::tlsTry(TLS::Client(TCP::Dial("127.0.0.1", tport).0, trusting, "127.0.0.1")) + " " + wait(ts){str};
+        ts = async(Main::tlsServe(tl, sctx));
+        s = s + " " + Main::tlsTry(TLS::Client(TCP::Dial("127.0.0.1", tport).0, trusting, "example.com")) + " " + wait(ts){str};
+        ts = async(Main::tlsServe(tl, sctx));
+        s = s + " " + Main::tlsTry(TLS::Client(TCP::Dial("127.0.0.1", tport).0, system, "localhost")) + " " + wait(ts){str};
+        ts = async(Main::tlsServe(tl, sctx));
+        s = s + " " + Main::tlsTry(TLS::Client(TCP::Dial("127.0.0.1", tport).0, lax, "example.com")) + " " + wait(ts){str};
         tl.Close();
-        s = s + " " + (type(TLS.Context).Server("missing.pem", "missing.pem").second != null){str} + "\n";
+        s = s + " " + (TLS.Context::Server("missing.pem", "missing.pem").1 != null){str} + "\n";
 
-        var Socket.Listener* sl = type(TCP).Listen("127.0.0.1", 0U).first;
-        var Socket* quiet = type(TCP).Dial("127.0.0.1", sl.Addr().first.second).first;
-        var Socket* held = sl.Accept().first;
+        var Socket.Listener* sl = TCP::Listen("127.0.0.1", 0U).0;
+        var Socket* quiet = TCP::Dial("127.0.0.1", sl.Addr().0.1).0;
+        var Socket* held = sl.Accept().0;
         quiet.SetReadTimeout(100U);
         var byte* one = new(byte, 1U);
-        s = s + (quiet.Read(one, 1).second != null){str} + "\n";
+        s = s + (quiet.Read(one, 1).1 != null){str} + "\n";
         free(one);
         quiet.Close();
         held.Close();
         sl.Close();
-        type(File).StdOut.WriteStr(s);
+        File::StdOut.WriteStr(s);
     }
 }
 `)
@@ -205,26 +205,26 @@ import std("io/net/*");
 
 namespace Main {
     static fun int(Socket.Listener*) echo = (l) {
-        var Socket* c = l.Accept().first;
-        var str all = c.ReadAll().first;
+        var Socket* c = l.Accept().0;
+        var str all = c.ReadAll().0;
         c.WriteStr(all);
         c.Close();
-        return type(Strs).ByteLen(all);
+        return Strs::ByteLen(all);
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var str path = type(FS).Join(argV[0], "echo.sock");
-        var Socket.Listener* l = type(UnixSocket).Listen(path).first;
-        var thread[int] server = async(type(Main).echo(l));
-        var Socket* c = type(UnixSocket).Dial(path).first;
-        var str peer = c.RemotePath().first;
+        var str path = FS::Join(argV[0], "echo.sock");
+        var Socket.Listener* l = UnixSocket::Listen(path).0;
+        var thread[int] server = async(Main::echo(l));
+        var Socket* c = UnixSocket::Dial(path).0;
+        var str peer = c.RemotePath().0;
         c.WriteStr("hello unix");
         c.CloseWrite();
-        var str s = c.ReadAll().first + " " + wait(server){str} + " " + peer;
+        var str s = c.ReadAll().0 + " " + wait(server){str} + " " + peer;
         c.Close();
-        s = s + " " + (c.RemoteAddr().second != null){str} + " " + l.Close(){str} + " " + type(FS).Exists(path){str};
-        s = s + " " + (type(UnixSocket).Dial(path).second != null){str} + "\n";
-        type(File).StdOut.WriteStr(s);
+        s = s + " " + (c.RemoteAddr().1 != null){str} + " " + l.Close(){str} + " " + FS::Exists(path){str};
+        s = s + " " + (UnixSocket::Dial(path).1 != null){str} + "\n";
+        File::StdOut.WriteStr(s);
     }
 }
 `)

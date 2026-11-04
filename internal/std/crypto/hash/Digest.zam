@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 import "../../lang/System.zam";
@@ -33,38 +32,38 @@ public class Digest {
 
     // New starts a digest of kind, size bytes long, or of its default length
     // for 0. An extendable-output function needs a size.
-    public static fun Pair[Digest*, Err*](Digest.Kind, uint) New = (kind, size) {
-        var Pair[Digest*, Err*] out;
-        out.first = null;
-        out.second = null;
+    public static fun (Digest*, Err*)(Digest.Kind, uint) New = (kind, size) {
+        var (Digest*, Err*) out;
+        out.0 = null;
+        out.1 = null;
         var uint h = 0U;
         var int n = 0;
         var int block = 0;
         var str errStr;
         native(STD_HASH_NEW){void(byte, int, uint*, int*, int*, str*)}(kind{byte}, size{int}, &h, &n, &block, &errStr);
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
             return out;
         }
-        out.first = new(Digest);
-        out.first.handle = h;
-        out.first.size = n{uint};
-        out.first.block = block{uint};
+        out.0 = new(Digest);
+        out.0.handle = h;
+        out.0.size = n{uint};
+        out.0.block = block{uint};
         return out;
     }
 
     // Must starts a digest that cannot fail to start, panicking otherwise.
     static fun Digest*(Digest.Kind, uint) Must = (kind, size) {
-        var Pair[Digest*, Err*] d = type(Digest).New(kind, size);
-        if(d.second != null) {
-            type(System).Panic(kind{str} + ": " + d.second.Err());
+        var (Digest*, Err*) d = Digest::New(kind, size);
+        if(d.1 != null) {
+            System::Panic(kind{str} + ": " + d.1.Err());
         }
-        return d.first;
+        return d.0;
     }
 
     // Of hashes n bytes at b with kind.
     static fun Arr[byte]*(Digest.Kind, uint, byte*, uint) Of = (kind, size, b, n) {
-        var Digest* d = type(Digest).Must(kind, size);
+        var Digest* d = Digest::Must(kind, size);
         d.Write(b, n);
         var Arr[byte]* sum = d.Sum();
         d.Delete();
@@ -76,14 +75,14 @@ public class Digest {
     }
 
     public fun void(str) WriteStr = (s) {
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        this.Write(p.first, p.second{uint});
+        var (byte*, int) p = Strs::ToBytes(s);
+        this.Write(p.0, p.1{uint});
     }
 
     public fun Arr[byte]*() Sum = () {
         var byte* b = new(byte, this.size);
         native(STD_HASH_SUM){void(uint, byte*)}(this.handle, b);
-        return type(Arr)[byte].New(this.size, b...);
+        return Arr::[byte]New(this.size, b...);
     }
 
     public fun void() Reset = () {

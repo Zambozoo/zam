@@ -11,6 +11,7 @@ type (
 		VisitStmtIf(s *StmtIf) error
 		VisitStmtLabel(s *StmtLabel) error
 		VisitStmtBlock(s *StmtBlock) error
+		VisitStmtUnpack(s *StmtUnpack) error
 		VisitStmtVariable(s *StmtVariable) error
 	}
 
@@ -108,6 +109,19 @@ type (
 		// Expr is the expression of the variable.
 		Expr Expr
 	}
+
+	// StmtUnpack is a declaration of several variables at once, each taking the
+	// element of a tuple at its position.
+	StmtUnpack struct {
+		// start is the token that started the statement.
+		start *Token
+		// Variables are the variables declared, in order. None carries an
+		// expression of its own.
+		Variables []*StmtVariable
+		// Expr is the tuple the variables are unpacked from, or nil where each
+		// is created from its type.
+		Expr Expr
+	}
 )
 
 // newStmtKind creates a new statement kind.
@@ -138,6 +152,8 @@ var (
 	StmtKindFor StmtKind = newStmtKind("for", TTFor)
 	// Variable declaration with or without an initializer
 	StmtKindVariable StmtKind = newStmtKind("variable", TTVar)
+	// Declaration of several variables unpacked from one tuple
+	StmtKindUnpack StmtKind = newStmtKind("unpack", TTNone)
 	// Block of statements with new scope
 	StmtKindBlock StmtKind = newStmtKind("block", TTLeftBrace)
 	// Runs the Delete override on an object, defaulting to Obj.Delete, and
@@ -549,8 +565,62 @@ func (s *StmtBlock) Accept(visitor StmtVisitor) error {
 	return visitor.VisitStmtBlock(s)
 }
 
-// newStmtVariable creates a new statement that is a variable declaration.
-func newStmtVariable(parser SyntaxParser, start *Token) (*StmtVariable, error) {
+// newStmtVariable creates a new statement that is a variable declaration, or
+// an unpacking declaration where several typed names are written before the
+// initializer.
+func newStmtVariable(parser SyntaxParser, start *Token) (Stmt, error) {
+	variable, err := newVariableBinding(parser, start)
+	if err != nil {
+		return nil, err
+	}
+
+	var unpack *StmtUnpack
+	for {
+		if tok, err := parser.Match(TTComma); err != nil {
+			return nil, keep(variable, err)
+		} else if tok == nil {
+			break
+		}
+		if unpack == nil {
+			unpack = &StmtUnpack{start: start, Variables: []*StmtVariable{variable}}
+		}
+		next, err := newVariableBinding(parser, start)
+		if err != nil {
+			return nil, keep(unpack, err)
+		}
+		unpack.Variables = append(unpack.Variables, next)
+	}
+
+	var stmt Stmt = variable
+	if unpack != nil {
+		stmt = unpack
+	}
+
+	if tok, err := parser.ConsumeAny(TTEqual, TTSemiColon); err != nil {
+		return nil, keep(stmt, err)
+	} else if tok.Kind == TTSemiColon {
+		return stmt, nil
+	}
+
+	expr, err := newExpr(parser)
+	if err != nil {
+		return nil, keep(stmt, err)
+	}
+
+	if _, err := parser.Consume(TTSemiColon); err != nil {
+		return nil, keep(stmt, err)
+	}
+
+	if unpack != nil {
+		unpack.Expr = expr
+	} else {
+		variable.Expr = expr
+	}
+	return stmt, nil
+}
+
+// newVariableBinding reads the type and name of one declared variable.
+func newVariableBinding(parser SyntaxParser, start *Token) (*StmtVariable, error) {
 	_type, err := newType(parser)
 	if err != nil {
 		return nil, err
@@ -565,29 +635,27 @@ func newStmtVariable(parser SyntaxParser, start *Token) (*StmtVariable, error) {
 		name = nameToken.Value.(string)
 	}
 
-	variable := &StmtVariable{
+	return &StmtVariable{
 		start:     start,
 		name:      name,
 		nameToken: nameToken,
 		Type:      _type,
-	}
-	if tok, err := parser.ConsumeAny(TTEqual, TTSemiColon); err != nil {
-		return nil, keep(variable, err)
-	} else if tok.Kind == TTSemiColon {
-		return variable, nil
-	}
+	}, nil
+}
 
-	expr, err := newExpr(parser)
-	if err != nil {
-		return nil, keep(variable, err)
-	}
+// StmtKind implements the [Stmt] interface.
+func (s *StmtUnpack) Kind() StmtKind {
+	return StmtKindUnpack
+}
 
-	if _, err := parser.Consume(TTSemiColon); err != nil {
-		return nil, keep(variable, err)
-	}
+// Start implements the [Stmt] interface.
+func (s *StmtUnpack) Start() *Token {
+	return s.start
+}
 
-	variable.Expr = expr
-	return variable, nil
+// Accept implements the [Stmt] interface.
+func (s *StmtUnpack) Accept(visitor StmtVisitor) error {
+	return visitor.VisitStmtUnpack(s)
 }
 
 // StmtKind implements the [Stmt] interface.

@@ -148,7 +148,7 @@ namespace Main {
 
     static fun void(int) churn = (i) {
         var str s = i{str} + "-churn";
-        type(Main).total = type(Main).total + type(Strs).ByteLen(s);
+        Main::total = Main::total + Strs::ByteLen(s);
     }
 
     static fun str(str) hello = (name) {
@@ -159,10 +159,10 @@ namespace Main {
         var int k = 10;
         var Scaler* sc = new(Scaler);
         sc.factor = 7;
-        var str s = type(Main).apply(type(Main).twice, 21){str};
-        s = s + " " + type(Main).apply(lambda int(int):(x) { return x + k; }, 5){str};
-        s = s + " " + type(Main).apply(sc.Scale, 6){str};
-        s = s + " " + type(Main).apply(lambda int(int):(x) { return type(Main).apply(type(Main).twice, x) + 1; }, 4){str} + "\n";
+        var str s = Main::apply(Main::twice, 21){str};
+        s = s + " " + Main::apply(lambda int(int):(x) { return x + k; }, 5){str};
+        s = s + " " + Main::apply(sc.Scale, 6){str};
+        s = s + " " + Main::apply(lambda int(int):(x) { return Main::apply(Main::twice, x) + 1; }, 4){str} + "\n";
 
         var int* a = new(int, 6U);
         a[0] = 5;
@@ -171,17 +171,17 @@ namespace Main {
         a[3] = 1;
         a[4] = 7;
         a[5] = 3;
-        native(SORT){void(int*, int, int(int, int))}(a, 6, type(Main).descending);
+        native(SORT){void(int*, int, int(int, int))}(a, 6, Main::descending);
         for(var int i = 0; i < 6; i++) {
             s = s + a[i]{str} + " ";
         }
         free(a);
 
-        native(EACH){void(int, void(int))}(3000, type(Main).churn);
+        native(EACH){void(int, void(int))}(3000, Main::churn);
         var str greeting;
-        native(GREET){void(str(str), str*)}(type(Main).hello, &greeting);
-        s = s + type(Main).total{str} + " " + greeting + "\n";
-        type(File).StdOut.WriteStr(s);
+        native(GREET){void(str(str), str*)}(Main::hello, &greeting);
+        s = s + Main::total{str} + " " + greeting + "\n";
+        File::StdOut.WriteStr(s);
     }
 }
 `, map[string]string{"callbacks.c": callbackNatives})

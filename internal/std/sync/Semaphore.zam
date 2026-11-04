@@ -14,8 +14,8 @@ public class Semaphore {
     }
 
     public fun void(uint) Init = (i) {
-        this.m = type(Mutex).New();
-        this.c = type(Cond).New(this.m);
+        this.m = Mutex::New();
+        this.c = Cond::New(this.m);
         this.count = i;
     }
 

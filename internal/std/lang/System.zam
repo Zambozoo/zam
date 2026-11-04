@@ -7,14 +7,14 @@ public namespace System {
     }
 
     public fun void(str) Panic = (s) {
-        type(File).StdErr.WriteStr(s);
-        type(System).Exit(-1);
+        File::StdErr.WriteStr(s);
+        System::Exit(-1);
     }
 
     public fun void(str, any...) Panicf = (fmt, args) {
-        var str s = type(Strs).Sprintf(fmt, args);
-        type(File).StdErr.WriteStr(s);
-        type(System).Exit(-1);
+        var str s = Strs::Sprintf(fmt, args);
+        File::StdErr.WriteStr(s);
+        System::Exit(-1);
     }
 
     // ProcessID reports the OS-level id of this process, which is what
@@ -59,11 +59,11 @@ public namespace System {
 
         public static fun Endian() Endianness = () {
             var byte* bytes = (&one){uint}{void*}{byte*};
-            return bytes[0]{int} == 1 ? type(Endian).LittleEndian : type(Endian).BigEndian;
+            return bytes[0]{int} == 1 ? Endian::LittleEndian : Endian::BigEndian;
         }
 
         public fun str() Str = () {
-            return *this == type(Endian).BigEndian ? "BigEndian" : "LittleEndian";
+            return *this == Endian::BigEndian ? "BigEndian" : "LittleEndian";
         }
     }
 

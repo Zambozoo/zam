@@ -99,12 +99,12 @@ static void markValue(ZamThread *collector, ZamWord location, ZamTypeID type) {
     uint64_t header = zam_value_header_bytes(image, type);
     uint64_t count = zam_type_member_count(image, type.shortID);
     for (uint64_t index = 0; index < count; index++) {
-        const ZamMemberDefinition *member =
+        ZamMemberDefinition member =
             zam_type_member(image, type.shortID, index);
-       ZamTypeID memberType = zam_member_type(member);
+       ZamTypeID memberType = zam_member_type(&member);
         if (type.tailLength != 0 && index + 1 == count)
             memberType.arrayLength = type.tailLength;
-        markValue(collector, location + header + member->offset, memberType);
+        markValue(collector, location + header + member.offset, memberType);
     }
 }
 
@@ -411,12 +411,12 @@ void zam_gc_mark_members(ZamThread *thread, ZamWord instance) {
 
     uint64_t count = zam_type_member_count(image, shortID);
     for (uint64_t index = 0; index < count; index++) {
-        const ZamMemberDefinition *member =
+        ZamMemberDefinition member =
             zam_type_member(image, shortID, index);
-       ZamTypeID memberType = zam_member_type(member);
+       ZamTypeID memberType = zam_member_type(&member);
         if (tailLength != 0 && index + 1 == count)
             memberType.arrayLength = tailLength;
-        markValue(thread, instance + header + member->offset, memberType);
+        markValue(thread, instance + header + member.offset, memberType);
     }
 }
 

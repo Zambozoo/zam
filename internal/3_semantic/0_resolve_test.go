@@ -329,10 +329,25 @@ namespace Main {
     }
 }
 `
-	errs := validate(t, "import \"a/Thing.zam\";\nimport \"b/Thing.zam\";\n"+fmt.Sprintf(main, "type(Thing).A()"), files)
+	errs := validate(t, "import \"a/Thing.zam\";\nimport \"b/Thing.zam\";\n"+fmt.Sprintf(main, "Thing::A()"), files)
 	require.NotEmpty(t, errs)
 	assert.Contains(t, errs[0].Error(), `declaration "Thing" is ambiguous`)
 
-	errs = validate(t, "import \"a/Thing.zam\";\nimport Other = \"b/Thing.zam\";\n"+fmt.Sprintf(main, "type(Thing).A() + type(Other.Thing).B()"), files)
+	errs = validate(t, "import \"a/Thing.zam\";\nimport Other = \"b/Thing.zam\";\n"+fmt.Sprintf(main, "Thing::A() + Other.Thing::B()"), files)
 	assert.Empty(t, errs)
+}
+
+// A static named through :: that its declaration does not have is reported
+// against the declaration, never read as anything else.
+func TestValidateASTReportsAMissingStatic(t *testing.T) {
+	errs := validate(t, `
+namespace Main {
+`+mainMethod+`
+    static fun int() use = () {
+        return Main::missing();
+    }
+}
+`, nil)
+	require.NotEmpty(t, errs)
+	assert.Contains(t, errs[0].Error(), "static field Main::missing not found")
 }

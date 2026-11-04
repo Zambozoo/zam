@@ -1,4 +1,3 @@
-import "../lang/Pair.zam";
 import "RWMutex.zam";
 
 // Value read and written by many threads at once
@@ -13,7 +12,7 @@ public class Atomic[A] {
     }
 
     public fun void(A) Init = (v) {
-        this.m = type(RWMutex).New();
+        this.m = RWMutex::New();
         this.v = v;
     }
 
@@ -35,15 +34,15 @@ public class Atomic[A] {
 
     // Update stores v if f holds for the current value and v, returning the
     // value it replaced and whether it did.
-    public fun Pair[A, bool](A, bool(A, A)) Update = (v, f) {
+    public fun (A, bool)(A, bool(A, A)) Update = (v, f) {
         this.m.Lock();
-        var Pair[A, bool] p;
+        var (A, bool) p;
         if(f(this.v, v)) {
-            p.second = true;
-            p.first = this.v;
+            p.1 = true;
+            p.0 = this.v;
             this.v = v;
         } else {
-            p.second = false;
+            p.1 = false;
         }
         this.m.Unlock();
         return p;

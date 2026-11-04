@@ -1,5 +1,4 @@
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../local/File.zam";
 import "IP.zam";
@@ -19,29 +18,29 @@ public class Socket <: File* {
 
         // Accept waits for the next connection, and fails once the listener
         // is closed, from this thread or another.
-        public fun Pair[Socket*, Err*]() Accept = () {
-            var Pair[Socket*, Err*] out;
+        public fun (Socket*, Err*)() Accept = () {
+            var (Socket*, Err*) out;
             var int fd = -1;
             var str errStr;
             native(STD_NET_ACCEPT){void(uint, int*, str*)}(this.handle, &fd, &errStr);
-            out.first = null;
-            out.second = null;
+            out.0 = null;
+            out.1 = null;
             if(errStr != null) {
-                out.second = type(StrErr).New(errStr);
+                out.1 = StrErr::New(errStr);
             } else {
-                out.first = type(Socket).Of(fd);
+                out.0 = Socket::Of(fd);
             }
             return out;
         }
 
         // Addr returns the address the listener is bound to, which names the
         // port chosen for a listener asked for port 0.
-        public fun Pair[Pair[IP, uint], Err*]() Addr = () {
+        public fun ((IP, uint), Err*)() Addr = () {
             var str text;
             var int port;
             var str errStr;
             native(STD_NET_LISTENER_ADDR){void(uint, str*, int*, str*)}(this.handle, &text, &port, &errStr);
-            return type(Socket).addrOf(text, port, errStr);
+            return Socket::addrOf(text, port, errStr);
         }
 
         // Close stops accepting, reporting whether the listener was open.
@@ -71,66 +70,66 @@ public class Socket <: File* {
         if(msg == null) {
             return null;
         }
-        return type(StrErr).New(msg);
+        return StrErr::New(msg);
     }
 
     // addrOf reads a native's address text and port as an IP and port.
-    static fun Pair[Pair[IP, uint], Err*](str, int, str) addrOf = (text, port, errStr) {
-        var Pair[Pair[IP, uint], Err*] out;
-        out.first.second = port{uint};
-        out.second = null;
+    static fun ((IP, uint), Err*)(str, int, str) addrOf = (text, port, errStr) {
+        var ((IP, uint), Err*) out;
+        out.0.1 = port{uint};
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
             return out;
         }
-        var Pair[IP, Err*] ip = type(IP).Parse(text);
-        out.first.first = ip.first;
-        out.second = ip.second;
+        var (IP, Err*) ip = IP::Parse(text);
+        out.0.0 = ip.0;
+        out.1 = ip.1;
         return out;
     }
 
     // name answers the local or remote address of the socket as the native
     // gives it: an address's text and port, or a Unix socket's path.
-    private fun Pair[Pair[str, int], str](bool) name = (remote) {
-        var Pair[Pair[str, int], str] out;
+    private fun ((str, int), str)(bool) name = (remote) {
+        var ((str, int), str) out;
         var str text;
         var int port;
         var str errStr;
         native(STD_SOCKET_ADDR){void(int, bool, str*, int*, str*)}(this.FD(), remote, &text, &port, &errStr);
-        out.first.first = text;
-        out.first.second = port;
-        out.second = errStr;
+        out.0.0 = text;
+        out.0.1 = port;
+        out.1 = errStr;
         return out;
     }
 
-    private fun Pair[Pair[IP, uint], Err*](bool) addr = (remote) {
-        var Pair[Pair[str, int], str] n = this.name(remote);
-        return type(Socket).addrOf(n.first.first, n.first.second, n.second);
+    private fun ((IP, uint), Err*)(bool) addr = (remote) {
+        var ((str, int), str) n = this.name(remote);
+        return Socket::addrOf(n.0.0, n.0.1, n.1);
     }
 
-    private fun Pair[str, Err*](bool) path = (remote) {
-        var Pair[Pair[str, int], str] n = this.name(remote);
-        var Pair[str, Err*] out;
-        out.first = n.first.first;
-        out.second = type(Socket).err(n.second);
+    private fun (str, Err*)(bool) path = (remote) {
+        var ((str, int), str) n = this.name(remote);
+        var (str, Err*) out;
+        out.0 = n.0.0;
+        out.1 = Socket::err(n.1);
         return out;
     }
 
     // LocalPath returns a Unix socket's own path, empty for a dialed one.
-    public fun Pair[str, Err*]() LocalPath = () {
+    public fun (str, Err*)() LocalPath = () {
         return this.path(false);
     }
 
     // RemotePath returns the path of a Unix socket's peer.
-    public fun Pair[str, Err*]() RemotePath = () {
+    public fun (str, Err*)() RemotePath = () {
         return this.path(true);
     }
 
-    public fun Pair[Pair[IP, uint], Err*]() LocalAddr = () {
+    public fun ((IP, uint), Err*)() LocalAddr = () {
         return this.addr(false);
     }
 
-    public fun Pair[Pair[IP, uint], Err*]() RemoteAddr = () {
+    public fun ((IP, uint), Err*)() RemoteAddr = () {
         return this.addr(true);
     }
 
@@ -139,19 +138,19 @@ public class Socket <: File* {
     public fun Err*(uint) SetReadTimeout = (ms) {
         var str errStr;
         native(STD_SOCKET_TIMEOUT){void(int, bool, int, str*)}(this.FD(), false, ms{int}, &errStr);
-        return type(Socket).err(errStr);
+        return Socket::err(errStr);
     }
 
     public fun Err*(uint) SetWriteTimeout = (ms) {
         var str errStr;
         native(STD_SOCKET_TIMEOUT){void(int, bool, int, str*)}(this.FD(), true, ms{int}, &errStr);
-        return type(Socket).err(errStr);
+        return Socket::err(errStr);
     }
 
     private fun Err*(int) shutdown = (how) {
         var str errStr;
         native(STD_SOCKET_SHUTDOWN){void(int, int, str*)}(this.FD(), how, &errStr);
-        return type(Socket).err(errStr);
+        return Socket::err(errStr);
     }
 
     // CloseRead stops reading, waking a read waiting in another thread.

@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 
@@ -18,17 +17,17 @@ public class XML {
     }
 
     // Parse reads a document and returns its root element.
-    public static fun Pair[XML*, Err*](str) Parse = (s) {
-        var Pair[XML*, Err*] out;
+    public static fun (XML*, Err*)(str) Parse = (s) {
+        var (XML*, Err*) out;
         var uint n = 0U;
         var str errStr;
         native(STD_XML_PARSE){void(str, uint*, str*)}(s, &n, &errStr);
-        out.first = null;
-        out.second = null;
+        out.0 = null;
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
         } else {
-            out.first = type(XML).wrap(n);
+            out.0 = XML::wrap(n);
         }
         return out;
     }
@@ -37,7 +36,7 @@ public class XML {
     public static fun XML*(str) New = (name) {
         var uint n;
         native(STD_XML_NEW){void(str, uint*)}(name, &n);
-        return type(XML).wrap(n);
+        return XML::wrap(n);
     }
 
     public fun str() Name = () {
@@ -59,9 +58,9 @@ public class XML {
     }
 
     // Attr returns an attribute's value, and false when there is none.
-    public fun Pair[str, bool](str) Attr = (name) {
-        var Pair[str, bool] out;
-        native(STD_XML_ATTR){void(uint, str, str*, bool*)}(this.node, name, &(out.first), &(out.second));
+    public fun (str, bool)(str) Attr = (name) {
+        var (str, bool) out;
+        native(STD_XML_ATTR){void(uint, str, str*, bool*)}(this.node, name, &(out.0), &(out.1));
         return out;
     }
 
@@ -77,10 +76,10 @@ public class XML {
     public fun Arr[str]*() Attrs = () {
         var str joined;
         native(STD_XML_ATTRS){void(uint, str*)}(this.node, &joined);
-        if(type(Strs).ByteLen(joined) == 0) {
-            return type(Arr)[str].New(0U, new(str, 0U)...);
+        if(Strs::ByteLen(joined) == 0) {
+            return Arr::[str]New(0U, new(str, 0U)...);
         }
-        return type(Strs).Split(joined, 0{byte});
+        return Strs::Split(joined, 0{byte});
     }
 
     // Len counts the element's child elements.
@@ -94,18 +93,18 @@ public class XML {
     public fun XML*(uint) At = (i) {
         var uint n;
         native(STD_XML_CHILD_AT){void(uint, int, uint*)}(this.node, i{int}, &n);
-        return type(XML).wrap(n);
+        return XML::wrap(n);
     }
 
     // Child returns the first child element by name, and false when there is
     // none.
-    public fun Pair[XML*, bool](str) Child = (name) {
-        var Pair[XML*, bool] out;
+    public fun (XML*, bool)(str) Child = (name) {
+        var (XML*, bool) out;
         var uint n;
-        native(STD_XML_CHILD){void(uint, str, uint*, bool*)}(this.node, name, &n, &(out.second));
-        out.first = null;
-        if(out.second) {
-            out.first = type(XML).wrap(n);
+        native(STD_XML_CHILD){void(uint, str, uint*, bool*)}(this.node, name, &n, &(out.1));
+        out.0 = null;
+        if(out.1) {
+            out.0 = XML::wrap(n);
         }
         return out;
     }
@@ -114,7 +113,7 @@ public class XML {
     public fun XML*(str) AddChild = (name) {
         var uint n;
         native(STD_XML_ADD_CHILD){void(uint, str, uint*)}(this.node, name, &n);
-        return type(XML).wrap(n);
+        return XML::wrap(n);
     }
 
     // Append appends a copy of x and everything beneath it.

@@ -1,6 +1,5 @@
 import "../lang/System.zam";
 import "../lang/Obj.zam";
-import "../lang/Pair.zam";
 import "Math.zam";
 import "Hash.zam";
 import "Vector.zam";
@@ -23,11 +22,11 @@ public class Matrix {
         for(var uint i = 0U; i < rows * cols; i++) {
             a[i] = 0.0;
         }
-        return type(Matrix).New(rows, cols, a...);
+        return Matrix::New(rows, cols, a...);
     }
 
     public static fun Matrix*(uint) Identity = (n) {
-        var Matrix* m = type(Matrix).Zero(n, n);
+        var Matrix* m = Matrix::Zero(n, n);
         for(var uint i = 0U; i < n; i++) {
             m.arr[i * n + i] = 1.0;
         }
@@ -42,19 +41,19 @@ public class Matrix {
 
     private fun void(Matrix*) checkSame = (o) {
         if(o.rows != this.rows || o.cols != this.cols) {
-            type(System).Panic("Matrix dimensions differ");
+            System::Panic("Matrix dimensions differ");
         }
     }
 
     private fun void(uint, uint) checkIndex = (r, c) {
         if(r >= this.rows || c >= this.cols) {
-            type(System).Panic("Matrix index out of range");
+            System::Panic("Matrix index out of range");
         }
     }
 
     private fun void() checkSquare = () {
         if(this.rows != this.cols) {
-            type(System).Panic("Matrix is not square");
+            System::Panic("Matrix is not square");
         }
     }
 
@@ -77,7 +76,7 @@ public class Matrix {
     }
 
     public fun Matrix*() Copy = () {
-        var Matrix* m = type(Matrix).Zero(this.rows, this.cols);
+        var Matrix* m = Matrix::Zero(this.rows, this.cols);
         for(var uint i = 0U; i < this.rows * this.cols; i++) {
             m.arr[i] = this.arr[i];
         }
@@ -86,7 +85,7 @@ public class Matrix {
 
     public fun Vector*(uint) Row = (r) {
         this.checkIndex(r, 0U);
-        var Vector* v = type(Vector).Zero(this.cols);
+        var Vector* v = Vector::Zero(this.cols);
         for(var uint c = 0U; c < this.cols; c++) {
             v.Set(c, this.arr[r * this.cols + c]);
         }
@@ -95,7 +94,7 @@ public class Matrix {
 
     public fun Vector*(uint) Col = (c) {
         this.checkIndex(0U, c);
-        var Vector* v = type(Vector).Zero(this.rows);
+        var Vector* v = Vector::Zero(this.rows);
         for(var uint r = 0U; r < this.rows; r++) {
             v.Set(r, this.arr[r * this.cols + c]);
         }
@@ -104,7 +103,7 @@ public class Matrix {
 
     public fun Matrix*(Matrix*) Add = (o) {
         this.checkSame(o);
-        var Matrix* m = type(Matrix).Zero(this.rows, this.cols);
+        var Matrix* m = Matrix::Zero(this.rows, this.cols);
         for(var uint i = 0U; i < this.rows * this.cols; i++) {
             m.arr[i] = this.arr[i] + o.arr[i];
         }
@@ -113,7 +112,7 @@ public class Matrix {
 
     public fun Matrix*(Matrix*) Sub = (o) {
         this.checkSame(o);
-        var Matrix* m = type(Matrix).Zero(this.rows, this.cols);
+        var Matrix* m = Matrix::Zero(this.rows, this.cols);
         for(var uint i = 0U; i < this.rows * this.cols; i++) {
             m.arr[i] = this.arr[i] - o.arr[i];
         }
@@ -121,7 +120,7 @@ public class Matrix {
     }
 
     public fun Matrix*(flt) Scale = (k) {
-        var Matrix* m = type(Matrix).Zero(this.rows, this.cols);
+        var Matrix* m = Matrix::Zero(this.rows, this.cols);
         for(var uint i = 0U; i < this.rows * this.cols; i++) {
             m.arr[i] = this.arr[i] * k;
         }
@@ -130,9 +129,9 @@ public class Matrix {
 
     public fun Matrix*(Matrix*) Mul = (o) {
         if(this.cols != o.rows) {
-            type(System).Panic("Matrix dimensions do not chain");
+            System::Panic("Matrix dimensions do not chain");
         }
-        var Matrix* m = type(Matrix).Zero(this.rows, o.cols);
+        var Matrix* m = Matrix::Zero(this.rows, o.cols);
         for(var uint r = 0U; r < this.rows; r++) {
             for(var uint k = 0U; k < this.cols; k++) {
                 var flt a = this.arr[r * this.cols + k];
@@ -147,9 +146,9 @@ public class Matrix {
     // MulVector returns this matrix times the column vector v.
     public fun Vector*(Vector*) MulVector = (v) {
         if(this.cols != v.Len()) {
-            type(System).Panic("Matrix and Vector dimensions do not chain");
+            System::Panic("Matrix and Vector dimensions do not chain");
         }
-        var Vector* out = type(Vector).Zero(this.rows);
+        var Vector* out = Vector::Zero(this.rows);
         for(var uint r = 0U; r < this.rows; r++) {
             var flt s = 0.0;
             for(var uint c = 0U; c < this.cols; c++) {
@@ -161,7 +160,7 @@ public class Matrix {
     }
 
     public fun Matrix*() Transpose = () {
-        var Matrix* m = type(Matrix).Zero(this.cols, this.rows);
+        var Matrix* m = Matrix::Zero(this.cols, this.rows);
         for(var uint r = 0U; r < this.rows; r++) {
             for(var uint c = 0U; c < this.cols; c++) {
                 m.arr[c * this.rows + r] = this.arr[r * this.cols + c];
@@ -175,7 +174,7 @@ public class Matrix {
     private fun uint(uint) pivot = (col) {
         var uint best = col;
         for(var uint r = col + 1U; r < this.rows; r++) {
-            if(type(Math).Abs(this.arr[r * this.cols + col]) > type(Math).Abs(this.arr[best * this.cols + col])) {
+            if(Math::Abs(this.arr[r * this.cols + col]) > Math::Abs(this.arr[best * this.cols + col])) {
                 best = r;
             }
         }
@@ -223,17 +222,17 @@ public class Matrix {
 
     // Inverse returns the inverse by Gauss-Jordan elimination, and false when
     // the matrix is singular.
-    public fun Pair[Matrix*, bool]() Inverse = () {
+    public fun (Matrix*, bool)() Inverse = () {
         this.checkSquare();
-        var Pair[Matrix*, bool] out;
+        var (Matrix*, bool) out;
         var uint n = this.rows;
         var Matrix* m = this.Copy();
-        var Matrix* inv = type(Matrix).Identity(n);
+        var Matrix* inv = Matrix::Identity(n);
         for(var uint col = 0U; col < n; col++) {
             var uint p = m.pivot(col);
             if(m.arr[p * n + col] == 0.0) {
-                out.first = null;
-                out.second = false;
+                out.0 = null;
+                out.1 = false;
                 return out;
             }
             m.swapRows(p, col);
@@ -253,8 +252,8 @@ public class Matrix {
                 }
             }
         }
-        out.first = inv;
-        out.second = true;
+        out.0 = inv;
+        out.1 = true;
         return out;
     }
 
@@ -272,9 +271,9 @@ public class Matrix {
     }
 
     public fun int() Hash = () {
-        var uint h = type(Hash).Combine(type(Hash).Int(this.rows{int}), type(Hash).Int(this.cols{int}));
+        var uint h = Hash::Combine(Hash::Int(this.rows{int}), Hash::Int(this.cols{int}));
         for(var uint i = 0U; i < this.rows * this.cols; i++) {
-            h = type(Hash).Combine(h, type(Hash).Flt(this.arr[i]));
+            h = Hash::Combine(h, Hash::Flt(this.arr[i]));
         }
         return h{int};
     }

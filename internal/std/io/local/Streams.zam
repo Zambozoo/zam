@@ -1,5 +1,4 @@
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 import "Buffer.zam";
@@ -8,24 +7,24 @@ import "Stream.zam";
 // Helpers over any Stream
 public namespace Streams {
     // ReadAll reads s to its end.
-    public static fun Pair[str, Err*](Stream*) ReadAll = (s) {
-        var Pair[str, Err*] out;
-        var Buffer* b = type(Buffer).New();
+    public static fun (str, Err*)(Stream*) ReadAll = (s) {
+        var (str, Err*) out;
+        var Buffer* b = Buffer::New();
         var byte* chunk = new(byte, 16384U);
-        out.second = null;
+        out.1 = null;
         for(;;) {
-            var Pair[int, Err*] p = s.Read(chunk, 16384);
-            if(p.second != null) {
-                out.second = p.second;
+            var (int, Err*) p = s.Read(chunk, 16384);
+            if(p.1 != null) {
+                out.1 = p.1;
                 break;
             }
-            if(p.first == 0) {
+            if(p.0 == 0) {
                 break;
             }
-            b.Write(chunk, p.first);
+            b.Write(chunk, p.0);
         }
         free(chunk);
-        out.first = b.Str();
+        out.0 = b.Str();
         b.Delete();
         return out;
     }
@@ -34,45 +33,45 @@ public namespace Streams {
     public static fun Err*(Stream*, byte*, int) WriteAll = (s, b, n) {
         var int done = 0;
         for(; done < n;) {
-            var Pair[int, Err*] p = s.Write(b + done{uint}, n - done);
-            if(p.second != null) {
-                return p.second;
+            var (int, Err*) p = s.Write(b + done{uint}, n - done);
+            if(p.1 != null) {
+                return p.1;
             }
-            if(p.first <= 0) {
-                return type(StrErr).New("stream accepted no bytes");
+            if(p.0 <= 0) {
+                return StrErr::New("stream accepted no bytes");
             }
-            done = done + p.first;
+            done = done + p.0;
         }
         return null;
     }
 
     public static fun Err*(Stream*, str) WriteStr = (s, text) {
-        var Pair[byte*, int] p = type(Strs).ToBytes(text);
-        return type(Streams).WriteAll(s, p.first, p.second);
+        var (byte*, int) p = Strs::ToBytes(text);
+        return Streams::WriteAll(s, p.0, p.1);
     }
 
     // Copy writes what it reads from src to dst until src ends, returning how
     // many bytes it copied.
-    public static fun Pair[int, Err*](Stream*, Stream*) Copy = (dst, src) {
-        var Pair[int, Err*] out;
-        out.first = 0;
-        out.second = null;
+    public static fun (int, Err*)(Stream*, Stream*) Copy = (dst, src) {
+        var (int, Err*) out;
+        out.0 = 0;
+        out.1 = null;
         var byte* chunk = new(byte, 16384U);
         for(;;) {
-            var Pair[int, Err*] p = src.Read(chunk, 16384);
-            if(p.second != null) {
-                out.second = p.second;
+            var (int, Err*) p = src.Read(chunk, 16384);
+            if(p.1 != null) {
+                out.1 = p.1;
                 break;
             }
-            if(p.first == 0) {
+            if(p.0 == 0) {
                 break;
             }
-            var Err* e = type(Streams).WriteAll(dst, chunk, p.first);
+            var Err* e = Streams::WriteAll(dst, chunk, p.0);
             if(e != null) {
-                out.second = e;
+                out.1 = e;
                 break;
             }
-            out.first = out.first + p.first;
+            out.0 = out.0 + p.0;
         }
         free(chunk);
         return out;

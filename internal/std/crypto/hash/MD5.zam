@@ -5,11 +5,11 @@ import "Digest.zam";
 public namespace MD5 {
     // New starts an MD5 digest.
     public static fun Digest*() New = () {
-        return type(Digest).Must(type(Digest.Kind).MD5, 0U);
+        return Digest::Must(Digest.Kind::MD5, 0U);
     }
 
     // Sum returns the MD5 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).MD5, 0U, b, n);
+        return Digest::Of(Digest.Kind::MD5, 0U, b, n);
     }
 }

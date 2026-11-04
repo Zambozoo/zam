@@ -1,38 +1,37 @@
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "Socket.zam";
 
 // Stream connections over Unix domain sockets, named by file system paths
 public namespace UnixSocket {
-    public static fun Pair[Socket*, Err*](str) Dial = (path) {
-        var Pair[Socket*, Err*] out;
+    public static fun (Socket*, Err*)(str) Dial = (path) {
+        var (Socket*, Err*) out;
         var int fd = -1;
         var str errStr;
         native(STD_UNIX_DIAL){void(str, int*, str*)}(path, &fd, &errStr);
-        out.first = null;
-        out.second = null;
+        out.0 = null;
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(path + ": " + errStr);
+            out.1 = StrErr::New(path + ": " + errStr);
         } else {
-            out.first = type(Socket).Of(fd);
+            out.0 = Socket::Of(fd);
         }
         return out;
     }
 
     // Listen accepts connections on a path, which must not exist yet and is
     // removed when the listener closes.
-    public static fun Pair[Socket.Listener*, Err*](str) Listen = (path) {
-        var Pair[Socket.Listener*, Err*] out;
+    public static fun (Socket.Listener*, Err*)(str) Listen = (path) {
+        var (Socket.Listener*, Err*) out;
         var uint h = 0U;
         var str errStr;
         native(STD_NET_LISTEN){void(bool, str, int, uint*, str*)}(true, path, 0, &h, &errStr);
-        out.first = null;
-        out.second = null;
+        out.0 = null;
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(path + ": " + errStr);
+            out.1 = StrErr::New(path + ": " + errStr);
         } else {
-            out.first = type(Socket.Listener).Of(h);
+            out.0 = Socket.Listener::Of(h);
         }
         return out;
     }

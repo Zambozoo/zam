@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 
 // Doubly-linked XOR List
@@ -49,7 +48,7 @@ public class LinkList[A] {
 
     private fun Node[A]*(uint) getNode = (i) {
         if(i >= this.len) {
-            type(System).Panic("LinkList out of bounds");
+            System::Panic("LinkList out of bounds");
         }
 
         var Node[A]* prev = null;
@@ -64,14 +63,14 @@ public class LinkList[A] {
 
     public fun A() GetFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("LinkList out of bounds");
+            System::Panic("LinkList out of bounds");
         }
         return this.head.val;
     }
 
     public fun A() GetLast = () {
         if(this.len == 0U) {
-            type(System).Panic("LinkList out of bounds");
+            System::Panic("LinkList out of bounds");
         }
         return this.tail.val;
     }
@@ -82,7 +81,7 @@ public class LinkList[A] {
 
     public fun A(A) SetFirst = (v) {
         if(this.len == 0U) {
-            type(System).Panic("LinkList out of bounds");
+            System::Panic("LinkList out of bounds");
         }
         var A old = this.head.val;
         this.head.val = v;
@@ -91,7 +90,7 @@ public class LinkList[A] {
 
     public fun A(A) SetLast = (v) {
         if(this.len == 0U) {
-            type(System).Panic("LinkList out of bounds");
+            System::Panic("LinkList out of bounds");
         }
         var A old = this.tail.val;
         this.tail.val = v;
@@ -115,10 +114,10 @@ public class LinkList[A] {
             return;
         }
         n.xor = this.head{uint};
-        type(System.GC).Block();
+        System.GC::Block();
         this.head.xor = this.head.xor ^ n{uint};
         this.head = n;
-        type(System.GC).Unblock();
+        System.GC::Unblock();
         this.len++;
     }
 
@@ -132,16 +131,16 @@ public class LinkList[A] {
             return;
         }
         n.xor = this.tail{uint};
-        type(System.GC).Block();
+        System.GC::Block();
         this.tail.xor = this.tail.xor ^ n{uint};
         this.tail = n;
-        type(System.GC).Unblock();
+        System.GC::Unblock();
         this.len++;
     }
 
     public fun void(uint, A) Add = (i, v) {
         if(i > this.len) {
-            type(System).Panic("LinkList out of bounds");
+            System::Panic("LinkList out of bounds");
         } else if(i == this.len) {
             return this.AddLast(v);
         } else if(i == 0U) {
@@ -159,16 +158,16 @@ public class LinkList[A] {
         var Node[A]* n = new(Node[A]);
         n.val = v;
         n.xor = prev{uint} ^ cur{uint};
-        type(System.GC).Block();
+        System.GC::Block();
         prev.xor = prev.xor ^ cur{uint} ^ n{uint};
         cur.xor = cur.xor ^ prev{uint} ^ n{uint};
-        type(System.GC).Unblock();
+        System.GC::Unblock();
         this.len++;
     }
     
     public fun A() RemoveFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("LinkList out of bounds");
+            System::Panic("LinkList out of bounds");
         }
         var Node[A]* oldHead = this.head;
         var A old = oldHead.val;
@@ -178,10 +177,10 @@ public class LinkList[A] {
             this.tail = null;
         } else {
             var Node[A]* newHead = (oldHead.xor){void*}{Node[A]*};
-            type(System.GC).Block();
+            System.GC::Block();
             this.head = newHead;
             newHead.xor = newHead.xor ^ oldHead{uint};
-            type(System.GC).Unblock();
+            System.GC::Unblock();
         }
 
         this.len--;
@@ -191,7 +190,7 @@ public class LinkList[A] {
 
     public fun A() RemoveLast = () {
         if(this.len == 0U) {
-            type(System).Panic("LinkList out of bounds");
+            System::Panic("LinkList out of bounds");
         }
         var Node[A]* oldTail = this.tail;
         var A old = oldTail.val;
@@ -201,10 +200,10 @@ public class LinkList[A] {
             this.tail = null;
         } else {
             var Node[A]* newTail = (oldTail.xor){void*}{Node[A]*};
-            type(System.GC).Block();
+            System.GC::Block();
             this.tail = newTail;
             newTail.xor = newTail.xor ^ oldTail{uint};
-            type(System.GC).Unblock();
+            System.GC::Unblock();
         }
 
         this.len--;
@@ -214,7 +213,7 @@ public class LinkList[A] {
 
     public fun A(uint) Remove = (i) {
         if(i >= this.len) {
-            type(System).Panic("LinkList out of bounds");
+            System::Panic("LinkList out of bounds");
         } else if(i == 0U) {
             return this.RemoveFirst();
         } else if(i == this.len - 1U) {
@@ -231,10 +230,10 @@ public class LinkList[A] {
         var Node[A]* next = (prev{uint} ^ cur.xor){void*}{Node[A]*};
         var A old = cur.val;
 
-        type(System.GC).Block();
+        System.GC::Block();
         prev.xor = prev.xor ^ cur{uint} ^ next{uint};
         next.xor = next.xor ^ cur{uint} ^ prev{uint};
-        type(System.GC).Unblock();
+        System.GC::Unblock();
 
         this.len--;
         free(cur);
@@ -252,7 +251,7 @@ public class LinkList[A] {
             n = next;
             i++;
         }
-        return type(Arr)[A].New(this.len, arr...);
+        return Arr::[A]New(this.len, arr...);
     }
 
     public fun Iter[A]*() Iter = () {
@@ -289,7 +288,7 @@ public class LinkList[A] {
     }
 
     public fun void() Mark = () {
-        if(!type(System.GC).Markable(@{A})) {
+        if(!System.GC::Markable(@{A})) {
             return;
         }
         var uint prev = 0U;
@@ -312,7 +311,7 @@ public class LinkList[A] {
 
         public fun void(LinkList[A]*, uint) InitWithIndex = (l, i) {
             if(i > l.Len()) {
-                type(System).Panic("Arr out of bounds");
+                System::Panic("Arr out of bounds");
             }
             this.l = l;
             this.prev = null;
@@ -324,28 +323,28 @@ public class LinkList[A] {
             }
         }
 
-        public fun Pair[A, bool]() Next = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Next = () {
+            var (A, bool) p;
             if(this.cur == null) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.cur.val;
-            p.second = true;
+            p.0 = this.cur.val;
+            p.1 = true;
             var Node[A]* next = (this.prev{uint} ^ this.cur.xor){void*}{Node[A]*};
             this.prev = this.cur;
             this.cur = next;
             return p;
         }
 
-        public fun Pair[A, bool]() Prev = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Prev = () {
+            var (A, bool) p;
             if(this.prev == null) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.prev.val;
-            p.second = true;
+            p.0 = this.prev.val;
+            p.1 = true;
             var Node[A]* prevPrev = (this.prev.xor ^ this.cur{uint}){void*}{Node[A]*};
             this.cur = this.prev;
             this.prev = prevPrev;

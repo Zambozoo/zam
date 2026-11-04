@@ -66,8 +66,8 @@ namespace Main {
 
 Lastly, let's print!
 First, we'll statically reference `std/io/File.zam` with a static type expression, `type(File)`.
-Then, we'll grab the `stdout` file from it, `type(File).StdOut`.
-Next, we'll call its `WriteStr` method with the `"Hello World!"` string argument, `type(File).StdOut.WriteStr("Hello World!\n")`.
+Then, we'll grab the `stdout` file from it, `File::StdOut`.
+Next, we'll call its `WriteStr` method with the `"Hello World!"` string argument, `File::StdOut.WriteStr("Hello World!\n")`.
 Lastly, we end the statement with a semicolon.
 ```go
 // Main.zam
@@ -75,7 +75,7 @@ import std("io/local/File.zam");
 
 namespace Main {
     fun void(uint, str...) main = (_, _) {
-        type(File).StdOut.WriteStr("Hello World!\n");
+        File::StdOut.WriteStr("Hello World!\n");
     }
 }
 ```

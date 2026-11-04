@@ -27,14 +27,14 @@ public class Arr[A] {
 
     public fun A(uint) Get = (i) {
         if(i >= this.len) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         return this.arr[i];
     }
 
     public fun A(uint, A) Set = (i, t) {
         if(i >= this.len) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         var A old = this.arr[i];
         this.arr[i] = t;
@@ -48,7 +48,7 @@ public class Arr[A] {
     }
 
     public fun void() Mark = () {
-        type(Arrs)[A].MarkAll(this.len, this.arr);
+        Arrs::[A]MarkAll(this.len, this.arr);
     }
 
     public fun str() Str = () {

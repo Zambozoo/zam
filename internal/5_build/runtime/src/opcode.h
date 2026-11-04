@@ -139,7 +139,9 @@
     OP(OpAnyUnbox, 0)                                                          \
                                                                                \
     OP(OpEnumValue, 0)                                                         \
-    OP(OpMarkAs, 0)
+    OP(OpMarkAs, 0)                                                            \
+                                                                               \
+    OP(OpPackTuple, 0)
 
 #define ZAMOPCODE_ENUM(name, operands) name,
 

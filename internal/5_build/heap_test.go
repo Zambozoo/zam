@@ -18,8 +18,8 @@ import std("data/heap/*");
 
 namespace Main {
     interface Iter[A] {
-        virtual fun Pair[A, bool]() Next;
-        virtual fun Pair[A, bool]() Prev;
+        virtual fun (A, bool)() Next;
+        virtual fun (A, bool)() Prev;
     }
 
     interface Heap[A] {
@@ -37,16 +37,16 @@ namespace Main {
     interface Queue[A, B] {
         virtual fun uint() Len;
         virtual fun void(A, B) Add;
-        virtual fun Pair[A, B]() GetMin;
-        virtual fun Pair[A, B]() GetMax;
-        virtual fun Pair[A, B]() RemoveMin;
-        virtual fun Pair[A, B]() RemoveMax;
+        virtual fun (A, B)() GetMin;
+        virtual fun (A, B)() GetMax;
+        virtual fun (A, B)() RemoveMin;
+        virtual fun (A, B)() RemoveMax;
     }
 
     static var int size = 100;
 
     static fun int(uint*) least = (counts) {
-        for(var int v = 0; v < type(Main).size; v++) {
+        for(var int v = 0; v < Main::size; v++) {
             if(counts[v{uint}] > 0U) {
                 return v;
             }
@@ -55,7 +55,7 @@ namespace Main {
     }
 
     static fun int(uint*) greatest = (counts) {
-        for(var int v = type(Main).size - 1; v >= 0; v--) {
+        for(var int v = Main::size - 1; v >= 0; v--) {
             if(counts[v{uint}] > 0U) {
                 return v;
             }
@@ -64,7 +64,7 @@ namespace Main {
     }
 
     static fun bool(Heap[int]*) run = (h) {
-        var uint* counts = new(uint, type(Main).size{uint});
+        var uint* counts = new(uint, Main::size{uint});
         var uint len = 0U;
         var bool ok = true;
         var uint x = 13U;
@@ -73,29 +73,29 @@ namespace Main {
             var uint r = x >> 33U;
             var uint op = r % 5U;
             if(len == 0U || op < 2U) {
-                var int v = ((r >> 8U) % type(Main).size{uint}){int};
+                var int v = ((r >> 8U) % Main::size{uint}){int};
                 h.Add(v);
                 counts[v{uint}]++;
                 len++;
             } else if(op == 2U) {
-                var int want = type(Main).least(counts);
+                var int want = Main::least(counts);
                 ok = ok && h.GetMin() == want && h.RemoveMin() == want;
                 counts[want{uint}]--;
                 len--;
             } else if(op == 3U) {
-                var int want = type(Main).greatest(counts);
+                var int want = Main::greatest(counts);
                 ok = ok && h.GetMax() == want && h.RemoveMax() == want;
                 counts[want{uint}]--;
                 len--;
             } else {
-                ok = ok && h.GetMin() == type(Main).least(counts) && h.GetMax() == type(Main).greatest(counts);
+                ok = ok && h.GetMin() == Main::least(counts) && h.GetMax() == Main::greatest(counts);
             }
             ok = ok && h.Len() == len;
         }
 
         var uint visited = 0U;
         var Iter[int]* it = h.Iter();
-        for(var Pair[int, bool] p = it.Next(); p.second; p = it.Next()) {
+        for(var (int, bool) p = it.Next(); p.1; p = it.Next()) {
             visited++;
         }
         ok = ok && visited == len && h.Arr().Len() == len;
@@ -121,14 +121,14 @@ namespace Main {
         }
         var int last = 100;
         for(; q.Len() > 0U;) {
-            var Pair[int, int] e = q.RemoveMax();
-            ok = ok && e.second == e.first * 7 && e.first <= last;
-            last = e.first;
+            var (int, int) e = q.RemoveMax();
+            ok = ok && e.1 == e.0 * 7 && e.0 <= last;
+            last = e.0;
         }
         q.Add(4, 1);
         q.Add(2, 2);
         q.Add(9, 3);
-        return ok && q.GetMin().second == 2 && q.GetMax().second == 3 && q.RemoveMin().first == 2 && q.Len() == 2U;
+        return ok && q.GetMin().1 == 2 && q.GetMax().1 == 3 && q.RemoveMin().0 == 2 && q.Len() == 2U;
     }
 
     // merged checks a heap that two others were merged into: every element
@@ -149,33 +149,33 @@ namespace Main {
         var bool ok = from.Len() == 0U && into.Len() == 60U;
         var int last = -1;
         for(; into.Len() > 0U;) {
-            var Pair[int, int] e = into.RemoveMin();
-            ok = ok && e.first == last + 1 && e.second == e.first * 7;
-            last = e.first;
+            var (int, int) e = into.RemoveMin();
+            ok = ok && e.0 == last + 1 && e.1 == e.0 * 7;
+            last = e.0;
         }
         return ok && last == 59;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var str out = type(Main).run(type(ArrHeap)[int].New(0U)){str} + " ";
-        out = out + type(Main).run(type(Treap)[int].New(0U)){str} + " ";
-        out = out + type(Main).run(type(PairHeap)[int].New(0U)){str} + " ";
-        out = out + type(Main).queue(type(ArrPriorityQueue)[int, int].New(0U)){str} + " ";
-        out = out + type(Main).queue(type(TreapPriorityQueue)[int, int].New(0U)){str} + " ";
-        out = out + type(Main).queue(type(PairPriorityQueue)[int, int].New(0U)){str} + "\n";
+        var str out = Main::run(ArrHeap::[int]New(0U)){str} + " ";
+        out = out + Main::run(Treap::[int]New(0U)){str} + " ";
+        out = out + Main::run(PairHeap::[int]New(0U)){str} + " ";
+        out = out + Main::queue(ArrPriorityQueue::[int, int]New(0U)){str} + " ";
+        out = out + Main::queue(TreapPriorityQueue::[int, int]New(0U)){str} + " ";
+        out = out + Main::queue(PairPriorityQueue::[int, int]New(0U)){str} + "\n";
 
-        var ArrHeap[int]* ah = type(ArrHeap)[int].New(0U);
-        var ArrHeap[int]* ao = type(ArrHeap)[int].New(0U);
-        var Treap[int]* th = type(Treap)[int].New(0U);
-        var Treap[int]* to = type(Treap)[int].New(0U);
-        var PairHeap[int]* ph = type(PairHeap)[int].New(0U);
-        var PairHeap[int]* po = type(PairHeap)[int].New(0U);
-        var ArrPriorityQueue[int, int]* aq = type(ArrPriorityQueue)[int, int].New(0U);
-        var ArrPriorityQueue[int, int]* aqo = type(ArrPriorityQueue)[int, int].New(0U);
-        var TreapPriorityQueue[int, int]* tq = type(TreapPriorityQueue)[int, int].New(0U);
-        var TreapPriorityQueue[int, int]* tqo = type(TreapPriorityQueue)[int, int].New(0U);
-        var PairPriorityQueue[int, int]* pq = type(PairPriorityQueue)[int, int].New(0U);
-        var PairPriorityQueue[int, int]* pqo = type(PairPriorityQueue)[int, int].New(0U);
+        var ArrHeap[int]* ah = ArrHeap::[int]New(0U);
+        var ArrHeap[int]* ao = ArrHeap::[int]New(0U);
+        var Treap[int]* th = Treap::[int]New(0U);
+        var Treap[int]* to = Treap::[int]New(0U);
+        var PairHeap[int]* ph = PairHeap::[int]New(0U);
+        var PairHeap[int]* po = PairHeap::[int]New(0U);
+        var ArrPriorityQueue[int, int]* aq = ArrPriorityQueue::[int, int]New(0U);
+        var ArrPriorityQueue[int, int]* aqo = ArrPriorityQueue::[int, int]New(0U);
+        var TreapPriorityQueue[int, int]* tq = TreapPriorityQueue::[int, int]New(0U);
+        var TreapPriorityQueue[int, int]* tqo = TreapPriorityQueue::[int, int]New(0U);
+        var PairPriorityQueue[int, int]* pq = PairPriorityQueue::[int, int]New(0U);
+        var PairPriorityQueue[int, int]* pqo = PairPriorityQueue::[int, int]New(0U);
         for(var int i = 0; i < 60; i++) {
             var int v = (i * 37) % 60;
             if(i % 3 == 0) {
@@ -200,10 +200,10 @@ namespace Main {
         aq.Merge(aqo);
         tq.Merge(tqo);
         pq.Merge(pqo);
-        out = out + type(Main).merged(ah, ao){str} + " " + type(Main).merged(th, to){str} + " " + type(Main).merged(ph, po){str} + " ";
-        out = out + type(Main).mergedQueue(aq, aqo){str} + " " + type(Main).mergedQueue(tq, tqo){str} + " " + type(Main).mergedQueue(pq, pqo){str} + "\n";
-        out = out + type(Treap)[int].New(3U, 5, 1, 3){str} + " " + type(ArrHeap)[str].New(2U, "b", "a").GetMin() + "\n";
-        type(File).StdOut.WriteStr(out);
+        out = out + Main::merged(ah, ao){str} + " " + Main::merged(th, to){str} + " " + Main::merged(ph, po){str} + " ";
+        out = out + Main::mergedQueue(aq, aqo){str} + " " + Main::mergedQueue(tq, tqo){str} + " " + Main::mergedQueue(pq, pqo){str} + "\n";
+        out = out + Treap::[int]New(3U, 5, 1, 3){str} + " " + ArrHeap::[str]New(2U, "b", "a").GetMin() + "\n";
+        File::StdOut.WriteStr(out);
     }
 }
 `)

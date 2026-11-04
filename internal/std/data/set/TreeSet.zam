@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 import "../../lang/Struct.zam";
 
@@ -40,7 +39,7 @@ public class TreeSet[A] {
         var Node[A]* h = *link;
         var Node[A]* x = h.right;
         var Struct[Node[A]*] pin;
-        pin.Init(x, type(TreeSet)[A].markTree, null);
+        pin.Init(x, TreeSet::[A]markTree, null);
         h.right = x.left;
         x.left = h;
         x.red = h.red;
@@ -53,7 +52,7 @@ public class TreeSet[A] {
         var Node[A]* h = *link;
         var Node[A]* x = h.left;
         var Struct[Node[A]*] pin;
-        pin.Init(x, type(TreeSet)[A].markTree, null);
+        pin.Init(x, TreeSet::[A]markTree, null);
         h.left = x.right;
         x.right = h;
         x.red = h.red;
@@ -225,8 +224,8 @@ public class TreeSet[A] {
             return;
         }
         mark(n.val);
-        type(TreeSet)[A].markTree(n.left);
-        type(TreeSet)[A].markTree(n.right);
+        TreeSet::[A]markTree(n.left);
+        TreeSet::[A]markTree(n.right);
     }
 
     private fun void(Node[A]*) freeAll = (n) {
@@ -282,14 +281,14 @@ public class TreeSet[A] {
 
     public fun A() GetFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("TreeSet is empty");
+            System::Panic("TreeSet is empty");
         }
         return this.first().val;
     }
 
     public fun A() GetLast = () {
         if(this.len == 0U) {
-            type(System).Panic("TreeSet is empty");
+            System::Panic("TreeSet is empty");
         }
         return this.last().val;
     }
@@ -301,7 +300,7 @@ public class TreeSet[A] {
     public fun Arr[A]*() Arr = () {
         var A* a = new(A, this.len);
         this.fill(this.root, a, 0U);
-        return type(Arr)[A].New(this.len, a...);
+        return Arr::[A]New(this.len, a...);
     }
 
     public fun Iter[A]*() Iter = () {
@@ -333,10 +332,10 @@ public class TreeSet[A] {
     }
 
     public fun void() Mark = () {
-        if(!type(System.GC).Markable(@{A})) {
+        if(!System.GC::Markable(@{A})) {
             return;
         }
-        type(TreeSet)[A].markTree(this.root);
+        TreeSet::[A]markTree(this.root);
     }
 
     private class Iter[A] {
@@ -348,30 +347,30 @@ public class TreeSet[A] {
             this.cur = s.first();
         }
 
-        public fun Pair[A, bool]() Next = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Next = () {
+            var (A, bool) p;
             if(this.cur == null) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.cur.val;
-            p.second = true;
+            p.0 = this.cur.val;
+            p.1 = true;
             this.cur = this.s.after(this.cur.val);
             return p;
         }
 
-        public fun Pair[A, bool]() Prev = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Prev = () {
+            var (A, bool) p;
             var Node[A]* prev = this.s.last();
             if(this.cur != null) {
                 prev = this.s.before(this.cur.val);
             }
             if(prev == null) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = prev.val;
-            p.second = true;
+            p.0 = prev.val;
+            p.1 = true;
             this.cur = prev;
             return p;
         }

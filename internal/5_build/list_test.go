@@ -18,8 +18,8 @@ import std("data/list/*");
 
 namespace Main {
     interface Iter[A] {
-        virtual fun Pair[A, bool]() Next;
-        virtual fun Pair[A, bool]() Prev;
+        virtual fun (A, bool)() Next;
+        virtual fun (A, bool)() Prev;
     }
 
     interface List[A] {
@@ -53,11 +53,11 @@ namespace Main {
         s = s + " " + l.RemoveFirst() + l.RemoveLast() + l.Remove(2U) + " " + l.Len(){str} + " " + l.Arr(){str} + " ";
 
         var Iter[str]* it = l.Iter();
-        for(var Pair[str, bool] p = it.Next(); p.second; p = it.Next()) {
-            s = s + p.first;
+        for(var (str, bool) p = it.Next(); p.1; p = it.Next()) {
+            s = s + p.0;
         }
-        for(var Pair[str, bool] p = it.Prev(); p.second; p = it.Prev()) {
-            s = s + p.first;
+        for(var (str, bool) p = it.Prev(); p.1; p = it.Prev()) {
+            s = s + p.0;
         }
 
         l.Clear();
@@ -81,9 +81,9 @@ namespace Main {
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        type(File).StdOut.WriteStr(type(Main).run(type(ArrList)[str].New(0U)));
-        type(File).StdOut.WriteStr(type(Main).run(type(LinkList)[str].New(0U)));
-        type(File).StdOut.WriteStr(type(Main).run(type(SkipList)[str].New(0U)));
+        File::StdOut.WriteStr(Main::run(ArrList::[str]New(0U)));
+        File::StdOut.WriteStr(Main::run(LinkList::[str]New(0U)));
+        File::StdOut.WriteStr(Main::run(SkipList::[str]New(0U)));
     }
 }
 `)
@@ -122,7 +122,7 @@ namespace Main {
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var BitList* b = type(BitList).New(3U, true, false, true);
+        var BitList* b = BitList::New(3U, true, false, true);
         b.AddFirst(false);
         b.AddLast(true);
         b.Add(2U, true);
@@ -130,15 +130,15 @@ namespace Main {
         s = s + " " + b.SetFirst(true){str} + b.SetLast(false){str} + b.Set(1U, true){str} + " " + b{str};
         s = s + " " + b.RemoveFirst(){str} + b.RemoveLast(){str} + b.Remove(1U){str} + " " + b.Len(){str} + " " + b.Arr(){str} + " ";
         var Iter[bool]* it = b.Iter();
-        for(var Pair[bool, bool] p = it.Next(); p.second; p = it.Next()) {
-            s = s + p.first{str} + ",";
+        for(var (bool, bool) p = it.Next(); p.1; p = it.Next()) {
+            s = s + p.0{str} + ",";
         }
-        for(var Pair[bool, bool] p = it.Prev(); p.second; p = it.Prev()) {
-            s = s + p.first{str} + ",";
+        for(var (bool, bool) p = it.Prev(); p.1; p = it.Prev()) {
+            s = s + p.0{str} + ",";
         }
 
         b.Clear();
-        var ArrList[bool]* a = type(ArrList)[bool].New(0U);
+        var ArrList[bool]* a = ArrList::[bool]New(0U);
         var bool agree = true;
         var uint x = 11U;
         for(var int i = 0; i < 4000; i++) {
@@ -166,13 +166,13 @@ namespace Main {
                 agree = agree && a.Set(at, v) == b.Set(at, v);
             }
         }
-        agree = agree && type(Main).same(b, a);
-        type(File).StdOut.WriteStr(s + "\n" + agree{str} + " " + (b.Len() > 64U){str} + "\n");
+        agree = agree && Main::same(b, a);
+        File::StdOut.WriteStr(s + "\n" + agree{str} + " " + (b.Len() > 64U){str} + "\n");
     }
 
     interface Iter[A] {
-        virtual fun Pair[A, bool]() Next;
-        virtual fun Pair[A, bool]() Prev;
+        virtual fun (A, bool)() Next;
+        virtual fun (A, bool)() Prev;
     }
 }
 `)

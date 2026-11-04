@@ -207,8 +207,8 @@ func TestPutObjectMethods(t *testing.T) {
 
 	t.Run("the std.Obj file asks for nothing", func(t *testing.T) {
 		// Obj is the root of the base-class chain and must not descend from
-		// itself. Every other file — including other stdlib files like Pair
-		// or Err — reaches Obj the usual way.
+		// itself. Every other file — including other stdlib files like Err
+		// or StrErr — reaches Obj the usual way.
 		file := &File{Path: base.StdPath("lang/Obj.zam"), Imports: map[string][]*Import{}}
 		iface := newTestInterface(file)
 

@@ -35,7 +35,7 @@ func TestValidateASTRecordsWhatNamesReferTo(t *testing.T) {
         }
     }
     static fun int(Box) measure = (b) {
-        return b.size + type(Main).count + count;
+        return b.size + Main::count + count;
     }
 ` + mainMethod + `}
 `

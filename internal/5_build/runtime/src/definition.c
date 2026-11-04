@@ -127,6 +127,10 @@ genericInterfaceEnd(const ZamGenericInterfaceDefinition *d) {
     return (const ZamWord *)set;
 }
 
+static const ZamWord *tupleEnd(const ZamTupleDefinition *d) {
+    return zam_tuple_offsets(d) + d->elementCount;
+}
+
 static uint64_t wordsBetween(const void *start, const ZamWord *end) {
     return (uint64_t)(end - (const ZamWord *)start);
 }
@@ -202,6 +206,11 @@ zam_generic_interface_definition(const ZamImage *image, uint16_t declID) {
 const ZamPointerDefinition *zam_pointer_definition(const ZamImage *image,
                                                    uint16_t declID) {
     return definitionAt(image, declID, ZAMBUCKET_POINTER, "a pointer");
+}
+
+const ZamTupleDefinition *zam_tuple_definition(const ZamImage *image,
+                                               uint16_t declID) {
+    return definitionAt(image, declID, ZAMBUCKET_TUPLE, "a tuple");
 }
 
 ZamTypeID zam_thread_type_result(const ZamImage *image, uint16_t declID) {
@@ -358,6 +367,16 @@ static ZamFieldTables fieldTables(const ZamImage *image, ZamTypeShort shortID) {
         };
     }
 
+    // A tuple's elements are its members and it has no methods. Its member run
+    // is not a run of member definitions, so zam_type_member reads it apart.
+    case ZAMBUCKET_TUPLE: {
+        const ZamTupleDefinition *d = zam_tuple_definition(image, declID);
+        return (ZamFieldTables){
+            .memberCount = d->elementCount,
+            .initializer = d->initializerInstruction,
+        };
+    }
+
     // None of these describes an instance. A primitive has no definition at
     // all, an interface is a supertype set and is dispatched to through
     // whatever class the instance turns out to be, and the three held as
@@ -374,15 +393,25 @@ static ZamFieldTables fieldTables(const ZamImage *image, ZamTypeShort shortID) {
     zam_die(ZAMEXIT_PANIC, "type id %u names no fields\n", declID);
 }
 
-const ZamMemberDefinition *zam_type_member(const ZamImage *image,
-                                          ZamTypeShort shortID,
-                                           uint64_t index) {
+ZamMemberDefinition zam_type_member(const ZamImage *image, ZamTypeShort shortID,
+                                    uint64_t index) {
    ZamFieldTables tables = fieldTables(image, shortID);
     if (index >= tables.memberCount)
         zam_die(ZAMEXIT_IMAGE, "member %llu of a type holding %llu\n",
                 (unsigned long long)index,
                 (unsigned long long)tables.memberCount);
-    return &tables.members[index];
+    if (tables.members != NULL)
+        return tables.members[index];
+
+    // A tuple's element is its type out of the list and its offset out of the
+    // run behind it, put together in the shape every other member is read in.
+    const ZamTupleDefinition *d =
+        zam_tuple_definition(image, ZAMTYPE_DECL(shortID));
+    ZamMemberDefinition member = {.offset = zam_tuple_offsets(d)[index]};
+    memcpy(&member.typeWord,
+           &zam_tuple_types(d)->types[index * ZAMTYPE_ID_WORDS],
+           ZAMTYPE_ID_WORDS * ZAMWORD_BYTES);
+    return member;
 }
 
 uint64_t zam_type_member_count(const ZamImage *image, ZamTypeShort shortID) {
@@ -448,6 +477,7 @@ ZamTypeID zam_type_generic_arg(const ZamImage *image, ZamTypeShort shortID,
     case ZAMBUCKET_INTERFACE:
     case ZAMBUCKET_GENERIC_INTERFACE:
     case ZAMBUCKET_POINTER:
+    case ZAMBUCKET_TUPLE:
     case ZAMBUCKET_THREAD_TYPE:
     case ZAMBUCKET_FUNCTION_TYPE:
         break;
@@ -480,6 +510,9 @@ uint64_t zam_definition_byte_count(const ZamImage *image, uint16_t declID) {
         break;
     case ZAMBUCKET_POINTER:
         words = ZAMTYPE_ID_WORDS;
+        break;
+    case ZAMBUCKET_TUPLE:
+        words = wordsBetween(at, tupleEnd(at));
         break;
     case ZAMBUCKET_STRUCT:
     case ZAMBUCKET_GENERIC_STRUCT:
@@ -550,6 +583,9 @@ static uint64_t elementBytes(const ZamImage *image, ZamTypeID type) {
                                                                    declID);
         return d->instanceByteSize + type.tailLength * d->instanceTailByteSize;
     }
+
+    case ZAMBUCKET_TUPLE:
+        return zam_tuple_definition(image, declID)->instanceByteSize;
 
     case ZAMBUCKET_ENUM:
         // An enum is the one declared type with no tail: its instances are the

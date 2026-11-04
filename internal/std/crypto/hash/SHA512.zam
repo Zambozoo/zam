@@ -5,31 +5,31 @@ import "Digest.zam";
 public namespace SHA512 {
     // New starts a SHA-512 digest.
     public static fun Digest*() New = () {
-        return type(Digest).Must(type(Digest.Kind).SHA512, 0U);
+        return Digest::Must(Digest.Kind::SHA512, 0U);
     }
 
     // Sum returns the SHA-512 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).SHA512, 0U, b, n);
+        return Digest::Of(Digest.Kind::SHA512, 0U, b, n);
     }
 
     // New384 starts a SHA-384 digest.
     public static fun Digest*() New384 = () {
-        return type(Digest).Must(type(Digest.Kind).SHA384, 0U);
+        return Digest::Must(Digest.Kind::SHA384, 0U);
     }
 
     // Sum384 returns the SHA-384 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum384 = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).SHA384, 0U, b, n);
+        return Digest::Of(Digest.Kind::SHA384, 0U, b, n);
     }
 
     // New256 starts a SHA-512/256 digest.
     public static fun Digest*() New256 = () {
-        return type(Digest).Must(type(Digest.Kind).SHA512_256, 0U);
+        return Digest::Must(Digest.Kind::SHA512_256, 0U);
     }
 
     // Sum256 returns the SHA-512/256 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum256 = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).SHA512_256, 0U, b, n);
+        return Digest::Of(Digest.Kind::SHA512_256, 0U, b, n);
     }
 }

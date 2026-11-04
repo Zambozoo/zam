@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 
 // Circularly buffered list of bools packed one per bit
@@ -12,7 +11,7 @@ public class BitList {
     var uint cap;
 
     public static fun BitList*(uint, bool...) New = (len, args) {
-        return type(BitList).NewWithCap(len, len, args...);
+        return BitList::NewWithCap(len, len, args...);
     }
 
     public fun void(uint, bool...) Init = (len, args) {
@@ -29,9 +28,9 @@ public class BitList {
         if(cap < len) {
             cap = len;
         }
-        var uint count = (cap + type(BitList).wordBits - 1U) / type(BitList).wordBits;
+        var uint count = (cap + BitList::wordBits - 1U) / BitList::wordBits;
         this.words = new(uint, count);
-        this.cap = count * type(BitList).wordBits;
+        this.cap = count * BitList::wordBits;
         this.len = len;
         this.start = this.cap / 4U;
         for(var uint i = 0U; i < len; i++) {
@@ -41,21 +40,21 @@ public class BitList {
 
     private fun bool(uint) at = (i) {
         var uint p = (this.start + i) % this.cap;
-        return ((this.words[p / type(BitList).wordBits] >> (p % type(BitList).wordBits)) & 1U) == 1U;
+        return ((this.words[p / BitList::wordBits] >> (p % BitList::wordBits)) & 1U) == 1U;
     }
 
     private fun void(uint, bool) put = (i, v) {
         var uint p = (this.start + i) % this.cap;
-        var uint bit = 1U << (p % type(BitList).wordBits);
+        var uint bit = 1U << (p % BitList::wordBits);
         if(v) {
-            this.words[p / type(BitList).wordBits] = this.words[p / type(BitList).wordBits] | bit;
+            this.words[p / BitList::wordBits] = this.words[p / BitList::wordBits] | bit;
         } else {
-            this.words[p / type(BitList).wordBits] = this.words[p / type(BitList).wordBits] & ((-1){uint} ^ bit);
+            this.words[p / BitList::wordBits] = this.words[p / BitList::wordBits] & ((-1){uint} ^ bit);
         }
     }
 
     private fun void() grow = () {
-        var uint count = this.cap * 2U / type(BitList).wordBits;
+        var uint count = this.cap * 2U / BitList::wordBits;
         if(count == 0U) {
             count = 1U;
         }
@@ -63,39 +62,39 @@ public class BitList {
         var uint oldStart = this.start;
         var uint oldCap = this.cap;
         this.words = new(uint, count);
-        this.cap = count * type(BitList).wordBits;
+        this.cap = count * BitList::wordBits;
         this.start = this.cap / 4U;
         for(var uint i = 0U; i < this.len; i++) {
             var uint p = (oldStart + i) % oldCap;
-            this.put(i, ((oldWords[p / type(BitList).wordBits] >> (p % type(BitList).wordBits)) & 1U) == 1U);
+            this.put(i, ((oldWords[p / BitList::wordBits] >> (p % BitList::wordBits)) & 1U) == 1U);
         }
         free(oldWords);
     }
 
     public fun bool() GetFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("BitList out of bounds");
+            System::Panic("BitList out of bounds");
         }
         return this.at(0U);
     }
 
     public fun bool() GetLast = () {
         if(this.len == 0U) {
-            type(System).Panic("BitList out of bounds");
+            System::Panic("BitList out of bounds");
         }
         return this.at(this.len - 1U);
     }
 
     public fun bool(uint) Get = (i) {
         if(i >= this.len) {
-            type(System).Panic("BitList out of bounds");
+            System::Panic("BitList out of bounds");
         }
         return this.at(i);
     }
 
     public fun bool(bool) SetFirst = (v) {
         if(this.len == 0U) {
-            type(System).Panic("BitList out of bounds");
+            System::Panic("BitList out of bounds");
         }
         var bool old = this.at(0U);
         this.put(0U, v);
@@ -104,7 +103,7 @@ public class BitList {
 
     public fun bool(bool) SetLast = (v) {
         if(this.len == 0U) {
-            type(System).Panic("BitList out of bounds");
+            System::Panic("BitList out of bounds");
         }
         var bool old = this.at(this.len - 1U);
         this.put(this.len - 1U, v);
@@ -113,7 +112,7 @@ public class BitList {
 
     public fun bool(uint, bool) Set = (i, v) {
         if(i >= this.len) {
-            type(System).Panic("BitList out of bounds");
+            System::Panic("BitList out of bounds");
         }
         var bool old = this.at(i);
         this.put(i, v);
@@ -139,7 +138,7 @@ public class BitList {
 
     public fun void(uint, bool) Add = (i, v) {
         if(i > this.len) {
-            type(System).Panic("BitList out of bounds");
+            System::Panic("BitList out of bounds");
         } else if(i == this.len) {
             return this.AddLast(v);
         } else if(i == 0U) {
@@ -158,7 +157,7 @@ public class BitList {
 
     public fun bool() RemoveFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("BitList out of bounds");
+            System::Panic("BitList out of bounds");
         }
         var bool old = this.at(0U);
         this.start = (this.start + 1U) % this.cap;
@@ -168,7 +167,7 @@ public class BitList {
 
     public fun bool() RemoveLast = () {
         if(this.len == 0U) {
-            type(System).Panic("BitList out of bounds");
+            System::Panic("BitList out of bounds");
         }
         this.len--;
         return this.at(this.len);
@@ -176,7 +175,7 @@ public class BitList {
 
     public fun bool(uint) Remove = (i) {
         if(i >= this.len) {
-            type(System).Panic("BitList out of bounds");
+            System::Panic("BitList out of bounds");
         }
         var bool old = this.at(i);
         this.len--;
@@ -192,7 +191,7 @@ public class BitList {
 
     public fun void() Clear = () {
         this.Delete();
-        this.InitWithCap(type(BitList).wordBits, 0U);
+        this.InitWithCap(BitList::wordBits, 0U);
     }
 
     public fun Arr[bool]*() Arr = () {
@@ -200,7 +199,7 @@ public class BitList {
         for(var uint i = 0U; i < this.len; i++) {
             a[i] = this.at(i);
         }
-        return type(Arr)[bool].New(this.len, a...);
+        return Arr::[bool]New(this.len, a...);
     }
 
     public fun Iter*() Iter = () {
@@ -234,33 +233,33 @@ public class BitList {
 
         public fun void(BitList*, uint) InitWithIndex = (l, i) {
             if(i > l.Len()) {
-                type(System).Panic("BitList out of bounds");
+                System::Panic("BitList out of bounds");
             }
             this.l = l;
             this.i = i;
         }
 
-        public fun Pair[bool, bool]() Next = () {
-            var Pair[bool, bool] p;
+        public fun (bool, bool)() Next = () {
+            var (bool, bool) p;
             if(this.i >= this.l.Len()) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.l.Get(this.i);
+            p.0 = this.l.Get(this.i);
             this.i++;
-            p.second = true;
+            p.1 = true;
             return p;
         }
 
-        public fun Pair[bool, bool]() Prev = () {
-            var Pair[bool, bool] p;
+        public fun (bool, bool)() Prev = () {
+            var (bool, bool) p;
             if(this.i == 0U) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
             this.i--;
-            p.first = this.l.Get(this.i);
-            p.second = true;
+            p.0 = this.l.Get(this.i);
+            p.1 = true;
             return p;
         }
     }

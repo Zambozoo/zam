@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 
 // Brotli (RFC 7932) compression, over libbrotli
@@ -9,17 +8,17 @@ public namespace Brotli {
 
     // take copies a compressed or decompressed run out of the buffer the
     // native left it in.
-    private static fun Pair[Arr[byte]*, Err*](uint, int, str) take = (h, n, errStr) {
-        var Pair[Arr[byte]*, Err*] out;
-        out.first = null;
-        out.second = null;
+    private static fun (Arr[byte]*, Err*)(uint, int, str) take = (h, n, errStr) {
+        var (Arr[byte]*, Err*) out;
+        out.0 = null;
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
             return out;
         }
         var byte* b = new(byte, n{uint});
         native(STD_CODEC_TAKE){void(uint, byte*)}(h, b);
-        out.first = type(Arr)[byte].New(n{uint}, b...);
+        out.0 = Arr::[byte]New(n{uint}, b...);
         return out;
     }
 
@@ -29,16 +28,16 @@ public namespace Brotli {
         var int len;
         var str errStr;
         native(STD_BROTLI_COMPRESS){void(byte*, int, int, uint*, int*, str*)}(b, n{int}, level, &h, &len, &errStr);
-        return type(Brotli).take(h, len, errStr).first;
+        return Brotli::take(h, len, errStr).0;
     }
 
     // Decompress decompresses n bytes at b, which must hold exactly one
     // compressed stream.
-    public static fun Pair[Arr[byte]*, Err*](byte*, uint) Decompress = (b, n) {
+    public static fun (Arr[byte]*, Err*)(byte*, uint) Decompress = (b, n) {
         var uint h;
         var int len;
         var str errStr;
         native(STD_BROTLI_DECOMPRESS){void(byte*, int, uint*, int*, str*)}(b, n{int}, &h, &len, &errStr);
-        return type(Brotli).take(h, len, errStr);
+        return Brotli::take(h, len, errStr);
     }
 }

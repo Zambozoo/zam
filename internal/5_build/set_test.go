@@ -17,8 +17,8 @@ import std("data/set/*");
 
 namespace Main {
     interface Iter[A] {
-        virtual fun Pair[A, bool]() Next;
-        virtual fun Pair[A, bool]() Prev;
+        virtual fun (A, bool)() Next;
+        virtual fun (A, bool)() Prev;
     }
 
     interface Set[A] {
@@ -42,13 +42,13 @@ namespace Main {
     // whether iteration visits each member once, forwards and back.
     static fun bool(Set[int]*) run = (s) {
         var bool ok = s.Add(5) && !s.Add(5) && s.Contains(5) && s.Remove(5) && !s.Remove(5) && !s.Contains(5);
-        var bool* ref = new(bool, type(Main).size{uint});
+        var bool* ref = new(bool, Main::size{uint});
         var uint count = 0U;
         var uint x = 3U;
         for(var int i = 0; i < 5000; i++) {
             x = x * 6364136223846793005U + 1442695040888963407U;
             var uint r = x >> 33U;
-            var int v = (r % type(Main).size{uint}){int};
+            var int v = (r % Main::size{uint}){int};
             var uint op = (r >> 8U) % 3U;
             if(op == 0U) {
                 ok = ok && s.Add(v) == !ref[v{uint}];
@@ -68,17 +68,17 @@ namespace Main {
         }
         ok = ok && s.Len() == count;
 
-        var bool* seen = new(bool, type(Main).size{uint});
+        var bool* seen = new(bool, Main::size{uint});
         var uint forward = 0U;
         var Iter[int]* it = s.Iter();
-        for(var Pair[int, bool] p = it.Next(); p.second; p = it.Next()) {
-            ok = ok && ref[p.first{uint}] && !seen[p.first{uint}];
-            seen[p.first{uint}] = true;
+        for(var (int, bool) p = it.Next(); p.1; p = it.Next()) {
+            ok = ok && ref[p.0{uint}] && !seen[p.0{uint}];
+            seen[p.0{uint}] = true;
             forward++;
         }
         var uint backward = 0U;
-        for(var Pair[int, bool] p = it.Prev(); p.second; p = it.Prev()) {
-            ok = ok && ref[p.first{uint}];
+        for(var (int, bool) p = it.Prev(); p.1; p = it.Prev()) {
+            ok = ok && ref[p.0{uint}];
             backward++;
         }
         ok = ok && forward == count && backward == count && s.Arr().Len() == count;
@@ -101,9 +101,9 @@ namespace Main {
         }
         var Iter[int]* it = s.Iter();
         var int prev = -1;
-        for(var Pair[int, bool] p = it.Next(); p.second; p = it.Next()) {
-            ok = ok && prev < p.first;
-            prev = p.first;
+        for(var (int, bool) p = it.Next(); p.1; p = it.Next()) {
+            ok = ok && prev < p.0;
+            prev = p.0;
         }
         return ok;
     }
@@ -135,8 +135,8 @@ namespace Main {
         if(n.red && n.left != null && n.left.red) {
             return -1;
         }
-        var int l = type(Main).blackHeight(n.left);
-        var int r = type(Main).blackHeight(n.right);
+        var int l = Main::blackHeight(n.left);
+        var int r = Main::blackHeight(n.right);
         if(l < 0 || l != r) {
             return -1;
         }
@@ -147,7 +147,7 @@ namespace Main {
     }
 
     static fun bool() balanced = () {
-        var TreeSet[int]* t = type(TreeSet)[int].New(0U);
+        var TreeSet[int]* t = TreeSet::[int]New(0U);
         var Tree* tree = t{void*}{Tree*};
         var bool ok = true;
         var uint x = 9U;
@@ -161,26 +161,26 @@ namespace Main {
                 t.Remove(v);
             }
             if(i % 100 == 0) {
-                ok = ok && type(Main).blackHeight(tree.root) >= 0;
+                ok = ok && Main::blackHeight(tree.root) >= 0;
             }
         }
-        return ok && type(Main).blackHeight(tree.root) >= 0 && (tree.root == null || !tree.root.red);
+        return ok && Main::blackHeight(tree.root) >= 0 && (tree.root == null || !tree.root.red);
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var str out = type(Main).run(type(HashSet)[int].New(0U)){str} + " ";
-        out = out + type(Main).run(type(SkipSet)[int].New(0U)){str} + " ";
-        out = out + type(Main).run(type(TreeSet)[int].New(0U)){str} + " ";
+        var str out = Main::run(HashSet::[int]New(0U)){str} + " ";
+        out = out + Main::run(SkipSet::[int]New(0U)){str} + " ";
+        out = out + Main::run(TreeSet::[int]New(0U)){str} + " ";
 
-        var SkipSet[int]* k = type(SkipSet)[int].New(0U);
-        out = out + type(Main).sorted(k, k){str} + " ";
-        var TreeSet[int]* t = type(TreeSet)[int].New(0U);
-        out = out + type(Main).sorted(t, t){str} + " ";
+        var SkipSet[int]* k = SkipSet::[int]New(0U);
+        out = out + Main::sorted(k, k){str} + " ";
+        var TreeSet[int]* t = TreeSet::[int]New(0U);
+        out = out + Main::sorted(t, t){str} + " ";
 
-        var HashSet[str]* h = type(HashSet)[str].New(2U, "ab", "cd");
+        var HashSet[str]* h = HashSet::[str]New(2U, "ab", "cd");
         out = out + (h.Contains("a" + "b") && !h.Add("c" + "d") && h.Len() == 2U){str};
-        out = out + " " + type(Main).balanced(){str};
-        type(File).StdOut.WriteStr(out + "\n");
+        out = out + " " + Main::balanced(){str};
+        File::StdOut.WriteStr(out + "\n");
     }
 }
 `)

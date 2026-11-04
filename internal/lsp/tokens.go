@@ -39,6 +39,7 @@ var (
 		syntax.TTLeftParen: true, syntax.TTRightParen: true, syntax.TTLeftBrace: true,
 		syntax.TTRightBrace: true, syntax.TTLeftBracket: true, syntax.TTRightBracket: true,
 		syntax.TTComma: true, syntax.TTSemiColon: true, syntax.TTPeriod: true,
+		syntax.TTColonColon: true,
 	}
 	keywordKinds = setOf(syntax.Keywords())
 	symbolKinds  = setOf(syntax.Symbols())

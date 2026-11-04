@@ -1,67 +1,66 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "Digest.zam";
 
 // SHA-3, with the SHAKE extendable-output functions
 public namespace SHA3 {
     // New224 starts a SHA3-224 digest.
     public static fun Digest*() New224 = () {
-        return type(Digest).Must(type(Digest.Kind).SHA3_224, 0U);
+        return Digest::Must(Digest.Kind::SHA3_224, 0U);
     }
 
     // Sum224 returns the SHA3-224 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum224 = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).SHA3_224, 0U, b, n);
+        return Digest::Of(Digest.Kind::SHA3_224, 0U, b, n);
     }
 
     // New256 starts a SHA3-256 digest.
     public static fun Digest*() New256 = () {
-        return type(Digest).Must(type(Digest.Kind).SHA3_256, 0U);
+        return Digest::Must(Digest.Kind::SHA3_256, 0U);
     }
 
     // Sum256 returns the SHA3-256 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum256 = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).SHA3_256, 0U, b, n);
+        return Digest::Of(Digest.Kind::SHA3_256, 0U, b, n);
     }
 
     // New384 starts a SHA3-384 digest.
     public static fun Digest*() New384 = () {
-        return type(Digest).Must(type(Digest.Kind).SHA3_384, 0U);
+        return Digest::Must(Digest.Kind::SHA3_384, 0U);
     }
 
     // Sum384 returns the SHA3-384 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum384 = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).SHA3_384, 0U, b, n);
+        return Digest::Of(Digest.Kind::SHA3_384, 0U, b, n);
     }
 
     // New512 starts a SHA3-512 digest.
     public static fun Digest*() New512 = () {
-        return type(Digest).Must(type(Digest.Kind).SHA3_512, 0U);
+        return Digest::Must(Digest.Kind::SHA3_512, 0U);
     }
 
     // Sum512 returns the SHA3-512 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum512 = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).SHA3_512, 0U, b, n);
+        return Digest::Of(Digest.Kind::SHA3_512, 0U, b, n);
     }
 
     // NewShake128 starts a SHAKE128 digest size bytes long.
-    public static fun Pair[Digest*, Err*](uint) NewShake128 = (size) {
-        return type(Digest).New(type(Digest.Kind).SHAKE128, size);
+    public static fun (Digest*, Err*)(uint) NewShake128 = (size) {
+        return Digest::New(Digest.Kind::SHAKE128, size);
     }
 
     // Shake128 returns size bytes of the SHAKE128 output of n bytes at b.
     public static fun Arr[byte]*(byte*, uint, uint) Shake128 = (b, n, size) {
-        return type(Digest).Of(type(Digest.Kind).SHAKE128, size, b, n);
+        return Digest::Of(Digest.Kind::SHAKE128, size, b, n);
     }
 
     // NewShake256 starts a SHAKE256 digest size bytes long.
-    public static fun Pair[Digest*, Err*](uint) NewShake256 = (size) {
-        return type(Digest).New(type(Digest.Kind).SHAKE256, size);
+    public static fun (Digest*, Err*)(uint) NewShake256 = (size) {
+        return Digest::New(Digest.Kind::SHAKE256, size);
     }
 
     // Shake256 returns size bytes of the SHAKE256 output of n bytes at b.
     public static fun Arr[byte]*(byte*, uint, uint) Shake256 = (b, n, size) {
-        return type(Digest).Of(type(Digest.Kind).SHAKE256, size, b, n);
+        return Digest::Of(Digest.Kind::SHAKE256, size, b, n);
     }
 }

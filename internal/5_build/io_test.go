@@ -17,46 +17,46 @@ import std("io/local/*");
 namespace Main {
     fun void(uint, str...) main = (argC, argV) {
         var str dir = argV[0];
-        var str a = type(FS).Join(dir, "a");
-        var str x = type(FS).Join(a, "x.txt");
-        var str s = (type(FS).MakeDirs(type(FS).Join(a, "b/c")) == null){str} + " " + type(FS).IsDir(type(FS).Join(a, "b/c")){str};
+        var str a = FS::Join(dir, "a");
+        var str x = FS::Join(a, "x.txt");
+        var str s = (FS::MakeDirs(FS::Join(a, "b/c")) == null){str} + " " + FS::IsDir(FS::Join(a, "b/c")){str};
 
-        s = s + " " + (type(FS).WriteFile(x, "line1\r\nline2\nlast") == null){str} + " " + (type(FS).AppendFile(x, "!\n") == null){str};
-        var Pair[FS.Info, Err*] info = type(FS).Stat(x);
-        s = s + " " + info.first.size{str} + " " + info.first.isDir{str} + " " + (info.first.modTime.Unix() > 0){str};
-        s = s + " " + (type(FS).Chmod(x, 384) == null){str} + " " + type(FS).Stat(x).first.mode{str} + "\n";
+        s = s + " " + (FS::WriteFile(x, "line1\r\nline2\nlast") == null){str} + " " + (FS::AppendFile(x, "!\n") == null){str};
+        var (FS.Info, Err*) info = FS::Stat(x);
+        s = s + " " + info.0.size{str} + " " + info.0.isDir{str} + " " + (info.0.modTime.Unix() > 0){str};
+        s = s + " " + (FS::Chmod(x, 384) == null){str} + " " + FS::Stat(x).0.mode{str} + "\n";
 
-        var File* f = type(File).Open(x).first;
+        var File* f = File::Open(x).0;
         var byte* chunk = new(byte, 16U);
-        s = s + f.Seek(7, type(File.Whence).Start).first{str} + " ";
-        var Pair[int, Err*] n = f.Read(chunk, 5);
-        s = s + type(Strs).FromBytes(chunk, n.first) + " " + f.Size().first{str} + " " + f.Seek(-2, type(File.Whence).End).first{str};
+        s = s + f.Seek(7, File.Whence::Start).0{str} + " ";
+        var (int, Err*) n = f.Read(chunk, 5);
+        s = s + Strs::FromBytes(chunk, n.0) + " " + f.Size().0{str} + " " + f.Seek(-2, File.Whence::End).0{str};
         s = s + " " + (f.Close() == null){str} + " " + f.Close().Err() + "\n";
 
-        var Buffer* b = type(Buffer).New();
-        b.WriteStr(type(FS).ReadFile(x).first);
-        for(var Pair[str, bool] line = b.ReadLine(); line.second; line = b.ReadLine()) {
-            s = s + "[" + line.first + "]";
+        var Buffer* b = Buffer::New();
+        b.WriteStr(FS::ReadFile(x).0);
+        for(var (str, bool) line = b.ReadLine(); line.1; line = b.ReadLine()) {
+            s = s + "[" + line.0 + "]";
         }
         for(var int i = 0; i < 5000; i++) {
             b.WriteByte((i % 26 + 97){byte});
         }
         b.ReadStr(4990U);
-        s = s + " " + b.Len(){str} + " " + b.Str() + " " + b.ReadByte().first{int}{str} + " " + b.Get(0U){int}{str} + "\n";
+        s = s + " " + b.Len(){str} + " " + b.Str() + " " + b.ReadByte().0{int}{str} + " " + b.Get(0U){int}{str} + "\n";
 
-        var Pair[Arr[str]*, Err*] entries = type(FS).ReadDir(a);
-        s = s + entries.first{str} + " " + (type(FS).Rename(x, type(FS).Join(a, "y.txt")) == null){str} + " " + type(FS).ReadDir(a).first{str};
-        s = s + " " + (type(FS).Remove(x) != null){str} + " " + (type(File).Open(x).second != null){str};
-        s = s + " " + (type(FS).RemoveAll(a) == null){str} + " " + type(FS).Exists(a){str} + " " + type(FS).ReadDir(dir).first.Len(){str} + "\n";
+        var (Arr[str]*, Err*) entries = FS::ReadDir(a);
+        s = s + entries.0{str} + " " + (FS::Rename(x, FS::Join(a, "y.txt")) == null){str} + " " + FS::ReadDir(a).0{str};
+        s = s + " " + (FS::Remove(x) != null){str} + " " + (File::Open(x).1 != null){str};
+        s = s + " " + (FS::RemoveAll(a) == null){str} + " " + FS::Exists(a){str} + " " + FS::ReadDir(dir).0.Len(){str} + "\n";
 
-        var Pipe* p = type(Pipe).New().first;
+        var Pipe* p = Pipe::New().0;
         p.Writer().WriteStr("ping");
         p.Writer().Close();
-        s = s + p.Reader().ReadAll().first + " " + (p.Close() == null){str};
+        s = s + p.Reader().ReadAll().0 + " " + (p.Close() == null){str};
 
-        s = s + " " + (type(FS).Chdir(dir) == null){str} + " " + (type(FS).WriteFile("rel.txt", "r") == null){str} + " " + type(FS).Exists(type(FS).Join(dir, "rel.txt")){str};
-        s = s + " " + (type(FS).Cwd().second == null){str} + " " + (type(Strs).ByteLen(type(FS).TempDir()) > 0){str} + "\n";
-        type(File).StdOut.WriteStr(s);
+        s = s + " " + (FS::Chdir(dir) == null){str} + " " + (FS::WriteFile("rel.txt", "r") == null){str} + " " + FS::Exists(FS::Join(dir, "rel.txt")){str};
+        s = s + " " + (FS::Cwd().1 == null){str} + " " + (Strs::ByteLen(FS::TempDir()) > 0){str} + "\n";
+        File::StdOut.WriteStr(s);
     }
 }
 `)

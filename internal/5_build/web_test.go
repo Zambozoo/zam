@@ -33,18 +33,18 @@ import std("io/web/*");
 
 namespace Main {
     fun void(uint, str...) main = (argC, argV) {
-        var URL* u = type(URL).Parse("https://user:pw@example.com:8443/a/b%20c?x=1&y=two+words&z=%26&flag#frag").first;
+        var URL* u = URL::Parse("https://user:pw@example.com:8443/a/b%20c?x=1&y=two+words&z=%26&flag#frag").0;
         var str s = u.scheme + "|" + u.user + "|" + u.password + "|" + u.host + "|" + u.port{str} + "|" + u.path + "|" + u.query + "|" + u.fragment + "\n";
-        s = s + u.QueryValue("y").first + "|" + u.QueryValue("z").first + "|" + u.QueryValue("flag").second{str} + "|" + u.QueryValue("nope").second{str} + "|" + u.QueryValues().Len(){str} + "\n";
+        s = s + u.QueryValue("y").0 + "|" + u.QueryValue("z").0 + "|" + u.QueryValue("flag").1{str} + "|" + u.QueryValue("nope").1{str} + "|" + u.QueryValues().Len(){str} + "\n";
         s = s + u.Str() + "\n";
-        s = s + u.Resolve("../c?q=1").first.Str() + " " + u.Resolve("//other.org/x").first.Str() + " " + u.Resolve("#top").first.Str() + "\n";
+        s = s + u.Resolve("../c?q=1").0.Str() + " " + u.Resolve("//other.org/x").0.Str() + " " + u.Resolve("#top").0.Str() + "\n";
         u.path = "/new";
         u.query = "";
         u.port = 0U;
         s = s + u.Str() + "\n";
-        s = s + type(URL).Escape("a b&c/é") + " " + type(URL).Unescape("a%20b%26c%2F%C3%A9") + " " + (type(URL).Parse("not a url").second != null){str};
-        s = s + " " + type(URL).Parse("http://h").first.path + " " + type(URL).Parse("http://h").first.port{str} + "\n";
-        type(File).StdOut.WriteStr(s);
+        s = s + URL::Escape("a b&c/é") + " " + URL::Unescape("a%20b%26c%2F%C3%A9") + " " + (URL::Parse("not a url").1 != null){str};
+        s = s + " " + URL::Parse("http://h").0.path + " " + URL::Parse("http://h").0.port{str} + "\n";
+        File::StdOut.WriteStr(s);
     }
 }
 `)
@@ -102,66 +102,66 @@ import std("io/web/*");
 namespace Main {
     fun void(uint, str...) main = (argC, argV) {
         var str base = argV[0];
-        var HTTP.Response* r = type(HTTP).Get(base + "/echo?a=1").first;
-        var str s = r.status{str} + " " + r.ReadBody().first + " " + r.headers.Value("x-method").first + " " + r.headers.Value("Content-Length").first + "\n";
+        var HTTP.Response* r = HTTP::Get(base + "/echo?a=1").0;
+        var str s = r.status{str} + " " + r.ReadBody().0 + " " + r.headers.Value("x-method").0 + " " + r.headers.Value("Content-Length").0 + "\n";
 
-        var HTTP.Request* req = type(HTTP.Request).New("PUT", base + "/echo");
+        var HTTP.Request* req = HTTP.Request::New("PUT", base + "/echo");
         req.headers.Set("X-Test", "hdr");
         req.SetBody("payload");
-        r = type(HTTP).Do(req).first;
-        s = s + r.ReadBody().first + " " + r.headers.Value("X-Multi").first + " " + r.headers.Values("x-multi"){str} + "\n";
-        var HTTP.Headers* h = type(HTTP.Headers).New();
+        r = HTTP::Do(req).0;
+        s = s + r.ReadBody().0 + " " + r.headers.Value("X-Multi").0 + " " + r.headers.Values("x-multi"){str} + "\n";
+        var HTTP.Headers* h = HTTP.Headers::New();
         h.Add("Accept", "a");
         h.Add("ACCEPT", "b");
         h.Set("X-One", "1");
         h.Set("x-one", "2");
-        s = s + h.Values("accept"){str} + " " + h.Value("X-ONE").first + " " + h.Len(){str} + " " + h.Get("x-one").first{str};
+        s = s + h.Values("accept"){str} + " " + h.Value("X-ONE").0 + " " + h.Len(){str} + " " + h.Get("x-one").0{str};
         h.Del("Accept");
         s = s + " " + h.Contains("accept"){str} + " " + h.Values("accept").Len(){str} + "\n";
 
-        r = type(HTTP).Post(base + "/echo", "text/plain", "posted").first;
-        s = s + r.ReadBody().first + "\n";
-        r = type(HTTP).Get(base + "/redirect").first;
-        s = s + r.status{str} + " " + r.ReadBody().first + "\n";
-        req = type(HTTP.Request).New("GET", base + "/redirect");
+        r = HTTP::Post(base + "/echo", "text/plain", "posted").0;
+        s = s + r.ReadBody().0 + "\n";
+        r = HTTP::Get(base + "/redirect").0;
+        s = s + r.status{str} + " " + r.ReadBody().0 + "\n";
+        req = HTTP.Request::New("GET", base + "/redirect");
         req.followRedirects = false;
-        r = type(HTTP).Do(req).first;
-        s = s + r.status{str} + " " + r.headers.Value("Location").first + "\n";
-        r = type(HTTP).Get(base + "/gzip").first;
-        s = s + type(Strs).ByteLen(r.ReadBody().first){str} + " " + r.status{str} + "\n";
-        r = type(HTTP).Get(base + "/teapot").first;
-        s = s + r.status{str} + " " + r.ReadBody().first + " " + type(HTTP).StatusText(404U) + "\n";
-        r = type(HTTP).Do(type(HTTP.Request).New("HEAD", base + "/echo")).first;
-        s = s + r.status{str} + " [" + r.ReadBody().first + "]\n";
-        s = s + (type(HTTP).Get("http://127.0.0.1:1/").second != null){str} + "\n";
+        r = HTTP::Do(req).0;
+        s = s + r.status{str} + " " + r.headers.Value("Location").0 + "\n";
+        r = HTTP::Get(base + "/gzip").0;
+        s = s + Strs::ByteLen(r.ReadBody().0){str} + " " + r.status{str} + "\n";
+        r = HTTP::Get(base + "/teapot").0;
+        s = s + r.status{str} + " " + r.ReadBody().0 + " " + HTTP::StatusText(404U) + "\n";
+        r = HTTP::Do(HTTP.Request::New("HEAD", base + "/echo")).0;
+        s = s + r.status{str} + " [" + r.ReadBody().0 + "]\n";
+        s = s + (HTTP::Get("http://127.0.0.1:1/").1 != null){str} + "\n";
 
-        r = type(HTTP).Open(type(HTTP.Request).New("GET", base + "/stream")).first;
+        r = HTTP::Open(HTTP.Request::New("GET", base + "/stream")).0;
         var byte* chunk = new(byte, 4U);
         var int reads = 0;
         var str streamed = "";
         for(;;) {
-            var Pair[int, Err*] p = r.body.Read(chunk, 4);
-            if(p.second != null || p.first == 0) {
+            var (int, Err*) p = r.body.Read(chunk, 4);
+            if(p.1 != null || p.0 == 0) {
                 break;
             }
             reads++;
-            streamed = streamed + type(Strs).FromBytes(chunk, p.first);
+            streamed = streamed + Strs::FromBytes(chunk, p.0);
         }
-        s = s + r.status{str} + " " + streamed + " " + (reads >= 4){str} + " " + r.body.Read(chunk, 4).first{str} + "\n";
+        s = s + r.status{str} + " " + streamed + " " + (reads >= 4){str} + " " + r.body.Read(chunk, 4).0{str} + "\n";
         free(chunk);
 
-        var Buffer* big = type(Buffer).New();
+        var Buffer* big = Buffer::New();
         for(var int i = 0; i < 10000; i++) {
             big.WriteStr("0123456789");
         }
-        req = type(HTTP.Request).New("POST", base + "/count");
+        req = HTTP.Request::New("POST", base + "/count");
         req.body = big;
-        s = s + type(HTTP).Do(req).first.ReadBody().first + "\n";
-        req = type(HTTP.Request).New("POST", base + "/count");
+        s = s + HTTP::Do(req).0.ReadBody().0 + "\n";
+        req = HTTP.Request::New("POST", base + "/count");
         req.SetBody("sized");
-        r = type(HTTP).Open(req).first;
-        s = s + r.ReadBody().first + " " + (r.body.Close() == null){str} + "\n";
-        type(File).StdOut.WriteStr(s);
+        r = HTTP::Open(req).0;
+        s = s + r.ReadBody().0 + " " + (r.body.Close() == null){str} + "\n";
+        File::StdOut.WriteStr(s);
     }
 }
 `)
@@ -193,55 +193,55 @@ namespace Main {
         var str path = r.Path();
         if(path == "/hello") {
             var str name = "world";
-            var Arr[Pair[str, str]]* q = r.QueryValues();
+            var Arr[(str, str)]* q = r.QueryValues();
             if(q.Len() > 0U) {
-                name = q.Get(0U).second;
+                name = q.Get(0U).1;
             }
-            var HTTP.Response* resp = type(HTTP.Response).New(200U, "hello " + name);
+            var HTTP.Response* resp = HTTP.Response::New(200U, "hello " + name);
             resp.headers.Set("Content-Type", "text/plain");
             return resp;
         }
         if(path == "/echo") {
-            return type(HTTP.Response).New(201U, r.method + " " + r.headers.Value("x-test").first + " [" + r.ReadBody().first + "]");
+            return HTTP.Response::New(201U, r.method + " " + r.headers.Value("x-test").0 + " [" + r.ReadBody().0 + "]");
         }
         if(path == "/upload") {
             var byte* b = new(byte, 1000U);
             var int total = 0;
             var int reads = 0;
             for(;;) {
-                var Pair[int, Err*] p = r.body.Read(b, 1000);
-                if(p.second != null || p.first == 0) {
+                var (int, Err*) p = r.body.Read(b, 1000);
+                if(p.1 != null || p.0 == 0) {
                     break;
                 }
-                total = total + p.first;
+                total = total + p.0;
                 reads++;
             }
             free(b);
-            return type(HTTP.Response).New(200U, total{str} + " " + r.length{str} + " " + (reads >= 100){str});
+            return HTTP.Response::New(200U, total{str} + " " + r.length{str} + " " + (reads >= 100){str});
         }
         if(path == "/chunked") {
-            var Buffer* b = type(Buffer).New();
+            var Buffer* b = Buffer::New();
             for(var int i = 0; i < 3000; i++) {
                 b.WriteStr("chunk ");
             }
-            return type(HTTP.Response).Of(200U, b, -1);
+            return HTTP.Response::Of(200U, b, -1);
         }
         if(path == "/ws") {
-            var Pair[WebSocket*, Err*] a = type(WebSocket).Accept(r);
-            if(a.second != null) {
-                return type(HTTP.Response).New(400U, a.second.Err());
+            var (WebSocket*, Err*) a = WebSocket::Accept(r);
+            if(a.1 != null) {
+                return HTTP.Response::New(400U, a.1.Err());
             }
-            var WebSocket* ws = a.first;
+            var WebSocket* ws = a.0;
             for(;;) {
-                var WebSocket.Message* m = ws.Receive().first;
+                var WebSocket.Message* m = ws.Receive().0;
                 if(m.closed) {
                     break;
                 }
                 if(m.text) {
                     ws.SendText("echo " + m.data);
                 } else {
-                    var Pair[byte*, int] bytes = type(Strs).ToBytes(m.data);
-                    ws.SendBinary(bytes.first, bytes.second{uint});
+                    var (byte*, int) bytes = Strs::ToBytes(m.data);
+                    ws.SendBinary(bytes.0, bytes.1{uint});
                 }
             }
             return null;
@@ -250,17 +250,17 @@ namespace Main {
             return null;
         }
         if(path == "/quit") {
-            type(Main).server.Close();
-            return type(HTTP.Response).New(200U, "bye");
+            Main::server.Close();
+            return HTTP.Response::New(200U, "bye");
         }
-        return type(HTTP.Response).New(404U, "no " + path);
+        return HTTP.Response::New(404U, "no " + path);
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        type(Main).server = type(HTTP.Server).Listen("127.0.0.1", 0U, type(Main).handle).first;
-        type(File).StdOut.WriteStr(type(Main).server.Addr().first.second{str} + "\n");
-        type(Main).server.Serve();
-        type(File).StdOut.WriteStr("stopped\n");
+        Main::server = HTTP.Server::Listen("127.0.0.1", 0U, Main::handle).0;
+        File::StdOut.WriteStr(Main::server.Addr().0.1{str} + "\n");
+        Main::server.Serve();
+        File::StdOut.WriteStr("stopped\n");
     }
 }
 `
@@ -472,37 +472,37 @@ namespace Main {
         if(m.text) {
             return "text:" + m.data;
         }
-        return "binary:" + type(Strs).ByteLen(m.data){str};
+        return "binary:" + Strs::ByteLen(m.data){str};
     }
 
     static fun str(WebSocket*) waitClosed = (ws) {
-        return type(Main).show(ws.Receive().first);
+        return Main::show(ws.Receive().0);
     }
 
     fun void(uint, str...) main = (argC, argV) {
         var str url = "ws" + argV[0] + "/ws";
-        var WebSocket* ws = type(WebSocket).Dial(url, null, null).first;
+        var WebSocket* ws = WebSocket::Dial(url, null, null).0;
         ws.SendText("hello");
-        var str s = type(Main).show(ws.Receive().first);
+        var str s = Main::show(ws.Receive().0);
         var byte* raw = new(byte, 70000U);
         for(var uint i = 0U; i < 70000U; i++) {
             raw[i] = (i % 256U){byte};
         }
         ws.SendBinary(raw, 70000U);
         free(raw);
-        var WebSocket.Message* big = ws.Receive().first;
-        var Pair[byte*, int] bytes = type(Strs).ToBytes(big.data);
-        s = s + " " + type(Main).show(big) + " " + bytes.first[69999]{int}{str};
+        var WebSocket.Message* big = ws.Receive().0;
+        var (byte*, int) bytes = Strs::ToBytes(big.data);
+        s = s + " " + Main::show(big) + " " + bytes.0[69999]{int}{str};
         ws.SendText("frag");
-        s = s + " " + type(Main).show(ws.Receive().first);
+        s = s + " " + Main::show(ws.Receive().0);
         ws.SendText("bye");
-        s = s + " " + type(Main).show(ws.Receive().first) + " " + (ws.SendText("after") != null){str} + "\n";
+        s = s + " " + Main::show(ws.Receive().0) + " " + (ws.SendText("after") != null){str} + "\n";
 
-        var WebSocket* other = type(WebSocket).Dial(url, null, null).first;
-        var thread[str] reader = async(type(Main).waitClosed(other));
+        var WebSocket* other = WebSocket::Dial(url, null, null).0;
+        var thread[str] reader = async(Main::waitClosed(other));
         other.Close();
-        s = s + wait(reader) + " " + (type(WebSocket).Dial("ws://127.0.0.1:1/ws", null, null).second != null){str} + "\n";
-        type(File).StdOut.WriteStr(s);
+        s = s + wait(reader) + " " + (WebSocket::Dial("ws://127.0.0.1:1/ws", null, null).1 != null){str} + "\n";
+        File::StdOut.WriteStr(s);
     }
 }
 `)
@@ -529,31 +529,31 @@ namespace Main {
     static fun HTTP.Response*(HTTP.Request*) handle = (r) {
         var str path = r.Path();
         if(path == "/ws") {
-            var Pair[WebSocket*, Err*] a = type(WebSocket).Accept(r);
-            if(a.second != null) {
-                return type(HTTP.Response).New(400U, a.second.Err());
+            var (WebSocket*, Err*) a = WebSocket::Accept(r);
+            if(a.1 != null) {
+                return HTTP.Response::New(400U, a.1.Err());
             }
-            var WebSocket* ws = a.first;
+            var WebSocket* ws = a.0;
             for(;;) {
-                var WebSocket.Message* m = ws.Receive().first;
+                var WebSocket.Message* m = ws.Receive().0;
                 if(m.closed) {
                     break;
                 }
                 if(m.text) {
                     ws.SendText("echo " + m.data);
                 } else {
-                    var Pair[byte*, int] bytes = type(Strs).ToBytes(m.data);
-                    ws.SendBinary(bytes.first, bytes.second{uint});
+                    var (byte*, int) bytes = Strs::ToBytes(m.data);
+                    ws.SendBinary(bytes.0, bytes.1{uint});
                 }
             }
             return null;
         }
         if(path == "/quit") {
-            type(Main).plain.Close();
-            type(Main).secure.Close();
-            return type(HTTP.Response).New(200U, "bye");
+            Main::plain.Close();
+            Main::secure.Close();
+            return HTTP.Response::New(200U, "bye");
         }
-        return type(HTTP.Response).New(200U, "secure " + r.ReadBody().first);
+        return HTTP.Response::New(200U, "secure " + r.ReadBody().0);
     }
 
     static fun int(HTTP.Server*) run = (s) {
@@ -562,44 +562,44 @@ namespace Main {
     }
 
     static fun str(str, TLS.Context*) talk = (url, ctx) {
-        var Pair[WebSocket*, Err*] d = type(WebSocket).Dial(url, null, ctx);
-        if(d.second != null) {
-            return d.second.Err();
+        var (WebSocket*, Err*) d = WebSocket::Dial(url, null, ctx);
+        if(d.1 != null) {
+            return d.1.Err();
         }
-        var WebSocket* ws = d.first;
+        var WebSocket* ws = d.0;
         ws.SendText("hi");
-        var str s = ws.Receive().first.data;
+        var str s = ws.Receive().0.data;
         var byte* raw = new(byte, 70000U);
         for(var uint i = 0U; i < 70000U; i++) {
             raw[i] = (i % 251U){byte};
         }
         ws.SendBinary(raw, 70000U);
         free(raw);
-        var WebSocket.Message* big = ws.Receive().first;
-        var Pair[byte*, int] bytes = type(Strs).ToBytes(big.data);
-        s = s + " " + big.text{str} + " " + bytes.second{str} + " " + bytes.first[69999]{int}{str};
+        var WebSocket.Message* big = ws.Receive().0;
+        var (byte*, int) bytes = Strs::ToBytes(big.data);
+        s = s + " " + big.text{str} + " " + bytes.1{str} + " " + bytes.0[69999]{int}{str};
         ws.Close();
-        s = s + " " + ws.Receive().first.closed{str} + " " + (ws.SendText("late") != null){str};
+        s = s + " " + ws.Receive().0.closed{str} + " " + (ws.SendText("late") != null){str};
         return s;
     }
 
     fun void(uint, str...) main = (argC, argV) {
         var str dir = argV[0];
-        var TLS.Context* server = type(TLS.Context).Server(dir + "/cert.pem", dir + "/key.pem").first;
-        var TLS.Context* client = type(TLS.Context).Client(dir + "/cert.pem", true).first;
-        type(Main).plain = type(HTTP.Server).Listen("127.0.0.1", 0U, type(Main).handle).first;
-        type(Main).secure = type(HTTP.Server).ListenTLS("127.0.0.1", 0U, server, type(Main).handle).first;
-        var thread[int] p = async(type(Main).run(type(Main).plain));
-        var thread[int] q = async(type(Main).run(type(Main).secure));
-        var str plainPort = type(Main).plain.Addr().first.second{str};
-        var str securePort = type(Main).secure.Addr().first.second{str};
-        var str s = type(Main).talk("ws://127.0.0.1:" + plainPort + "/ws", client) + "\n";
-        s = s + type(Main).talk("wss://127.0.0.1:" + securePort + "/ws", client) + "\n";
-        s = s + (type(WebSocket).Dial("ws://127.0.0.1:" + securePort + "/ws", null, null).second != null){str} + "\n";
-        type(File).StdOut.WriteStr(securePort + "\n" + s);
+        var TLS.Context* server = TLS.Context::Server(dir + "/cert.pem", dir + "/key.pem").0;
+        var TLS.Context* client = TLS.Context::Client(dir + "/cert.pem", true).0;
+        Main::plain = HTTP.Server::Listen("127.0.0.1", 0U, Main::handle).0;
+        Main::secure = HTTP.Server::ListenTLS("127.0.0.1", 0U, server, Main::handle).0;
+        var thread[int] p = async(Main::run(Main::plain));
+        var thread[int] q = async(Main::run(Main::secure));
+        var str plainPort = Main::plain.Addr().0.1{str};
+        var str securePort = Main::secure.Addr().0.1{str};
+        var str s = Main::talk("ws://127.0.0.1:" + plainPort + "/ws", client) + "\n";
+        s = s + Main::talk("wss://127.0.0.1:" + securePort + "/ws", client) + "\n";
+        s = s + (WebSocket::Dial("ws://127.0.0.1:" + securePort + "/ws", null, null).1 != null){str} + "\n";
+        File::StdOut.WriteStr(securePort + "\n" + s);
         wait(p);
         wait(q);
-        type(File).StdOut.WriteStr("stopped\n");
+        File::StdOut.WriteStr("stopped\n");
     }
 }
 `)

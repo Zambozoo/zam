@@ -2,6 +2,7 @@ package syntax
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	base "github.com/zambozoo/zam/internal/0_base"
@@ -19,6 +20,7 @@ type (
 		VisitTypePrimitive(t *TypePrimitive) error
 		VisitTypeReference(t *TypeReference) error
 		VisitTypeTailed(t *TypeTailed) error
+		VisitTypeTuple(t *TypeTuple) error
 		VisitTypeWrapped(t *TypeWrapped) error
 	}
 
@@ -147,6 +149,17 @@ type (
 		Size *uint64
 	}
 
+	// TypeTuple is an ordered, unnamed run of at least two element types laid
+	// out inline the way a struct's members are.
+	TypeTuple struct {
+		// start is the token that started the type.
+		start *Token
+		// outerDecl is the containing declaration of the type.
+		outerDecl Decl
+		// Types are the element types, in order.
+		Types []Type
+	}
+
 	// TypeWrapped is a type that is a wrapped type.
 	TypeWrapped struct {
 		// start is the token that started the type.
@@ -224,6 +237,8 @@ var (
 	TypeKindTailed = newTypeKind("tailed")
 	// Const type for a value whose slot cannot be reassigned
 	TypeKindConst = newTypeKind("const")
+	// Tuple type for an ordered run of unnamed values
+	TypeKindTuple = newTypeKind("tuple")
 
 	// primitiveTokenKindMap is the map of token kinds to primitive type kinds.
 	primitiveTokenKindMap = map[TokenKind]TypeKind{
@@ -253,6 +268,7 @@ var (
 		TTType,
 		TTThread,
 		TTIdentifier,
+		TTLeftParen,
 	}
 
 	TypeVoid = &TypePrimitive{
@@ -349,6 +365,18 @@ func SelectionTarget(t Type) (TypeResolvable, bool) {
 	}
 	resolvable, ok := t.(TypeResolvable)
 	return resolvable, ok
+}
+
+// TupleSelectionTarget is the tuple an element written after a dot is selected
+// out of: the type itself, or what a pointer addresses, const peeled on either
+// side as [SelectionTarget] peels it.
+func TupleSelectionTarget(t Type) (*TypeTuple, bool) {
+	t = StripConst(t)
+	if w, ok := t.(*TypeWrapped); ok && w.Kind() == TypeKindPointer {
+		t = StripConst(w.Type)
+	}
+	tuple, ok := t.(*TypeTuple)
+	return tuple, ok
 }
 
 // ReachedThroughAddress reports whether a value of the type is the address of an
@@ -500,51 +528,50 @@ func ownerContainingDecl(o GenericOwner) Decl {
 	panic("unknown GenericOwner kind")
 }
 
-// newTypeBase creates a new base type.
-func newTypeBase(parser SyntaxParser, canBeTailed bool) (Type, error) {
-	start, err := parser.ConsumeAny(baseTypeTokenKinds...)
-	if err != nil {
-		return nil, err
-	} else if start.Kind == TTThread {
-		return newTypeThread(parser, start)
-
-	} else if start.Kind != TTIdentifier {
-		return &TypePrimitive{
-			start:     start,
-			outerDecl: *parser.Decl(),
-			kind:      primitiveTokenKindMap[start.Kind],
-		}, nil
-	}
-
+// readDottedIds reads the ids of a dotted name whose first id, start, has
+// already been consumed. Where allowIndex is set, a period followed by an
+// integer literal ends the name and the literal is returned as the tuple
+// element index selected out of it.
+func readDottedIds(parser SyntaxParser, start *Token, allowIndex bool) ([]string, []*Token, *Token, error) {
 	ids := []string{start.Value.(string)}
 	idTokens := []*Token{start}
 	for {
 		if tok, err := parser.Match(TTPeriod); err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		} else if tok == nil {
-			break
+			return ids, idTokens, nil, nil
+		}
+
+		if allowIndex {
+			if index, err := parser.Match(TTIntLiteral); err != nil {
+				return nil, nil, nil, err
+			} else if index != nil {
+				return ids, idTokens, index, nil
+			}
 		}
 
 		tok, err := parser.Consume(TTIdentifier)
 		if err != nil {
-			return nil, err
+			return nil, nil, nil, err
 		}
 
 		ids = append(ids, tok.Value.(string))
 		idTokens = append(idTokens, tok)
 	}
+}
 
-	var t Type
+// newTypePath makes the type a dotted name of declarations stands for.
+func newTypePath(parser SyntaxParser, ids []string, idTokens []*Token) Type {
 	// A generic argument is a name and nothing more, so only a lone id can be
 	// one. Every declaration that can hold a type satisfies DeclGeneric, so what
 	// says one was written with parameters is its map being there at all.
 	if len(ids) == 1 {
 		if owner, ok := resolveGenericArg(parser, ids[0]); ok {
 			return &TypeGenericArg{
-				start: start,
+				start: idTokens[0],
 				owner: owner,
 				Name:  ids[0],
-			}, nil
+			}
 		}
 	}
 
@@ -553,11 +580,38 @@ func newTypeBase(parser SyntaxParser, canBeTailed bool) (Type, error) {
 	// depends on what is in scope where it was written, which is a question for
 	// resolution; a parse that answered it by counting the ids would make a
 	// nested declaration unreachable from the file it was written in.
-	t = &TypeReference{
-		start:     start,
+	return &TypeReference{
+		start:     idTokens[0],
 		outerDecl: *parser.Decl(),
 		Ids:       ids,
 		IdTokens:  idTokens,
+	}
+}
+
+// newTypeBase creates a new base type.
+func newTypeBase(parser SyntaxParser, canBeTailed bool) (Type, error) {
+	start, err := parser.ConsumeAny(baseTypeTokenKinds...)
+	if err != nil {
+		return nil, err
+	} else if start.Kind == TTThread {
+		return newTypeThread(parser, start)
+	} else if start.Kind == TTLeftParen {
+		return newTypeTuple(parser, start)
+	} else if start.Kind != TTIdentifier {
+		return &TypePrimitive{
+			start:     start,
+			outerDecl: *parser.Decl(),
+			kind:      primitiveTokenKindMap[start.Kind],
+		}, nil
+	}
+
+	ids, idTokens, _, err := readDottedIds(parser, start, false)
+	if err != nil {
+		return nil, err
+	}
+	t := newTypePath(parser, ids, idTokens)
+	if _, isArg := t.(*TypeGenericArg); isArg {
+		return t, nil
 	}
 
 	if tilde, err := parser.Match(TTTilde); err != nil {
@@ -710,6 +764,57 @@ func newTypeFunction(parser SyntaxParser, _type Type) (Type, error) {
 		ReturnType:     _type,
 		ParameterTypes: parameters,
 	}, nil
+}
+
+// newTypeTuple creates a new tuple type whose opening parenthesis, start, has
+// already been consumed. A parenthesized single type is not a tuple.
+func newTypeTuple(parser SyntaxParser, start *Token) (Type, error) {
+	var types []Type
+	for {
+		t, err := newTypeHelper(parser, false)
+		if err != nil {
+			return nil, err
+		}
+		types = append(types, t)
+
+		if tok, err := parser.ConsumeAny(TTComma, TTRightParen); err != nil {
+			return nil, err
+		} else if tok.Kind == TTRightParen {
+			break
+		}
+	}
+
+	if len(types) < 2 {
+		return nil, fmt.Errorf("tuple type must have at least two elements, got %d", len(types))
+	}
+
+	return &TypeTuple{
+		start:     start,
+		outerDecl: *parser.Decl(),
+		Types:     types,
+	}, nil
+}
+
+// NewTypeTuple returns a tuple type over the given element types.
+func NewTypeTuple(outerDecl Decl, types []Type) *TypeTuple {
+	return &TypeTuple{
+		outerDecl: outerDecl,
+		Types:     types,
+	}
+}
+
+// TupleElement returns the type of element index of t, and whether t is a tuple
+// with such an element. Const is seen through on t.
+func TupleElement(t Type, index string) (Type, bool) {
+	tuple, ok := StripConst(t).(*TypeTuple)
+	if !ok {
+		return nil, false
+	}
+	i, err := strconv.Atoi(index)
+	if err != nil || i < 0 || i >= len(tuple.Types) || strconv.Itoa(i) != index {
+		return nil, false
+	}
+	return tuple.Types[i], true
 }
 
 // newTypeThread creates a new thread type.
@@ -1339,6 +1444,89 @@ func (t *TypeTailed) String() string {
 
 // ContainsGenericArg implements the [Type] interface.
 func (t *TypeTailed) ContainsGenericArg() bool {
+	return false
+}
+
+// Accept implements the [Type] interface.
+func (t *TypeTuple) Accept(visitor TypeVisitor) error {
+	return visitor.VisitTypeTuple(t)
+}
+
+// Equals implements the [Type] interface.
+func (t *TypeTuple) Equals(other Type) bool {
+	otherTuple, ok := other.(*TypeTuple)
+	if !ok || len(t.Types) != len(otherTuple.Types) {
+		return false
+	}
+	for i, element := range t.Types {
+		if !element.Equals(otherTuple.Types[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// Hash implements the [Type] interface.
+func (t *TypeTuple) Hash() uint64 {
+	hs := make([]uint64, 0, len(t.Types)+1)
+	hs = append(hs, uint64(TypeKindTuple))
+	for _, element := range t.Types {
+		hs = append(hs, element.Hash())
+	}
+	return base.Hash(hs...)
+}
+
+// IsSubtypeOf implements the [Type] interface. A tuple stands below itself and
+// any, and nothing else.
+func (t *TypeTuple) IsSubtypeOf(other Type) bool {
+	super, ok := other.(TypeSupertypeable)
+	return (ok && super.IsSupertypeOf(t)) || t.Equals(other)
+}
+
+// Kind implements the [Type] interface.
+func (t *TypeTuple) Kind() TypeKind {
+	return TypeKindTuple
+}
+
+// Map implements the [Type] interface.
+func (t *TypeTuple) Map(types map[GenericArgKey]Type) Type {
+	mapped := *t
+	mapped.Types = make([]Type, len(t.Types))
+	for i, element := range t.Types {
+		mapped.Types[i] = element.Map(types)
+	}
+	return &mapped
+}
+
+// OuterDecl implements the [Type] interface.
+func (t *TypeTuple) OuterDecl() Decl {
+	return t.outerDecl
+}
+
+// Start implements the [Type] interface.
+func (t *TypeTuple) Start() *Token {
+	if t.start != nil {
+		return t.start
+	}
+	return t.Types[0].Start()
+}
+
+// String implements the [fmt.Stringer] interface.
+func (t *TypeTuple) String() string {
+	strs := make([]string, len(t.Types))
+	for i, element := range t.Types {
+		strs[i] = element.String()
+	}
+	return fmt.Sprintf("(%s)", strings.Join(strs, ", "))
+}
+
+// ContainsGenericArg implements the [Type] interface.
+func (t *TypeTuple) ContainsGenericArg() bool {
+	for _, element := range t.Types {
+		if element.ContainsGenericArg() {
+			return true
+		}
+	}
 	return false
 }
 

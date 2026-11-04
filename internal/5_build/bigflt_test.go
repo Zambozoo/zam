@@ -18,46 +18,46 @@ import std("math/*");
 
 namespace Main {
     static fun BigFlt*(str) p = (s) {
-        return type(BigFlt).Parse(s, 200U).first;
+        return BigFlt::Parse(s, 200U).0;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var str s = type(BigFlt).Pi(200U).Text(50U) + "\n";
-        s = s + type(BigFlt).E(200U).Text(50U) + "\n";
-        s = s + type(BigFlt).Ln2(200U).Text(50U) + "\n";
-        s = s + type(BigFlt).FromInt(2, 200U).Sqrt().Text(50U) + "\n";
-        s = s + type(Main).p("1.5").Exp().Text(50U) + "\n";
-        s = s + type(Main).p("10").Log().Text(50U) + "\n";
-        s = s + type(Main).p("0.5").Sin().Text(50U) + "\n";
-        s = s + type(Main).p("0.5").Cos().Text(50U) + "\n";
-        s = s + type(Main).p("0.5").Tan().Text(50U) + "\n";
-        s = s + type(Main).p("100").Sin().Text(50U) + "\n";
-        s = s + type(Main).p("2").Atan().Text(50U) + "\n";
-        s = s + type(Main).p("0.3").Atan().Text(50U) + "\n";
-        s = s + type(Main).p("-1000").Atan().Text(50U) + "\n";
-        s = s + type(Main).p("2").Pow(type(Main).p("0.5")).Text(50U) + "\n";
-        s = s + type(Main).p("2").Pow(type(Main).p("10")).Text(50U) + "\n";
-        s = s + type(Main).p("2").Pow(type(Main).p("-3")).Text(50U) + "\n";
-        s = s + type(Main).p("3").Sqrt().Mul(type(Main).p("10").Exp()).Text(50U) + "\n";
-        s = s + type(BigFlt).Pi(200U).Sin().Text(10U) + "\n";
-        s = s + type(Main).p("1.000000000000000000000000000001").Log().Text(20U) + "\n";
-        var BigFlt* tiny = type(BigFlt).FromInt(2, 400U).Pow(type(BigFlt).FromInt(-300, 400U));
-        s = s + type(BigFlt).FromInt(1, 400U).Add(tiny).Sub(type(BigFlt).FromInt(1, 400U)).Text(5U) + "\n";
-        s = s + type(BigFlt).FromFlt(0.1, 53U).Text(20U) + "\n";
-        s = s + type(BigFlt).FromInt(1, 200U).Div(type(BigFlt).FromInt(3, 200U)).Text(40U) + "\n";
-        s = s + type(Main).p("-123.456e-7").Text(12U) + "\n";
-        s = s + type(BigFlt).Ln2(200U).Mul(type(Main).p("-37.5")).Text(50U) + "\n";
-        s = s + type(Main).p("-40").Exp().Text(30U) + "\n";
+        var str s = BigFlt::Pi(200U).Text(50U) + "\n";
+        s = s + BigFlt::E(200U).Text(50U) + "\n";
+        s = s + BigFlt::Ln2(200U).Text(50U) + "\n";
+        s = s + BigFlt::FromInt(2, 200U).Sqrt().Text(50U) + "\n";
+        s = s + Main::p("1.5").Exp().Text(50U) + "\n";
+        s = s + Main::p("10").Log().Text(50U) + "\n";
+        s = s + Main::p("0.5").Sin().Text(50U) + "\n";
+        s = s + Main::p("0.5").Cos().Text(50U) + "\n";
+        s = s + Main::p("0.5").Tan().Text(50U) + "\n";
+        s = s + Main::p("100").Sin().Text(50U) + "\n";
+        s = s + Main::p("2").Atan().Text(50U) + "\n";
+        s = s + Main::p("0.3").Atan().Text(50U) + "\n";
+        s = s + Main::p("-1000").Atan().Text(50U) + "\n";
+        s = s + Main::p("2").Pow(Main::p("0.5")).Text(50U) + "\n";
+        s = s + Main::p("2").Pow(Main::p("10")).Text(50U) + "\n";
+        s = s + Main::p("2").Pow(Main::p("-3")).Text(50U) + "\n";
+        s = s + Main::p("3").Sqrt().Mul(Main::p("10").Exp()).Text(50U) + "\n";
+        s = s + BigFlt::Pi(200U).Sin().Text(10U) + "\n";
+        s = s + Main::p("1.000000000000000000000000000001").Log().Text(20U) + "\n";
+        var BigFlt* tiny = BigFlt::FromInt(2, 400U).Pow(BigFlt::FromInt(-300, 400U));
+        s = s + BigFlt::FromInt(1, 400U).Add(tiny).Sub(BigFlt::FromInt(1, 400U)).Text(5U) + "\n";
+        s = s + BigFlt::FromFlt(0.1, 53U).Text(20U) + "\n";
+        s = s + BigFlt::FromInt(1, 200U).Div(BigFlt::FromInt(3, 200U)).Text(40U) + "\n";
+        s = s + Main::p("-123.456e-7").Text(12U) + "\n";
+        s = s + BigFlt::Ln2(200U).Mul(Main::p("-37.5")).Text(50U) + "\n";
+        s = s + Main::p("-40").Exp().Text(30U) + "\n";
 
-        var BigFlt* h = type(Main).p("-2.5");
-        s = s + h.Floor(){str} + " " + h.Ceil(){str} + " " + h.Round(){str} + " " + h.Trunc(){str} + " " + type(Main).p("7.5").Round(){str};
-        s = s + " " + type(Main).p("1e100").Text(5U) + " " + type(Main).p("123456789").Text(5U) + " " + type(Main).p("-.5"){str};
-        s = s + " " + type(BigFlt).FromInt(1, 100U).Add(type(BigFlt).FromInt(2, 100U).Pow(type(BigFlt).FromInt(-300, 100U))){str};
-        s = s + " " + (type(Main).p("0.5") == type(BigFlt).FromFlt(0.5, 10U)){str} + " " + type(BigFlt).FromInt(1, 200U).Div(type(BigFlt).FromInt(3, 200U)).Cmp(type(Main).p("0.3333")){str};
-        s = s + " " + type(BigFlt).Parse("1.2.3", 64U).second{str} + " " + type(BigFlt).Parse("1e", 64U).second{str} + " " + type(Main).p("12.9").ToBigInt(){str};
-        s = s + " " + (type(Main).p("123.25").ToFlt() == 123.25){str} + " " + (type(BigFlt).FromFlt(0.1, 53U).ToFlt() == 0.1){str} + " " + (type(BigFlt).Pi(53U).ToFlt() == type(Constants).Pi){str};
-        s = s + " " + (type(Main).p("1e-300").ToFlt() == 1e-300){str} + " " + type(Main).p("3").Sub(type(Main).p("3")).IsZero(){str} + "\n";
-        type(File).StdOut.WriteStr(s);
+        var BigFlt* h = Main::p("-2.5");
+        s = s + h.Floor(){str} + " " + h.Ceil(){str} + " " + h.Round(){str} + " " + h.Trunc(){str} + " " + Main::p("7.5").Round(){str};
+        s = s + " " + Main::p("1e100").Text(5U) + " " + Main::p("123456789").Text(5U) + " " + Main::p("-.5"){str};
+        s = s + " " + BigFlt::FromInt(1, 100U).Add(BigFlt::FromInt(2, 100U).Pow(BigFlt::FromInt(-300, 100U))){str};
+        s = s + " " + (Main::p("0.5") == BigFlt::FromFlt(0.5, 10U)){str} + " " + BigFlt::FromInt(1, 200U).Div(BigFlt::FromInt(3, 200U)).Cmp(Main::p("0.3333")){str};
+        s = s + " " + BigFlt::Parse("1.2.3", 64U).1{str} + " " + BigFlt::Parse("1e", 64U).1{str} + " " + Main::p("12.9").ToBigInt(){str};
+        s = s + " " + (Main::p("123.25").ToFlt() == 123.25){str} + " " + (BigFlt::FromFlt(0.1, 53U).ToFlt() == 0.1){str} + " " + (BigFlt::Pi(53U).ToFlt() == Constants::Pi){str};
+        s = s + " " + (Main::p("1e-300").ToFlt() == 1e-300){str} + " " + Main::p("3").Sub(Main::p("3")).IsZero(){str} + "\n";
+        File::StdOut.WriteStr(s);
     }
 }
 `)

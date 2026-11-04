@@ -1,5 +1,4 @@
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "AEAD.zam";
 
 // ChaCha20-Poly1305 authenticated encryption (RFC 8439), with 32-byte keys
@@ -8,13 +7,13 @@ public namespace ChaCha20Poly1305 {
 
     // New returns a key with 12-byte nonces, too short to draw at random for
     // many messages.
-    public static fun Pair[AEAD*, Err*](byte*, uint) New = (key, keyLen) {
-        return type(AEAD).New(type(AEAD.Kind).CHACHA20_POLY1305, key, keyLen, type(ChaCha20Poly1305).KeySize, 12U, 16U);
+    public static fun (AEAD*, Err*)(byte*, uint) New = (key, keyLen) {
+        return AEAD::New(AEAD.Kind::CHACHA20_POLY1305, key, keyLen, ChaCha20Poly1305::KeySize, 12U, 16U);
     }
 
     // NewX returns an XChaCha20-Poly1305 key, with 24-byte nonces safe to
     // draw at random.
-    public static fun Pair[AEAD*, Err*](byte*, uint) NewX = (key, keyLen) {
-        return type(AEAD).New(type(AEAD.Kind).XCHACHA20_POLY1305, key, keyLen, type(ChaCha20Poly1305).KeySize, 24U, 16U);
+    public static fun (AEAD*, Err*)(byte*, uint) NewX = (key, keyLen) {
+        return AEAD::New(AEAD.Kind::XCHACHA20_POLY1305, key, keyLen, ChaCha20Poly1305::KeySize, 24U, 16U);
     }
 }

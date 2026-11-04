@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 import "../../math/Rand.zam";
 
@@ -29,7 +28,7 @@ public class SkipSet[A] {
 
     public fun void(uint, A...) Init = (len, args) {
         this.len = 0U;
-        this.heads = new(Node.Link[A], type(SkipSet).maxHeight{uint});
+        this.heads = new(Node.Link[A], SkipSet::maxHeight{uint});
         this.tail = null;
         for(var uint i = 0U; i < len; i++) {
             this.Add(args[i]);
@@ -55,7 +54,7 @@ public class SkipSet[A] {
     // with null standing for the head.
     private fun void(A, Node~[A]**) walk = (v, preds) {
         var Node~[A]* cur = null;
-        for(var uint lvl = type(SkipSet).maxHeight{uint}; lvl > 0U; lvl--) {
+        for(var uint lvl = SkipSet::maxHeight{uint}; lvl > 0U; lvl--) {
             for(; this.nextOf(cur, lvl - 1U) != null && this.nextOf(cur, lvl - 1U).val < v;) {
                 cur = this.nextOf(cur, lvl - 1U);
             }
@@ -66,7 +65,7 @@ public class SkipSet[A] {
     // ceiling returns the first node holding a value not less than v.
     private fun Node~[A]*(A) ceiling = (v) {
         var Node~[A]* cur = null;
-        for(var uint lvl = type(SkipSet).maxHeight{uint}; lvl > 0U; lvl--) {
+        for(var uint lvl = SkipSet::maxHeight{uint}; lvl > 0U; lvl--) {
             for(; this.nextOf(cur, lvl - 1U) != null && this.nextOf(cur, lvl - 1U).val < v;) {
                 cur = this.nextOf(cur, lvl - 1U);
             }
@@ -76,7 +75,7 @@ public class SkipSet[A] {
 
     private fun uint() randomHeight = () {
         var uint h = 1U;
-        for(var uint r = type(Rand).Uint(); (r & 1U) == 1U && h < type(SkipSet).maxHeight{uint}; r = r >> 1U) {
+        for(var uint r = Rand::Uint(); (r & 1U) == 1U && h < SkipSet::maxHeight{uint}; r = r >> 1U) {
             h++;
         }
         return h;
@@ -92,7 +91,7 @@ public class SkipSet[A] {
     }
 
     public fun bool(A) Add = (v) {
-        var Node~[A]** preds = new(Node~[A]*, type(SkipSet).maxHeight{uint});
+        var Node~[A]** preds = new(Node~[A]*, SkipSet::maxHeight{uint});
         this.walk(v, preds);
         var Node~[A]* at = this.nextOf(preds[0], 0U);
         if(at != null && !(v < at.val)) {
@@ -120,7 +119,7 @@ public class SkipSet[A] {
     }
 
     public fun bool(A) Remove = (v) {
-        var Node~[A]** preds = new(Node~[A]*, type(SkipSet).maxHeight{uint});
+        var Node~[A]** preds = new(Node~[A]*, SkipSet::maxHeight{uint});
         this.walk(v, preds);
         var Node~[A]* n = this.nextOf(preds[0], 0U);
         if(n == null || v < n.val) {
@@ -144,14 +143,14 @@ public class SkipSet[A] {
 
     public fun A() GetFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("SkipSet is empty");
+            System::Panic("SkipSet is empty");
         }
         return this.heads[0].n.val;
     }
 
     public fun A() GetLast = () {
         if(this.len == 0U) {
-            type(System).Panic("SkipSet is empty");
+            System::Panic("SkipSet is empty");
         }
         return this.tail.val;
     }
@@ -168,7 +167,7 @@ public class SkipSet[A] {
             a[i] = n.val;
             i++;
         }
-        return type(Arr)[A].New(this.len, a...);
+        return Arr::[A]New(this.len, a...);
     }
 
     public fun Iter[A]*() Iter = () {
@@ -203,7 +202,7 @@ public class SkipSet[A] {
     }
 
     public fun void() Mark = () {
-        if(!type(System.GC).Markable(@{A})) {
+        if(!System.GC::Markable(@{A})) {
             return;
         }
         if(this.heads == null) {
@@ -223,30 +222,30 @@ public class SkipSet[A] {
             this.cur = s.heads[0].n;
         }
 
-        public fun Pair[A, bool]() Next = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Next = () {
+            var (A, bool) p;
             if(this.cur == null) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.cur.val;
-            p.second = true;
+            p.0 = this.cur.val;
+            p.1 = true;
             this.cur = this.cur.nexts[0].n;
             return p;
         }
 
-        public fun Pair[A, bool]() Prev = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Prev = () {
+            var (A, bool) p;
             var Node~[A]* prev = this.s.tail;
             if(this.cur != null) {
                 prev = this.cur.prev;
             }
             if(prev == null) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = prev.val;
-            p.second = true;
+            p.0 = prev.val;
+            p.1 = true;
             this.cur = prev;
             return p;
         }

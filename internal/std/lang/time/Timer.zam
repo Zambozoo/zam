@@ -16,7 +16,7 @@ public class Timer {
     // New starts a timer that fires d from now.
     public static fun Timer*(Duration) New = (d) {
         var Timer* t = new(Timer);
-        native(STD_TIMER_NEW){void(int, int, uint*)}(type(Timer).deadline(d), 0, &(t.handle));
+        native(STD_TIMER_NEW){void(int, int, uint*)}(Timer::deadline(d), 0, &(t.handle));
         return t;
     }
 
@@ -44,7 +44,7 @@ public class Timer {
     // stopped or neither, answering whether it had yet to fire.
     public fun bool(Duration) Reset = (d) {
         var bool active = false;
-        native(STD_TIMER_RESET){void(uint, int, int, bool*)}(this.handle, type(Timer).deadline(d), 0, &active);
+        native(STD_TIMER_RESET){void(uint, int, int, bool*)}(this.handle, Timer::deadline(d), 0, &active);
         return active;
     }
 

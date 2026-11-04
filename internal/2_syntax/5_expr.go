@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 )
 
 type (
@@ -13,6 +14,7 @@ type (
 	ExprVisitor interface {
 		VisitExprCast(e *ExprCast) error
 		VisitExprField(e *ExprField) error
+		VisitExprFields(e *ExprFields) error
 		VisitExprLambda(e *ExprLambda) error
 		VisitExprNAry(e *ExprNAry) error
 		VisitExprNative(e *ExprNative) error
@@ -55,6 +57,21 @@ type (
 		// ComputedType is the type of the field, resolved by static semantic
 		// validation.
 		ComputedType Type
+	}
+
+	// ExprFields is a variable and the fields selected out of it in turn,
+	// written as one dotted name: a.b.c is Head a and Fields b and c. A
+	// selection out of anything but a name is an ExprField instead.
+	ExprFields struct {
+		// Head is the variable the first field is selected out of.
+		Head *ExprSymbol
+		// Fields are the fields selected in turn.
+		Fields []string
+		// FieldTokens are the tokens Fields are written at.
+		FieldTokens []*Token
+		// ComputedTypes are the types of each selection in turn, resolved by
+		// static semantic validation.
+		ComputedTypes []Type
 	}
 
 	// ExprLambda is a lambda expression in the AST.
@@ -201,6 +218,8 @@ var (
 	ExprKindAddressOf = newExprKind("address_of")
 	// Dereference expression for dereferencing a pointer
 	ExprKindDereference = newExprKind("dereference")
+	// Tuple expression for packing comma-separated values into a tuple
+	ExprKindTuple = newExprKind("tuple")
 	// Spread expression for forwarding a pointer or array as a variadic payload
 	// at a call site. The spread is a modifier on the argument it wraps and is
 	// only legal as the last argument of a call.
@@ -216,6 +235,8 @@ var (
 	ExprKindCast = newExprKind("cast")
 	// Field expression for accessing a field
 	ExprKindField = newExprKind("field")
+	// Fields expression for selecting fields in turn out of a variable
+	ExprKindFields = newExprKind("fields")
 	// Literal string expression for a string literal
 	ExprKindLiteralString = newExprKind("literal_string")
 	// Literal char expression for a char literal
@@ -357,14 +378,36 @@ var (
 	primaryTokenKinds = append(slices.Collect(maps.Keys(primaryKindMap)), TTLeftParen)
 )
 
-// newExpr creates a new expression.
+// newExpr creates a new expression. The comma binds loosest of all, so a run of
+// comma-separated assignments packs into one tuple.
 func newExpr(parser SyntaxParser) (Expr, error) {
 	expr, err := newExprAssign(parser)
 	if err != nil {
 		return nil, err
 	}
 
-	return expr, nil
+	exprs := []Expr{expr}
+	for {
+		if tok, err := parser.Match(TTComma); err != nil {
+			return nil, err
+		} else if tok == nil {
+			break
+		}
+
+		expr, err := newExprAssign(parser)
+		if err != nil {
+			return nil, err
+		}
+		exprs = append(exprs, expr)
+	}
+
+	if len(exprs) == 1 {
+		return expr, nil
+	}
+	return &ExprNAry{
+		kind:  ExprKindTuple,
+		Exprs: exprs,
+	}, nil
 }
 
 // newExprAssign creates a new assignment expression.
@@ -519,11 +562,14 @@ func newExprPrefix(parser SyntaxParser) (Expr, error) {
 	}, nil
 }
 
-// newExprPostfix creates a new postfix expression.
+// newExprPostfix creates a new postfix expression. A type named as a value has
+// nothing to select, call or index, so nothing is read after one.
 func newExprPostfix(parser SyntaxParser) (Expr, error) {
 	expr, err := newExprPrimary(parser)
 	if err != nil {
 		return nil, err
+	} else if t, ok := expr.(*ExprType); ok && t.Field == "" {
+		return expr, nil
 	}
 
 	for {
@@ -546,17 +592,13 @@ func newExprPostfix(parser SyntaxParser) (Expr, error) {
 				Exprs: []Expr{expr},
 			}
 		case TTPeriod:
-			field, err := parser.Consume(TTIdentifier)
+			field, err := parser.ConsumeAny(TTIdentifier, TTIntLiteral)
 			if err != nil {
 				return nil, err
 			}
-			expr = &ExprField{
-				Expr:       expr,
-				Field:      field.Value.(string),
-				FieldToken: field,
-			}
+			expr = newExprField(expr, field)
 		case TTLeftBracket: // equivalent to *(arr + i)
-			index, err := newExpr(parser)
+			index, err := newExprAssign(parser)
 			if err != nil {
 				return nil, err
 			}
@@ -593,6 +635,30 @@ func newExprPostfix(parser SyntaxParser) (Expr, error) {
 	}
 }
 
+// NewExprIdentifier returns an identifier naming name, already resolved to t,
+// for a name no source was written for.
+func NewExprIdentifier(name string, t Type) *ExprSymbol {
+	return &ExprSymbol{
+		start:        newToken(TTIdentifier, 0, name),
+		kind:         ExprKindIdentifier,
+		ComputedType: t,
+	}
+}
+
+// newExprField selects the field written at tok out of expr. An integer
+// literal names a tuple element by its index.
+func newExprField(expr Expr, tok *Token) *ExprField {
+	name, ok := tok.Value.(string)
+	if !ok {
+		name = strconv.FormatUint(tok.Value.(uint64), 10)
+	}
+	return &ExprField{
+		Expr:       expr,
+		Field:      name,
+		FieldToken: tok,
+	}
+}
+
 // newExprPrimary creates a new primary expression.
 func newExprPrimary(parser SyntaxParser) (Expr, error) {
 	tok, err := parser.ConsumeAny(primaryTokenKinds...)
@@ -602,7 +668,9 @@ func newExprPrimary(parser SyntaxParser) (Expr, error) {
 
 	var expr Expr
 	switch tok.Kind {
-	case TTIdentifier, TTThis, TTSuper, TTNull, TTTrue, TTFalse, TTCharLiteral, TTStringLiteral, TTIntLiteral, TTUintLiteral, TTFloatLiteral:
+	case TTIdentifier:
+		expr, err = newExprIdentifier(parser, tok)
+	case TTThis, TTSuper, TTNull, TTTrue, TTFalse, TTCharLiteral, TTStringLiteral, TTIntLiteral, TTUintLiteral, TTFloatLiteral:
 		expr = &ExprSymbol{
 			start: tok,
 			kind:  primaryKindMap[tok.Kind],
@@ -643,35 +711,9 @@ func newExprPrimary(parser SyntaxParser) (Expr, error) {
 			return nil, err
 		}
 
-		var field string
-		var fieldTok *Token
-		var typeArgs []Type
-		if lb, err := parser.Match(TTLeftBracket); err != nil {
-			return nil, err
-		} else if lb != nil {
-			typeArgs, err = parseTypeList(parser)
-			if err != nil {
-				return nil, err
-			}
-		}
-		if period, err := parser.Match(TTPeriod); err != nil {
-			return nil, err
-		} else if period != nil {
-			fieldTok, err = parser.Consume(TTIdentifier)
-			if err != nil {
-				return nil, err
-			}
-			field = fieldTok.Value.(string)
-		} else if typeArgs != nil {
-			return nil, fmt.Errorf("type arguments on type() must be followed by '.field'")
-		}
-
 		expr = &ExprType{
-			start:      tok,
-			Type:       _type,
-			Field:      field,
-			FieldToken: fieldTok,
-			TypeArgs:   typeArgs,
+			start: tok,
+			Type:  _type,
 		}
 	case TTWait:
 		if _, err := parser.Consume(TTLeftParen); err != nil {
@@ -706,6 +748,63 @@ func newExprPrimary(parser SyntaxParser) (Expr, error) {
 	}
 
 	return expr, nil
+}
+
+// newExprIdentifier reads what an identifier starts: a dotted name followed by
+// :: is a path of declarations and the static it names, optionally with type
+// arguments for a generic method; a dotted name with no :: is a variable and the
+// fields selected out of it; a lone name is a symbol.
+func newExprIdentifier(parser SyntaxParser, start *Token) (Expr, error) {
+	ids, idTokens, index, err := readDottedIds(parser, start, true)
+	if err != nil {
+		return nil, err
+	}
+
+	if index != nil {
+		var head Expr = &ExprSymbol{start: start, kind: ExprKindIdentifier}
+		if len(ids) > 1 {
+			head = &ExprFields{
+				Head:        head.(*ExprSymbol),
+				Fields:      ids[1:],
+				FieldTokens: idTokens[1:],
+			}
+		}
+		return newExprField(head, index), nil
+	}
+
+	if colons, err := parser.Match(TTColonColon); err != nil {
+		return nil, err
+	} else if colons != nil {
+		var typeArgs []Type
+		if lb, err := parser.Match(TTLeftBracket); err != nil {
+			return nil, err
+		} else if lb != nil {
+			if typeArgs, err = parseTypeList(parser); err != nil {
+				return nil, err
+			}
+		}
+		field, err := parser.Consume(TTIdentifier)
+		if err != nil {
+			return nil, err
+		}
+		return &ExprType{
+			start:      start,
+			Type:       newTypePath(parser, ids, idTokens),
+			Field:      field.Value.(string),
+			FieldToken: field,
+			TypeArgs:   typeArgs,
+		}, nil
+	}
+
+	head := &ExprSymbol{start: start, kind: ExprKindIdentifier}
+	if len(ids) == 1 {
+		return head, nil
+	}
+	return &ExprFields{
+		Head:        head,
+		Fields:      ids[1:],
+		FieldTokens: idTokens[1:],
+	}, nil
 }
 
 // parseTypeList reads a comma-separated list of types up to and including the
@@ -744,7 +843,7 @@ func newExprCall(parser SyntaxParser, expr Expr) (Expr, error) {
 	}
 
 	for {
-		expr, err := newExpr(parser)
+		expr, err := newExprAssign(parser)
 		if err != nil {
 			return nil, err
 		}
@@ -807,7 +906,7 @@ func newExprNew(parser SyntaxParser, start *Token) (Expr, error) {
 		}, nil
 	}
 
-	size, err := newExpr(parser)
+	size, err := newExprAssign(parser)
 	if err != nil {
 		return nil, err
 	}
@@ -821,7 +920,7 @@ func newExprNew(parser SyntaxParser, start *Token) (Expr, error) {
 		}, nil
 	}
 
-	tail, err := newExpr(parser)
+	tail, err := newExprAssign(parser)
 	if err != nil {
 		return nil, err
 	}
@@ -913,6 +1012,59 @@ func (e *ExprField) Accept(visitor ExprVisitor) error {
 // ResolvedType implements the [Expr] interface.
 func (e *ExprField) ResolvedType() Type {
 	return e.ComputedType
+}
+
+// Start implements the [Expr] interface.
+func (e *ExprFields) Start() *Token {
+	return e.Head.Start()
+}
+
+// Kind implements the [Expr] interface.
+func (e *ExprFields) Kind() ExprKind {
+	return ExprKindFields
+}
+
+// Accept implements the [Expr] interface.
+func (e *ExprFields) Accept(visitor ExprVisitor) error {
+	return visitor.VisitExprFields(e)
+}
+
+// ResolvedType implements the [Expr] interface.
+func (e *ExprFields) ResolvedType() Type {
+	if len(e.ComputedTypes) < len(e.Fields) {
+		return nil
+	}
+	return e.ComputedTypes[len(e.Fields)-1]
+}
+
+// Field is the last field selected.
+func (e *ExprFields) Field() string {
+	return e.Fields[len(e.Fields)-1]
+}
+
+// FieldToken is the token the last field is written at.
+func (e *ExprFields) FieldToken() *Token {
+	return e.FieldTokens[len(e.FieldTokens)-1]
+}
+
+// Receiver is what the last field is selected out of: the head for a single
+// field, and otherwise the same name one field shorter, sharing this one's
+// storage.
+func (e *ExprFields) Receiver() Expr {
+	n := len(e.Fields) - 1
+	if n == 0 {
+		return e.Head
+	}
+	types := e.ComputedTypes
+	if len(types) > n {
+		types = types[:n]
+	}
+	return &ExprFields{
+		Head:          e.Head,
+		Fields:        e.Fields[:n],
+		FieldTokens:   e.FieldTokens[:n],
+		ComputedTypes: types,
+	}
 }
 
 // Start implements the [Expr] interface.

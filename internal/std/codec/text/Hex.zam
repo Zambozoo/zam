@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 
@@ -9,20 +8,20 @@ public namespace Hex {
     var str$ digits = "0123456789abcdef";
 
     public static fun str(byte*, uint) Encode = (b, n) {
-        var Pair[byte*, int] d = type(Strs).ToBytes(type(Hex).digits);
+        var (byte*, int) d = Strs::ToBytes(Hex::digits);
         var byte* out = new(byte, 2U * n + 1U);
         for(var uint i = 0U; i < n; i++) {
-            out[2U * i] = d.first[b[i]{uint} >> 4U];
-            out[2U * i + 1U] = d.first[b[i]{uint} & 15U];
+            out[2U * i] = d.0[b[i]{uint} >> 4U];
+            out[2U * i + 1U] = d.0[b[i]{uint} & 15U];
         }
-        var str s = type(Strs).FromBytes(out, (2U * n){int});
+        var str s = Strs::FromBytes(out, (2U * n){int});
         free(out);
         return s;
     }
 
     public static fun str(str) EncodeStr = (s) {
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        return type(Hex).Encode(p.first, p.second{uint});
+        var (byte*, int) p = Strs::ToBytes(s);
+        return Hex::Encode(p.0, p.1{uint});
     }
 
     private static fun int(int) value = (c) {
@@ -38,38 +37,38 @@ public namespace Hex {
         return -1;
     }
 
-    public static fun Pair[Arr[byte]*, Err*](str) Decode = (s) {
-        var Pair[Arr[byte]*, Err*] out;
-        out.first = null;
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        var uint n = p.second{uint};
+    public static fun (Arr[byte]*, Err*)(str) Decode = (s) {
+        var (Arr[byte]*, Err*) out;
+        out.0 = null;
+        var (byte*, int) p = Strs::ToBytes(s);
+        var uint n = p.1{uint};
         if(n % 2U != 0U) {
-            out.second = type(StrErr).New("odd hex length");
+            out.1 = StrErr::New("odd hex length");
             return out;
         }
         var byte* b = new(byte, n / 2U);
         for(var uint i = 0U; i < n; i = i + 2U) {
-            var int hi = type(Hex).value(p.first[i]{int});
-            var int lo = type(Hex).value(p.first[i + 1U]{int});
+            var int hi = Hex::value(p.0[i]{int});
+            var int lo = Hex::value(p.0[i + 1U]{int});
             if(hi < 0 || lo < 0) {
                 free(b);
-                out.second = type(StrErr).New("invalid hex byte at offset " + i{str});
+                out.1 = StrErr::New("invalid hex byte at offset " + i{str});
                 return out;
             }
             b[i / 2U] = (hi * 16 + lo){byte};
         }
-        out.first = type(Arr)[byte].New(n / 2U, b...);
-        out.second = null;
+        out.0 = Arr::[byte]New(n / 2U, b...);
+        out.1 = null;
         return out;
     }
 
-    public static fun Pair[str, Err*](str) DecodeStr = (s) {
-        var Pair[str, Err*] out;
-        var Pair[Arr[byte]*, Err*] d = type(Hex).Decode(s);
-        out.second = d.second;
-        out.first = "";
-        if(d.second == null) {
-            out.first = type(Strs).FromBytes(d.first.Arr(), d.first.Len(){int});
+    public static fun (str, Err*)(str) DecodeStr = (s) {
+        var (str, Err*) out;
+        var (Arr[byte]*, Err*) d = Hex::Decode(s);
+        out.1 = d.1;
+        out.0 = "";
+        if(d.1 == null) {
+            out.0 = Strs::FromBytes(d.0.Arr(), d.0.Len(){int});
         }
         return out;
     }

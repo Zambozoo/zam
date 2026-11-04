@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 import "../../math/Rand.zam";
 import "../../lang/Struct.zam";
@@ -36,7 +35,7 @@ public class Treap[A] {
         var Node[A]* n = *link;
         var Node[A]* l = n.left;
         var Struct[Node[A]*] pin;
-        pin.Init(l, type(Treap)[A].markTree, null);
+        pin.Init(l, Treap::[A]markTree, null);
         n.left = l.right;
         l.right = n;
         *link = l;
@@ -47,7 +46,7 @@ public class Treap[A] {
         var Node[A]* n = *link;
         var Node[A]* r = n.right;
         var Struct[Node[A]*] pin;
-        pin.Init(r, type(Treap)[A].markTree, null);
+        pin.Init(r, Treap::[A]markTree, null);
         n.right = r.left;
         r.left = n;
         *link = r;
@@ -61,7 +60,7 @@ public class Treap[A] {
         if(n == null) {
             var Node[A]* m = new(Node[A]);
             m.val = k;
-            m.prio = type(Rand).Uint();
+            m.prio = Rand::Uint();
             *link = m;
             return;
         }
@@ -109,7 +108,7 @@ public class Treap[A] {
             return;
         }
         var Struct[Node[A]*] rest;
-        rest.Init(b, type(Treap)[A].markTree, null);
+        rest.Init(b, Treap::[A]markTree, null);
         if(b.prio < a.prio) {
             rest.s = a;
             *link = b;
@@ -117,9 +116,9 @@ public class Treap[A] {
             b = rest.s;
         }
         var Struct[Node[A]*] lo;
-        lo.Init(null, type(Treap)[A].markTree, null);
+        lo.Init(null, Treap::[A]markTree, null);
         var Struct[Node[A]*] hi;
-        hi.Init(null, type(Treap)[A].markTree, null);
+        hi.Init(null, Treap::[A]markTree, null);
         this.split(b, a.val, &(lo.s), &(hi.s));
         rest.s = null;
         this.union(&(a.left), lo.s);
@@ -166,8 +165,8 @@ public class Treap[A] {
             return;
         }
         mark(n.val);
-        type(Treap)[A].markTree(n.left);
-        type(Treap)[A].markTree(n.right);
+        Treap::[A]markTree(n.left);
+        Treap::[A]markTree(n.right);
     }
 
     private fun void(Node[A]*) freeAll = (n) {
@@ -190,7 +189,7 @@ public class Treap[A] {
 
     public fun A() GetMin = () {
         if(this.len == 0U) {
-            type(System).Panic("Treap is empty");
+            System::Panic("Treap is empty");
         }
         var Node[A]* n = this.root;
         for(; n.left != null;) {
@@ -201,7 +200,7 @@ public class Treap[A] {
 
     public fun A() GetMax = () {
         if(this.len == 0U) {
-            type(System).Panic("Treap is empty");
+            System::Panic("Treap is empty");
         }
         var Node[A]* n = this.root;
         for(; n.right != null;) {
@@ -212,7 +211,7 @@ public class Treap[A] {
 
     public fun A() RemoveMin = () {
         if(this.len == 0U) {
-            type(System).Panic("Treap is empty");
+            System::Panic("Treap is empty");
         }
         var A v = this.GetMin();
         this.unlinkEnd(true);
@@ -222,7 +221,7 @@ public class Treap[A] {
 
     public fun A() RemoveMax = () {
         if(this.len == 0U) {
-            type(System).Panic("Treap is empty");
+            System::Panic("Treap is empty");
         }
         var A v = this.GetMax();
         this.unlinkEnd(false);
@@ -233,7 +232,7 @@ public class Treap[A] {
     // Merge moves every element of other into this heap, leaving other empty.
     public fun void(Treap[A]*) Merge = (other) {
         if(other{void*} == this{void*}) {
-            type(System).Panic("Treap merged with itself");
+            System::Panic("Treap merged with itself");
         }
         this.union(&(this.root), other.root);
         this.len = this.len + other.len;
@@ -249,7 +248,7 @@ public class Treap[A] {
     public fun Arr[A]*() Arr = () {
         var A* a = new(A, this.len);
         this.fill(this.root, a, 0U);
-        return type(Arr)[A].New(this.len, a...);
+        return Arr::[A]New(this.len, a...);
     }
 
     // Iter visits the elements in ascending order, as they stood when it was
@@ -275,37 +274,37 @@ public class Treap[A] {
     }
 
     public fun void() Mark = () {
-        if(!type(System.GC).Markable(@{A})) {
+        if(!System.GC::Markable(@{A})) {
             return;
         }
-        type(Treap)[A].markTree(this.root);
+        Treap::[A]markTree(this.root);
     }
 
     private class Iter[A] {
         var Arr[A]* items;
         var uint i;
 
-        public fun Pair[A, bool]() Next = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Next = () {
+            var (A, bool) p;
             if(this.i >= this.items.Len()) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.items.Get(this.i);
-            p.second = true;
+            p.0 = this.items.Get(this.i);
+            p.1 = true;
             this.i++;
             return p;
         }
 
-        public fun Pair[A, bool]() Prev = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Prev = () {
+            var (A, bool) p;
             if(this.i == 0U) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
             this.i--;
-            p.first = this.items.Get(this.i);
-            p.second = true;
+            p.0 = this.items.Get(this.i);
+            p.1 = true;
             return p;
         }
     }

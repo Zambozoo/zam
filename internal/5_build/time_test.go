@@ -24,80 +24,80 @@ import std("codec/format/*");
 
 namespace Main {
     static fun void(str, str) put = (name, value) {
-        type(File).StdOut.WriteStr(name + " " + value + "\n");
+        File::StdOut.WriteStr(name + " " + value + "\n");
     }
 
     static fun bool(Timer*) stopLater = (t) {
-        type(Timer).Sleep(type(Duration).Milliseconds(20));
+        Timer::Sleep(Duration::Milliseconds(20));
         return t.Stop();
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        type(Main).put("now", type(Time).Now().UnixNano(){str});
+        Main::put("now", Time::Now().UnixNano(){str});
 
-        var JSON* instants = type(JSON).Parse(argV[0]).first;
+        var JSON* instants = JSON::Parse(argV[0]).0;
         for(var uint i = 0U; i < instants.Len(); i++) {
-            var Time t = type(Time).FromUnixNano(instants.At(i).AsInt());
-            type(Main).put("instant", t.UnixNano(){str} + " " + t.Year(){str} + " " + t.Month(){str} + " " + t.Day(){str} + " " +
+            var Time t = Time::FromUnixNano(instants.At(i).AsInt());
+            Main::put("instant", t.UnixNano(){str} + " " + t.Year(){str} + " " + t.Month(){str} + " " + t.Day(){str} + " " +
                 t.Hour(){str} + " " + t.Minute(){str} + " " + t.Second(){str} + " " + t.Nanosecond(){str} + " " +
                 t.Weekday(){str} + " " + t.YearDay(){str} + " " + t.Unix(){str} + " " + t.UnixMilli(){str} + " " + t.Str());
         }
 
-        var JSON* texts = type(JSON).Parse(argV[1]).first;
+        var JSON* texts = JSON::Parse(argV[1]).0;
         for(var uint i = 0U; i < texts.Len(); i++) {
-            var Pair[Time, Err*] p = type(Time).Parse(texts.At(i).AsStr());
-            if(p.second != null) {
-                type(Main).put("parse", "error");
+            var (Time, Err*) p = Time::Parse(texts.At(i).AsStr());
+            if(p.1 != null) {
+                Main::put("parse", "error");
             } else {
-                type(Main).put("parse", p.first.UnixNano(){str});
+                Main::put("parse", p.0.UnixNano(){str});
             }
         }
 
-        var JSON* spans = type(JSON).Parse(argV[2]).first;
+        var JSON* spans = JSON::Parse(argV[2]).0;
         for(var uint i = 0U; i < spans.Len(); i++) {
-            type(Main).put("duration", type(Duration).Nanoseconds(spans.At(i).AsInt()).Str());
+            Main::put("duration", Duration::Nanoseconds(spans.At(i).AsInt()).Str());
         }
 
-        var Time leap = type(Time).Date(2024, 3, 0, 0, 0, 0, 0);
-        var Time carried = type(Time).Date(2023, 14, 1, 25, 0, 0, 0);
-        var Time early = type(Time).FromUnix(100, 0);
-        var Duration hour = type(Duration).Hours(1);
-        type(Main).put("date", leap.Str() + " " + carried.Str() + " " + early.Add(hour).Sub(early).Str() + " " +
-            early.Before(early.Add(hour)){str} + " " + early.Add(hour).After(early){str} + " " + early.Equal(type(Time).FromUnixMilli(100000)){str} + " " +
-            hour.Add(type(Duration).Minutes(30)).InMinutes(){str} + " " + type(Duration).Seconds(-3).Abs().Cmp(type(Duration).Milliseconds(3000)){str} + " " +
-            type(Duration).Seconds(10).Div(4).Mul(2).InMilliseconds(){str});
+        var Time leap = Time::Date(2024, 3, 0, 0, 0, 0, 0);
+        var Time carried = Time::Date(2023, 14, 1, 25, 0, 0, 0);
+        var Time early = Time::FromUnix(100, 0);
+        var Duration hour = Duration::Hours(1);
+        Main::put("date", leap.Str() + " " + carried.Str() + " " + early.Add(hour).Sub(early).Str() + " " +
+            early.Before(early.Add(hour)){str} + " " + early.Add(hour).After(early){str} + " " + early.Equal(Time::FromUnixMilli(100000)){str} + " " +
+            hour.Add(Duration::Minutes(30)).InMinutes(){str} + " " + Duration::Seconds(-3).Abs().Cmp(Duration::Milliseconds(3000)){str} + " " +
+            Duration::Seconds(10).Div(4).Mul(2).InMilliseconds(){str});
 
-        var Time start = type(Time).Now();
-        type(Timer).Sleep(type(Duration).Milliseconds(50));
-        var Duration slept = type(Time).Since(start);
+        var Time start = Time::Now();
+        Timer::Sleep(Duration::Milliseconds(50));
+        var Duration slept = Time::Since(start);
 
-        start = type(Time).Now();
-        var Timer* fires = type(Timer).New(type(Duration).Milliseconds(30));
+        start = Time::Now();
+        var Timer* fires = Timer::New(Duration::Milliseconds(30));
         var bool fired = fires.Wait();
-        var Duration waited = type(Time).Since(start);
+        var Duration waited = Time::Since(start);
         var bool stoppedLate = fires.Stop();
-        var bool rearmed = fires.Reset(type(Duration).Milliseconds(10));
+        var bool rearmed = fires.Reset(Duration::Milliseconds(10));
         var bool firedAgain = fires.Wait();
 
-        start = type(Time).Now();
-        var Timer* stopped = type(Timer).New(type(Duration).Seconds(10));
-        var thread[bool] stopper = async(type(Main).stopLater(stopped));
+        start = Time::Now();
+        var Timer* stopped = Timer::New(Duration::Seconds(10));
+        var thread[bool] stopper = async(Main::stopLater(stopped));
         var bool firedEarly = stopped.Wait();
         var bool stoppedInTime = wait(stopper);
-        var Duration cut = type(Time).Since(start);
-        type(Main).put("timer", (slept.InMilliseconds() >= 50){str} + " " + fired{str} + " " + (waited.InMilliseconds() >= 30){str} + " " +
+        var Duration cut = Time::Since(start);
+        Main::put("timer", (slept.InMilliseconds() >= 50){str} + " " + fired{str} + " " + (waited.InMilliseconds() >= 30){str} + " " +
             stoppedLate{str} + " " + rearmed{str} + " " + firedAgain{str} + " " + firedEarly{str} + " " + stoppedInTime{str} + " " +
-            (cut.InSeconds() < 5.0){str} + " " + (type(Time).Until(type(Time).Now().Add(hour)).InMinutes() > 59.0){str});
+            (cut.InSeconds() < 5.0){str} + " " + (Time::Until(Time::Now().Add(hour)).InMinutes() > 59.0){str});
 
-        start = type(Time).Now();
-        var Ticker* ticker = type(Ticker).New(type(Duration).Milliseconds(20));
+        start = Time::Now();
+        var Ticker* ticker = Ticker::New(Duration::Milliseconds(20));
         var bool ticked = ticker.Wait() && ticker.Wait() && ticker.Wait();
-        var Duration ticking = type(Time).Since(start);
+        var Duration ticking = Time::Since(start);
         var bool stoppedTicking = ticker.Stop();
         var bool tickedAfterStop = ticker.Wait();
-        var bool restarted = ticker.Reset(type(Duration).Milliseconds(10));
+        var bool restarted = ticker.Reset(Duration::Milliseconds(10));
         var bool tickedAgain = ticker.Wait();
-        type(Main).put("ticker", ticked{str} + " " + (ticking.InMilliseconds() >= 60){str} + " " + (ticking.InSeconds() < 2.0){str} + " " +
+        Main::put("ticker", ticked{str} + " " + (ticking.InMilliseconds() >= 60){str} + " " + (ticking.InSeconds() < 2.0){str} + " " +
             stoppedTicking{str} + " " + tickedAfterStop{str} + " " + restarted{str} + " " + tickedAgain{str} + " " + ticker.Stop(){str});
     }
 }

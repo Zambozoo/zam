@@ -6,10 +6,10 @@ public namespace Flts {
     public var flt$ Min = 2.2250738585072014e-308;
     // Epsilon is the gap between 1 and the next flt above it.
     public var flt$ Epsilon = 2.220446049250313e-16;
-    public var flt$ Inf = type(Flts).FromBits(9218868437227405312U);
-    public var flt$ NegInf = type(Flts).FromBits(18442240474082181120U);
+    public var flt$ Inf = Flts::FromBits(9218868437227405312U);
+    public var flt$ NegInf = Flts::FromBits(18442240474082181120U);
     // NaN is a quiet NaN, which compares unequal to everything, itself too.
-    public var flt$ NaN = type(Flts).FromBits(9221120237041090560U);
+    public var flt$ NaN = Flts::FromBits(9221120237041090560U);
 
     // FromBits returns the flt whose IEEE 754 bits are u.
     public static fun flt(uint) FromBits = (u) {

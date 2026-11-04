@@ -320,6 +320,16 @@ func (v *populateGenericDeclsVisitor) VisitStmtVariable(s *syntax.StmtVariable) 
 	return nil
 }
 
+func (v *populateGenericDeclsVisitor) VisitStmtUnpack(s *syntax.StmtUnpack) error {
+	for _, variable := range s.Variables {
+		variable.Accept(v)
+	}
+	if s.Expr != nil {
+		s.Expr.Accept(v)
+	}
+	return nil
+}
+
 // ----- ExprVisitor -----
 
 func (v *populateGenericDeclsVisitor) VisitExprCast(e *syntax.ExprCast) error {
@@ -330,6 +340,11 @@ func (v *populateGenericDeclsVisitor) VisitExprCast(e *syntax.ExprCast) error {
 
 func (v *populateGenericDeclsVisitor) VisitExprField(e *syntax.ExprField) error {
 	e.Expr.Accept(v)
+	return nil
+}
+
+func (v *populateGenericDeclsVisitor) VisitExprFields(e *syntax.ExprFields) error {
+	e.Head.Accept(v)
 	return nil
 }
 
@@ -371,7 +386,7 @@ func (v *populateGenericDeclsVisitor) VisitExprType(e *syntax.ExprType) error {
 	e.Type.Accept(v)
 	if len(e.TypeArgs) > 0 {
 		// Call sites written with an open class-level T (e.g. Arr.Mark's
-		// type(Arrs)[A].MarkAll) share one ExprType across every instantiation
+		// Arrs::[A]MarkAll) share one ExprType across every instantiation
 		// of the enclosing decl. Mapping under the current binding can make
 		// those args ground for materialization — MarkAll[flt], MarkAll[str],
 		// … — but the site itself stays open: which concrete runs is a
@@ -480,6 +495,13 @@ func (v *populateGenericDeclsVisitor) VisitTypeReference(t *syntax.TypeReference
 
 func (v *populateGenericDeclsVisitor) VisitTypeTailed(t *syntax.TypeTailed) error {
 	t.Type.Accept(v)
+	return nil
+}
+
+func (v *populateGenericDeclsVisitor) VisitTypeTuple(t *syntax.TypeTuple) error {
+	for _, element := range t.Types {
+		element.Accept(v)
+	}
 	return nil
 }
 

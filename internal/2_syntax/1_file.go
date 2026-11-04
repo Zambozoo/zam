@@ -39,7 +39,7 @@ type (
 
 		// Imports maps each id to the imports written under it. The common case
 		// is one import per id, but a package name may hold several: a user who
-		// writes `import std("Pair.zam")` has reached one file in the stdlib
+		// writes `import std("Err.zam")` has reached one file in the stdlib
 		// through the std package, and the implicit `std.Object` auto-import
 		// still has to find its own, so both sit here under the "std" key and a
 		// lookup picks the one whose top-level decl answers to the type name.
@@ -308,7 +308,7 @@ func newGlobImport(parser SyntaxParser, start *Token, pkg, alias *string, pathSt
 	}
 
 	dirPathStr := strings.TrimSuffix(pathStr, globSuffix)
-	if dirPathStr == "" {
+	if dirPathStr == "" || pathStr == "*" {
 		dirPathStr = "."
 	}
 

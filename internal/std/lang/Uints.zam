@@ -27,7 +27,7 @@ public namespace Uints {
 
     // Len is the number of bits needed to hold x, 0 for zero.
     public static fun uint(uint) Len = (x) {
-        return 64U - type(Uints).LeadingZeros(x);
+        return 64U - Uints::LeadingZeros(x);
     }
 
     public static fun uint(uint, uint) RotateLeft = (x, k) {
@@ -39,7 +39,7 @@ public namespace Uints {
     }
 
     public static fun uint(uint, uint) RotateRight = (x, k) {
-        return type(Uints).RotateLeft(x, 64U - k % 64U);
+        return Uints::RotateLeft(x, 64U - k % 64U);
     }
 
     public static fun uint(uint) ReverseBytes = (x) {
@@ -53,7 +53,7 @@ public namespace Uints {
         x = ((x >> 1U) & 6148914691236517205U) | ((x & 6148914691236517205U) << 1U);
         x = ((x >> 2U) & 3689348814741910323U) | ((x & 3689348814741910323U) << 2U);
         x = ((x >> 4U) & 1085102592571150095U) | ((x & 1085102592571150095U) << 4U);
-        return type(Uints).ReverseBytes(x);
+        return Uints::ReverseBytes(x);
     }
 
     public static fun bool(uint) IsPowerOfTwo = (x) {
@@ -66,7 +66,7 @@ public namespace Uints {
         if(x <= 1U) {
             return 1U;
         }
-        var uint n = type(Uints).Len(x - 1U);
+        var uint n = Uints::Len(x - 1U);
         if(n == 64U) {
             return 0U;
         }

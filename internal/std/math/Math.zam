@@ -129,26 +129,26 @@ public namespace Math {
     // IsInf reports whether x is an infinity of the given sign, either one
     // for a sign of zero.
     public static fun bool(flt, int) IsInf = (x, sign) {
-        return (sign >= 0 && x == type(Flts).Inf) || (sign <= 0 && x == type(Flts).NegInf);
+        return (sign >= 0 && x == Flts::Inf) || (sign <= 0 && x == Flts::NegInf);
     }
 
     public static fun bool(flt) IsFinite = (x) {
-        return !type(Math).IsNaN(x) && !type(Math).IsInf(x, 0);
+        return !Math::IsNaN(x) && !Math::IsInf(x, 0);
     }
 
     // SignBit reports whether the sign bit of x is set, as it is for -0.
     public static fun bool(flt) SignBit = (x) {
-        return (type(Flts).ToBits(x) >> 63U) == 1U;
+        return (Flts::ToBits(x) >> 63U) == 1U;
     }
 
     // CopySign returns x with the sign of s.
     public static fun flt(flt, flt) CopySign = (x, s) {
-        var uint m = type(Flts).ToBits(x) & 9223372036854775807U;
-        return type(Flts).FromBits(m | (type(Flts).ToBits(s) & 9223372036854775808U));
+        var uint m = Flts::ToBits(x) & 9223372036854775807U;
+        return Flts::FromBits(m | (Flts::ToBits(s) & 9223372036854775808U));
     }
 
     public static fun flt(flt) Abs = (x) {
-        return type(Flts).FromBits(type(Flts).ToBits(x) & 9223372036854775807U);
+        return Flts::FromBits(Flts::ToBits(x) & 9223372036854775807U);
     }
 
     public static fun int(int) AbsInt = (x) {
@@ -225,11 +225,11 @@ public namespace Math {
 
     // Clamp returns x held within [lo, hi].
     public static fun flt(flt, flt, flt) Clamp = (x, lo, hi) {
-        return type(Math).Min(type(Math).Max(x, lo), hi);
+        return Math::Min(Math::Max(x, lo), hi);
     }
 
     public static fun int(int, int, int) ClampInt = (x, lo, hi) {
-        return type(Math).MinInt(type(Math).MaxInt(x, lo), hi);
+        return Math::MinInt(Math::MaxInt(x, lo), hi);
     }
 
     // Lerp returns the point t of the way from a to b.
@@ -277,6 +277,6 @@ public namespace Math {
         if(a == 0U || b == 0U) {
             return 0U;
         }
-        return a / type(Math).Gcd(a, b) * b;
+        return a / Math::Gcd(a, b) * b;
     }
 }

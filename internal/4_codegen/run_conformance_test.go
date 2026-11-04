@@ -686,6 +686,7 @@ func writeImage(t *testing.T, operations []operation, routines ...uint64) string
 			threadTypeDefinitionsStartIndex:       first,
 			functionTypeDefinitionsStartIndex:     first,
 			pointerDefinitionsStartIndex:          first + 5,
+			tupleDefinitionsStartIndex:            first + 10,
 			structDefinitionsStartIndex:           first + 10,
 			genericStructDefinitionsStartIndex:    first + 11,
 			enumDefinitionsStartIndex:             first + 11,

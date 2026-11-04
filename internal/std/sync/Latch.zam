@@ -14,8 +14,8 @@ public class Latch {
     }
 
     public fun void(uint) Init = (count) {
-        this.m = type(Mutex).New();
-        this.c = type(Cond).New(this.m);
+        this.m = Mutex::New();
+        this.c = Cond::New(this.m);
         this.count = count;
     }
 

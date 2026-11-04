@@ -10,13 +10,13 @@ public struct Fraction {
     // Of returns num / den in lowest terms.
     public static fun Fraction(int, int) Of = (num, den) {
         if(den == 0) {
-            type(System).Panic("Fraction with a zero denominator");
+            System::Panic("Fraction with a zero denominator");
         }
         if(den < 0) {
             num = -num;
             den = -den;
         }
-        var int g = type(Math).Gcd(type(Math).AbsInt(num){uint}, den{uint}){int};
+        var int g = Math::Gcd(Math::AbsInt(num){uint}, den{uint}){int};
         var Fraction f;
         f.num = num / g;
         f.den = den / g;
@@ -24,12 +24,12 @@ public struct Fraction {
     }
 
     public static fun Fraction(int) FromInt = (n) {
-        return type(Fraction).Of(n, 1);
+        return Fraction::Of(n, 1);
     }
 
     public fun Fraction(Fraction) Add = (o) {
-        var int g = type(Math).Gcd(this.den{uint}, o.den{uint}){int};
-        return type(Fraction).Of(this.num * (o.den / g) + o.num * (this.den / g), this.den / g * o.den);
+        var int g = Math::Gcd(this.den{uint}, o.den{uint}){int};
+        return Fraction::Of(this.num * (o.den / g) + o.num * (this.den / g), this.den / g * o.den);
     }
 
     public fun Fraction(Fraction) Sub = (o) {
@@ -37,9 +37,9 @@ public struct Fraction {
     }
 
     public fun Fraction(Fraction) Mul = (o) {
-        var int g1 = type(Math).Gcd(type(Math).AbsInt(this.num){uint}, o.den{uint}){int};
-        var int g2 = type(Math).Gcd(type(Math).AbsInt(o.num){uint}, this.den{uint}){int};
-        return type(Fraction).Of((this.num / g1) * (o.num / g2), (this.den / g2) * (o.den / g1));
+        var int g1 = Math::Gcd(Math::AbsInt(this.num){uint}, o.den{uint}){int};
+        var int g2 = Math::Gcd(Math::AbsInt(o.num){uint}, this.den{uint}){int};
+        return Fraction::Of((this.num / g1) * (o.num / g2), (this.den / g2) * (o.den / g1));
     }
 
     public fun Fraction(Fraction) Div = (o) {
@@ -55,12 +55,12 @@ public struct Fraction {
 
     // Inv returns the reciprocal.
     public fun Fraction() Inv = () {
-        return type(Fraction).Of(this.den, this.num);
+        return Fraction::Of(this.den, this.num);
     }
 
     // Cmp returns -1, 0 or 1 as this is less than, equal to or greater than o.
     public fun int(Fraction) Cmp = (o) {
-        return type(Math).SignInt(this.Sub(o).num);
+        return Math::SignInt(this.Sub(o).num);
     }
 
     public fun bool(Fraction) Eq = (o) {

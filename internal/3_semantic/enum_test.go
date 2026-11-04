@@ -20,7 +20,7 @@ namespace Main {
     enum Mask : int {
         A(1),
         B(1 << 7),
-        C(type(Main).twice(3));
+        C(Main::twice(3));
 
         fun int() Bits = () {
             return (*this){int};
@@ -33,9 +33,9 @@ namespace Main {
     }
 
     static fun void() f = () {
-        var int m = type(Mask).A{int} | type(Mask).B{int};
-        var int c = type(Mask).C.Bits();
-        var str s = type(Name).Y{str};
+        var int m = Mask::A{int} | Mask::B{int};
+        var int c = Mask::C.Bits();
+        var str s = Name::Y{str};
         return;
     }
 }
@@ -73,9 +73,9 @@ namespace Main {
     }
 
     static fun void() f = () {
-        var int i = type(Small).A{int};
-        var flt x = type(Small).A{flt};
-        var bool b = type(Small).A{bool};
+        var int i = Small::A{int};
+        var flt x = Small::A{flt};
+        var bool b = Small::A{bool};
         return;
     }
 }
@@ -88,7 +88,7 @@ namespace Main {
 // primitive casts back to it.
 func TestValidateASTRejectsPrimitiveEnumCasts(t *testing.T) {
 	for name, body := range map[string]string{
-		"to what its primitive cannot be": `var int x = type(Name).A{int};`,
+		"to what its primitive cannot be": `var int x = Name::A{int};`,
 		"from its primitive":              `var Mask m = 1{Mask};`,
 	} {
 		t.Run(name, func(t *testing.T) {

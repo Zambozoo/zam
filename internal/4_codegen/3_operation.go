@@ -5,6 +5,7 @@ import (
 	"io"
 	"math"
 	"slices"
+	"strconv"
 
 	base "github.com/zambozoo/zam/internal/0_base"
 	syntax "github.com/zambozoo/zam/internal/2_syntax"
@@ -834,6 +835,15 @@ const (
 	// settles it.
 	//   (code) | [value,typeID] {markEntry?} -> [value] {markEntry?}
 	OpMarkAs
+
+	// OpPackTuple packs the elements lying beneath a tuple's type id into one
+	// value of that tuple. Each element stands on the stack as a value of its
+	// own and is laid at the offset the tuple's definition gives it, so the
+	// type id is the whole of what says how many words come off and how they
+	// are arranged. The elements' mark entries give way to the one the tuple
+	// owns.
+	//   (code) | [elements...,tupleTypeID] {elementMarkEntries?} -> [tupleWords...] {tupleMarkEntry?}
+	OpPackTuple
 )
 
 // ReceiverSlotClosure is the OpPushReceiverType operand that reads `this`
@@ -1040,6 +1050,11 @@ const thisVariableName = "this"
 // which is how many elements are left to fill in. It is not a name a program can
 // write, so nothing shadows it and it shadows nothing.
 const remainingVariableName = "~remaining"
+
+// unpackVariableName is bound to the slot a tuple is held in while the
+// variables of an unpacking declaration are read out of it. It is not a name a
+// program can write.
+const unpackVariableName = "~unpack"
 
 // A bare Opcode is an operation with no immediate operands.
 func (o Opcode) ByteCount() int { return 1 }
@@ -1265,7 +1280,7 @@ func openWidth(t syntax.Type) bool {
 	switch tt := t.(type) {
 	case *syntax.TypeGenericArg:
 		return true
-	case *syntax.TypeArray:
+	case *syntax.TypeArray, *syntax.TypeTuple:
 		return true
 	case *syntax.TypeWrapped, *syntax.TypeFunction:
 		return false
@@ -2241,6 +2256,86 @@ func (v *operationVisitor) emitInstanceInitializer(d syntax.Decl) error {
 	return nil
 }
 
+// emitTupleInitializers gives every tuple type holding an element that is filled
+// in by a routine of its own a routine that fills a fresh tuple in, and records
+// where it begins on the tuple's definition. A tuple of nothing but primitives
+// and references is left naming offset 0, there being nothing to run.
+func (v *operationVisitor) emitTupleInitializers() {
+	i := 0
+	for t := range v.ast.TupleTypes.Values() {
+		def := v.reader.tupleDefinitions[i].(*tupleDefinition)
+		i++
+		tuple := t.(*syntax.TypeTuple)
+		if !slices.ContainsFunc(tuple.Types, initializedInline) {
+			continue
+		}
+		def.initializerInstruction = uint64(v.byteOffset)
+		v.emitTupleInitializer(tuple)
+	}
+}
+
+// initializedInline reports whether a value of t lies inline and is filled in by
+// an initializer rather than left as the zeros it is allocated as.
+func initializedInline(t syntax.Type) bool {
+	switch tt := syntax.StripConst(t).(type) {
+	case *syntax.TypeArray:
+		return tt.Size != nil && initializedInline(tt.Type)
+	case *syntax.TypeTuple:
+		return slices.ContainsFunc(tt.Types, initializedInline)
+	}
+	return laidOutInline(t)
+}
+
+// emitTupleInitializer emits one tuple type's initializer, which is the routine
+// [operationVisitor.emitInstanceInitializer] emits for a declaration with every
+// element created from its type. A tuple is ground wherever it has a definition,
+// so the frame needs no receiver to resolve an open type against, and slot 0 is
+// read as the plain word its cursor is.
+func (v *operationVisitor) emitTupleInitializer(tuple *syntax.TypeTuple) {
+	v.returnType = syntax.TypeVoid
+	v.inMain = false
+	v.receiverInFrame = true
+	v.nextVariableOffset = 0
+	v.openSlots = nil
+
+	v.pushScope()
+	defer v.popScope()
+
+	cursor := v.declareVariable(thisVariableName, syntax.TypeInt)
+	remaining := v.declareVariable(remainingVariableName, syntax.TypeInt)
+
+	top := v.byteOffset
+	v.emitLoadWord(remaining)
+	v.emit(OpIsPositiveI64)
+	done := v.emitJump(OpJumpIfFalse)
+
+	for i, element := range tuple.Types {
+		v.emitLoadWord(cursor)
+		v.emitPushTypeID(tuple)
+		v.emit(newUnaryOp(OpPushMember, uint64(i)))
+		v.emitDefaultValue(element)
+		v.emitPushTypeID(element)
+		v.emit(OpStore)
+		v.emitPopLocation()
+	}
+
+	v.emitStoreWord(cursor, func() {
+		v.emitLoadWord(cursor)
+		v.emitPushTypeID(tuple)
+		v.emit(OpSizeOf)
+		v.emit(OpAddI64)
+	})
+	v.emitStoreWord(remaining, func() {
+		v.emitLoadWord(remaining)
+		v.emitPushWords(1)
+		v.emit(OpSubI64)
+	})
+	v.emitJumpTo(OpJump, top)
+
+	v.patch(done)
+	v.emit(OpReturnVoid)
+}
+
 // recordInitializer points a declaration's type definition at its initializer.
 // A generic class or abstract is one definition holding every instantiation, and
 // a generic struct is one definition apiece, but the routine is emitted once for
@@ -2513,6 +2608,69 @@ func (v *operationVisitor) VisitStmtVariable(s *syntax.StmtVariable) error {
 	return v.emitValueAs(s.Expr, s.Type)
 }
 
+// VisitStmtUnpack declares each variable over the element of the tuple at its
+// position. A tuple written out with an element per variable lays each element
+// straight into its variable's slot, and the names are bound only once every
+// element has been emitted, so an element naming one reaches what it reached
+// before the declaration. Any other tuple is held in a slot of its own, and each
+// variable is read out of it.
+func (v *operationVisitor) VisitStmtUnpack(s *syntax.StmtUnpack) error {
+	if s.Expr == nil {
+		for _, variable := range s.Variables {
+			if err := variable.Accept(v); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if literal, ok := s.Expr.(*syntax.ExprNAry); ok && literal.Kind() == syntax.ExprKindTuple && len(literal.Exprs) == len(s.Variables) {
+		for i, variable := range s.Variables {
+			if err := v.emitValueAs(literal.Exprs[i], variable.Type); err != nil {
+				return err
+			}
+		}
+		for _, variable := range s.Variables {
+			v.declareVariable(variable.Name(), variable.Type)
+		}
+		return nil
+	}
+
+	tupleType := s.Expr.ResolvedType()
+	v.declareVariable(unpackVariableName, tupleType)
+	if err := v.emitValue(s.Expr); err != nil {
+		return err
+	}
+
+	source := syntax.NewExprIdentifier(unpackVariableName, tupleType)
+	elements := syntax.StripConst(tupleType).(*syntax.TypeTuple).Types
+	for i, variable := range s.Variables {
+		v.declareVariable(variable.Name(), variable.Type)
+		element := &syntax.ExprField{
+			Expr:         source,
+			Field:        strconv.Itoa(i),
+			ComputedType: elements[i],
+		}
+		if err := v.emitValueAs(element, variable.Type); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// emitTuple packs the elements of a tuple written out into a value of target,
+// each element emitted as the slot it lands in was declared.
+func (v *operationVisitor) emitTuple(e *syntax.ExprNAry, target *syntax.TypeTuple) error {
+	for i, element := range e.Exprs {
+		if err := v.emitValueAs(element, target.Types[i]); err != nil {
+			return err
+		}
+	}
+	v.emitPushTypeID(target)
+	v.emit(OpPackTuple)
+	return nil
+}
+
 // visitScoped visits a statement in its own scope, so that a body which is a
 // bare declaration rather than a block does not leak its variable outward. A
 // block is a scope already, and is visited as it stands.
@@ -2650,6 +2808,8 @@ func (v *operationVisitor) VisitExprNAry(e *syntax.ExprNAry) error {
 		return v.emitTypeof(e)
 	case syntax.ExprKindHash:
 		return v.emitHash(e)
+	case syntax.ExprKindTuple:
+		return v.emitTuple(e, e.ComputedType.(*syntax.TypeTuple))
 
 	case syntax.ExprKindBinaryNegate, syntax.ExprKindArithmeticNegate,
 		syntax.ExprKindLogicalNegate:
@@ -2728,13 +2888,16 @@ func (v *operationVisitor) addressable(e syntax.Expr) bool {
 	case syntax.ExprKindDereference,
 		syntax.ExprKindThis, syntax.ExprKindSuper, syntax.ExprKindAssign:
 		return true
-	case syntax.ExprKindField:
-		selection := e.(*syntax.ExprField)
-		_, field := selectedField(selection)
+	case syntax.ExprKindField, syntax.ExprKindFields:
+		object, name, _ := selection(e)
+		if _, ok := syntax.TupleSelectionTarget(object.ResolvedType()); ok {
+			return v.hasHome(object)
+		}
+		_, field := selectedField(object, name)
 		if _, isMember := field.(*syntax.FieldMember); !isMember {
 			return false
 		}
-		return v.hasHome(selection.Expr)
+		return v.hasHome(object)
 	case syntax.ExprKindType:
 		typeExpr := e.(*syntax.ExprType)
 		if typeExpr.Field == "" {
@@ -2759,15 +2922,27 @@ func (v *operationVisitor) hasHome(object syntax.Expr) bool {
 	return syntax.ReachedThroughAddress(object.ResolvedType()) || v.addressable(object)
 }
 
-// selectedField resolves what a field selection names: the declaration the
-// object's static type resolves to, and that declaration's instance field the
-// selection picks out.
-func selectedField(e *syntax.ExprField) (syntax.DeclTypeable, syntax.FieldTypeable) {
-	resolvable, ok := syntax.SelectionTarget(e.Expr.ResolvedType())
+// selection is the object a field selection is made out of and the field's
+// name, for either way a selection is written.
+func selection(e syntax.Expr) (syntax.Expr, string, bool) {
+	switch s := e.(type) {
+	case *syntax.ExprField:
+		return s.Expr, s.Field, true
+	case *syntax.ExprFields:
+		return s.Receiver(), s.Field(), true
+	}
+	return nil, "", false
+}
+
+// selectedField resolves what selecting name out of object names: the
+// declaration the object's static type resolves to, and that declaration's
+// instance field the selection picks out.
+func selectedField(object syntax.Expr, name string) (syntax.DeclTypeable, syntax.FieldTypeable) {
+	resolvable, ok := syntax.SelectionTarget(object.ResolvedType())
 	if !ok {
 		return nil, nil
 	}
-	field, _ := resolvable.Decl().GetInstanceField(e.Field)
+	field, _ := resolvable.Decl().GetInstanceField(name)
 	return resolvable.Decl(), field
 }
 
@@ -2907,6 +3082,11 @@ func variadicElement(parameters []syntax.Type) syntax.Type {
 // in a static or instance layout. The slot's own type is what gets pushed as
 // the value's id after the cast runs.
 func (v *operationVisitor) emitValueAs(e syntax.Expr, target syntax.Type) error {
+	if literal, ok := e.(*syntax.ExprNAry); ok && literal.Kind() == syntax.ExprKindTuple {
+		if tuple, ok := syntax.StripConst(target).(*syntax.TypeTuple); ok && len(tuple.Types) == len(literal.Exprs) {
+			return v.emitTuple(literal, tuple)
+		}
+	}
 	if e.ResolvedType().Equals(target) {
 		return v.emitValue(e)
 	}
@@ -3032,13 +3212,14 @@ func (v *operationVisitor) emitCall(e *syntax.ExprNAry) error {
 // already a closure.
 func (v *operationVisitor) directMethodCallee(callee syntax.Expr) (syntax.Expr, *syntax.FieldMethod, bool) {
 	switch c := callee.(type) {
-	case *syntax.ExprField:
-		_, field := selectedField(c)
+	case *syntax.ExprField, *syntax.ExprFields:
+		object, name, _ := selection(c)
+		_, field := selectedField(object, name)
 		method, ok := field.(*syntax.FieldMethod)
-		if !ok || !v.hasHome(c.Expr) {
+		if !ok || !v.hasHome(object) {
 			return nil, nil, false
 		}
-		return c.Expr, method, true
+		return object, method, true
 	case *syntax.ExprSymbol:
 		if c.Kind() != syntax.ExprKindIdentifier {
 			return nil, nil, false
@@ -3479,10 +3660,10 @@ func (v *operationVisitor) emitHashedComparisonOperand(operand syntax.Expr) erro
 // compared against an any, so the lift the caller does for an any pair
 // never changes the type here.
 func (v *operationVisitor) emitComparisonOperand(operand syntax.Expr, as syntax.Type) error {
-	if field, ok := operand.(*syntax.ExprField); ok {
-		if _, member := selectedField(field); member != nil {
+	if object, name, ok := selection(operand); ok {
+		if _, member := selectedField(object, name); member != nil {
 			if arr, isArr := member.FieldType().(*syntax.TypeArray); isArr && arr.Size == nil {
-				return v.emitMemberSelection(field.Expr, field.Expr.ResolvedType(),
+				return v.emitMemberSelection(object, object.ResolvedType(),
 					newUnaryOp(OpLoadTailMember, uint64(*member.(*syntax.FieldMember).Index())))
 			}
 		}
@@ -3820,10 +4001,29 @@ func binaryOpcode(kind syntax.ExprKind, t syntax.Type) Opcode {
 //
 // Selecting through a type names a static instead, which [operationVisitor.VisitExprType] emits.
 func (v *operationVisitor) VisitExprField(e *syntax.ExprField) error {
-	object := e.Expr
+	return v.emitSelection(e.Expr, e.Field)
+}
+
+// VisitExprFields emits the last field selected out of everything before it,
+// which is emitted the same way in turn.
+func (v *operationVisitor) VisitExprFields(e *syntax.ExprFields) error {
+	return v.emitSelection(e.Receiver(), e.Field())
+}
+
+// emitSelection emits the field name selected out of object.
+func (v *operationVisitor) emitSelection(object syntax.Expr, name string) error {
 	objectType := object.ResolvedType()
 
-	decl, field := selectedField(e)
+	// A tuple's elements are its members, numbered by position.
+	if _, ok := syntax.TupleSelectionTarget(objectType); ok {
+		index, err := strconv.ParseUint(name, 10, 64)
+		if err != nil {
+			panic("unreachable")
+		}
+		return v.emitMemberSelection(object, objectType, newUnaryOp(OpPushMember, index))
+	}
+
+	decl, field := selectedField(object, name)
 	if method, ok := field.(*syntax.FieldMethod); ok {
 		return v.emitMethodSelection(object, objectType, newUnaryOp(methodOpcode(decl), uint64(*method.Index())))
 	}
@@ -3892,6 +4092,9 @@ func pointeeType(t syntax.Type) (syntax.Type, bool) {
 // interface is never laid out anywhere, so a value of one is already an address
 // and has none of its own worth taking.
 func laidOutInline(t syntax.Type) bool {
+	if _, ok := syntax.StripConst(t).(*syntax.TypeTuple); ok {
+		return true
+	}
 	resolvable, ok := syntax.StripConst(t).(syntax.TypeResolvable)
 	if !ok {
 		return false
@@ -4697,6 +4900,7 @@ func populateOperations(ast *syntax.AST, reader *codegenReader, typeIndices *syn
 	if err := visitor.emitInstanceInitializers(); err != nil {
 		return err
 	}
+	visitor.emitTupleInitializers()
 
 	// Every body has been emitted by here, which is the first point any of the
 	// method tables can be filled in: a table entry is where a body turned out

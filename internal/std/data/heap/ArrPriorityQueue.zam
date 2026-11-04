@@ -1,6 +1,5 @@
 import "../../lang/Arrs.zam";
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 
 // Array-based min max priority queue of values B ordered by priorities A
@@ -12,14 +11,14 @@ public class ArrPriorityQueue[A, B] {
     var uint len;
     var uint cap;
 
-    public static fun[A, B] ArrPriorityQueue[A, B]*(uint, Pair[A, B]...) New = (len, args) {
+    public static fun[A, B] ArrPriorityQueue[A, B]*(uint, (A, B)...) New = (len, args) {
         var ArrPriorityQueue[A, B]* h = new(ArrPriorityQueue[A, B]);
         h.Init(len, args...);
         return h;
     }
 
-    public fun void(uint, Pair[A, B]...) Init = (len, args) {
-        this.cap = type(ArrPriorityQueue).minCap;
+    public fun void(uint, (A, B)...) Init = (len, args) {
+        this.cap = ArrPriorityQueue::minCap;
         if(this.cap < len) {
             this.cap = len;
         }
@@ -27,7 +26,7 @@ public class ArrPriorityQueue[A, B] {
         this.vals = new(B, this.cap);
         this.len = 0U;
         for(var uint i = 0U; i < len; i++) {
-            this.Add(args[i].first, args[i].second);
+            this.Add(args[i].0, args[i].1);
         }
     }
 
@@ -58,10 +57,10 @@ public class ArrPriorityQueue[A, B] {
         this.vals[j] = u;
     }
 
-    private fun Pair[A, B](uint) entry = (i) {
-        var Pair[A, B] p;
-        p.first = this.arr[i];
-        p.second = this.vals[i];
+    private fun (A, B)(uint) entry = (i) {
+        var (A, B) p;
+        p.0 = this.arr[i];
+        p.1 = this.vals[i];
         return p;
     }
 
@@ -139,8 +138,8 @@ public class ArrPriorityQueue[A, B] {
         return 1U;
     }
 
-    private fun Pair[A, B](uint) removeAt = (i) {
-        var Pair[A, B] old = this.entry(i);
+    private fun (A, B)(uint) removeAt = (i) {
+        var (A, B) old = this.entry(i);
         this.len--;
         if(i < this.len) {
             this.arr[i] = this.arr[this.len];
@@ -158,7 +157,7 @@ public class ArrPriorityQueue[A, B] {
         var A* old = this.arr;
         var B* oldVals = this.vals;
         if(this.cap == 0U) {
-            this.cap = type(ArrPriorityQueue).minCap;
+            this.cap = ArrPriorityQueue::minCap;
         }
         for(; this.cap < n;) {
             this.cap = this.cap * 2U;
@@ -185,30 +184,30 @@ public class ArrPriorityQueue[A, B] {
         this.bubbleUp(this.len - 1U);
     }
 
-    public fun Pair[A, B]() GetMin = () {
+    public fun (A, B)() GetMin = () {
         if(this.len == 0U) {
-            type(System).Panic("ArrPriorityQueue is empty");
+            System::Panic("ArrPriorityQueue is empty");
         }
         return this.entry(0U);
     }
 
-    public fun Pair[A, B]() GetMax = () {
+    public fun (A, B)() GetMax = () {
         if(this.len == 0U) {
-            type(System).Panic("ArrPriorityQueue is empty");
+            System::Panic("ArrPriorityQueue is empty");
         }
         return this.entry(this.maxIndex());
     }
 
-    public fun Pair[A, B]() RemoveMin = () {
+    public fun (A, B)() RemoveMin = () {
         if(this.len == 0U) {
-            type(System).Panic("ArrPriorityQueue is empty");
+            System::Panic("ArrPriorityQueue is empty");
         }
         return this.removeAt(0U);
     }
 
-    public fun Pair[A, B]() RemoveMax = () {
+    public fun (A, B)() RemoveMax = () {
         if(this.len == 0U) {
-            type(System).Panic("ArrPriorityQueue is empty");
+            System::Panic("ArrPriorityQueue is empty");
         }
         return this.removeAt(this.maxIndex());
     }
@@ -216,7 +215,7 @@ public class ArrPriorityQueue[A, B] {
     // Merge moves every entry of other into this queue, leaving other empty.
     public fun void(ArrPriorityQueue[A, B]*) Merge = (other) {
         if(other{void*} == this{void*}) {
-            type(System).Panic("ArrPriorityQueue merged with itself");
+            System::Panic("ArrPriorityQueue merged with itself");
         }
         this.reserve(this.len + other.len);
         for(var uint i = 0U; i < other.len; i++) {
@@ -236,13 +235,13 @@ public class ArrPriorityQueue[A, B] {
     }
 
     // Arr returns the entries in no particular order.
-    public fun Arr[Pair[A, B]]*() Arr = () {
-        var Pair[A, B]* a = new(Pair[A, B], this.len);
+    public fun Arr[(A, B)]*() Arr = () {
+        var (A, B)* a = new((A, B), this.len);
         for(var uint i = 0U; i < this.len; i++) {
-            a[i].first = this.arr[i];
-            a[i].second = this.vals[i];
+            a[i].0 = this.arr[i];
+            a[i].1 = this.vals[i];
         }
-        return type(Arr)[Pair[A, B]].New(this.len, a...);
+        return Arr::[(A, B)]New(this.len, a...);
     }
 
     // Iter visits the entries in no particular order.
@@ -273,35 +272,35 @@ public class ArrPriorityQueue[A, B] {
     }
 
     public fun void() Mark = () {
-        type(Arrs)[A].MarkAll(this.len, this.arr);
-        type(Arrs)[B].MarkAll(this.len, this.vals);
+        Arrs::[A]MarkAll(this.len, this.arr);
+        Arrs::[B]MarkAll(this.len, this.vals);
     }
 
     private class Iter[A, B] {
         var ArrPriorityQueue[A, B]* h;
         var uint i;
 
-        public fun Pair[Pair[A, B], bool]() Next = () {
-            var Pair[Pair[A, B], bool] p;
+        public fun ((A, B), bool)() Next = () {
+            var ((A, B), bool) p;
             if(this.i >= this.h.len) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.h.entry(this.i);
-            p.second = true;
+            p.0 = this.h.entry(this.i);
+            p.1 = true;
             this.i++;
             return p;
         }
 
-        public fun Pair[Pair[A, B], bool]() Prev = () {
-            var Pair[Pair[A, B], bool] p;
+        public fun ((A, B), bool)() Prev = () {
+            var ((A, B), bool) p;
             if(this.i == 0U) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
             this.i--;
-            p.first = this.h.entry(this.i);
-            p.second = true;
+            p.0 = this.h.entry(this.i);
+            p.1 = true;
             return p;
         }
     }

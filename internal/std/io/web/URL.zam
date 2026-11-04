@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 import "../../data/list/ArrList.zam";
@@ -19,19 +18,19 @@ public class URL {
     public var str fragment;
 
     // Parse reads an absolute URL.
-    public static fun Pair[URL*, Err*](str) Parse = (s) {
-        var Pair[URL*, Err*] out;
+    public static fun (URL*, Err*)(str) Parse = (s) {
+        var (URL*, Err*) out;
         var URL* u = new(URL);
         var int port;
         var str errStr;
         native(STD_URL_PARSE){void(str, str*, str*, str*, str*, int*, str*, str*, str*, str*)}(s, &(u.scheme), &(u.user), &(u.password), &(u.host), &port, &(u.path), &(u.query), &(u.fragment), &errStr);
         u.port = port{uint};
-        out.first = null;
-        out.second = null;
+        out.0 = null;
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(s + ": " + errStr);
+            out.1 = StrErr::New(s + ": " + errStr);
         } else {
-            out.first = u;
+            out.0 = u;
         }
         return out;
     }
@@ -52,18 +51,18 @@ public class URL {
 
     // ParseQuery decodes a query as name=value pairs joined by &, reading +
     // as a space. A pair with no = has an empty value.
-    public static fun Arr[Pair[str, str]]*(str) ParseQuery = (q) {
-        var ArrList[Pair[str, str]]* pairs = type(ArrList)[Pair[str, str]].New(0U);
-        if(type(Strs).ByteLen(q) == 0) {
+    public static fun Arr[(str, str)]*(str) ParseQuery = (q) {
+        var ArrList[(str, str)]* pairs = ArrList::[(str, str)]New(0U);
+        if(Strs::ByteLen(q) == 0) {
             return pairs.Arr();
         }
-        var Arr[str]* parts = type(Strs).Split(q, '&'{int}{byte});
+        var Arr[str]* parts = Strs::Split(q, '&'{int}{byte});
         for(var uint i = 0U; i < parts.Len(); i++) {
             var str part = parts.Get(i);
-            if(type(Strs).ByteLen(part) == 0) {
+            if(Strs::ByteLen(part) == 0) {
                 continue;
             }
-            var Arr[str]* kv = type(Strs).Split(part, '='{int}{byte});
+            var Arr[str]* kv = Strs::Split(part, '='{int}{byte});
             var str value = "";
             for(var uint j = 1U; j < kv.Len(); j++) {
                 if(j > 1U) {
@@ -71,16 +70,16 @@ public class URL {
                 }
                 value = value + kv.Get(j);
             }
-            var Pair[str, str] p;
-            p.first = type(URL).Unescape(type(URL).plusToSpace(kv.Get(0U)));
-            p.second = type(URL).Unescape(type(URL).plusToSpace(value));
+            var (str, str) p;
+            p.0 = URL::Unescape(URL::plusToSpace(kv.Get(0U)));
+            p.1 = URL::Unescape(URL::plusToSpace(value));
             pairs.AddLast(p);
         }
         return pairs.Arr();
     }
 
     private static fun str(str) plusToSpace = (s) {
-        var Arr[str]* parts = type(Strs).Split(s, '+'{int}{byte});
+        var Arr[str]* parts = Strs::Split(s, '+'{int}{byte});
         var str out = parts.Get(0U);
         for(var uint i = 1U; i < parts.Len(); i++) {
             out = out + " " + parts.Get(i);
@@ -89,21 +88,21 @@ public class URL {
     }
 
     // QueryValues decodes this URL's query; see ParseQuery.
-    public fun Arr[Pair[str, str]]*() QueryValues = () {
-        return type(URL).ParseQuery(this.query);
+    public fun Arr[(str, str)]*() QueryValues = () {
+        return URL::ParseQuery(this.query);
     }
 
     // QueryValue returns the first value the query gives a name, and false
     // when it gives none.
-    public fun Pair[str, bool](str) QueryValue = (name) {
-        var Pair[str, bool] out;
-        out.first = "";
-        out.second = false;
-        var Arr[Pair[str, str]]* values = this.QueryValues();
+    public fun (str, bool)(str) QueryValue = (name) {
+        var (str, bool) out;
+        out.0 = "";
+        out.1 = false;
+        var Arr[(str, str)]* values = this.QueryValues();
         for(var uint i = 0U; i < values.Len(); i++) {
-            if(values.Get(i).first == name) {
-                out.first = values.Get(i).second;
-                out.second = true;
+            if(values.Get(i).0 == name) {
+                out.0 = values.Get(i).1;
+                out.1 = true;
                 return out;
             }
         }
@@ -111,17 +110,17 @@ public class URL {
     }
 
     // Resolve resolves a reference, absolute or relative, against this URL.
-    public fun Pair[URL*, Err*](str) Resolve = (ref) {
+    public fun (URL*, Err*)(str) Resolve = (ref) {
         var str resolved;
         var str errStr;
         native(STD_URL_RESOLVE){void(str, str, str*, str*)}(this.Str(), ref, &resolved, &errStr);
         if(errStr != null) {
-            var Pair[URL*, Err*] out;
-            out.first = null;
-            out.second = type(StrErr).New(ref + ": " + errStr);
+            var (URL*, Err*) out;
+            out.0 = null;
+            out.1 = StrErr::New(ref + ": " + errStr);
             return out;
         }
-        return type(URL).Parse(resolved);
+        return URL::Parse(resolved);
     }
 
     // Str joins the parts back into a URL, or is empty when they do not make

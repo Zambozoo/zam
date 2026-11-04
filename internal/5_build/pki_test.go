@@ -71,30 +71,30 @@ import std("crypto/pki/*");
 
 namespace Main {
     static fun void(str, str) put = (name, value) {
-        type(File).StdOut.WriteStr(name + " " + value + "\n");
+        File::StdOut.WriteStr(name + " " + value + "\n");
     }
 
     static fun void(str, Err*) must = (what, e) {
         if(e != null) {
-            type(Main).put("error", what + ": " + e.Err());
+            Main::put("error", what + ": " + e.Err());
         }
     }
 
     static fun void(str, str) write = (path, s) {
-        var File* f = type(File).Create(path).first;
+        var File* f = File::Create(path).0;
         f.WriteStr(s);
         f.Close();
     }
 
     static fun str(str) read = (path) {
-        var File* f = type(File).Open(path).first;
-        var str s = f.ReadAll().first;
+        var File* f = File::Open(path).0;
+        var str s = f.ReadAll().0;
         f.Close();
         return s;
     }
 
     static fun Arr[X509*]*(X509*) one = (c) {
-        var Arr[X509*]* a = type(Arr)[X509*].New(1U, new(X509*, 1U)...);
+        var Arr[X509*]* a = Arr::[X509*]New(1U, new(X509*, 1U)...);
         a.Set(0U, c);
         return a;
     }
@@ -102,84 +102,84 @@ namespace Main {
     fun void(uint, str...) main = (argC, argV) {
         var str dir = argV[0];
 
-        var X509* goCA = type(X509).ParsePEM(type(Main).read(dir + "/go-ca.pem")).first;
-        var X509* goLeaf = type(X509).ParsePEM(type(Main).read(dir + "/go-leaf.pem")).first;
-        type(Main).put("goLeaf", goLeaf.Subject() + "|" + goLeaf.Issuer() + "|" + goLeaf.DNSNames().Get(0U) + "|" + goLeaf.IsCA(){str} + "|" + goCA.IsCA(){str});
-        type(Main).put("goVerify", (goLeaf.Verify(type(Main).one(goCA), null, "go.example.test", type(Time).Now()) == null){str} + " " +
-            (goLeaf.Verify(type(Main).one(goCA), null, "other.test", type(Time).Now()) != null){str} + " " +
-            (goLeaf.Verify(type(Main).one(goLeaf), null, "", type(Time).Now()) != null){str} + " " +
-            (goLeaf.Verify(type(Main).one(goCA), null, "", goLeaf.NotAfter().Add(type(Duration).Seconds(10))) != null){str});
+        var X509* goCA = X509::ParsePEM(Main::read(dir + "/go-ca.pem")).0;
+        var X509* goLeaf = X509::ParsePEM(Main::read(dir + "/go-leaf.pem")).0;
+        Main::put("goLeaf", goLeaf.Subject() + "|" + goLeaf.Issuer() + "|" + goLeaf.DNSNames().Get(0U) + "|" + goLeaf.IsCA(){str} + "|" + goCA.IsCA(){str});
+        Main::put("goVerify", (goLeaf.Verify(Main::one(goCA), null, "go.example.test", Time::Now()) == null){str} + " " +
+            (goLeaf.Verify(Main::one(goCA), null, "other.test", Time::Now()) != null){str} + " " +
+            (goLeaf.Verify(Main::one(goLeaf), null, "", Time::Now()) != null){str} + " " +
+            (goLeaf.Verify(Main::one(goCA), null, "", goLeaf.NotAfter().Add(Duration::Seconds(10))) != null){str});
 
-        var Key* caKey = type(ECDSA).Generate(type(Key.Kind).P384).first;
-        var X509.Template* caT = type(X509.Template).New("Zam Root");
+        var Key* caKey = ECDSA::Generate(Key.Kind::P384).0;
+        var X509.Template* caT = X509.Template::New("Zam Root");
         caT.organization = "Zam";
         caT.isCA = true;
-        var Pair[X509*, Err*] ca = type(X509).SelfSign(caT, caKey);
-        type(Main).must("self-sign", ca.second);
-        var Key* leafKey = type(Ed25519).Generate();
-        var X509.Template* t = type(X509.Template).New("zam leaf");
-        t.dnsNames = type(Strs).Split("zam.example.test,www.zam.example.test", ','{byte});
+        var (X509*, Err*) ca = X509::SelfSign(caT, caKey);
+        Main::must("self-sign", ca.1);
+        var Key* leafKey = Ed25519::Generate();
+        var X509.Template* t = X509.Template::New("zam leaf");
+        t.dnsNames = Strs::Split("zam.example.test,www.zam.example.test", ','{byte});
         t.ocspURL = argV[1];
-        var Pair[X509*, Err*] leaf = type(X509).Sign(t, leafKey.Public(), ca.first, caKey);
-        type(Main).must("sign", leaf.second);
-        type(Main).write(dir + "/zam-ca.pem", ca.first.PEM());
-        type(Main).write(dir + "/zam-leaf.pem", leaf.first.PEM());
-        type(Main).put("zamLeafFingerprint", type(Hex).Encode(leaf.first.Fingerprint(type(Digest.Kind).SHA256).Arr(), 32U));
-        var Arr[byte]* der = leaf.first.DER();
-        var X509* back = type(X509).ParseDER(der.Arr(), der.Len()).first;
-        type(Main).put("zamLeaf", back.Serial() + "|" + (back.Serial() == leaf.first.Serial()){str} + "|" + back.OCSPURL() + "|" + type(Hex).Encode(back.PublicKey().first.Raw().first.Arr(), 32U) + "|" + type(Hex).Encode(leafKey.Public().Raw().first.Arr(), 32U));
-        type(Main).put("chain", type(X509).ParsePEMChain(ca.first.PEM() + leaf.first.PEM()).first.Len(){str} + " " + (type(X509).ParsePEM("junk").second != null){str} +
-            " " + (type(X509).SelfSign(caT, caKey.Public()).second != null){str});
+        var (X509*, Err*) leaf = X509::Sign(t, leafKey.Public(), ca.0, caKey);
+        Main::must("sign", leaf.1);
+        Main::write(dir + "/zam-ca.pem", ca.0.PEM());
+        Main::write(dir + "/zam-leaf.pem", leaf.0.PEM());
+        Main::put("zamLeafFingerprint", Hex::Encode(leaf.0.Fingerprint(Digest.Kind::SHA256).Arr(), 32U));
+        var Arr[byte]* der = leaf.0.DER();
+        var X509* back = X509::ParseDER(der.Arr(), der.Len()).0;
+        Main::put("zamLeaf", back.Serial() + "|" + (back.Serial() == leaf.0.Serial()){str} + "|" + back.OCSPURL() + "|" + Hex::Encode(back.PublicKey().0.Raw().0.Arr(), 32U) + "|" + Hex::Encode(leafKey.Public().Raw().0.Arr(), 32U));
+        Main::put("chain", X509::ParsePEMChain(ca.0.PEM() + leaf.0.PEM()).0.Len(){str} + " " + (X509::ParsePEM("junk").1 != null){str} +
+            " " + (X509::SelfSign(caT, caKey.Public()).1 != null){str});
 
-        var Pair[Arr[byte]*, Err*] p12 = type(PKCS12).Create(leafKey, leaf.first, type(Main).one(ca.first), "secret", "zam leaf");
-        type(Main).must("pkcs12", p12.second);
-        var PKCS12.Bundle* bundle = type(PKCS12).Parse(p12.first.Arr(), p12.first.Len(), "secret").first;
-        type(Main).put("pkcs12", (bundle.cert.Serial() == leaf.first.Serial()){str} + " " + (bundle.chain.Get(0U).Serial() == ca.first.Serial()){str} + " " +
-            (type(Hex).Encode(bundle.key.Raw().first.Arr(), 32U) == type(Hex).Encode(leafKey.Raw().first.Arr(), 32U)){str} + " " +
-            (type(PKCS12).Parse(p12.first.Arr(), p12.first.Len(), "wrong").second != null){str});
+        var (Arr[byte]*, Err*) p12 = PKCS12::Create(leafKey, leaf.0, Main::one(ca.0), "secret", "zam leaf");
+        Main::must("pkcs12", p12.1);
+        var PKCS12.Bundle* bundle = PKCS12::Parse(p12.0.Arr(), p12.0.Len(), "secret").0;
+        Main::put("pkcs12", (bundle.cert.Serial() == leaf.0.Serial()){str} + " " + (bundle.chain.Get(0U).Serial() == ca.0.Serial()){str} + " " +
+            (Hex::Encode(bundle.key.Raw().0.Arr(), 32U) == Hex::Encode(leafKey.Raw().0.Arr(), 32U)){str} + " " +
+            (PKCS12::Parse(p12.0.Arr(), p12.0.Len(), "wrong").1 != null){str});
 
-        var Arr[byte]* req = type(OCSP).Request(leaf.first, ca.first).first;
-        var Pair[Arr[byte]*, Err*] resp = type(OCSP).Respond(req.Arr(), req.Len(), ca.first, caKey, type(OCSP.Status).Revoked, type(Time).FromUnix(1700000000, 0), type(Duration).Hours(1));
-        type(Main).must("respond", resp.second);
-        var File* f = type(File).Create(dir + "/ocsp.der").first;
-        f.Write(resp.first.Arr(), resp.first.Len(){int});
+        var Arr[byte]* req = OCSP::Request(leaf.0, ca.0).0;
+        var (Arr[byte]*, Err*) resp = OCSP::Respond(req.Arr(), req.Len(), ca.0, caKey, OCSP.Status::Revoked, Time::FromUnix(1700000000, 0), Duration::Hours(1));
+        Main::must("respond", resp.1);
+        var File* f = File::Create(dir + "/ocsp.der").0;
+        f.Write(resp.0.Arr(), resp.0.Len(){int});
         f.Close();
-        type(Main).put("ocspRequest", type(Hex).Encode(req.Arr(), req.Len()));
-        var Pair[OCSP.Result*, Err*] queried = type(OCSP).Query(leaf.first, ca.first);
-        type(Main).must("query", queried.second);
-        type(Main).put("ocsp", (queried.first.status == type(OCSP.Status).Revoked){str} + " " + queried.first.revokedAt.Str() + " " +
-            queried.first.nextUpdate.Sub(queried.first.thisUpdate).Str() + " " + queried.first.hasNextUpdate{str} + " " +
-            (type(OCSP).Check(leaf.first, goCA, resp.first.Arr(), resp.first.Len()).second != null){str} + " " +
-            (type(OCSP).Query(goLeaf, goCA).second != null){str});
+        Main::put("ocspRequest", Hex::Encode(req.Arr(), req.Len()));
+        var (OCSP.Result*, Err*) queried = OCSP::Query(leaf.0, ca.0);
+        Main::must("query", queried.1);
+        Main::put("ocsp", (queried.0.status == OCSP.Status::Revoked){str} + " " + queried.0.revokedAt.Str() + " " +
+            queried.0.nextUpdate.Sub(queried.0.thisUpdate).Str() + " " + queried.0.hasNextUpdate{str} + " " +
+            (OCSP::Check(leaf.0, goCA, resp.0.Arr(), resp.0.Len()).1 != null){str} + " " +
+            (OCSP::Query(goLeaf, goCA).1 != null){str});
 
-        var Key* account = type(ECDSA).Generate(type(Key.Kind).P256).first;
-        var Pair[ACME*, Err*] client = type(ACME).New(argV[2], account);
-        type(Main).must("acme", client.second);
-        var ACME* acme = client.first;
+        var Key* account = ECDSA::Generate(Key.Kind::P256).0;
+        var (ACME*, Err*) client = ACME::New(argV[2], account);
+        Main::must("acme", client.1);
+        var ACME* acme = client.0;
         acme.pollMs = 10U;
-        type(Main).must("register", acme.Register("admin@zam.example.test", true));
-        var Arr[str]* domains = type(Strs).Split("a.zam.example.test,b.zam.example.test", ','{byte});
-        var Pair[ACME.Order*, Err*] order = acme.NewOrder(domains);
-        type(Main).must("order", order.second);
-        var Arr[ACME.Challenge*]* http = acme.Challenges(order.first, "http-01").first;
-        var Arr[ACME.Challenge*]* dns = acme.Challenges(order.first, "dns-01").first;
+        Main::must("register", acme.Register("admin@zam.example.test", true));
+        var Arr[str]* domains = Strs::Split("a.zam.example.test,b.zam.example.test", ','{byte});
+        var (ACME.Order*, Err*) order = acme.NewOrder(domains);
+        Main::must("order", order.1);
+        var Arr[ACME.Challenge*]* http = acme.Challenges(order.0, "http-01").0;
+        var Arr[ACME.Challenge*]* dns = acme.Challenges(order.0, "dns-01").0;
         for(var uint i = 0U; i < http.Len(); i++) {
-            type(Main).put("challenge", http.Get(i).domain + " " + http.Get(i).token + " " + http.Get(i).keyAuthorization + " " + dns.Get(i).dnsValue);
-            type(Main).must("accept", acme.Accept(http.Get(i)));
+            Main::put("challenge", http.Get(i).domain + " " + http.Get(i).token + " " + http.Get(i).keyAuthorization + " " + dns.Get(i).dnsValue);
+            Main::must("accept", acme.Accept(http.Get(i)));
         }
-        type(Main).must("wait", acme.Wait(order.first));
-        var Key* certKey = type(ECDSA).Generate(type(Key.Kind).P256).first;
-        var Arr[byte]* csr = type(X509).Request(certKey, "a.zam.example.test", domains).first;
-        type(Main).must("finalize", acme.Finalize(order.first, csr));
-        var Pair[str, Err*] chainPem = acme.Certificate(order.first);
-        type(Main).must("certificate", chainPem.second);
-        var Arr[X509*]* issued = type(X509).ParsePEMChain(chainPem.first).first;
-        var Arr[byte]* issuedKey = issued.Get(0U).PublicKey().first.DER().first;
-        var Arr[byte]* wantKey = certKey.Public().DER().first;
-        type(Main).put("acme", order.first.status + " " + issued.Len(){str} + " " +
-            (issued.Get(0U).Verify(type(Main).one(goCA), null, "b.zam.example.test", type(Time).Now()) == null){str} + " " +
-            (type(Hex).Encode(issuedKey.Arr(), issuedKey.Len()) == type(Hex).Encode(wantKey.Arr(), wantKey.Len())){str} + " " +
-            (type(ACME).New(argV[2], certKey.Public()).second != null){str});
+        Main::must("wait", acme.Wait(order.0));
+        var Key* certKey = ECDSA::Generate(Key.Kind::P256).0;
+        var Arr[byte]* csr = X509::Request(certKey, "a.zam.example.test", domains).0;
+        Main::must("finalize", acme.Finalize(order.0, csr));
+        var (str, Err*) chainPem = acme.Certificate(order.0);
+        Main::must("certificate", chainPem.1);
+        var Arr[X509*]* issued = X509::ParsePEMChain(chainPem.0).0;
+        var Arr[byte]* issuedKey = issued.Get(0U).PublicKey().0.DER().0;
+        var Arr[byte]* wantKey = certKey.Public().DER().0;
+        Main::put("acme", order.0.status + " " + issued.Len(){str} + " " +
+            (issued.Get(0U).Verify(Main::one(goCA), null, "b.zam.example.test", Time::Now()) == null){str} + " " +
+            (Hex::Encode(issuedKey.Arr(), issuedKey.Len()) == Hex::Encode(wantKey.Arr(), wantKey.Len())){str} + " " +
+            (ACME::New(argV[2], certKey.Public()).1 != null){str});
     }
 }
 `)
@@ -214,7 +214,7 @@ namespace Main {
 	assert.Equal(t, fmt.Sprintf("%x", fingerprint), first("zamLeafFingerprint"))
 	parts := strings.Split(first("zamLeaf"), "|")
 	require.Len(t, parts, 5)
-	assert.Equal(t, strings.ToUpper(zamLeaf.SerialNumber.Text(16)), parts[0])
+	assert.Equal(t, strings.ToUpper(zamLeaf.SerialNumber.Text(16)), strings.TrimLeft(parts[0], "0"))
 	assert.Equal(t, []string{"true", ocsp.URL + "/ocsp"}, parts[1:3])
 	assert.Equal(t, parts[4], parts[3])
 	assert.Equal(t, "2 true true", first("chain"))

@@ -17,100 +17,100 @@ import std("math/*");
 
 namespace Main {
     static fun flt(flt) r = (x) {
-        return type(Math).Round(x * 1000000.0) / 1000000.0 + 0.0;
+        return Math::Round(x * 1000000.0) / 1000000.0 + 0.0;
     }
 
     static fun BigInt*(str) big = (s) {
-        return type(BigInt).Parse(s).first;
+        return BigInt::Parse(s).0;
     }
 
     static fun str() basics = () {
-        var str s = type(Math).Sqrt(2.0){str} + " " + type(Math).Pow(2.0, 10.0){str} + " " + type(Math).Floor(-1.5){str};
-        s = s + " " + type(Math).Mod(7.5, 2.0){str} + " " + type(Math).Round(2.5){str} + " " + type(Math).Log(type(Constants).E){str};
-        s = s + " " + type(Flts).NegInf{str} + " " + type(Math).IsNaN(type(Flts).NaN){str} + " " + type(Math).CopySign(3.0, -0.0){str};
-        s = s + " " + type(Math).Gcd(84U, 36U){str} + " " + type(Math).Lcm(4U, 6U){str} + " " + type(Math).PowInt(-3, 5U){str};
-        s = s + " " + type(Math).Hypot(3.0, 4.0){str} + " " + type(Math).Fma(2.0, 3.0, 1.0){str} + " " + type(Math).Clamp(5.0, 0.0, 1.0){str};
-        s = s + " " + type(Trig).Sin(type(Constants).Pi / 2.0){str} + " " + (type(Trig).Atan2(1.0, 1.0) * 4.0){str} + " " + type(Trig).ToDegrees(type(Constants).Pi){str};
+        var str s = Math::Sqrt(2.0){str} + " " + Math::Pow(2.0, 10.0){str} + " " + Math::Floor(-1.5){str};
+        s = s + " " + Math::Mod(7.5, 2.0){str} + " " + Math::Round(2.5){str} + " " + Math::Log(Constants::E){str};
+        s = s + " " + Flts::NegInf{str} + " " + Math::IsNaN(Flts::NaN){str} + " " + Math::CopySign(3.0, -0.0){str};
+        s = s + " " + Math::Gcd(84U, 36U){str} + " " + Math::Lcm(4U, 6U){str} + " " + Math::PowInt(-3, 5U){str};
+        s = s + " " + Math::Hypot(3.0, 4.0){str} + " " + Math::Fma(2.0, 3.0, 1.0){str} + " " + Math::Clamp(5.0, 0.0, 1.0){str};
+        s = s + " " + Trig::Sin(Constants::Pi / 2.0){str} + " " + (Trig::Atan2(1.0, 1.0) * 4.0){str} + " " + Trig::ToDegrees(Constants::Pi){str};
         return s;
     }
 
     static fun str() bits = () {
-        var str s = type(Uints).Ones(255U){str} + " " + type(Uints).LeadingZeros(1U){str} + " " + type(Uints).TrailingZeros(8U){str} + " " + type(Uints).TrailingZeros(0U){str};
-        s = s + " " + (type(Uints).Reverse(1U) == 9223372036854775808U){str} + " " + (type(Uints).ReverseBytes(1U) == 72057594037927936U){str};
-        s = s + " " + type(Uints).RotateLeft(9223372036854775809U, 1U){str} + " " + type(Flts).ToBits(1.0){str} + " " + type(Flts).FromBits(4607182418800017408U){str};
-        s = s + " " + type(Uints).NextPowerOfTwo(33U){str} + " " + type(Uints).Len(255U){str} + " " + type(Uints).IsPowerOfTwo(64U){str};
+        var str s = Uints::Ones(255U){str} + " " + Uints::LeadingZeros(1U){str} + " " + Uints::TrailingZeros(8U){str} + " " + Uints::TrailingZeros(0U){str};
+        s = s + " " + (Uints::Reverse(1U) == 9223372036854775808U){str} + " " + (Uints::ReverseBytes(1U) == 72057594037927936U){str};
+        s = s + " " + Uints::RotateLeft(9223372036854775809U, 1U){str} + " " + Flts::ToBits(1.0){str} + " " + Flts::FromBits(4607182418800017408U){str};
+        s = s + " " + Uints::NextPowerOfTwo(33U){str} + " " + Uints::Len(255U){str} + " " + Uints::IsPowerOfTwo(64U){str};
         return s;
     }
 
     static fun str() hashes = () {
-        var Pair[byte*, int] a = type(Strs).ToBytes("a");
-        var Pair[byte*, int] abc = type(Strs).ToBytes("abc");
-        var Pair[byte*, int] fox = type(Strs).ToBytes("the quick brown fox jumps over the lazy dog!");
-        var Pair[byte*, int] hello = type(Strs).ToBytes("hello");
-        var Pair[byte*, int] g = type(Strs).ToBytes("abcdefg");
-        var str s = type(Hash).FNV1a(a.first, 1U){str} + " " + type(Hash).XXHash64(abc.first, 3U, 0U){str};
-        s = s + " " + type(Hash).XXHash64(fox.first, fox.second{uint}, 0U){str} + " " + type(Hash).XXHash64(fox.first, fox.second{uint}, 7U){str};
-        s = s + " " + type(Hash).Murmur3(hello.first, 5U, 0U){str} + " " + type(Hash).Murmur3(g.first, 7U, 3U){str};
-        s = s + " " + (type(Hash).Str("abc") == type(Hash).XXHash64(abc.first, 3U, 0U)){str} + " " + (type(Hash).Flt(0.0) == type(Hash).Flt(-0.0)){str};
+        var (byte*, int) a = Strs::ToBytes("a");
+        var (byte*, int) abc = Strs::ToBytes("abc");
+        var (byte*, int) fox = Strs::ToBytes("the quick brown fox jumps over the lazy dog!");
+        var (byte*, int) hello = Strs::ToBytes("hello");
+        var (byte*, int) g = Strs::ToBytes("abcdefg");
+        var str s = Hash::FNV1a(a.0, 1U){str} + " " + Hash::XXHash64(abc.0, 3U, 0U){str};
+        s = s + " " + Hash::XXHash64(fox.0, fox.1{uint}, 0U){str} + " " + Hash::XXHash64(fox.0, fox.1{uint}, 7U){str};
+        s = s + " " + Hash::Murmur3(hello.0, 5U, 0U){str} + " " + Hash::Murmur3(g.0, 7U, 3U){str};
+        s = s + " " + (Hash::Str("abc") == Hash::XXHash64(abc.0, 3U, 0U)){str} + " " + (Hash::Flt(0.0) == Hash::Flt(-0.0)){str};
         return s;
     }
 
     static fun str() values = () {
-        var Complex a = type(Complex).Of(1.0, 2.0);
-        var Complex b = type(Complex).Of(3.0, -4.0);
+        var Complex a = Complex::Of(1.0, 2.0);
+        var Complex b = Complex::Of(3.0, -4.0);
         var Complex p = a.Mul(b);
         var Complex q = p.Div(b);
-        var Complex root = type(Complex).Of(-4.0, 0.0).Sqrt();
+        var Complex root = Complex::Of(-4.0, 0.0).Sqrt();
         var str s = p.Str() + " " + q.Str() + " " + root.Str() + " " + b.Abs(){str} + " " + (&p){str};
-        var Complex e = type(Complex).Of(0.0, type(Constants).Pi).Exp();
-        s = s + " " + type(Main).r(e.re){str} + "," + type(Main).r(e.im){str};
+        var Complex e = Complex::Of(0.0, Constants::Pi).Exp();
+        s = s + " " + Main::r(e.re){str} + "," + Main::r(e.im){str};
 
-        var Quaternion rot = type(Quaternion).FromAxisAngle(0.0, 0.0, 2.0, type(Constants).Pi / 2.0);
-        var Vector* v = rot.Rotate(type(Vector).New(3U, 1.0, 0.0, 0.0));
-        s = s + " " + type(Main).r(v.Get(0U)){str} + "," + type(Main).r(v.Get(1U)){str} + "," + type(Main).r(v.Get(2U)){str};
-        var Quaternion half = type(Quaternion).Identity().Slerp(rot, 0.5);
-        s = s + " " + type(Main).r(half.Mul(half).Sub(rot).Norm()){str} + " " + type(Main).r(rot.Mul(rot.Inverse()).w){str};
+        var Quaternion rot = Quaternion::FromAxisAngle(0.0, 0.0, 2.0, Constants::Pi / 2.0);
+        var Vector* v = rot.Rotate(Vector::New(3U, 1.0, 0.0, 0.0));
+        s = s + " " + Main::r(v.Get(0U)){str} + "," + Main::r(v.Get(1U)){str} + "," + Main::r(v.Get(2U)){str};
+        var Quaternion half = Quaternion::Identity().Slerp(rot, 0.5);
+        s = s + " " + Main::r(half.Mul(half).Sub(rot).Norm()){str} + " " + Main::r(rot.Mul(rot.Inverse()).w){str};
 
-        var Fraction f = type(Fraction).Of(1, 2).Add(type(Fraction).Of(1, 3));
-        s = s + " " + f.Str() + " " + type(Fraction).Of(3, 4).Mul(type(Fraction).Of(2, 3)).Str() + " " + type(Fraction).Of(4, -8).Str();
-        s = s + " " + type(Fraction).Of(1, 3).Cmp(type(Fraction).Of(1, 2)){str} + " " + type(Fraction).Of(6, 3).Str() + " " + f.Div(f).Str();
+        var Fraction f = Fraction::Of(1, 2).Add(Fraction::Of(1, 3));
+        s = s + " " + f.Str() + " " + Fraction::Of(3, 4).Mul(Fraction::Of(2, 3)).Str() + " " + Fraction::Of(4, -8).Str();
+        s = s + " " + Fraction::Of(1, 3).Cmp(Fraction::Of(1, 2)){str} + " " + Fraction::Of(6, 3).Str() + " " + f.Div(f).Str();
         return s;
     }
 
     static fun str() linear = () {
-        var Vector* a = type(Vector).New(3U, 1.0, 2.0, 3.0);
-        var Vector* b = type(Vector).New(3U, 4.0, 5.0, 6.0);
-        var str s = a.Dot(b){str} + " " + a.Cross(b){str} + " " + type(Vector).New(2U, 3.0, 4.0).Norm(){str} + " " + a.Add(b){str};
+        var Vector* a = Vector::New(3U, 1.0, 2.0, 3.0);
+        var Vector* b = Vector::New(3U, 4.0, 5.0, 6.0);
+        var str s = a.Dot(b){str} + " " + a.Cross(b){str} + " " + Vector::New(2U, 3.0, 4.0).Norm(){str} + " " + a.Add(b){str};
         s = s + " " + (a == a.Copy()){str} + " " + (a == b){str} + " " + (a.Hash() == a.Copy().Hash()){str} + " " + a.Len(){str};
 
-        var Matrix* m = type(Matrix).New(2U, 2U, 1.0, 2.0, 3.0, 4.0);
-        var Pair[Matrix*, bool] inv = m.Inverse();
-        s = s + " " + m.Determinant(){str} + " " + inv.first{str} + " " + m.Mul(type(Matrix).Identity(2U)){str} + " " + m.Transpose(){str};
-        s = s + " " + m.MulVector(type(Vector).New(2U, 1.0, 1.0)){str} + " " + type(Matrix).New(2U, 2U, 1.0, 2.0, 2.0, 4.0).Inverse().second{str};
-        s = s + " " + type(Matrix).Identity(3U).Determinant(){str} + " " + (m == m.Copy()){str};
+        var Matrix* m = Matrix::New(2U, 2U, 1.0, 2.0, 3.0, 4.0);
+        var (Matrix*, bool) inv = m.Inverse();
+        s = s + " " + m.Determinant(){str} + " " + inv.0{str} + " " + m.Mul(Matrix::Identity(2U)){str} + " " + m.Transpose(){str};
+        s = s + " " + m.MulVector(Vector::New(2U, 1.0, 1.0)){str} + " " + Matrix::New(2U, 2U, 1.0, 2.0, 2.0, 4.0).Inverse().1{str};
+        s = s + " " + Matrix::Identity(3U).Determinant(){str} + " " + (m == m.Copy()){str};
         return s;
     }
 
     static fun str() bigs = () {
-        var BigInt* f = type(BigInt).FromUint(1U);
+        var BigInt* f = BigInt::FromUint(1U);
         for(var uint i = 2U; i <= 30U; i++) {
-            f = f.Mul(type(BigInt).FromUint(i));
+            f = f.Mul(BigInt::FromUint(i));
         }
-        var str s = f.Str() + " " + type(BigInt).FromInt(2).Pow(100U).Str() + " " + type(BigInt).FromInt(-10).Pow(30U).Str();
-        var BigInt* a = type(BigInt).FromInt(2).Pow(200U).Add(type(BigInt).FromInt(12345));
-        var Pair[BigInt*, BigInt*] d = a.DivMod(type(Main).big("100000000000000000007"));
-        s = s + " " + d.first.Str() + " " + d.second.Str();
-        d = type(Main).big("170141183420855150474555134919112130560").DivMod(type(Main).big("39614081257132168796771975169"));
-        s = s + " " + d.first.Str() + " " + d.second.Str();
-        d = type(BigInt).FromInt(-7).DivMod(type(BigInt).FromInt(2));
-        s = s + " " + d.first.Str() + " " + d.second.Str();
-        s = s + " " + type(BigInt).FromInt(2).Pow(100U).Shr(37U).Str() + " " + type(BigInt).FromInt(3).Pow(50U).Shl(45U).Str();
-        s = s + " " + type(BigInt).FromInt(462).Gcd(type(BigInt).FromInt(-1071)).Str() + " " + type(BigInt).FromInt(-9223372036854775807).Sub(type(BigInt).FromInt(1)).ToInt().first{str};
-        s = s + " " + type(BigInt).FromInt(2).Pow(64U).ToInt().second{str} + " " + type(BigInt).Parse("12x").second{str} + " " + type(BigInt).Parse("-0").first.Str();
-        s = s + " " + type(BigInt).FromInt(5).Cmp(type(BigInt).FromInt(-5)){str} + " " + (type(BigInt).FromInt(5) == type(Main).big("5")){str} + " " + type(BigInt).FromInt(2).Pow(70U).ToFlt(){str};
+        var str s = f.Str() + " " + BigInt::FromInt(2).Pow(100U).Str() + " " + BigInt::FromInt(-10).Pow(30U).Str();
+        var BigInt* a = BigInt::FromInt(2).Pow(200U).Add(BigInt::FromInt(12345));
+        var (BigInt*, BigInt*) d = a.DivMod(Main::big("100000000000000000007"));
+        s = s + " " + d.0.Str() + " " + d.1.Str();
+        d = Main::big("170141183420855150474555134919112130560").DivMod(Main::big("39614081257132168796771975169"));
+        s = s + " " + d.0.Str() + " " + d.1.Str();
+        d = BigInt::FromInt(-7).DivMod(BigInt::FromInt(2));
+        s = s + " " + d.0.Str() + " " + d.1.Str();
+        s = s + " " + BigInt::FromInt(2).Pow(100U).Shr(37U).Str() + " " + BigInt::FromInt(3).Pow(50U).Shl(45U).Str();
+        s = s + " " + BigInt::FromInt(462).Gcd(BigInt::FromInt(-1071)).Str() + " " + BigInt::FromInt(-9223372036854775807).Sub(BigInt::FromInt(1)).ToInt().0{str};
+        s = s + " " + BigInt::FromInt(2).Pow(64U).ToInt().1{str} + " " + BigInt::Parse("12x").1{str} + " " + BigInt::Parse("-0").0.Str();
+        s = s + " " + BigInt::FromInt(5).Cmp(BigInt::FromInt(-5)){str} + " " + (BigInt::FromInt(5) == Main::big("5")){str} + " " + BigInt::FromInt(2).Pow(70U).ToFlt(){str};
 
-        var BigFraction* h = type(BigFraction).FromInts(1, 3).Add(type(BigFraction).FromInts(1, 6));
-        s = s + " " + h.Str() + " " + h.Sub(h).Str() + " " + type(BigFraction).FromInts(-4, -6).Div(type(BigFraction).FromInts(1, 3)).Str() + " " + h.Cmp(type(BigFraction).FromInts(2, 3)){str};
+        var BigFraction* h = BigFraction::FromInts(1, 3).Add(BigFraction::FromInts(1, 6));
+        s = s + " " + h.Str() + " " + h.Sub(h).Str() + " " + BigFraction::FromInts(-4, -6).Div(BigFraction::FromInts(1, 3)).Str() + " " + h.Cmp(BigFraction::FromInts(2, 3)){str};
         return s;
     }
 
@@ -120,14 +120,14 @@ namespace Main {
         var uint x = 99U;
         var bool ok = true;
         for(var int i = 0; i < 300; i++) {
-            var BigInt* a = type(BigInt).FromUint(0U);
-            var BigInt* b = type(BigInt).FromUint(0U);
+            var BigInt* a = BigInt::FromUint(0U);
+            var BigInt* b = BigInt::FromUint(0U);
             x = x * 6364136223846793005U + 1442695040888963407U;
             var uint an = (x >> 33U) % 6U + 1U;
             var uint bn = (x >> 40U) % 4U + 1U;
             for(var uint k = 0U; k < an; k++) {
                 x = x * 6364136223846793005U + 1442695040888963407U;
-                a = a.Shl(32U).Add(type(BigInt).FromUint(x >> 32U));
+                a = a.Shl(32U).Add(BigInt::FromUint(x >> 32U));
             }
             for(var uint k = 0U; k < bn; k++) {
                 x = x * 6364136223846793005U + 1442695040888963407U;
@@ -135,10 +135,10 @@ namespace Main {
                 if(k == 0U && (x & 1U) == 1U) {
                     limb = limb | 2147483648U;
                 }
-                b = b.Shl(32U).Add(type(BigInt).FromUint(limb));
+                b = b.Shl(32U).Add(BigInt::FromUint(limb));
             }
             if(b.IsZero()) {
-                b = type(BigInt).FromUint(3U);
+                b = BigInt::FromUint(3U);
             }
             if((x & 2U) == 2U) {
                 a = a.Neg();
@@ -146,20 +146,20 @@ namespace Main {
             if((x & 4U) == 4U) {
                 b = b.Neg();
             }
-            var Pair[BigInt*, BigInt*] d = a.DivMod(b);
-            ok = ok && d.first.Mul(b).Add(d.second) == a;
-            ok = ok && d.second.Abs().Cmp(b.Abs()) < 0;
-            ok = ok && (d.second.IsZero() || d.second.Sign() == a.Sign());
-            ok = ok && type(Main).big(a.Str()) == a;
+            var (BigInt*, BigInt*) d = a.DivMod(b);
+            ok = ok && d.0.Mul(b).Add(d.1) == a;
+            ok = ok && d.1.Abs().Cmp(b.Abs()) < 0;
+            ok = ok && (d.1.IsZero() || d.1.Sign() == a.Sign());
+            ok = ok && Main::big(a.Str()) == a;
         }
         return ok;
     }
 
     fun void(uint, str...) main = (argC, argV) {
-        var str out = type(Main).basics() + "\n" + type(Main).bits() + "\n" + type(Main).hashes() + "\n";
-        out = out + type(Main).values() + "\n" + type(Main).linear() + "\n" + type(Main).bigs() + "\n";
-        out = out + type(Main).divisions(){str} + "\n";
-        type(File).StdOut.WriteStr(out);
+        var str out = Main::basics() + "\n" + Main::bits() + "\n" + Main::hashes() + "\n";
+        out = out + Main::values() + "\n" + Main::linear() + "\n" + Main::bigs() + "\n";
+        out = out + Main::divisions(){str} + "\n";
+        File::StdOut.WriteStr(out);
     }
 }
 `)

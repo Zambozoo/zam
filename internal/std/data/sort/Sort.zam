@@ -8,26 +8,26 @@ public namespace Sort {
     fun[A] void(A*, A*, ArrList[uint]*, ArrList[uint]*, uint) run = (arr, tmp, runBase, runLen, len) {
         var uint lo = 0U;
         var uint remaining = len;
-        var uint minRun = type(Sort).minRunLength(remaining);
+        var uint minRun = Sort::minRunLength(remaining);
 
         for (;remaining != 0U;) {
-            var uint rl = type(Sort)[A].countRunAndMakeAscending(arr, lo, lo + remaining);
+            var uint rl = Sort::[A]countRunAndMakeAscending(arr, lo, lo + remaining);
 
             if (rl < minRun) {
                 var uint force = remaining < minRun ? remaining : minRun;
-                type(Sort)[A].binarySort(arr, lo, lo + force, lo + rl);
+                Sort::[A]binarySort(arr, lo, lo + force, lo + rl);
                 rl = force;
             }
 
             runBase.AddLast(lo);
             runLen.AddLast(rl);
-            type(Sort)[A].mergeCollapse(arr, tmp, runBase, runLen);
+            Sort::[A]mergeCollapse(arr, tmp, runBase, runLen);
 
             lo = lo + rl;
             remaining = remaining - rl;
         }
 
-        type(Sort)[A].mergeForceCollapse(arr, tmp, runBase, runLen);
+        Sort::[A]mergeForceCollapse(arr, tmp, runBase, runLen);
     }
 
     // Merge adjacent runs on the stack until the TimSort invariants hold.
@@ -38,9 +38,9 @@ public namespace Sort {
                 if (runLen.Get(n - 1U) < runLen.Get(n + 1U)) {
                     n = n - 1U;
                 }
-                type(Sort)[A].mergeAt(arr, tmp, runBase, runLen, n);
+                Sort::[A]mergeAt(arr, tmp, runBase, runLen, n);
             } else if (runLen.Get(n) <= runLen.Get(n + 1U)) {
-                type(Sort)[A].mergeAt(arr, tmp, runBase, runLen, n);
+                Sort::[A]mergeAt(arr, tmp, runBase, runLen, n);
             } else {
                 break;
             }
@@ -54,7 +54,7 @@ public namespace Sort {
             if (n > 0U && runLen.Get(n - 1U) < runLen.Get(n + 1U)) {
                 n = n - 1U;
             }
-            type(Sort)[A].mergeAt(arr, tmp, runBase, runLen, n);
+            Sort::[A]mergeAt(arr, tmp, runBase, runLen, n);
         }
     }
 
@@ -74,15 +74,15 @@ public namespace Sort {
         runLen.RemoveLast();
 
         if (len1 <= len2) {
-            type(Sort)[A].mergeLo(arr, tmp, base1, len1, base2, len2);
+            Sort::[A]mergeLo(arr, tmp, base1, len1, base2, len2);
         } else {
-            type(Sort)[A].mergeHi(arr, tmp, base1, len1, base2, len2);
+            Sort::[A]mergeHi(arr, tmp, base1, len1, base2, len2);
         }
     }
 
     // Merge when len1 <= len2
     fun[A] void(A*, A*, uint, uint, uint, uint) mergeLo = (arr, tmp, base1, len1, base2, len2) {
-        type(Arrs)[A].Copy(len1, arr + base1, tmp);
+        Arrs::[A]Copy(len1, arr + base1, tmp);
 
         var uint cursorT = 0U;
         var uint cursor2 = base2;
@@ -102,13 +102,13 @@ public namespace Sort {
         }
 
         if (len1 > 0U) {
-            type(Arrs)[A].Copy(len1, tmp + cursorT, arr + dest);
+            Arrs::[A]Copy(len1, tmp + cursorT, arr + dest);
         }
     }
 
     // Merge when len1 > len2
     fun[A] void(A*, A*, uint, uint, uint, uint) mergeHi = (arr, tmp, base1, len1, base2, len2) {
-        type(Arrs)[A].Copy(len2, arr + base2, tmp);
+        Arrs::[A]Copy(len2, arr + base2, tmp);
 
         var uint endLeft = base1 + len1;
         var uint endT = len2;
@@ -128,7 +128,7 @@ public namespace Sort {
         }
 
         if (len2 > 0U) {
-            type(Arrs)[A].Copy(endT, tmp, arr + base1);
+            Arrs::[A]Copy(endT, tmp, arr + base1);
         }
     }
 
@@ -168,7 +168,7 @@ public namespace Sort {
         if ((arr[runHi] <=> arr[lo]) < 0) {
             runHi = runHi + 1U;
             for (;runHi < hi && (arr[runHi] <=> arr[runHi - 1U]) < 0; runHi = runHi + 1U) {}
-            type(Sort)[A].reverseRange(arr, lo, runHi);
+            Sort::[A]reverseRange(arr, lo, runHi);
         } else {
             runHi = runHi + 1U;
             for (;runHi < hi && (arr[runHi] <=> arr[runHi - 1U]) >= 0; runHi = runHi + 1U) {}
@@ -206,16 +206,16 @@ public namespace Sort {
         }
 
         if (len < 32U) {
-            var uint initRun = type(Sort)[A].countRunAndMakeAscending(arr, 0U, len);
-            type(Sort)[A].binarySort(arr, 0U, len, initRun);
+            var uint initRun = Sort::[A]countRunAndMakeAscending(arr, 0U, len);
+            Sort::[A]binarySort(arr, 0U, len, initRun);
             return;
         }
 
         var A* tmp = new(A, len / 2U + 1U);
-        var ArrList[uint]* runBase = type(ArrList)[uint].NewWithCap(32U, 0U);
-        var ArrList[uint]* runLen = type(ArrList)[uint].NewWithCap(32U, 0U);
+        var ArrList[uint]* runBase = ArrList::[uint]NewWithCap(32U, 0U);
+        var ArrList[uint]* runLen = ArrList::[uint]NewWithCap(32U, 0U);
 
-        type(Sort)[A].run(arr, tmp, runBase, runLen, len);
+        Sort::[A]run(arr, tmp, runBase, runLen, len);
 
         delete(runBase);
         free(runBase);
@@ -225,6 +225,6 @@ public namespace Sort {
     }
 
     public fun[A] void(Arr[A]*) SortArr = (arr) {
-        type(Sort)[A].Sort(arr.Len(), arr.Arr()...);
+        Sort::[A]Sort(arr.Len(), arr.Arr()...);
     }
 }

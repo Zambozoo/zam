@@ -774,7 +774,7 @@ func newFieldEnum(parser SyntaxParser, enum *DeclEnum) (*FieldEnum, error) {
 
 	if enum.primitive != nil {
 		if _, err := parser.Consume(TTLeftParen); err != nil {
-			return nil, keep(value, fmt.Errorf("enum value %s.%s must be written with a %s value: %w", enum.name, name, enum.primitive.String(), err))
+			return nil, keep(value, fmt.Errorf("enum value %s::%s must be written with a %s value: %w", enum.name, name, enum.primitive.String(), err))
 		}
 		expr, err := newExpr(parser)
 		if err != nil {
@@ -790,7 +790,7 @@ func newFieldEnum(parser SyntaxParser, enum *DeclEnum) (*FieldEnum, error) {
 	if tok, err := parser.Match(TTLeftParen); err != nil {
 		return nil, keep(value, err)
 	} else if tok != nil {
-		return nil, keep(value, fmt.Errorf("enum value %s.%s cannot be written with a value: %s is not backed by a primitive", enum.name, name, enum.name))
+		return nil, keep(value, fmt.Errorf("enum value %s::%s cannot be written with a value: %s is not backed by a primitive", enum.name, name, enum.name))
 	}
 
 	if tok, err := parser.Match(TTPeriod); err != nil {
@@ -815,7 +815,7 @@ func newFieldEnum(parser SyntaxParser, enum *DeclEnum) (*FieldEnum, error) {
 		return nil, keep(value, err)
 	} else if tok == nil {
 		for {
-			expr, err := newExpr(parser)
+			expr, err := newExprAssign(parser)
 			if err != nil {
 				return nil, keep(value, err)
 			}

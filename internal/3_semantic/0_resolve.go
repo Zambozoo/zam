@@ -220,6 +220,17 @@ func (r *referenceTypeResolverVisitor) VisitStmtVariable(s *syntax.StmtVariable)
 	return nil
 }
 
+// VisitStmtUnpack implements [syntax.StmtVisitor].
+func (r *referenceTypeResolverVisitor) VisitStmtUnpack(s *syntax.StmtUnpack) error {
+	for _, variable := range s.Variables {
+		variable.Accept(r)
+	}
+	if s.Expr != nil {
+		s.Expr.Accept(r)
+	}
+	return nil
+}
+
 // VisitExprCast implements [syntax.ExprVisitor].
 func (r *referenceTypeResolverVisitor) VisitExprCast(e *syntax.ExprCast) error {
 	e.Type.Accept(r)
@@ -230,6 +241,12 @@ func (r *referenceTypeResolverVisitor) VisitExprCast(e *syntax.ExprCast) error {
 // VisitExprField implements [syntax.ExprVisitor].
 func (r *referenceTypeResolverVisitor) VisitExprField(e *syntax.ExprField) error {
 	e.Expr.Accept(r)
+	return nil
+}
+
+// VisitExprFields implements [syntax.ExprVisitor].
+func (r *referenceTypeResolverVisitor) VisitExprFields(e *syntax.ExprFields) error {
+	e.Head.Accept(r)
 	return nil
 }
 
@@ -276,7 +293,7 @@ func (r *referenceTypeResolverVisitor) VisitExprSymbol(e *syntax.ExprSymbol) err
 //
 // A generic class is normally rejected as a type reference, since using it as
 // a value requires its parameters be filled in. Field selection through a
-// type is different: the Arr in type(Arr)[string].New names the template a
+// type is different: the Arr in Arr::[string]New names the template a
 // static method lives on, not a value, so the reference is resolved without
 // the generic check. Each written type argument is resolved on its own.
 func (r *referenceTypeResolverVisitor) VisitExprType(e *syntax.ExprType) error {
@@ -444,9 +461,9 @@ func (r *referenceTypeResolverVisitor) visitTypeReference(t *syntax.TypeReferenc
 	// A single-id reference also resolves against the file's imports when one
 	// of them carries a top-level declaration of that name. The dotted form
 	// above is the fully-qualified spelling; this is the shorthand that lets a
-	// `import "../Pair.zam"` or `import std("Pair.zam")` be reached as just
-	// `Pair`. Walking every import rather than keying by id covers both the
-	// relative form (whose id is "Pair" already) and the package form (whose
+	// `import "../Err.zam"` or `import std("Err.zam")` be reached as just
+	// `Err`. Walking every import rather than keying by id covers both the
+	// relative form (whose id is "Err" already) and the package form (whose
 	// id is the package name, "std"). An aliased import is reached only by its
 	// alias, which is what lets two imports declaring one name be told apart.
 	var all []*syntax.Import
@@ -527,5 +544,13 @@ func (r *referenceTypeResolverVisitor) VisitTypeTailed(t *syntax.TypeTailed) err
 // VisitTypeWrapped implements [syntax.TypeVisitor].
 func (r *referenceTypeResolverVisitor) VisitTypeWrapped(t *syntax.TypeWrapped) error {
 	t.Type.Accept(r)
+	return nil
+}
+
+// VisitTypeTuple implements [syntax.TypeVisitor].
+func (r *referenceTypeResolverVisitor) VisitTypeTuple(t *syntax.TypeTuple) error {
+	for _, element := range t.Types {
+		element.Accept(r)
+	}
 	return nil
 }

@@ -12,7 +12,7 @@ public class Once {
     }
 
     public fun void() Init = () {
-        this.m = type(Mutex).New();
+        this.m = Mutex::New();
         this.done = false;
     }
 

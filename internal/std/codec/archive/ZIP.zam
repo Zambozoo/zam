@@ -1,16 +1,15 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "Archive.zam";
 
 // Zip archives, written with deflate and read with any method libarchive
 // supports
 public namespace ZIP {
-    public static fun Pair[Arr[Archive.Entry*]*, Err*](byte*, uint) Read = (b, n) {
-        return type(Archive).Read(b, n, type(Archive.Format).Zip);
+    public static fun (Arr[Archive.Entry*]*, Err*)(byte*, uint) Read = (b, n) {
+        return Archive::Read(b, n, Archive.Format::Zip);
     }
 
-    public static fun Pair[Arr[byte]*, Err*](Arr[Archive.Entry*]*) Write = (entries) {
-        return type(Archive).Write(entries, type(Archive.Format).Zip);
+    public static fun (Arr[byte]*, Err*)(Arr[Archive.Entry*]*) Write = (entries) {
+        return Archive::Write(entries, Archive.Format::Zip);
     }
 }

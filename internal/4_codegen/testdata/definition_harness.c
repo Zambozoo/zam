@@ -231,6 +231,17 @@ static void pointerDump(const ZamPointerDefinition *d) {
     put("wordCount", ZAMTYPE_ID_WORDS);
 }
 
+// A tuple definition is its size and initializer, its element types read as the
+// type list a signature is, and each element's offset behind the list.
+static void tupleDump(const ZamTupleDefinition *d) {
+    put("instanceByteSize", d->instanceByteSize);
+    put("initializerInstruction", d->initializerInstruction);
+    putTypeList("types", 0, zam_tuple_types(d));
+    for (uint64_t i = 0; i < d->elementCount; i++)
+        put("offset", zam_tuple_offsets(d)[i]);
+    put("wordCount", wordsBetween(d, zam_tuple_offsets(d) + d->elementCount));
+}
+
 // A thread type's definition is the one type it yields. The bucket check is what
 // zam_thread_type_result adds over this, and it is a question about the image
 // rather than about the definition's bytes.
@@ -307,6 +318,8 @@ int main(int argc, char **argv) {
         typeListDump((const ZamTypeList *)bytes);
     else if (strcmp(kind, "pointer") == 0)
         pointerDump((const ZamPointerDefinition *)bytes);
+    else if (strcmp(kind, "tuple") == 0)
+        tupleDump((const ZamTupleDefinition *)bytes);
     else if (strcmp(kind, "thread-type") == 0)
         threadTypeDump((const ZamWord *)bytes);
     else {

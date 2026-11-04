@@ -5,11 +5,11 @@ import "Digest.zam";
 public namespace SHA1 {
     // New starts a SHA-1 digest.
     public static fun Digest*() New = () {
-        return type(Digest).Must(type(Digest.Kind).SHA1, 0U);
+        return Digest::Must(Digest.Kind::SHA1, 0U);
     }
 
     // Sum returns the SHA-1 digest of n bytes at b.
     public static fun Arr[byte]*(byte*, uint) Sum = (b, n) {
-        return type(Digest).Of(type(Digest.Kind).SHA1, 0U, b, n);
+        return Digest::Of(Digest.Kind::SHA1, 0U, b, n);
     }
 }

@@ -89,6 +89,7 @@ func newTestReader() *codegenReader {
 			threadTypeDefinitionsStartIndex:       first,
 			functionTypeDefinitionsStartIndex:     first,
 			pointerDefinitionsStartIndex:          first,
+			tupleDefinitionsStartIndex:            first + 2,
 			structDefinitionsStartIndex:           first + 2,
 			genericStructDefinitionsStartIndex:    first + 3,
 			enumDefinitionsStartIndex:             first + 3,
@@ -277,7 +278,7 @@ func TestValidateMainMethodRequiresAnEntry(t *testing.T) {
 		},
 		"wrong type": {
 			body:     `    static fun int() main = () { return 0; }`,
-			expected: "main method Main.main is of type",
+			expected: "main method Main::main is of type",
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

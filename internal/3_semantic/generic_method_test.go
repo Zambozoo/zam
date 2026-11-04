@@ -10,7 +10,7 @@ import (
 // Naming a generic static method without its type arguments is refused: the
 // field type still carries open generic parameters, and a call compiled against
 // those would try to work on parameters nothing has bound. The user has to
-// write type(Decl)[A,...].Field rather than type(Decl).Field.
+// write Decl::[A,...]Field rather than Decl::Field.
 func TestValidateASTRejectsGenericStaticMethodWithoutTypeArgs(t *testing.T) {
 	errs := validate(t, `
 namespace Main {
@@ -22,7 +22,7 @@ namespace Main {
     }
 `+mainMethod+`
     static fun void() build = () {
-        type(Box).New(0);
+        Box::New(0);
     }
 }
 `, nil)
@@ -44,7 +44,7 @@ namespace Main {
     }
 `+mainMethod+`
     static fun void() build = () {
-        type(Box)[int].New(0);
+        Box::[int]New(0);
     }
 }
 `, nil)

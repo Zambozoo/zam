@@ -51,6 +51,8 @@ type (
 		functionTypeDefinitionsStartIndex int
 		// pointerDefinitionsStartIndex is the start index of the pointer definitions.
 		pointerDefinitionsStartIndex int
+		// tupleDefinitionsStartIndex is the start index of the tuple definitions.
+		tupleDefinitionsStartIndex int
 		// structDefinitionsStartIndex is the start index of the struct definitions.
 		structDefinitionsStartIndex int
 		// genericStructDefinitionsStartIndex is the start index of the generic struct definitions.
@@ -110,6 +112,8 @@ type (
 		threadTypeDefinitions []typeDefinition
 		// pointerDefinitions are the readers for the pointer definitions.
 		pointerDefinitions []typeDefinition
+		// tupleDefinitions are the readers for the tuple definitions.
+		tupleDefinitions []typeDefinition
 		// structDefinitions are the readers for the struct definitions.
 		structDefinitions []typeDefinition
 		// genericStructDefinitions are the readers for the generic struct definitions.
@@ -297,6 +301,7 @@ func (b *counts) words() []int {
 		b.threadTypeDefinitionsStartIndex,
 		b.functionTypeDefinitionsStartIndex,
 		b.pointerDefinitionsStartIndex,
+		b.tupleDefinitionsStartIndex,
 		b.structDefinitionsStartIndex,
 		b.genericStructDefinitionsStartIndex,
 		b.enumDefinitionsStartIndex,
@@ -323,6 +328,7 @@ func (b *counts) startIndices() []*int {
 		&b.threadTypeDefinitionsStartIndex,
 		&b.functionTypeDefinitionsStartIndex,
 		&b.pointerDefinitionsStartIndex,
+		&b.tupleDefinitionsStartIndex,
 		&b.structDefinitionsStartIndex,
 		&b.genericStructDefinitionsStartIndex,
 		&b.enumDefinitionsStartIndex,
@@ -345,6 +351,7 @@ func (cr *codegenReader) definitionBuckets() [][]typeDefinition {
 		cr.threadTypeDefinitions,
 		cr.functionTypeDefinitions,
 		cr.pointerDefinitions,
+		cr.tupleDefinitions,
 		cr.structDefinitions,
 		cr.genericStructDefinitions,
 		cr.enumDefinitions,
@@ -697,7 +704,7 @@ func validateMainMethod(ast *syntax.AST) error {
 		return base.NewError(fmt.Errorf("main method not found in main code declaration %s", decl.Name()), location)
 	}
 	if !mainMethod.FieldType().Equals(mainType) {
-		return base.NewError(fmt.Errorf("main method %s.%s is of type %q, not %q",
+		return base.NewError(fmt.Errorf("main method %s::%s is of type %q, not %q",
 			decl.Name(), base.MainMethodName, mainMethod.FieldType().String(), mainType.String()), location)
 	}
 	return nil

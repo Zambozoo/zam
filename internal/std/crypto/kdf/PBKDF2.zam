@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../hash/Digest.zam";
 
@@ -8,18 +7,18 @@ import "../hash/Digest.zam";
 // Digest.Kind
 public namespace PBKDF2 {
     // Key derives length bytes from a password and salt over iterations.
-    public static fun Pair[Arr[byte]*, Err*](Digest.Kind, byte*, uint, byte*, uint, uint, uint) Key = (kind, password, passwordLen, salt, saltLen, iterations, length) {
+    public static fun (Arr[byte]*, Err*)(Digest.Kind, byte*, uint, byte*, uint, uint, uint) Key = (kind, password, passwordLen, salt, saltLen, iterations, length) {
         var byte* out = new(byte, length);
         var str errStr;
         native(STD_PBKDF2){void(byte, byte*, int, byte*, int, uint, byte*, int, str*)}(kind{byte}, password, passwordLen{int}, salt, saltLen{int}, iterations, out, length{int}, &errStr);
-        var Pair[Arr[byte]*, Err*] r;
-        r.first = null;
-        r.second = null;
+        var (Arr[byte]*, Err*) r;
+        r.0 = null;
+        r.1 = null;
         if(errStr != null) {
             free(out);
-            r.second = type(StrErr).New(errStr);
+            r.1 = StrErr::New(errStr);
         } else {
-            r.first = type(Arr)[byte].New(length, out...);
+            r.0 = Arr::[byte]New(length, out...);
         }
         return r;
     }

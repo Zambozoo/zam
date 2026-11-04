@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "Key.zam";
 
@@ -53,10 +52,10 @@ public namespace HPKE {
 
     // Seal seals n bytes at b to key, binding infoLen bytes at info and
     // aadLen bytes at aad.
-    public static fun Pair[HPKE.Sealed*, Err*](HPKE.Suite, Key*, byte*, uint, byte*, uint, byte*, uint) Seal = (suite, key, info, infoLen, aad, aadLen, b, n) {
-        var Pair[HPKE.Sealed*, Err*] out;
-        out.first = null;
-        out.second = null;
+    public static fun (HPKE.Sealed*, Err*)(HPKE.Suite, Key*, byte*, uint, byte*, uint, byte*, uint) Seal = (suite, key, info, infoLen, aad, aadLen, b, n) {
+        var (HPKE.Sealed*, Err*) out;
+        out.0 = null;
+        out.1 = null;
         var uint encH = 0U;
         var int encN = 0;
         var uint ctH = 0U;
@@ -64,29 +63,29 @@ public namespace HPKE {
         var str errStr;
         native(STD_HPKE_SEAL){void(int, int, int, uint, byte*, int, byte*, int, byte*, int, uint*, int*, uint*, int*, str*)}(suite.kem{int}, suite.kdf{int}, suite.cipher{int}, key.handle, info, infoLen{int}, aad, aadLen{int}, b, n{int}, &encH, &encN, &ctH, &ctN, &errStr);
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
             return out;
         }
         var HPKE.Sealed* s = new(HPKE.Sealed);
-        s.enc = type(Key).take(encH, encN, null).first;
-        s.ciphertext = type(Key).take(ctH, ctN, null).first;
-        out.first = s;
+        s.enc = Key::take(encH, encN, null).0;
+        s.ciphertext = Key::take(ctH, ctN, null).0;
+        out.0 = s;
         return out;
     }
 
     // Open opens what Seal sealed to key's public half, given the same info
     // and aad.
-    public static fun Pair[Arr[byte]*, Err*](HPKE.Suite, Key*, HPKE.Sealed*, byte*, uint, byte*, uint) Open = (suite, key, sealed, info, infoLen, aad, aadLen) {
+    public static fun (Arr[byte]*, Err*)(HPKE.Suite, Key*, HPKE.Sealed*, byte*, uint, byte*, uint) Open = (suite, key, sealed, info, infoLen, aad, aadLen) {
         if(!key.IsPrivate()) {
-            var Pair[Arr[byte]*, Err*] out;
-            out.first = null;
-            out.second = type(StrErr).New("HPKE needs a private key to open");
+            var (Arr[byte]*, Err*) out;
+            out.0 = null;
+            out.1 = StrErr::New("HPKE needs a private key to open");
             return out;
         }
         var uint h = 0U;
         var int len = 0;
         var str errStr;
         native(STD_HPKE_OPEN){void(int, int, int, uint, byte*, int, byte*, int, byte*, int, byte*, int, uint*, int*, str*)}(suite.kem{int}, suite.kdf{int}, suite.cipher{int}, key.handle, sealed.enc.Arr(), sealed.enc.Len(){int}, info, infoLen{int}, aad, aadLen{int}, sealed.ciphertext.Arr(), sealed.ciphertext.Len(){int}, &h, &len, &errStr);
-        return type(Key).take(h, len, errStr);
+        return Key::take(h, len, errStr);
     }
 }

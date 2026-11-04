@@ -4,7 +4,7 @@ import syntax "github.com/zambozoo/zam/internal/2_syntax"
 
 // collectTypes gathers every ground (fully concrete) function type and
 // thread type argument the program uses into the AST's FunctionTypes and
-// ThreadTypes sets.
+// ThreadTypes sets, along with every ground pointer and tuple type.
 //
 // Function and thread types cannot be read straight off the source tree: inside
 // a generic decl every type is written against the formal parameters (e.g.
@@ -26,6 +26,7 @@ func collectTypes(ast *syntax.AST) {
 		functionTypes: syntax.NewTypeSet(),
 		threadTypes:   syntax.NewTypeSet(),
 		pointerTypes:  syntax.NewTypeSet(),
+		tupleTypes:    syntax.NewTypeSet(),
 	}
 	for _, entry := range ast.CodeFiles.All() {
 		entry.Value.Decl.Accept(c)
@@ -33,12 +34,14 @@ func collectTypes(ast *syntax.AST) {
 	ast.FunctionTypes = *c.functionTypes
 	ast.ThreadTypes = *c.threadTypes
 	ast.PointerTypes = *c.pointerTypes
+	ast.TupleTypes = *c.tupleTypes
 }
 
 type functionTypeCollector struct {
 	functionTypes *syntax.TypeSet
 	threadTypes   *syntax.TypeSet
 	pointerTypes  *syntax.TypeSet
+	tupleTypes    *syntax.TypeSet
 	// concrete is the instantiation whose binding is applied to every type in the
 	// tree currently being walked, or nil while walking ground types (a
 	// non-generic decl, or any static field).
@@ -89,7 +92,7 @@ func (c *functionTypeCollector) walkInstanceFields(d syntax.Decl) {
 // or not the program ever writes T*.
 //
 // A namespace has no instances and no instance methods, so there is no receiver
-// to record. It is DeclTypeable so that type(NS).staticField resolves, but
+// to record. It is DeclTypeable so that NS::staticField resolves, but
 // nothing at runtime holds a pointer to a namespace to be collected here.
 func (c *functionTypeCollector) collectReceiverType(d syntax.Decl) {
 	if d.Kind() == syntax.KindNamespace {
@@ -255,6 +258,16 @@ func (c *functionTypeCollector) VisitStmtVariable(s *syntax.StmtVariable) error 
 	return nil
 }
 
+func (c *functionTypeCollector) VisitStmtUnpack(s *syntax.StmtUnpack) error {
+	for _, variable := range s.Variables {
+		variable.Accept(c)
+	}
+	if s.Expr != nil {
+		s.Expr.Accept(c)
+	}
+	return nil
+}
+
 // ----- ExprVisitor -----
 
 func (c *functionTypeCollector) VisitExprCast(e *syntax.ExprCast) error {
@@ -265,6 +278,11 @@ func (c *functionTypeCollector) VisitExprCast(e *syntax.ExprCast) error {
 
 func (c *functionTypeCollector) VisitExprField(e *syntax.ExprField) error {
 	e.Expr.Accept(c)
+	return nil
+}
+
+func (c *functionTypeCollector) VisitExprFields(e *syntax.ExprFields) error {
+	e.Head.Accept(c)
 	return nil
 }
 
@@ -363,7 +381,20 @@ func (c *functionTypeCollector) VisitTypeTailed(t *syntax.TypeTailed) error {
 	return nil
 }
 
-// VisitTypeWrapped records a thread's type argument, or a pointer type itself —
+// VisitTypeTuple records the tuple — substituted through the current concrete's
+// binding when one is in effect — if it is ground, then recurses into its
+// elements.
+func (c *functionTypeCollector) VisitTypeTuple(t *syntax.TypeTuple) error {
+	if applied := c.apply(t); !applied.ContainsGenericArg() {
+		c.tupleTypes.Add(applied)
+	}
+	for _, element := range t.Types {
+		element.Accept(c)
+	}
+	return nil
+}
+
+// VisitTypeWrapped records a thread or a pointer type itself —
 // substituted through the current concrete's binding when one is in effect — if
 // it is ground, then recurses into the wrapped type.
 //
@@ -375,7 +406,7 @@ func (c *functionTypeCollector) VisitTypeTailed(t *syntax.TypeTailed) error {
 func (c *functionTypeCollector) VisitTypeWrapped(t *syntax.TypeWrapped) error {
 	switch t.Kind() {
 	case syntax.TypeKindThread:
-		if applied := c.apply(t.Type); !applied.ContainsGenericArg() {
+		if applied := c.apply(t); !applied.ContainsGenericArg() {
 			c.threadTypes.Add(applied)
 		}
 	case syntax.TypeKindPointer, syntax.TypeKindVariadic:

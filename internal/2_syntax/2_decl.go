@@ -927,8 +927,8 @@ func objectBaseDeclType(parser SyntaxParser, d Decl) *TypeWrapped {
 	}
 
 	// Obj sits under the std package key beside anything else the file
-	// imports from std. The user may have written `import std("Pair.zam")`,
-	// which already claims the key for Pair, but Obj still has to be
+	// imports from std. The user may have written `import std("Err.zam")`,
+	// which already claims the key for Err, but Obj still has to be
 	// reachable from here — the base of every class — so this appends rather
 	// than overwrites, and skips when a previous call has already appended it.
 	already := false
@@ -1904,7 +1904,7 @@ func (d *DeclNamespace) Accept(visitor FieldVisitor) error {
 
 // DeclType implements the [DeclTypeable] interface. A namespace holds no
 // instances and has no shape of its own, but needs to be reachable through a
-// type expression — `type(Objs).Delete(obj)` is the only way to name its
+// type expression — `Objs::Delete(obj)` is the only way to name its
 // statics — and the one piece of a type that question reads is the name.
 func (d *DeclNamespace) DeclType() Type {
 	return &TypeReference{

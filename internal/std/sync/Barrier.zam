@@ -18,10 +18,10 @@ public class Barrier {
 
     public fun void(uint) Init = (parties) {
         if(parties == 0U) {
-            type(System).Panic("Barrier needs at least one party");
+            System::Panic("Barrier needs at least one party");
         }
-        this.m = type(Mutex).New();
-        this.c = type(Cond).New(this.m);
+        this.m = Mutex::New();
+        this.c = Cond::New(this.m);
         this.parties = parties;
         this.waiting = 0U;
         this.generation = 0U;

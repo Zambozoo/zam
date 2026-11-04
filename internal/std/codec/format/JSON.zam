@@ -1,7 +1,6 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
 import "../../lang/Obj.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 
@@ -36,59 +35,59 @@ public class JSON {
     }
 
     // Parse reads one JSON document, which may be surrounded by whitespace.
-    public static fun Pair[JSON*, Err*](str) Parse = (s) {
-        var Pair[JSON*, Err*] out;
+    public static fun (JSON*, Err*)(str) Parse = (s) {
+        var (JSON*, Err*) out;
         var uint h = 0U;
         var str errStr;
         native(STD_JSON_PARSE){void(str, uint*, str*)}(s, &h, &errStr);
-        out.first = null;
-        out.second = null;
+        out.0 = null;
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
         } else {
-            out.first = type(JSON).wrap(h);
+            out.0 = JSON::wrap(h);
         }
         return out;
     }
 
     public static fun JSON*() Null = () {
-        return type(JSON).wrap(0U);
+        return JSON::wrap(0U);
     }
 
     public static fun JSON*(bool) NewBool = (b) {
         var uint h;
         native(STD_JSON_NEW_BOOL){void(bool, uint*)}(b, &h);
-        return type(JSON).wrap(h);
+        return JSON::wrap(h);
     }
 
     public static fun JSON*(int) NewInt = (i) {
         var uint h;
         native(STD_JSON_NEW_INT){void(int, uint*)}(i, &h);
-        return type(JSON).wrap(h);
+        return JSON::wrap(h);
     }
 
     public static fun JSON*(flt) NewFlt = (f) {
         var uint h;
         native(STD_JSON_NEW_FLT){void(flt, uint*)}(f, &h);
-        return type(JSON).wrap(h);
+        return JSON::wrap(h);
     }
 
     public static fun JSON*(str) NewStr = (s) {
         var uint h;
         native(STD_JSON_NEW_STR){void(str, uint*)}(s, &h);
-        return type(JSON).wrap(h);
+        return JSON::wrap(h);
     }
 
     public static fun JSON*() NewArray = () {
         var uint h;
         native(STD_JSON_NEW_ARRAY){void(uint*)}(&h);
-        return type(JSON).wrap(h);
+        return JSON::wrap(h);
     }
 
     public static fun JSON*() NewObject = () {
         var uint h;
         native(STD_JSON_NEW_OBJECT){void(uint*)}(&h);
-        return type(JSON).wrap(h);
+        return JSON::wrap(h);
     }
 
     private fun int() kind = () {
@@ -100,24 +99,24 @@ public class JSON {
     public fun JSON.Kind() Kind = () {
         var int k = this.kind();
         if(k == 1) {
-            return type(JSON.Kind).Bool;
+            return JSON.Kind::Bool;
         }
         if(k == 2) {
-            return type(JSON.Kind).Int;
+            return JSON.Kind::Int;
         }
         if(k == 3) {
-            return type(JSON.Kind).Flt;
+            return JSON.Kind::Flt;
         }
         if(k == 4) {
-            return type(JSON.Kind).String;
+            return JSON.Kind::String;
         }
         if(k == 5) {
-            return type(JSON.Kind).Array;
+            return JSON.Kind::Array;
         }
         if(k == 6) {
-            return type(JSON.Kind).Object;
+            return JSON.Kind::Object;
         }
-        return type(JSON.Kind).Null;
+        return JSON.Kind::Null;
     }
 
     public fun bool() IsNull = () {
@@ -159,17 +158,17 @@ public class JSON {
     public fun JSON*(uint) At = (i) {
         var uint h;
         native(STD_JSON_AT){void(uint, int, uint*)}(this.handle, i{int}, &h);
-        return type(JSON).wrap(h);
+        return JSON::wrap(h);
     }
 
     // Get returns an object's member, and false when it has none by key.
-    public fun Pair[JSON*, bool](str) Get = (key) {
-        var Pair[JSON*, bool] out;
+    public fun (JSON*, bool)(str) Get = (key) {
+        var (JSON*, bool) out;
         var uint h;
-        native(STD_JSON_GET){void(uint, str, uint*, bool*)}(this.handle, key, &h, &(out.second));
-        out.first = null;
-        if(out.second) {
-            out.first = type(JSON).wrap(h);
+        native(STD_JSON_GET){void(uint, str, uint*, bool*)}(this.handle, key, &h, &(out.1));
+        out.0 = null;
+        if(out.1) {
+            out.0 = JSON::wrap(h);
         }
         return out;
     }
@@ -179,15 +178,15 @@ public class JSON {
         var str joined;
         native(STD_JSON_KEYS){void(uint, str*)}(this.handle, &joined);
         if(this.Len() == 0U) {
-            return type(Arr)[str].New(0U, new(str, 0U)...);
+            return Arr::[str]New(0U, new(str, 0U)...);
         }
-        return type(Strs).Split(joined, 0{byte});
+        return Strs::Split(joined, 0{byte});
     }
 
     // Set adds or replaces an object's member, a null value standing for
     // JSON null.
     public fun void(str, JSON*) Set = (key, v) {
-        native(STD_JSON_SET){void(uint, str, uint)}(this.handle, key, type(JSON).handleOf(v));
+        native(STD_JSON_SET){void(uint, str, uint)}(this.handle, key, JSON::handleOf(v));
     }
 
     public fun void(str) Remove = (key) {
@@ -195,11 +194,11 @@ public class JSON {
     }
 
     public fun void(JSON*) Append = (v) {
-        native(STD_JSON_APPEND){void(uint, uint)}(this.handle, type(JSON).handleOf(v));
+        native(STD_JSON_APPEND){void(uint, uint)}(this.handle, JSON::handleOf(v));
     }
 
     public fun void(uint, JSON*) SetAt = (i, v) {
-        native(STD_JSON_SET_AT){void(uint, int, uint)}(this.handle, i{int}, type(JSON).handleOf(v));
+        native(STD_JSON_SET_AT){void(uint, int, uint)}(this.handle, i{int}, JSON::handleOf(v));
     }
 
     // Encode writes the value as JSON text, indented when pretty.

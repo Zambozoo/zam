@@ -23,12 +23,12 @@ func (mock_GitProvider) ArchiveName(string) string           { return "" }
 
 // TestStdFSHasExpectedFiles pins the standard library's embedded contents to
 // the names the compiler reaches for by hand elsewhere (Obj as the implicit
-// base, Objs as the override namespace, Err/Pair/StrErr/Strs/System under
+// base, Objs as the override namespace, Err/StrErr/Strs/System under
 // lang, and File under the io/local sub-package). A file renamed or removed
 // from the embed would otherwise only surface when a program that used one
 // tried to import it.
 func TestStdFSHasExpectedFiles(t *testing.T) {
-	for _, name := range []string{"lang/Obj", "lang/Objs", "lang/Err", "lang/Pair", "lang/StrErr", "lang/Strs", "lang/System", "io/local/File"} {
+	for _, name := range []string{"lang/Obj", "lang/Objs", "lang/Err", "lang/StrErr", "lang/Strs", "lang/System", "io/local/File"} {
 		t.Run(name, func(t *testing.T) {
 			f, err := std.FS.Open(name + base.CodeFileExtension)
 			require.NoError(t, err, "%s is missing from the embedded stdlib", name)
@@ -43,7 +43,7 @@ func TestStdFSHasExpectedFiles(t *testing.T) {
 // file is not a program and has no main method, which only code generation asks
 // of an entry.
 func TestStdFilesValidate(t *testing.T) {
-	for _, name := range []string{"lang/Err", "lang/Pair", "lang/StrErr", "lang/Strs", "lang/Objs", "lang/System", "io/local/File"} {
+	for _, name := range []string{"lang/Err", "lang/StrErr", "lang/Strs", "lang/Objs", "lang/System", "io/local/File"} {
 		t.Run(name, func(t *testing.T) {
 			cmd := &command.Command{
 				InputPath:  base.StdPath(name + base.CodeFileExtension),

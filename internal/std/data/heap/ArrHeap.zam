@@ -1,6 +1,5 @@
 import "../../lang/Arrs.zam";
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 
 // Array-based min max heap
@@ -18,7 +17,7 @@ public class ArrHeap[A] {
     }
 
     public fun void(uint, A...) Init = (len, args) {
-        this.cap = type(ArrHeap).minCap;
+        this.cap = ArrHeap::minCap;
         if(this.cap < len) {
             this.cap = len;
         }
@@ -144,7 +143,7 @@ public class ArrHeap[A] {
         }
         var A* old = this.arr;
         if(this.cap == 0U) {
-            this.cap = type(ArrHeap).minCap;
+            this.cap = ArrHeap::minCap;
         }
         for(; this.cap < n;) {
             this.cap = this.cap * 2U;
@@ -169,28 +168,28 @@ public class ArrHeap[A] {
 
     public fun A() GetMin = () {
         if(this.len == 0U) {
-            type(System).Panic("ArrHeap is empty");
+            System::Panic("ArrHeap is empty");
         }
         return this.arr[0];
     }
 
     public fun A() GetMax = () {
         if(this.len == 0U) {
-            type(System).Panic("ArrHeap is empty");
+            System::Panic("ArrHeap is empty");
         }
         return this.arr[this.maxIndex()];
     }
 
     public fun A() RemoveMin = () {
         if(this.len == 0U) {
-            type(System).Panic("ArrHeap is empty");
+            System::Panic("ArrHeap is empty");
         }
         return this.removeAt(0U);
     }
 
     public fun A() RemoveMax = () {
         if(this.len == 0U) {
-            type(System).Panic("ArrHeap is empty");
+            System::Panic("ArrHeap is empty");
         }
         return this.removeAt(this.maxIndex());
     }
@@ -198,7 +197,7 @@ public class ArrHeap[A] {
     // Merge moves every element of other into this heap, leaving other empty.
     public fun void(ArrHeap[A]*) Merge = (other) {
         if(other{void*} == this{void*}) {
-            type(System).Panic("ArrHeap merged with itself");
+            System::Panic("ArrHeap merged with itself");
         }
         this.reserve(this.len + other.len);
         for(var uint i = 0U; i < other.len; i++) {
@@ -222,7 +221,7 @@ public class ArrHeap[A] {
         for(var uint i = 0U; i < this.len; i++) {
             a[i] = this.arr[i];
         }
-        return type(Arr)[A].New(this.len, a...);
+        return Arr::[A]New(this.len, a...);
     }
 
     // Iter visits the elements in no particular order.
@@ -251,34 +250,34 @@ public class ArrHeap[A] {
     }
 
     public fun void() Mark = () {
-        type(Arrs)[A].MarkAll(this.len, this.arr);
+        Arrs::[A]MarkAll(this.len, this.arr);
     }
 
     private class Iter[A] {
         var ArrHeap[A]* h;
         var uint i;
 
-        public fun Pair[A, bool]() Next = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Next = () {
+            var (A, bool) p;
             if(this.i >= this.h.len) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.h.arr[this.i];
-            p.second = true;
+            p.0 = this.h.arr[this.i];
+            p.1 = true;
             this.i++;
             return p;
         }
 
-        public fun Pair[A, bool]() Prev = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Prev = () {
+            var (A, bool) p;
             if(this.i == 0U) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
             this.i--;
-            p.first = this.h.arr[this.i];
-            p.second = true;
+            p.0 = this.h.arr[this.i];
+            p.1 = true;
             return p;
         }
     }

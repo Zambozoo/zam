@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 import "../../math/Rand.zam";
 
@@ -33,7 +32,7 @@ public class SkipList[A] {
         }
 
         private static fun[A] Node~[A]*(byte, A) New = (maxHeight, val) {
-            var uint height = type(Node).clz(type(Rand).Uint()) + 1U;
+            var uint height = Node::clz(Rand::Uint()) + 1U;
             if (maxHeight{uint} < height) {
                 height = maxHeight{uint};
             }
@@ -52,11 +51,11 @@ public class SkipList[A] {
     var Node~[A]* tail;
 
     public static fun[A] SkipList[A]*(uint, A...) New = (len, args) {
-        return type(SkipList)[A].NewWithHeight(type(SkipList).defaultHeight, len, args...);
+        return SkipList::[A]NewWithHeight(SkipList::defaultHeight, len, args...);
     }
 
     public fun void(uint, A...) Init = (len, args) {
-        return this.InitWithHeight(type(SkipList).defaultHeight, len, args...);
+        return this.InitWithHeight(SkipList::defaultHeight, len, args...);
     }
 
     public static fun[A] SkipList[A]*(byte, uint, A...) NewWithHeight = (height, len, args) {
@@ -67,7 +66,7 @@ public class SkipList[A] {
 
     public fun void(byte, uint, A...) InitWithHeight = (height, len, args) {
         if (height == 0{byte}) {
-            type(System).Panic("SkipList with 0 height");
+            System::Panic("SkipList with 0 height");
         }
         this.len = len;
         this.height = height;
@@ -77,7 +76,7 @@ public class SkipList[A] {
         var uint* poss = new(uint, height{uint});
         var Node~[A]* last = null;
         for(var uint i = 0U; i < len; i++) {
-            var Node~[A]* n = type(Node)[A].New(height, args[i]);
+            var Node~[A]* n = Node::[A]New(height, args[i]);
             n.prev = last;
             for(var uint j = 0U; j < n.height{uint}; j++) {
                 this.link(prevs[j], j, n, i + 1U - poss[j]);
@@ -117,7 +116,7 @@ public class SkipList[A] {
 
     private fun Node~[A]*(uint) node = (i) {
         if(i >= this.len) {
-            type(System).Panic("SkipList out of bounds");
+            System::Panic("SkipList out of bounds");
         }
         var uint target = i + 1U;
         var uint pos = 0U;
@@ -158,14 +157,14 @@ public class SkipList[A] {
 
     public fun A() GetFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("SkipList out of bounds");
+            System::Panic("SkipList out of bounds");
         }
         return this.heads[0].n.val;
     }
 
     public fun A() GetLast = () {
         if(this.len == 0U) {
-            type(System).Panic("SkipList out of bounds");
+            System::Panic("SkipList out of bounds");
         }
         return this.tail.val;
     }
@@ -176,7 +175,7 @@ public class SkipList[A] {
 
     public fun A(A) SetFirst = (v) {
         if(this.len == 0U) {
-            type(System).Panic("SkipList out of bounds");
+            System::Panic("SkipList out of bounds");
         }
         var Node~[A]* n = this.heads[0].n;
         var A old = n.val;
@@ -186,7 +185,7 @@ public class SkipList[A] {
 
     public fun A(A) SetLast = (v) {
         if(this.len == 0U) {
-            type(System).Panic("SkipList out of bounds");
+            System::Panic("SkipList out of bounds");
         }
         var A old = this.tail.val;
         this.tail.val = v;
@@ -210,14 +209,14 @@ public class SkipList[A] {
 
     public fun void(uint, A) Add = (i, v) {
         if(i > this.len) {
-            type(System).Panic("SkipList out of bounds");
+            System::Panic("SkipList out of bounds");
         }
         var uint target = i + 1U;
         var Node~[A]** preds = new(Node~[A]*, this.height{uint});
         var uint* poss = new(uint, this.height{uint});
         this.walk(target, preds, poss);
 
-        var Node~[A]* n = type(Node)[A].New(this.height, v);
+        var Node~[A]* n = Node::[A]New(this.height, v);
         for(var uint j = 0U; j < this.height{uint}; j++) {
             var Node~[A]* next = this.nextOf(preds[j], j);
             var uint dist = this.distOf(preds[j], j);
@@ -245,21 +244,21 @@ public class SkipList[A] {
 
     public fun A() RemoveFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("SkipList out of bounds");
+            System::Panic("SkipList out of bounds");
         }
         return this.Remove(0U);
     }
 
     public fun A() RemoveLast = () {
         if(this.len == 0U) {
-            type(System).Panic("SkipList out of bounds");
+            System::Panic("SkipList out of bounds");
         }
         return this.Remove(this.len - 1U);
     }
 
     public fun A(uint) Remove = (i) {
         if(i >= this.len) {
-            type(System).Panic("SkipList out of bounds");
+            System::Panic("SkipList out of bounds");
         }
         var Node~[A]** preds = new(Node~[A]*, this.height{uint});
         var uint* poss = new(uint, this.height{uint});
@@ -296,7 +295,7 @@ public class SkipList[A] {
             a[i] = n.val;
             i++;
         }
-        return type(Arr)[A].New(this.len, a...);
+        return Arr::[A]New(this.len, a...);
     }
 
     public fun Iter[A]*() Iter = () {
@@ -332,7 +331,7 @@ public class SkipList[A] {
     }
 
     public fun void() Mark = () {
-        if(!type(System.GC).Markable(@{A})) {
+        if(!System.GC::Markable(@{A})) {
             return;
         }
         if(this.heads == null) {
@@ -353,7 +352,7 @@ public class SkipList[A] {
 
         public fun void(SkipList[A]*, uint) InitWithIndex = (l, i) {
             if(i > l.Len()) {
-                type(System).Panic("SkipList out of bounds");
+                System::Panic("SkipList out of bounds");
             }
             this.l = l;
             this.cur = null;
@@ -362,36 +361,36 @@ public class SkipList[A] {
             }
         }
 
-        public fun Pair[A, bool]() Next = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Next = () {
+            var (A, bool) p;
             if(this.cur == null) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.cur.val;
-            p.second = true;
+            p.0 = this.cur.val;
+            p.1 = true;
             this.cur = this.cur.nexts[0].n;
             return p;
         }
 
-        public fun Pair[A, bool]() Prev = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Prev = () {
+            var (A, bool) p;
             if(this.cur == null) {
                 if(this.l.tail == null) {
-                    p.second = false;
+                    p.1 = false;
                     return p;
                 }
-                p.first = this.l.tail.val;
-                p.second = true;
+                p.0 = this.l.tail.val;
+                p.1 = true;
                 this.cur = this.l.tail;
                 return p;
             }
             if(this.cur.prev == null) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.cur.prev.val;
-            p.second = true;
+            p.0 = this.cur.prev.val;
+            p.1 = true;
             this.cur = this.cur.prev;
             return p;
         }

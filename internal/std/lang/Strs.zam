@@ -1,15 +1,14 @@
 import "Arr.zam";
-import "Pair.zam";
 
 public namespace Strs {
     // ToBytes hands back the str's own bytes and length. The pointer is the
     // str's own bytes field — a plain cast, no copy, NUL-terminated — so the
     // caller must not outlive the str; use Strs.FromBytes on the result if
     // lifetime independence is needed.
-    public static fun Pair[byte*, int](str) ToBytes = (s) {
-        var Pair[byte*, int] p;
-        p.first = s{byte*};
-        p.second = type(Strs).ByteLen(s);
+    public static fun (byte*, int)(str) ToBytes = (s) {
+        var (byte*, int) p;
+        p.0 = s{byte*};
+        p.1 = Strs::ByteLen(s);
         return p;
     }
 
@@ -27,10 +26,10 @@ public namespace Strs {
     // char through it reads one byte at the char's low eight bits and whatever
     // follows above them; it is a reinterpretation for the C side rather than a
     // decoded run.
-    public static fun Pair[char*, int](str) Chars = (s) {
-        var Pair[char*, int] p;
-        p.first = s{char*};
-        p.second = type(Strs).CharLen(s);
+    public static fun (char*, int)(str) Chars = (s) {
+        var (char*, int) p;
+        p.0 = s{char*};
+        p.1 = Strs::CharLen(s);
         return p;
     }
 
@@ -58,20 +57,20 @@ public namespace Strs {
     // Split returns the runs of s between each sep byte, so an empty s is one
     // empty run.
     public static fun Arr[str]*(str, byte) Split = (s, sep) {
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        var uint n = p.second{uint};
+        var (byte*, int) p = Strs::ToBytes(s);
+        var uint n = p.1{uint};
         var uint count = 1U;
         for(var uint i = 0U; i < n; i++) {
-            if(p.first[i] == sep) {
+            if(p.0[i] == sep) {
                 count++;
             }
         }
-        var Arr[str]* out = type(Arr)[str].New(count, new(str, count)...);
+        var Arr[str]* out = Arr::[str]New(count, new(str, count)...);
         var uint start = 0U;
         var uint k = 0U;
         for(var uint i = 0U; i <= n; i++) {
-            if(i == n || p.first[i] == sep) {
-                out.Set(k, type(Strs).FromBytes(&(p.first[start]), (i - start){int}));
+            if(i == n || p.0[i] == sep) {
+                out.Set(k, Strs::FromBytes(&(p.0[start]), (i - start){int}));
                 k++;
                 start = i + 1U;
             }
@@ -92,9 +91,9 @@ public namespace Strs {
     public static fun str(str, any...) Sprintf = (fmt, args) {
         var str result = "";
         var int argIndex = 0;
-        var Pair[byte*, int] fmtBytes = type(Strs).ToBytes(fmt);
-        var byte* b = fmtBytes.first;
-        var int n = fmtBytes.second;
+        var (byte*, int) fmtBytes = Strs::ToBytes(fmt);
+        var byte* b = fmtBytes.0;
+        var int n = fmtBytes.1;
 
         for (var int i = 0; i < n; ) {
             if (b[i]{int} != '%'{int}) {
@@ -104,7 +103,7 @@ public namespace Strs {
                         break;
                     }
                 }
-                result = result + type(Strs).FromBytes(b + start, i - start);
+                result = result + Strs::FromBytes(b + start, i - start);
             } else {
                 i = i + 1;
                 if (i >= n) {

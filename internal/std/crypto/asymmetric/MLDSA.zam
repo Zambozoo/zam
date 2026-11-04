@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "Key.zam";
 
@@ -8,23 +7,23 @@ import "Key.zam";
 // the ML_DSA_44, ML_DSA_65 or ML_DSA_87 kinds
 public namespace MLDSA {
     // Generate makes a private key of a parameter set.
-    public static fun Pair[Key*, Err*](Key.Kind) Generate = (kind) {
-        if(kind{byte} < type(Key.Kind).ML_DSA_44{byte} || kind{byte} > type(Key.Kind).ML_DSA_87{byte}) {
-            var Pair[Key*, Err*] out;
-            out.first = null;
-            out.second = type(StrErr).New("ML-DSA needs an ML_DSA_44, ML_DSA_65 or ML_DSA_87 kind");
+    public static fun (Key*, Err*)(Key.Kind) Generate = (kind) {
+        if(kind{byte} < Key.Kind::ML_DSA_44{byte} || kind{byte} > Key.Kind::ML_DSA_87{byte}) {
+            var (Key*, Err*) out;
+            out.0 = null;
+            out.1 = StrErr::New("ML-DSA needs an ML_DSA_44, ML_DSA_65 or ML_DSA_87 kind");
             return out;
         }
-        return type(Key).Generate(kind);
+        return Key::Generate(kind);
     }
 
     // Sign returns the signature of n bytes at b.
-    public static fun Pair[Arr[byte]*, Err*](Key*, byte*, uint) Sign = (key, b, n) {
-        var Err* e = type(Key).checkPrivate(key, type(Key.Kind).ML_DSA_44, type(Key.Kind).ML_DSA_87, "ML-DSA");
+    public static fun (Arr[byte]*, Err*)(Key*, byte*, uint) Sign = (key, b, n) {
+        var Err* e = Key::checkPrivate(key, Key.Kind::ML_DSA_44, Key.Kind::ML_DSA_87, "ML-DSA");
         if(e != null) {
-            var Pair[Arr[byte]*, Err*] out;
-            out.first = null;
-            out.second = e;
+            var (Arr[byte]*, Err*) out;
+            out.0 = null;
+            out.1 = e;
             return out;
         }
         return key.sign(-1, false, b, n);
@@ -33,7 +32,7 @@ public namespace MLDSA {
     // Verify reports whether sigLen bytes at sig are a signature of n bytes at
     // b under key.
     public static fun bool(Key*, byte*, uint, byte*, uint) Verify = (key, b, n, sig, sigLen) {
-        return type(Key).check(key, type(Key.Kind).ML_DSA_44, type(Key.Kind).ML_DSA_87, "ML-DSA") == null &&
+        return Key::check(key, Key.Kind::ML_DSA_44, Key.Kind::ML_DSA_87, "ML-DSA") == null &&
             key.verify(-1, false, b, n, sig, sigLen);
     }
 }

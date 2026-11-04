@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arrs.zam";
 import "../../lang/Arr.zam";
 
@@ -11,7 +10,7 @@ public class ArrList[A] {
     var uint cap;
 
     public static fun[A] ArrList[A]*(uint, A...) New = (len, args) {
-        return type(ArrList)[A].NewWithCap(len, len, args...);
+        return ArrList::[A]NewWithCap(len, len, args...);
     }
 
     public fun void(uint, A...) Init = (len, args) {
@@ -45,11 +44,11 @@ public class ArrList[A] {
         var uint newStart = newCap / 4U;
         var A* a = new(A, newCap);
         if(this.start + this.len <= this.cap) {
-            type(Arrs)[A].Copy(this.len, this.arr + this.start, a + newStart);
+            Arrs::[A]Copy(this.len, this.arr + this.start, a + newStart);
         } else {
             var uint firstCount = this.cap - this.start;
-            type(Arrs)[A].Copy(firstCount, this.arr + this.start, a + newStart);
-            type(Arrs)[A].Copy(this.len - firstCount, this.arr, a + newStart + firstCount);
+            Arrs::[A]Copy(firstCount, this.arr + this.start, a + newStart);
+            Arrs::[A]Copy(this.len - firstCount, this.arr, a + newStart + firstCount);
         }
         free(this.arr);
         this.arr = a;
@@ -59,28 +58,28 @@ public class ArrList[A] {
 
     public fun A() GetFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         return this.arr[this.start];
     }
 
     public fun A() GetLast = () {
         if(this.len == 0U) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         return this.arr[(this.start + this.len - 1U) % this.cap];
     }
 
     public fun A(uint) Get = (i) {
         if(i >= this.len) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         return this.arr[(this.start + i) % this.cap];
     }
 
     public fun A(A) SetFirst = (v) {
         if(this.len == 0U) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         var A old = this.arr[this.start];
         this.arr[this.start] = v;
@@ -89,7 +88,7 @@ public class ArrList[A] {
 
     public fun A(A) SetLast = (v) {
         if(this.len == 0U) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         var uint p = (this.start + this.len - 1U) % this.cap;
         var A old = this.arr[p];
@@ -99,7 +98,7 @@ public class ArrList[A] {
 
     public fun A(uint, A) Set = (i, v) {
         if(i >= this.len) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         var uint p = (this.start + i) % this.cap;
         var A old = this.arr[p];
@@ -126,7 +125,7 @@ public class ArrList[A] {
 
     public fun void(uint, A) Add = (i, v) {
         if(i > this.len) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         } else if(i == this.len) {
             return this.AddLast(v);
         } else if(i == 0U) {
@@ -141,7 +140,7 @@ public class ArrList[A] {
         var uint dstPhys = (this.start + i + 1U) % this.cap;
         var uint count = this.len - i;
         if(srcPhys + count <= this.cap && dstPhys + count <= this.cap) {
-            type(Arrs)[A].Copy(count, this.arr + srcPhys, this.arr + dstPhys);
+            Arrs::[A]Copy(count, this.arr + srcPhys, this.arr + dstPhys);
         } else {
             for(var uint j = this.len; j > i; j--) {
                 this.arr[(this.start + j) % this.cap] = this.arr[(this.start + j - 1U) % this.cap];
@@ -153,7 +152,7 @@ public class ArrList[A] {
 
     public fun A() RemoveFirst = () {
         if(this.len == 0U) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         var A old = this.arr[this.start];
         this.start = (this.start + 1U) % this.cap;
@@ -163,7 +162,7 @@ public class ArrList[A] {
 
     public fun A() RemoveLast = () {
         if(this.len == 0U) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         this.len--;
         return this.arr[(this.start + this.len) % this.cap];
@@ -171,7 +170,7 @@ public class ArrList[A] {
 
     public fun A(uint) Remove = (i) {
         if(i >= this.len) {
-            type(System).Panic("Arr out of bounds");
+            System::Panic("Arr out of bounds");
         }
         var A old = this.arr[(this.start + i) % this.cap];
         this.len--;
@@ -180,7 +179,7 @@ public class ArrList[A] {
         var uint dstPhys = (this.start + i) % this.cap;
         var uint count = this.len - i;
         if(srcPhys + count <= this.cap && dstPhys + count <= this.cap) {
-            type(Arrs)[A].Copy(count, this.arr + srcPhys, this.arr + dstPhys);
+            Arrs::[A]Copy(count, this.arr + srcPhys, this.arr + dstPhys);
         } else {
             for(var uint j = i; j < this.len; j++) {
                 this.arr[(this.start + j) % this.cap] = this.arr[(this.start + j + 1U) % this.cap];
@@ -203,7 +202,7 @@ public class ArrList[A] {
         for(var uint i = 0U; i < this.len; i++) {
             a[i] = this.arr[(this.start + i) % this.cap];
         }
-        return type(Arr)[A].New(this.len, a...);
+        return Arr::[A]New(this.len, a...);
     }
 
     public fun Iter[A]*() Iter = () {
@@ -237,8 +236,8 @@ public class ArrList[A] {
             first = this.len;
         }
         var A* tail = &(this.arr[this.start]);
-        type(Arrs)[A].MarkAll(first, tail);
-        type(Arrs)[A].MarkAll(this.len - first, this.arr);
+        Arrs::[A]MarkAll(first, tail);
+        Arrs::[A]MarkAll(this.len - first, this.arr);
     }
 
     private class Iter[A] {
@@ -251,33 +250,33 @@ public class ArrList[A] {
 
         public fun void(ArrList[A]*, uint) InitWithIndex = (l, i) {
             if(i > l.Len()) {
-                type(System).Panic("Arr out of bounds");
+                System::Panic("Arr out of bounds");
             }
             this.l = l;
             this.i = i;
         }
 
-        public fun Pair[A, bool]() Next = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Next = () {
+            var (A, bool) p;
             if(this.i >= this.l.Len()) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.l.Get(this.i);
+            p.0 = this.l.Get(this.i);
             this.i++;
-            p.second = true;
+            p.1 = true;
             return p;
         }
 
-        public fun Pair[A, bool]() Prev = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Prev = () {
+            var (A, bool) p;
             if(this.i == 0U) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
             this.i--;
-            p.first = this.l.Get(this.i);
-            p.second = true;
+            p.0 = this.l.Get(this.i);
+            p.1 = true;
             return p;
         }
     }

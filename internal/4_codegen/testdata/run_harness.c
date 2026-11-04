@@ -215,11 +215,11 @@ int main(int argc, char **argv) {
         // records — so a header the runtime got wrong is a header this looks
         // for the inner value past, rather than something restated here and
         // agreed with by accident.
-        const ZamMemberDefinition *member = zam_type_member(
+        ZamMemberDefinition member = zam_type_member(
             &vm.image, (ZamTypeShort)zam_object_header_of(outer)->shortID, 0);
         uint8_t *inner = outer +
                          zam_object_header_bytes(zam_mark_word_of(outer)->kind) +
-                         member->offset;
+                         member.offset;
 
         put("inner.kind", zam_mark_word_of(inner)->kind);
         put("inner.contained", zam_mark_word_of(inner)->contained);
@@ -266,13 +266,13 @@ int main(int argc, char **argv) {
         // word, then the offset the definition records — so a slot the compiler
         // left unstamped resolves this member a word early, and the word the
         // program wrote is then somewhere else entirely.
-        const ZamMemberDefinition *member = zam_type_member(
+        ZamMemberDefinition member = zam_type_member(
             &vm.image, (ZamTypeShort)zam_object_header_of(slot)->shortID, 0);
         put("static.member",
             *(const ZamWord *)(slot +
                                zam_object_header_bytes(
                                    zam_mark_word_of(slot)->kind) +
-                               member->offset));
+                               member.offset));
     }
 
     if (wantMark && vm.main.markByteCount != 0) {
@@ -312,11 +312,11 @@ int main(int argc, char **argv) {
 
     if (wantMemberArray) {
         uint8_t *outer = (uint8_t *)(vm.main.operands + ZAMMAIN_FRAME_WORDS);
-        const ZamMemberDefinition *member = zam_type_member(
+        ZamMemberDefinition member = zam_type_member(
             &vm.image, (ZamTypeShort)zam_object_header_of(outer)->shortID, 0);
         uint8_t *first = outer +
                          zam_object_header_bytes(zam_mark_word_of(outer)->kind) +
-                         member->offset;
+                         member.offset;
 
         // The front of the run, unlike the front of an allocation or of a value
         // standing on its own, does lie inside something — so its distance is

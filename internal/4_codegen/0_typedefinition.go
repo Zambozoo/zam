@@ -158,6 +158,18 @@ type (
 	pointerDefinition struct {
 		pointee typeInstance
 	}
+
+	// tupleDefinition is a tuple's element type list, with how much room an
+	// instance takes, the routine that fills a fresh one in, and where each
+	// element lies. The list is written as a function's signature is, so the
+	// runtime reads it as the same type list; the offsets follow it, one word
+	// per element.
+	tupleDefinition struct {
+		instanceByteSize       uint64
+		initializerInstruction uint64
+		types                  typeListInstance
+		offsets                []uint64
+	}
 )
 
 // packed encodes a type the way the runtime names it: the definition's type id
@@ -532,6 +544,23 @@ func (t *typeDefinitionGenericInterface) Read(p []byte) (int, error) {
 
 func (t *pointerDefinition) ByteCount() int { return t.pointee.ByteCount() }
 
+func (t *tupleDefinition) ByteCount() int {
+	return 2*wordByteSize + t.types.ByteCount() + len(t.offsets)*wordByteSize
+}
+
+// Read implements the [byteCountable] interface.
+func (t *tupleDefinition) Read(p []byte) (int, error) {
+	if len(p) < t.ByteCount() {
+		return 0, io.ErrShortBuffer
+	}
+
+	totalBytes, _ := readAllWords(p, t.instanceByteSize, t.initializerInstruction)
+	n, _ := t.types.Read(p[totalBytes:])
+	totalBytes += n
+	n, _ = readAllWords(p[totalBytes:], t.offsets...)
+	return totalBytes + n, nil
+}
+
 // Read implements the [byteCountable] interface.
 func (t *pointerDefinition) Read(p []byte) (int, error) { return t.pointee.Read(p) }
 
@@ -572,6 +601,15 @@ func buildTypeDefinitionSkeletons(ast *syntax.AST, reader *codegenReader) *synta
 		visitor.typeIndices.Set(t, i)
 		i++
 		reader.pointerDefinitions = append(reader.pointerDefinitions, &pointerDefinition{})
+	}
+	for t := range ast.TupleTypes.Values() {
+		visitor.typeIndices.Set(t, i)
+		i++
+		size, _, offsets := tupleLayout(t.(*syntax.TypeTuple))
+		reader.tupleDefinitions = append(reader.tupleDefinitions, &tupleDefinition{
+			instanceByteSize: size,
+			offsets:          offsets,
+		})
 	}
 
 	for _, entry := range ast.CodeFiles.All() {
@@ -763,11 +801,10 @@ func populateTypeDefinitions(ast *syntax.AST, reader *codegenReader, typeIndices
 	// resolved to an id until every declaration has been given one.
 	var i int
 	for t := range ast.ThreadTypes.Values() {
-		// A thread is interned by the type it runs, so the set already holds the
-		// yielded type rather than the thread wrapping it. A pointer is interned
-		// whole, which is why the loop below unwraps and this one does not.
+		// A thread is interned whole, as a pointer is, so that it never shares a
+		// key with the type it yields when that type is interned too.
 		def := reader.threadTypeDefinitions[i].(*typeInstance)
-		*def = populator.typeInstanceOf(t)
+		*def = populator.typeInstanceOf(t.(*syntax.TypeWrapped).Type)
 		i++
 	}
 
@@ -782,6 +819,15 @@ func populateTypeDefinitions(ast *syntax.AST, reader *codegenReader, typeIndices
 	for t := range ast.PointerTypes.Values() {
 		def := reader.pointerDefinitions[i].(*pointerDefinition)
 		def.pointee = populator.typeInstanceOf(t.(*syntax.TypeWrapped).Type)
+		i++
+	}
+
+	i = 0
+	for t := range ast.TupleTypes.Values() {
+		def := reader.tupleDefinitions[i].(*tupleDefinition)
+		for _, element := range t.(*syntax.TypeTuple).Types {
+			def.types.typeIDs = append(def.types.typeIDs, populator.typeInstanceOf(element))
+		}
 		i++
 	}
 }

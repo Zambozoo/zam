@@ -1,6 +1,5 @@
 import "../../lang/Arrs.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Strs.zam";
 import "../../lang/System.zam";
 
@@ -33,7 +32,7 @@ public class Buffer {
     // Get returns unread byte i.
     public fun byte(uint) Get = (i) {
         if(i >= this.Len()) {
-            type(System).Panic("Buffer index out of range");
+            System::Panic("Buffer index out of range");
         }
         return this.buf[this.start + i];
     }
@@ -45,7 +44,7 @@ public class Buffer {
             return;
         }
         if(len + n <= this.cap && this.start >= len) {
-            type(Arrs)[byte].Copy(len, this.buf + this.start, this.buf);
+            Arrs::[byte]Copy(len, this.buf + this.start, this.buf);
         } else {
             var uint grown = this.cap * 2U;
             if(grown < len + n) {
@@ -56,7 +55,7 @@ public class Buffer {
             }
             var byte* b = new(byte, grown);
             if(len > 0U) {
-                type(Arrs)[byte].Copy(len, this.buf + this.start, b);
+                Arrs::[byte]Copy(len, this.buf + this.start, b);
             }
             free(this.buf);
             this.buf = b;
@@ -67,23 +66,23 @@ public class Buffer {
     }
 
     // Write appends n bytes from b, all of them.
-    public fun Pair[int, Err*](byte*, int) Write = (b, n) {
-        var Pair[int, Err*] p;
-        p.first = n;
-        p.second = null;
+    public fun (int, Err*)(byte*, int) Write = (b, n) {
+        var (int, Err*) p;
+        p.0 = n;
+        p.1 = null;
         if(n <= 0) {
-            p.first = 0;
+            p.0 = 0;
             return p;
         }
         this.Reserve(n{uint});
-        type(Arrs)[byte].Copy(n{uint}, b, this.buf + this.end);
+        Arrs::[byte]Copy(n{uint}, b, this.buf + this.end);
         this.end = this.end + n{uint};
         return p;
     }
 
     public fun void(str) WriteStr = (s) {
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        this.Write(p.first, p.second);
+        var (byte*, int) p = Strs::ToBytes(s);
+        this.Write(p.0, p.1);
     }
 
     public fun void(byte) WriteByte = (c) {
@@ -93,9 +92,9 @@ public class Buffer {
     }
 
     // Read moves up to n unread bytes into b, returning how many it moved.
-    public fun Pair[int, Err*](byte*, int) Read = (b, n) {
-        var Pair[int, Err*] p;
-        p.second = null;
+    public fun (int, Err*)(byte*, int) Read = (b, n) {
+        var (int, Err*) p;
+        p.1 = null;
         var uint m = 0U;
         if(n > 0) {
             m = n{uint};
@@ -104,19 +103,19 @@ public class Buffer {
             m = this.Len();
         }
         if(m > 0U) {
-            type(Arrs)[byte].Copy(m, this.buf + this.start, b);
+            Arrs::[byte]Copy(m, this.buf + this.start, b);
         }
         this.start = this.start + m;
-        p.first = m{int};
+        p.0 = m{int};
         return p;
     }
 
     // ReadByte reads one byte, and false when there is none.
-    public fun Pair[byte, bool]() ReadByte = () {
-        var Pair[byte, bool] p;
-        p.second = this.Len() > 0U;
-        if(p.second) {
-            p.first = this.buf[this.start];
+    public fun (byte, bool)() ReadByte = () {
+        var (byte, bool) p;
+        p.1 = this.Len() > 0U;
+        if(p.1) {
+            p.0 = this.buf[this.start];
             this.start++;
         }
         return p;
@@ -130,7 +129,7 @@ public class Buffer {
         if(n == 0U) {
             return "";
         }
-        var str s = type(Strs).FromBytes(&(this.buf[this.start]), n{int});
+        var str s = Strs::FromBytes(&(this.buf[this.start]), n{int});
         this.start = this.start + n;
         return s;
     }
@@ -138,11 +137,11 @@ public class Buffer {
     // ReadLine reads up to the next newline, which it consumes but leaves out
     // along with a carriage return before it, or else the rest. It reports
     // false when nothing is left.
-    public fun Pair[str, bool]() ReadLine = () {
-        var Pair[str, bool] p;
-        p.first = "";
-        p.second = this.Len() > 0U;
-        if(!p.second) {
+    public fun (str, bool)() ReadLine = () {
+        var (str, bool) p;
+        p.0 = "";
+        p.1 = this.Len() > 0U;
+        if(!p.1) {
             return p;
         }
         var uint n = 0U;
@@ -154,7 +153,7 @@ public class Buffer {
         if(keep > 0U && this.buf[this.start + keep - 1U]{int} == 13) {
             keep--;
         }
-        p.first = this.ReadStr(keep);
+        p.0 = this.ReadStr(keep);
         this.start = this.start + n - keep;
         if(newline) {
             this.start++;
@@ -167,7 +166,7 @@ public class Buffer {
         if(this.Len() == 0U) {
             return "";
         }
-        return type(Strs).FromBytes(&(this.buf[this.start]), this.Len(){int});
+        return Strs::FromBytes(&(this.buf[this.start]), this.Len(){int});
     }
 
     // Reset drops every unread byte, keeping the room they took.

@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../hash/Digest.zam";
 import "ECDH.zam";
 import "Key.zam";
@@ -9,17 +8,17 @@ import "Key.zam";
 // and P521, with DER-encoded signatures
 public namespace ECDSA {
     // Generate makes a private key on a curve.
-    public static fun Pair[Key*, Err*](Key.Kind) Generate = (curve) {
-        return type(ECDH).Generate(curve);
+    public static fun (Key*, Err*)(Key.Kind) Generate = (curve) {
+        return ECDH::Generate(curve);
     }
 
     // Sign returns the signature of the digest of n bytes at b.
-    public static fun Pair[Arr[byte]*, Err*](Key*, Digest.Kind, byte*, uint) Sign = (key, digest, b, n) {
-        var Err* e = type(Key).checkPrivate(key, type(Key.Kind).P256, type(Key.Kind).P521, "ECDSA");
+    public static fun (Arr[byte]*, Err*)(Key*, Digest.Kind, byte*, uint) Sign = (key, digest, b, n) {
+        var Err* e = Key::checkPrivate(key, Key.Kind::P256, Key.Kind::P521, "ECDSA");
         if(e != null) {
-            var Pair[Arr[byte]*, Err*] out;
-            out.first = null;
-            out.second = e;
+            var (Arr[byte]*, Err*) out;
+            out.0 = null;
+            out.1 = e;
             return out;
         }
         return key.sign(digest{byte}{int}, false, b, n);
@@ -28,7 +27,7 @@ public namespace ECDSA {
     // Verify reports whether sigLen bytes at sig are a signature of the digest
     // of n bytes at b under key.
     public static fun bool(Key*, Digest.Kind, byte*, uint, byte*, uint) Verify = (key, digest, b, n, sig, sigLen) {
-        return type(Key).check(key, type(Key.Kind).P256, type(Key.Kind).P521, "ECDSA") == null &&
+        return Key::check(key, Key.Kind::P256, Key.Kind::P521, "ECDSA") == null &&
             key.verify(digest{byte}{int}, false, b, n, sig, sigLen);
     }
 }

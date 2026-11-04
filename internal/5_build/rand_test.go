@@ -24,38 +24,38 @@ namespace Main {
         var uint distinct = 0U;
         var uint last = 0U;
         for(var int i = 0; i < 2000; i++) {
-            var int n = type(Rand).IntRange(-3, 3);
+            var int n = Rand::IntRange(-3, 3);
             inRange = inRange && n >= -3 && n <= 3;
             ints[(n + 3){uint}] = true;
 
-            var byte b = type(Rand).ByteRange(3{byte}, 5{byte});
+            var byte b = Rand::ByteRange(3{byte}, 5{byte});
             inRange = inRange && b >= 3{byte} && b <= 5{byte};
             bytes[(b - 3{byte}){uint}] = true;
 
-            var uint c = type(Rand).CharRange(55290U{char}, 57350U{char}){uint};
+            var uint c = Rand::CharRange(55290U{char}, 57350U{char}){uint};
             inRange = inRange && (c <= 55295U || c >= 57344U) && c >= 55290U && c <= 57350U;
-            var uint ch = type(Rand).Char(){uint};
+            var uint ch = Rand::Char(){uint};
             inRange = inRange && ch <= 1114111U && (ch < 55296U || ch > 57343U);
 
-            var flt f = type(Rand).Flt();
+            var flt f = Rand::Flt();
             inRange = inRange && f >= 0.0 && f < 1.0;
-            var flt g = type(Rand).FltRange(-2.0, 2.0);
+            var flt g = Rand::FltRange(-2.0, 2.0);
             inRange = inRange && g >= -2.0 && g <= 2.0;
 
-            var uint u = type(Rand).UintRange(10U, 12U);
+            var uint u = Rand::UintRange(10U, 12U);
             inRange = inRange && u >= 10U && u <= 12U;
-            type(Rand).UintRange(0U, (-1){uint});
-            type(Rand).IntRange(-9223372036854775807 - 1, 9223372036854775807);
-            type(Rand).Byte();
-            type(Rand).Int();
+            Rand::UintRange(0U, (-1){uint});
+            Rand::IntRange(-9223372036854775807 - 1, 9223372036854775807);
+            Rand::Byte();
+            Rand::Int();
 
-            if(type(Rand).Bool()) {
+            if(Rand::Bool()) {
                 bools[1] = true;
             } else {
                 bools[0] = true;
             }
 
-            var uint r = type(Rand).Uint();
+            var uint r = Rand::Uint();
             if(r != last) {
                 distinct++;
             }
@@ -65,7 +65,7 @@ namespace Main {
         for(var uint i = 0U; i < 7U; i++) {
             covered = covered && ints[i];
         }
-        type(File).StdOut.WriteStr(inRange{str} + " " + covered{str} + " " + (distinct > 1990U){str} + "\n");
+        File::StdOut.WriteStr(inRange{str} + " " + covered{str} + " " + (distinct > 1990U){str} + "\n");
     }
 }
 `)

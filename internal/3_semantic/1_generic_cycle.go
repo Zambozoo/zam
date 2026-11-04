@@ -321,6 +321,17 @@ func (v *genericCycleDetectorVisitor) VisitStmtVariable(s *syntax.StmtVariable) 
 	return nil
 }
 
+// VisitStmtUnpack implements [syntax.StmtVisitor].
+func (v *genericCycleDetectorVisitor) VisitStmtUnpack(s *syntax.StmtUnpack) error {
+	for _, variable := range s.Variables {
+		variable.Accept(v)
+	}
+	if s.Expr != nil {
+		s.Expr.Accept(v)
+	}
+	return nil
+}
+
 // VisitExprCast implements [syntax.ExprVisitor].
 func (v *genericCycleDetectorVisitor) VisitExprCast(e *syntax.ExprCast) error {
 	e.Type.Accept(v)
@@ -331,6 +342,12 @@ func (v *genericCycleDetectorVisitor) VisitExprCast(e *syntax.ExprCast) error {
 // VisitExprField implements [syntax.ExprVisitor].
 func (v *genericCycleDetectorVisitor) VisitExprField(e *syntax.ExprField) error {
 	e.Expr.Accept(v)
+	return nil
+}
+
+// VisitExprFields implements [syntax.ExprVisitor].
+func (v *genericCycleDetectorVisitor) VisitExprFields(e *syntax.ExprFields) error {
+	e.Head.Accept(v)
 	return nil
 }
 
@@ -393,6 +410,14 @@ func (v *genericCycleDetectorVisitor) VisitTypeWrapped(t *syntax.TypeWrapped) er
 	return nil
 }
 
+// VisitTypeTuple implements [syntax.TypeVisitor].
+func (v *genericCycleDetectorVisitor) VisitTypeTuple(t *syntax.TypeTuple) error {
+	for _, element := range t.Types {
+		element.Accept(v)
+	}
+	return nil
+}
+
 func (v *genericCycleDetectorVisitor) VisitTypeFunction(t *syntax.TypeFunction) error {
 	t.ReturnType.Accept(v)
 	for _, parameter := range t.ParameterTypes {
@@ -450,6 +475,16 @@ func (v *genericArgVisitor) VisitTypeArray(t *syntax.TypeArray) error {
 func (v *genericArgVisitor) VisitTypeWrapped(t *syntax.TypeWrapped) error {
 	v.depth++
 	t.Type.Accept(v)
+	v.depth--
+	return nil
+}
+
+// VisitTypeTuple implements [syntax.TypeVisitor].
+func (v *genericArgVisitor) VisitTypeTuple(t *syntax.TypeTuple) error {
+	v.depth++
+	for _, element := range t.Types {
+		element.Accept(v)
+	}
 	v.depth--
 	return nil
 }

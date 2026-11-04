@@ -33,6 +33,6 @@ public class RWMutex {
     public fun void() Delete = () {
         native(STD_RWMUTEX_DELETE){void(uint)}(this.handle);
         this.handle = 0U;
-        type(Objs).Delete(this);
+        Objs::Delete(this);
     }
 }

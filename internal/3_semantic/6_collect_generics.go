@@ -244,6 +244,16 @@ func (c *genericTypeCollector) VisitStmtVariable(s *syntax.StmtVariable) error {
 	return nil
 }
 
+func (c *genericTypeCollector) VisitStmtUnpack(s *syntax.StmtUnpack) error {
+	for _, variable := range s.Variables {
+		variable.Accept(c)
+	}
+	if s.Expr != nil {
+		s.Expr.Accept(c)
+	}
+	return nil
+}
+
 // ----- ExprVisitor -----
 
 func (c *genericTypeCollector) VisitExprCast(e *syntax.ExprCast) error {
@@ -261,6 +271,23 @@ func (c *genericTypeCollector) VisitExprField(e *syntax.ExprField) error {
 		if _, ok := syntax.StripConst(t).(syntax.TypeResolvable); ok {
 			c.recordComputed(syntax.NewWrappedType(syntax.TypeKindPointer, t))
 		}
+	}
+	return nil
+}
+
+func (c *genericTypeCollector) VisitExprFields(e *syntax.ExprFields) error {
+	e.Head.Accept(c)
+	receiver := e.Head.ResolvedType()
+	for _, t := range e.ComputedTypes {
+		c.recordComputed(t)
+		// A method of an inline value with a home is called through the
+		// value's address, so the pointer to it is a type the call names too.
+		if receiver != nil && !syntax.ReachedThroughAddress(receiver) {
+			if _, ok := syntax.StripConst(receiver).(syntax.TypeResolvable); ok {
+				c.recordComputed(syntax.NewWrappedType(syntax.TypeKindPointer, receiver))
+			}
+		}
+		receiver = t
 	}
 	return nil
 }
@@ -371,6 +398,14 @@ func (c *genericTypeCollector) VisitTypeReference(t *syntax.TypeReference) error
 func (c *genericTypeCollector) VisitTypeTailed(t *syntax.TypeTailed) error {
 	c.record(t)
 	t.Type.Accept(c)
+	return nil
+}
+
+func (c *genericTypeCollector) VisitTypeTuple(t *syntax.TypeTuple) error {
+	c.record(t)
+	for _, element := range t.Types {
+		element.Accept(c)
+	}
 	return nil
 }
 

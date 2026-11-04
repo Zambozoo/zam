@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 
 // Open-addressed hash set with linear probing
@@ -31,7 +30,7 @@ public class HashSet[A] {
     }
 
     public fun void(uint, A...) Init = (len, args) {
-        this.alloc(type(HashSet).minCap);
+        this.alloc(HashSet::minCap);
         for(var uint i = 0U; i < len; i++) {
             this.Add(args[i]);
         }
@@ -41,7 +40,7 @@ public class HashSet[A] {
         this.vals = new(A, cap);
         this.states = new(byte, cap);
         this.cap = cap;
-        this.shift = type(HashSet).wordBits;
+        this.shift = HashSet::wordBits;
         for(var uint c = cap; c > 1U; c = c >> 1U) {
             this.shift--;
         }
@@ -50,7 +49,7 @@ public class HashSet[A] {
     }
 
     private fun uint(A) home = (v) {
-        return ((#v){uint} * type(HashSet).fibonacci) >> this.shift;
+        return ((#v){uint} * HashSet::fibonacci) >> this.shift;
     }
 
     private fun uint(uint) step = (i) {
@@ -59,8 +58,8 @@ public class HashSet[A] {
 
     // find returns the slot holding v, or cap when v is absent.
     private fun uint(A) find = (v) {
-        for(var uint i = this.home(v); this.states[i] != type(HashSet).empty; i = this.step(i)) {
-            if(this.states[i] == type(HashSet).full && this.vals[i] == v) {
+        for(var uint i = this.home(v); this.states[i] != HashSet::empty; i = this.step(i)) {
+            if(this.states[i] == HashSet::full && this.vals[i] == v) {
                 return i;
             }
         }
@@ -71,24 +70,24 @@ public class HashSet[A] {
     // old ones are still the set's, so the collector reaches every element
     // throughout, and installed once they are full.
     private fun void() rehash = () {
-        var uint newCap = type(HashSet).minCap;
+        var uint newCap = HashSet::minCap;
         for(; newCap < (this.len + 1U) * 2U;) {
             newCap = newCap * 2U;
         }
-        var uint shift = type(HashSet).wordBits;
+        var uint shift = HashSet::wordBits;
         for(var uint c = newCap; c > 1U; c = c >> 1U) {
             shift--;
         }
         var A* vals = new(A, newCap);
         var byte* states = new(byte, newCap);
         for(var uint i = 0U; i < this.cap; i++) {
-            if(this.states[i] == type(HashSet).full) {
-                var uint j = ((#this.vals[i]){uint} * type(HashSet).fibonacci) >> shift;
-                for(; states[j] == type(HashSet).full;) {
+            if(this.states[i] == HashSet::full) {
+                var uint j = ((#this.vals[i]){uint} * HashSet::fibonacci) >> shift;
+                for(; states[j] == HashSet::full;) {
                     j = (j + 1U) & (newCap - 1U);
                 }
                 vals[j] = this.vals[i];
-                states[j] = type(HashSet).full;
+                states[j] = HashSet::full;
             }
         }
         var A* oldVals = this.vals;
@@ -104,13 +103,13 @@ public class HashSet[A] {
 
     private fun void(A) place = (v) {
         var uint i = this.home(v);
-        for(; this.states[i] == type(HashSet).full;) {
+        for(; this.states[i] == HashSet::full;) {
             i = this.step(i);
         }
-        if(this.states[i] == type(HashSet).empty) {
+        if(this.states[i] == HashSet::empty) {
             this.used++;
         }
-        this.states[i] = type(HashSet).full;
+        this.states[i] = HashSet::full;
         this.vals[i] = v;
         this.len++;
     }
@@ -127,7 +126,7 @@ public class HashSet[A] {
         if(this.find(v) != this.cap) {
             return false;
         }
-        if((this.used + 1U) * type(HashSet).loadDen > this.cap * type(HashSet).loadNum) {
+        if((this.used + 1U) * HashSet::loadDen > this.cap * HashSet::loadNum) {
             this.rehash();
         }
         this.place(v);
@@ -139,26 +138,26 @@ public class HashSet[A] {
         if(i == this.cap) {
             return false;
         }
-        this.states[i] = type(HashSet).removed;
+        this.states[i] = HashSet::removed;
         this.len--;
         return true;
     }
 
     public fun void() Clear = () {
         this.Delete();
-        this.alloc(type(HashSet).minCap);
+        this.alloc(HashSet::minCap);
     }
 
     public fun Arr[A]*() Arr = () {
         var A* a = new(A, this.len);
         var uint n = 0U;
         for(var uint i = 0U; i < this.cap; i++) {
-            if(this.states[i] == type(HashSet).full) {
+            if(this.states[i] == HashSet::full) {
                 a[n] = this.vals[i];
                 n++;
             }
         }
-        return type(Arr)[A].New(this.len, a...);
+        return Arr::[A]New(this.len, a...);
     }
 
     public fun Iter[A]*() Iter = () {
@@ -171,7 +170,7 @@ public class HashSet[A] {
         var str s = "{";
         var str spacer = "";
         for(var uint i = 0U; i < this.cap; i++) {
-            if(this.states[i] == type(HashSet).full) {
+            if(this.states[i] == HashSet::full) {
                 s = s + spacer + this.vals[i]{str};
                 spacer = ", ";
             }
@@ -190,11 +189,11 @@ public class HashSet[A] {
     }
 
     public fun void() Mark = () {
-        if(!type(System.GC).Markable(@{A})) {
+        if(!System.GC::Markable(@{A})) {
             return;
         }
         for(var uint i = 0U; i < this.cap; i++) {
-            if(this.states[i] == type(HashSet).full) {
+            if(this.states[i] == HashSet::full) {
                 mark(this.vals[i]);
             }
         }
@@ -209,31 +208,31 @@ public class HashSet[A] {
             this.i = 0U;
         }
 
-        public fun Pair[A, bool]() Next = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Next = () {
+            var (A, bool) p;
             for(; this.i < this.s.cap; this.i++) {
-                if(this.s.states[this.i] == type(HashSet).full) {
-                    p.first = this.s.vals[this.i];
-                    p.second = true;
+                if(this.s.states[this.i] == HashSet::full) {
+                    p.0 = this.s.vals[this.i];
+                    p.1 = true;
                     this.i++;
                     return p;
                 }
             }
-            p.second = false;
+            p.1 = false;
             return p;
         }
 
-        public fun Pair[A, bool]() Prev = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Prev = () {
+            var (A, bool) p;
             for(; this.i > 0U;) {
                 this.i--;
-                if(this.s.states[this.i] == type(HashSet).full) {
-                    p.first = this.s.vals[this.i];
-                    p.second = true;
+                if(this.s.states[this.i] == HashSet::full) {
+                    p.0 = this.s.vals[this.i];
+                    p.1 = true;
                     return p;
                 }
             }
-            p.second = false;
+            p.1 = false;
             return p;
         }
     }

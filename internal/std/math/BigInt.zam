@@ -1,7 +1,6 @@
 import "../lang/Uints.zam";
 import "../lang/System.zam";
 import "../lang/Obj.zam";
-import "../lang/Pair.zam";
 import "../lang/Strs.zam";
 import "Hash.zam";
 
@@ -41,10 +40,10 @@ public class BigInt {
     }
 
     public static fun BigInt*(uint) FromUint = (u) {
-        var uint* a = type(BigInt).zeros(2U);
-        a[0] = u & type(BigInt).mask;
+        var uint* a = BigInt::zeros(2U);
+        a[0] = u & BigInt::mask;
         a[1] = u >> 32U;
-        return type(BigInt).make(false, 2U, a);
+        return BigInt::make(false, 2U, a);
     }
 
     public static fun BigInt*(int) FromInt = (i) {
@@ -52,20 +51,20 @@ public class BigInt {
         if(i < 0) {
             m = 0U - m;
         }
-        var BigInt* b = type(BigInt).FromUint(m);
+        var BigInt* b = BigInt::FromUint(m);
         b.neg = i < 0;
         return b;
     }
 
     // Parse reads an optional minus sign followed by decimal digits, and
     // reports false for anything else.
-    public static fun Pair[BigInt*, bool](str) Parse = (s) {
-        var Pair[BigInt*, bool] out;
-        out.first = null;
-        out.second = false;
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        var byte* b = p.first;
-        var uint n = p.second{uint};
+    public static fun (BigInt*, bool)(str) Parse = (s) {
+        var (BigInt*, bool) out;
+        out.0 = null;
+        out.1 = false;
+        var (byte*, int) p = Strs::ToBytes(s);
+        var byte* b = p.0;
+        var uint n = p.1{uint};
         var uint i = 0U;
         var bool neg = false;
         if(n > 0U && b[0]{int} == '-'{int}) {
@@ -76,7 +75,7 @@ public class BigInt {
             return out;
         }
         var uint cap = (n - i) / 9U + 2U;
-        var uint* a = type(BigInt).zeros(cap);
+        var uint* a = BigInt::zeros(cap);
         var uint len = 0U;
         for(; i < n;) {
             var uint mul = 1U;
@@ -94,7 +93,7 @@ public class BigInt {
             var uint carry = add;
             for(var uint j = 0U; j < len; j++) {
                 var uint t = a[j] * mul + carry;
-                a[j] = t & type(BigInt).mask;
+                a[j] = t & BigInt::mask;
                 carry = t >> 32U;
             }
             if(carry != 0U) {
@@ -102,8 +101,8 @@ public class BigInt {
                 len++;
             }
         }
-        out.first = type(BigInt).make(neg, len, a);
-        out.second = true;
+        out.0 = BigInt::make(neg, len, a);
+        out.1 = true;
         return out;
     }
 
@@ -132,48 +131,48 @@ public class BigInt {
             a = b;
             b = t;
         }
-        var uint* r = type(BigInt).zeros(a.len + 1U);
+        var uint* r = BigInt::zeros(a.len + 1U);
         var uint carry = 0U;
         for(var uint i = 0U; i < a.len; i++) {
             var uint s = a.limbs[i] + carry;
             if(i < b.len) {
                 s = s + b.limbs[i];
             }
-            r[i] = s & type(BigInt).mask;
+            r[i] = s & BigInt::mask;
             carry = s >> 32U;
         }
         r[a.len] = carry;
-        return type(BigInt).make(neg, a.len + 1U, r);
+        return BigInt::make(neg, a.len + 1U, r);
     }
 
     // subMag subtracts the magnitude of b from that of a, which is no less.
     private static fun BigInt*(bool, BigInt*, BigInt*) subMag = (neg, a, b) {
-        var uint* r = type(BigInt).zeros(a.len);
+        var uint* r = BigInt::zeros(a.len);
         var uint borrow = 0U;
         for(var uint i = 0U; i < a.len; i++) {
-            var uint t = a.limbs[i] + type(BigInt).base - borrow;
+            var uint t = a.limbs[i] + BigInt::base - borrow;
             if(i < b.len) {
                 t = t - b.limbs[i];
             }
-            r[i] = t & type(BigInt).mask;
+            r[i] = t & BigInt::mask;
             borrow = 1U - (t >> 32U);
         }
-        return type(BigInt).make(neg, a.len, r);
+        return BigInt::make(neg, a.len, r);
     }
 
     // addSigned returns this plus o with o's sign taken as oneg.
     private fun BigInt*(BigInt*, bool) addSigned = (o, oneg) {
         if(this.neg == oneg) {
-            return type(BigInt).addMag(oneg, this, o);
+            return BigInt::addMag(oneg, this, o);
         }
-        var int c = type(BigInt).cmpMag(this, o);
+        var int c = BigInt::cmpMag(this, o);
         if(c == 0) {
-            return type(BigInt).FromUint(0U);
+            return BigInt::FromUint(0U);
         }
         if(c > 0) {
-            return type(BigInt).subMag(this.neg, this, o);
+            return BigInt::subMag(this.neg, this, o);
         }
-        return type(BigInt).subMag(oneg, o, this);
+        return BigInt::subMag(oneg, o, this);
     }
 
     public fun BigInt*(BigInt*) Add = (o) {
@@ -185,74 +184,74 @@ public class BigInt {
     }
 
     public fun BigInt*(BigInt*) Mul = (o) {
-        var uint* r = type(BigInt).zeros(this.len + o.len);
+        var uint* r = BigInt::zeros(this.len + o.len);
         for(var uint i = 0U; i < this.len; i++) {
             var uint carry = 0U;
             var uint a = this.limbs[i];
             for(var uint j = 0U; j < o.len; j++) {
                 var uint t = a * o.limbs[j] + r[i + j] + carry;
-                r[i + j] = t & type(BigInt).mask;
+                r[i + j] = t & BigInt::mask;
                 carry = t >> 32U;
             }
             r[i + o.len] = carry;
         }
-        return type(BigInt).make(this.neg != o.neg, this.len + o.len, r);
+        return BigInt::make(this.neg != o.neg, this.len + o.len, r);
     }
 
     // divSmall divides the magnitude of a by d, below 2^32, returning the
     // quotient's limbs and the remainder.
-    private static fun Pair[uint*, uint](BigInt*, uint) divSmall = (a, d) {
-        var Pair[uint*, uint] out;
-        var uint* q = type(BigInt).zeros(a.len);
+    private static fun (uint*, uint)(BigInt*, uint) divSmall = (a, d) {
+        var (uint*, uint) out;
+        var uint* q = BigInt::zeros(a.len);
         var uint rem = 0U;
         for(var uint i = a.len; i > 0U; i--) {
             var uint cur = (rem << 32U) | a.limbs[i - 1U];
             q[i - 1U] = cur / d;
             rem = cur % d;
         }
-        out.first = q;
-        out.second = rem;
+        out.0 = q;
+        out.1 = rem;
         return out;
     }
 
     // DivMod returns the quotient truncated toward zero and the remainder,
     // which takes the sign of this.
-    public fun Pair[BigInt*, BigInt*](BigInt*) DivMod = (o) {
+    public fun (BigInt*, BigInt*)(BigInt*) DivMod = (o) {
         if(o.len == 0U) {
-            type(System).Panic("BigInt division by zero");
+            System::Panic("BigInt division by zero");
         }
-        var Pair[BigInt*, BigInt*] out;
-        if(type(BigInt).cmpMag(this, o) < 0) {
-            out.first = type(BigInt).FromUint(0U);
-            out.second = this;
+        var (BigInt*, BigInt*) out;
+        if(BigInt::cmpMag(this, o) < 0) {
+            out.0 = BigInt::FromUint(0U);
+            out.1 = this;
             return out;
         }
         var bool qneg = this.neg != o.neg;
         if(o.len == 1U) {
-            var Pair[uint*, uint] p = type(BigInt).divSmall(this, o.limbs[0]);
-            out.first = type(BigInt).make(qneg, this.len, p.first);
-            var BigInt* r = type(BigInt).FromUint(p.second);
+            var (uint*, uint) p = BigInt::divSmall(this, o.limbs[0]);
+            out.0 = BigInt::make(qneg, this.len, p.0);
+            var BigInt* r = BigInt::FromUint(p.1);
             r.neg = this.neg && r.len > 0U;
-            out.second = r;
+            out.1 = r;
             return out;
         }
 
         var uint m = this.len;
         var uint n = o.len;
-        var uint s = type(Uints).LeadingZeros(o.limbs[n - 1U]) - 32U;
-        var uint* v = type(BigInt).zeros(n);
+        var uint s = Uints::LeadingZeros(o.limbs[n - 1U]) - 32U;
+        var uint* v = BigInt::zeros(n);
         for(var uint i = n - 1U; i > 0U; i--) {
-            v[i] = ((o.limbs[i] << s) | (o.limbs[i - 1U] >> (32U - s))) & type(BigInt).mask;
+            v[i] = ((o.limbs[i] << s) | (o.limbs[i - 1U] >> (32U - s))) & BigInt::mask;
         }
-        v[0] = (o.limbs[0] << s) & type(BigInt).mask;
-        var uint* u = type(BigInt).zeros(m + 1U);
+        v[0] = (o.limbs[0] << s) & BigInt::mask;
+        var uint* u = BigInt::zeros(m + 1U);
         u[m] = this.limbs[m - 1U] >> (32U - s);
         for(var uint i = m - 1U; i > 0U; i--) {
-            u[i] = ((this.limbs[i] << s) | (this.limbs[i - 1U] >> (32U - s))) & type(BigInt).mask;
+            u[i] = ((this.limbs[i] << s) | (this.limbs[i - 1U] >> (32U - s))) & BigInt::mask;
         }
-        u[0] = (this.limbs[0] << s) & type(BigInt).mask;
+        u[0] = (this.limbs[0] << s) & BigInt::mask;
 
-        var uint* q = type(BigInt).zeros(m - n + 1U);
+        var uint* q = BigInt::zeros(m - n + 1U);
         var uint top = v[n - 1U];
         var uint next = v[n - 2U];
         for(var uint jj = m - n + 1U; jj > 0U; jj--) {
@@ -260,7 +259,7 @@ public class BigInt {
             var uint num = (u[j + n] << 32U) | u[j + n - 1U];
             var uint qhat = num / top;
             var uint rhat = num % top;
-            for(; rhat < type(BigInt).base && (qhat >= type(BigInt).base || qhat * next > ((rhat << 32U) | u[j + n - 2U]));) {
+            for(; rhat < BigInt::base && (qhat >= BigInt::base || qhat * next > ((rhat << 32U) | u[j + n - 2U]));) {
                 qhat--;
                 rhat = rhat + top;
             }
@@ -270,12 +269,12 @@ public class BigInt {
             for(var uint i = 0U; i < n; i++) {
                 var uint p = qhat * v[i] + carry;
                 carry = p >> 32U;
-                var uint t = u[i + j] + type(BigInt).base - (p & type(BigInt).mask) - borrow;
-                u[i + j] = t & type(BigInt).mask;
+                var uint t = u[i + j] + BigInt::base - (p & BigInt::mask) - borrow;
+                u[i + j] = t & BigInt::mask;
                 borrow = 1U - (t >> 32U);
             }
-            var uint t = u[j + n] + type(BigInt).base - carry - borrow;
-            u[j + n] = t & type(BigInt).mask;
+            var uint t = u[j + n] + BigInt::base - carry - borrow;
+            u[j + n] = t & BigInt::mask;
             borrow = 1U - (t >> 32U);
 
             if(borrow != 0U) {
@@ -283,31 +282,31 @@ public class BigInt {
                 var uint c = 0U;
                 for(var uint i = 0U; i < n; i++) {
                     var uint w = u[i + j] + v[i] + c;
-                    u[i + j] = w & type(BigInt).mask;
+                    u[i + j] = w & BigInt::mask;
                     c = w >> 32U;
                 }
-                u[j + n] = (u[j + n] + c) & type(BigInt).mask;
+                u[j + n] = (u[j + n] + c) & BigInt::mask;
             }
             q[j] = qhat;
         }
 
-        var uint* r = type(BigInt).zeros(n);
+        var uint* r = BigInt::zeros(n);
         for(var uint i = 0U; i < n; i++) {
-            r[i] = ((u[i] >> s) | (u[i + 1U] << (32U - s))) & type(BigInt).mask;
+            r[i] = ((u[i] >> s) | (u[i + 1U] << (32U - s))) & BigInt::mask;
         }
         free(u);
         free(v);
-        out.first = type(BigInt).make(qneg, m - n + 1U, q);
-        out.second = type(BigInt).make(this.neg, n, r);
+        out.0 = BigInt::make(qneg, m - n + 1U, q);
+        out.1 = BigInt::make(this.neg, n, r);
         return out;
     }
 
     public fun BigInt*(BigInt*) Div = (o) {
-        return this.DivMod(o).first;
+        return this.DivMod(o).0;
     }
 
     public fun BigInt*(BigInt*) Mod = (o) {
-        return this.DivMod(o).second;
+        return this.DivMod(o).1;
     }
 
     public fun BigInt*() Neg = () {
@@ -317,11 +316,11 @@ public class BigInt {
     }
 
     public fun BigInt*() Abs = () {
-        var uint* a = type(BigInt).zeros(this.len);
+        var uint* a = BigInt::zeros(this.len);
         for(var uint i = 0U; i < this.len; i++) {
             a[i] = this.limbs[i];
         }
-        return type(BigInt).make(false, this.len, a);
+        return BigInt::make(false, this.len, a);
     }
 
     // Sign returns -1, 0 or 1 by the sign of this.
@@ -341,7 +340,7 @@ public class BigInt {
 
     // Pow returns this to the e.
     public fun BigInt*(uint) Pow = (e) {
-        var BigInt* r = type(BigInt).FromUint(1U);
+        var BigInt* r = BigInt::FromUint(1U);
         var BigInt* b = this;
         for(; e > 0U; e = e >> 1U) {
             if((e & 1U) == 1U) {
@@ -371,13 +370,13 @@ public class BigInt {
     public fun BigInt*(uint) Shl = (k) {
         var uint words = k / 32U;
         var uint bits = k % 32U;
-        var uint* a = type(BigInt).zeros(this.len + words + 1U);
+        var uint* a = BigInt::zeros(this.len + words + 1U);
         for(var uint i = 0U; i < this.len; i++) {
             var uint x = this.limbs[i] << bits;
-            a[i + words] = a[i + words] | (x & type(BigInt).mask);
+            a[i + words] = a[i + words] | (x & BigInt::mask);
             a[i + words + 1U] = x >> 32U;
         }
-        return type(BigInt).make(this.neg, this.len + words + 1U, a);
+        return BigInt::make(this.neg, this.len + words + 1U, a);
     }
 
     // Shr returns the magnitude shifted right by k bits, keeping the sign.
@@ -385,18 +384,18 @@ public class BigInt {
         var uint words = k / 32U;
         var uint bits = k % 32U;
         if(words >= this.len) {
-            return type(BigInt).FromUint(0U);
+            return BigInt::FromUint(0U);
         }
         var uint n = this.len - words;
-        var uint* a = type(BigInt).zeros(n);
+        var uint* a = BigInt::zeros(n);
         for(var uint i = 0U; i < n; i++) {
             var uint x = this.limbs[i + words] >> bits;
             if(i + words + 1U < this.len) {
-                x = x | ((this.limbs[i + words + 1U] << (32U - bits)) & type(BigInt).mask);
+                x = x | ((this.limbs[i + words + 1U] << (32U - bits)) & BigInt::mask);
             }
-            a[i] = x & type(BigInt).mask;
+            a[i] = x & BigInt::mask;
         }
-        return type(BigInt).make(this.neg, n, a);
+        return BigInt::make(this.neg, n, a);
     }
 
     // Sqrt returns the square root of the magnitude, rounded down.
@@ -405,7 +404,7 @@ public class BigInt {
         if(n.len == 0U) {
             return n;
         }
-        var BigInt* x = type(BigInt).FromUint(1U).Shl((n.BitLen() + 1U) / 2U);
+        var BigInt* x = BigInt::FromUint(1U).Shl((n.BitLen() + 1U) / 2U);
         for(;;) {
             var BigInt* y = x.Add(n.Div(x)).Shr(1U);
             if(y.Cmp(x) >= 0) {
@@ -429,7 +428,7 @@ public class BigInt {
     public fun uint() TrailingZeros = () {
         for(var uint i = 0U; i < this.len; i++) {
             if(this.limbs[i] != 0U) {
-                return i * 32U + type(Uints).TrailingZeros(this.limbs[i]);
+                return i * 32U + Uints::TrailingZeros(this.limbs[i]);
             }
         }
         return 0U;
@@ -440,14 +439,14 @@ public class BigInt {
         if(this.len == 0U) {
             return 0U;
         }
-        return (this.len - 1U) * 32U + type(Uints).Len(this.limbs[this.len - 1U]);
+        return (this.len - 1U) * 32U + Uints::Len(this.limbs[this.len - 1U]);
     }
 
     // ToInt returns this as an int, and false when it does not fit.
-    public fun Pair[int, bool]() ToInt = () {
-        var Pair[int, bool] out;
-        out.first = 0;
-        out.second = false;
+    public fun (int, bool)() ToInt = () {
+        var (int, bool) out;
+        out.0 = 0;
+        out.1 = false;
         if(this.len > 2U) {
             return out;
         }
@@ -459,14 +458,14 @@ public class BigInt {
             if(m > 9223372036854775808U) {
                 return out;
             }
-            out.first = (0U - m){int};
+            out.0 = (0U - m){int};
         } else {
             if(m > 9223372036854775807U) {
                 return out;
             }
-            out.first = m{int};
+            out.0 = m{int};
         }
-        out.second = true;
+        out.1 = true;
         return out;
     }
 
@@ -484,7 +483,7 @@ public class BigInt {
 
     public fun bool(Obj*) Eq = (o) {
         var BigInt* b = o{BigInt*};
-        return this.neg == b.neg && type(BigInt).cmpMag(this, b) == 0;
+        return this.neg == b.neg && BigInt::cmpMag(this, b) == 0;
     }
 
     public fun int(Obj*) Cmp = (o) {
@@ -495,7 +494,7 @@ public class BigInt {
             }
             return 1;
         }
-        var int c = type(BigInt).cmpMag(this, b);
+        var int c = BigInt::cmpMag(this, b);
         if(this.neg) {
             return -c;
         }
@@ -503,9 +502,9 @@ public class BigInt {
     }
 
     public fun int() Hash = () {
-        var uint h = type(Hash).Int(this.Sign());
+        var uint h = Hash::Int(this.Sign());
         for(var uint i = 0U; i < this.len; i++) {
-            h = type(Hash).Combine(h, this.limbs[i]);
+            h = Hash::Combine(h, this.limbs[i]);
         }
         return h{int};
     }
@@ -520,10 +519,10 @@ public class BigInt {
         var uint count = 0U;
         var BigInt* cur = this.Abs();
         for(; cur.len > 0U;) {
-            var Pair[uint*, uint] p = type(BigInt).divSmall(cur, type(BigInt).chunk);
-            chunks[count] = p.second;
+            var (uint*, uint) p = BigInt::divSmall(cur, BigInt::chunk);
+            chunks[count] = p.1;
             count++;
-            cur = type(BigInt).make(false, cur.len, p.first);
+            cur = BigInt::make(false, cur.len, p.0);
         }
         var str s = "";
         if(this.neg) {
@@ -532,7 +531,7 @@ public class BigInt {
         s = s + chunks[count - 1U]{str};
         for(var uint i = count - 1U; i > 0U; i--) {
             var str digits = chunks[i - 1U]{str};
-            for(var int pad = 9 - type(Strs).ByteLen(digits); pad > 0; pad--) {
+            for(var int pad = 9 - Strs::ByteLen(digits); pad > 0; pad--) {
                 s = s + "0";
             }
             s = s + digits;

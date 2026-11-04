@@ -99,7 +99,7 @@ namespace Main {
             var Archive.Entry* e = entries.Get(i);
             var str body = "-";
             if(e.data != null) {
-                body = type(Strs).FromBytes(e.data.Arr(), e.data.Len(){int});
+                body = Strs::FromBytes(e.data.Arr(), e.data.Len(){int});
             }
             s = s + "[" + e.name + " " + e.isDir{str} + " " + e.mode{str} + " " + e.modTime.Unix(){str} + " " + body + "]";
         }
@@ -107,50 +107,50 @@ namespace Main {
     }
 
     static fun Arr[byte]*(str) bytesOf = (s) {
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        var byte* b = new(byte, p.second{uint});
-        for(var int i = 0; i < p.second; i++) {
-            b[i] = p.first[i];
+        var (byte*, int) p = Strs::ToBytes(s);
+        var byte* b = new(byte, p.1{uint});
+        for(var int i = 0; i < p.1; i++) {
+            b[i] = p.0[i];
         }
-        return type(Arr)[byte].New(p.second{uint}, b...);
+        return Arr::[byte]New(p.1{uint}, b...);
     }
 
     static fun void(str, Arr[byte]*) save = (path, b) {
-        var File* f = type(File).Create(path).first;
+        var File* f = File::Create(path).0;
         f.Write(b.Arr(), b.Len(){int});
         f.Close();
     }
 
     fun void(uint, str...) main = (argC, argV) {
         var str dir = argV[0];
-        var str tar = type(FS).ReadFile(type(FS).Join(dir, "in.tar")).first;
-        var str tgz = type(FS).ReadFile(type(FS).Join(dir, "in.tgz")).first;
-        var str zip = type(FS).ReadFile(type(FS).Join(dir, "in.zip")).first;
-        var Pair[byte*, int] tb = type(Strs).ToBytes(tar);
-        var Pair[byte*, int] gb = type(Strs).ToBytes(tgz);
-        var Pair[byte*, int] zb = type(Strs).ToBytes(zip);
-        var str s = type(Main).describe(type(TAR).Read(tb.first, tb.second{uint}).first) + "\n";
-        s = s + type(Main).describe(type(TAR).Read(gb.first, gb.second{uint}).first) + "\n";
-        s = s + type(Main).describe(type(ZIP).Read(zb.first, zb.second{uint}).first) + "\n";
+        var str tar = FS::ReadFile(FS::Join(dir, "in.tar")).0;
+        var str tgz = FS::ReadFile(FS::Join(dir, "in.tgz")).0;
+        var str zip = FS::ReadFile(FS::Join(dir, "in.zip")).0;
+        var (byte*, int) tb = Strs::ToBytes(tar);
+        var (byte*, int) gb = Strs::ToBytes(tgz);
+        var (byte*, int) zb = Strs::ToBytes(zip);
+        var str s = Main::describe(TAR::Read(tb.0, tb.1{uint}).0) + "\n";
+        s = s + Main::describe(TAR::Read(gb.0, gb.1{uint}).0) + "\n";
+        s = s + Main::describe(ZIP::Read(zb.0, zb.1{uint}).0) + "\n";
 
-        var Arr[Archive.Entry*]* out = type(Arr)[Archive.Entry*].New(3U, new(Archive.Entry*, 3U)...);
-        out.Set(0U, type(Archive.Entry).Dir("d/"));
-        out.Set(1U, type(Archive.Entry).File("d/a.txt", type(Main).bytesOf("hello")));
-        var Archive.Entry* tool = type(Archive.Entry).File("tool", type(Main).bytesOf("#!/bin/sh\n"));
+        var Arr[Archive.Entry*]* out = Arr::[Archive.Entry*]New(3U, new(Archive.Entry*, 3U)...);
+        out.Set(0U, Archive.Entry::Dir("d/"));
+        out.Set(1U, Archive.Entry::File("d/a.txt", Main::bytesOf("hello")));
+        var Archive.Entry* tool = Archive.Entry::File("tool", Main::bytesOf("#!/bin/sh\n"));
         tool.mode = 493;
-        tool.modTime = type(Time).FromUnix(1700000002, 0);
+        tool.modTime = Time::FromUnix(1700000002, 0);
         out.Set(2U, tool);
-        var Arr[byte]* written = type(TAR).Write(out).first;
-        var Arr[byte]* zipWritten = type(ZIP).Write(out).first;
-        type(Main).save(type(FS).Join(dir, "out.tar"), written);
-        type(Main).save(type(FS).Join(dir, "out.zip"), zipWritten);
-        s = s + type(Main).describe(type(TAR).Read(written.Arr(), written.Len()).first) + "\n";
-        s = s + type(Main).describe(type(ZIP).Read(zipWritten.Arr(), zipWritten.Len()).first) + "\n";
+        var Arr[byte]* written = TAR::Write(out).0;
+        var Arr[byte]* zipWritten = ZIP::Write(out).0;
+        Main::save(FS::Join(dir, "out.tar"), written);
+        Main::save(FS::Join(dir, "out.zip"), zipWritten);
+        s = s + Main::describe(TAR::Read(written.Arr(), written.Len()).0) + "\n";
+        s = s + Main::describe(ZIP::Read(zipWritten.Arr(), zipWritten.Len()).0) + "\n";
 
-        var Arr[byte]* junk = type(Main).bytesOf("this is not an archive at all, not even close to one");
-        s = s + (type(TAR).Read(junk.Arr(), junk.Len()).second != null){str} + " " + (type(ZIP).Read(junk.Arr(), junk.Len()).second != null){str};
-        s = s + " " + (type(ZIP).Read(written.Arr(), written.Len()).second != null){str} + "\n";
-        type(File).StdOut.WriteStr(s);
+        var Arr[byte]* junk = Main::bytesOf("this is not an archive at all, not even close to one");
+        s = s + (TAR::Read(junk.Arr(), junk.Len()).1 != null){str} + " " + (ZIP::Read(junk.Arr(), junk.Len()).1 != null){str};
+        s = s + " " + (ZIP::Read(written.Arr(), written.Len()).1 != null){str} + "\n";
+        File::StdOut.WriteStr(s);
     }
 }
 `)

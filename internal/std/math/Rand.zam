@@ -9,17 +9,17 @@ public namespace Rand {
 
     // Byte returns a uniformly random byte.
     public fun byte() Byte = () {
-        return (type(Rand).Uint() >> 56U){byte};
+        return (Rand::Uint() >> 56U){byte};
     }
 
     // ByteRange returns a uniformly random byte in [min, max].
     public fun byte(byte, byte) ByteRange = (min, max) {
-        return type(Rand).UintRange(min{uint}, max{uint}){byte};
+        return Rand::UintRange(min{uint}, max{uint}){byte};
     }
 
     // Char returns a uniformly random Unicode scalar value.
     public fun char() Char = () {
-        return type(Rand).CharRange(0U{char}, type(Rand).maxChar{char});
+        return Rand::CharRange(0U{char}, Rand::maxChar{char});
     }
 
     // CharRange returns a uniformly random Unicode scalar value in [min, max],
@@ -28,24 +28,24 @@ public namespace Rand {
         var uint lo = min{uint};
         var uint hi = max{uint};
         if(lo > hi) {
-            type(System).Panic("Rand.CharRange: min is greater than max");
+            System::Panic("Rand.CharRange: min is greater than max");
         }
         var uint start = lo;
-        if(start < type(Rand).surrogateLo) {
-            start = type(Rand).surrogateLo;
+        if(start < Rand::surrogateLo) {
+            start = Rand::surrogateLo;
         }
         var uint end = hi;
-        if(end > type(Rand).surrogateHi) {
-            end = type(Rand).surrogateHi;
+        if(end > Rand::surrogateHi) {
+            end = Rand::surrogateHi;
         }
         var uint gap = 0U;
         if(start <= end) {
             gap = end - start + 1U;
         }
         if(gap == hi - lo + 1U) {
-            type(System).Panic("Rand.CharRange: range holds only surrogates");
+            System::Panic("Rand.CharRange: range holds only surrogates");
         }
-        var uint c = type(Rand).UintRange(lo, hi - gap);
+        var uint c = Rand::UintRange(lo, hi - gap);
         if(gap > 0U && c >= start) {
             c = c + gap;
         }
@@ -62,31 +62,31 @@ public namespace Rand {
     // UintRange returns a uniformly random uint in [min, max].
     public fun uint(uint, uint) UintRange = (min, max) {
         if(min > max) {
-            type(System).Panic("Rand.UintRange: min is greater than max");
+            System::Panic("Rand.UintRange: min is greater than max");
         }
         var uint span = max - min + 1U;
         if(span == 0U) {
-            return type(Rand).Uint();
+            return Rand::Uint();
         }
         var uint threshold = (0U - span) % span;
-        var uint r = type(Rand).Uint();
+        var uint r = Rand::Uint();
         for(; r < threshold;) {
-            r = type(Rand).Uint();
+            r = Rand::Uint();
         }
         return min + r % span;
     }
 
     // Int returns a uniformly random int.
     public fun int() Int = () {
-        return type(Rand).Uint(){int};
+        return Rand::Uint(){int};
     }
 
     // IntRange returns a uniformly random int in [min, max].
     public fun int(int, int) IntRange = (min, max) {
         if(min > max) {
-            type(System).Panic("Rand.IntRange: min is greater than max");
+            System::Panic("Rand.IntRange: min is greater than max");
         }
-        return (min{uint} + type(Rand).UintRange(0U, max{uint} - min{uint})){int};
+        return (min{uint} + Rand::UintRange(0U, max{uint} - min{uint})){int};
     }
 
     // Flt returns a uniformly random flt in [0, 1).
@@ -99,13 +99,13 @@ public namespace Rand {
     // FltRange returns a uniformly random flt between min and max.
     public fun flt(flt, flt) FltRange = (min, max) {
         if(min > max) {
-            type(System).Panic("Rand.FltRange: min is greater than max");
+            System::Panic("Rand.FltRange: min is greater than max");
         }
-        return min + (max - min) * type(Rand).Flt();
+        return min + (max - min) * Rand::Flt();
     }
 
     // Bool returns true or false with equal odds.
     public fun bool() Bool = () {
-        return (type(Rand).Uint() >> 63U) == 1U;
+        return (Rand::Uint() >> 63U) == 1U;
     }
 }

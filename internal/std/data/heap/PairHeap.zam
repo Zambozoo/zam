@@ -1,5 +1,4 @@
 import "../../lang/System.zam";
-import "../../lang/Pair.zam";
 import "../../lang/Arr.zam";
 import "../../lang/Struct.zam";
 
@@ -40,7 +39,7 @@ public class PairHeap[A] {
 
     // before reports whether a belongs above b in the tree for side s.
     private fun bool(Node[A]*, Node[A]*, uint) before = (a, b, s) {
-        if(s == type(PairHeap).minSide) {
+        if(s == PairHeap::minSide) {
             return a.val < b.val;
         }
         return b.val < a.val;
@@ -76,9 +75,9 @@ public class PairHeap[A] {
     private fun void(Node[A]*, uint, Node[A]**) combine = (c, s, out) {
         var void(Node[A]*) chain = null;
         var void(Node[A]*) tree = null;
-        if(s == type(PairHeap).minSide) {
-            chain = type(PairHeap)[A].markChain;
-            tree = type(PairHeap)[A].markFrom;
+        if(s == PairHeap::minSide) {
+            chain = PairHeap::[A]markChain;
+            tree = PairHeap::[A]markFrom;
         }
         var Struct[Node[A]*] rest;
         rest.Init(c, chain, null);
@@ -125,8 +124,8 @@ public class PairHeap[A] {
     // unlink takes n out of the tree for side s, melding its children back in.
     private fun void(Node[A]*, uint) unlink = (n, s) {
         var void(Node[A]*) tree = null;
-        if(s == type(PairHeap).minSide) {
-            tree = type(PairHeap)[A].markFrom;
+        if(s == PairHeap::minSide) {
+            tree = PairHeap::[A]markFrom;
         }
         var Struct[Node[A]*] kids;
         kids.Init(null, tree, null);
@@ -212,13 +211,13 @@ public class PairHeap[A] {
 
     // markFrom marks n and everything beneath it in the min tree.
     private static fun[A] void(Node[A]*) markFrom = (n) {
-        type(PairHeap)[A].markWalk(n, false);
+        PairHeap::[A]markWalk(n, false);
     }
 
     // markChain marks n, the siblings that follow it, and everything beneath
     // them in the min tree.
     private static fun[A] void(Node[A]*) markChain = (n) {
-        type(PairHeap)[A].markWalk(n, true);
+        PairHeap::[A]markWalk(n, true);
     }
 
     // nodes returns every node, which the caller frees.
@@ -263,36 +262,36 @@ public class PairHeap[A] {
 
     public fun A() GetMin = () {
         if(this.len == 0U) {
-            type(System).Panic("PairHeap is empty");
+            System::Panic("PairHeap is empty");
         }
-        return this.roots[type(PairHeap).minSide].val;
+        return this.roots[PairHeap::minSide].val;
     }
 
     public fun A() GetMax = () {
         if(this.len == 0U) {
-            type(System).Panic("PairHeap is empty");
+            System::Panic("PairHeap is empty");
         }
-        return this.roots[type(PairHeap).maxSide].val;
+        return this.roots[PairHeap::maxSide].val;
     }
 
     public fun A() RemoveMin = () {
         if(this.len == 0U) {
-            type(System).Panic("PairHeap is empty");
+            System::Panic("PairHeap is empty");
         }
-        return this.removeRoot(type(PairHeap).minSide);
+        return this.removeRoot(PairHeap::minSide);
     }
 
     public fun A() RemoveMax = () {
         if(this.len == 0U) {
-            type(System).Panic("PairHeap is empty");
+            System::Panic("PairHeap is empty");
         }
-        return this.removeRoot(type(PairHeap).maxSide);
+        return this.removeRoot(PairHeap::maxSide);
     }
 
     // Merge moves every element of other into this heap, leaving other empty.
     public fun void(PairHeap[A]*) Merge = (other) {
         if(other{void*} == this{void*}) {
-            type(System).Panic("PairHeap merged with itself");
+            System::Panic("PairHeap merged with itself");
         }
         this.roots[0] = this.link(this.roots[0], other.roots[0], 0U);
         this.roots[1] = this.link(this.roots[1], other.roots[1], 1U);
@@ -314,7 +313,7 @@ public class PairHeap[A] {
             a[i] = ns[i].val;
         }
         free(ns);
-        return type(Arr)[A].New(this.len, a...);
+        return Arr::[A]New(this.len, a...);
     }
 
     // Iter visits the elements in no particular order, as they stood when it
@@ -342,11 +341,11 @@ public class PairHeap[A] {
     }
 
     public fun void() Mark = () {
-        if(!type(System.GC).Markable(@{A})) {
+        if(!System.GC::Markable(@{A})) {
             return;
         }
         if(this.roots[0] != null) {
-            type(PairHeap)[A].markFrom(this.roots[0]);
+            PairHeap::[A]markFrom(this.roots[0]);
         }
     }
 
@@ -354,27 +353,27 @@ public class PairHeap[A] {
         var Arr[A]* items;
         var uint i;
 
-        public fun Pair[A, bool]() Next = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Next = () {
+            var (A, bool) p;
             if(this.i >= this.items.Len()) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
-            p.first = this.items.Get(this.i);
-            p.second = true;
+            p.0 = this.items.Get(this.i);
+            p.1 = true;
             this.i++;
             return p;
         }
 
-        public fun Pair[A, bool]() Prev = () {
-            var Pair[A, bool] p;
+        public fun (A, bool)() Prev = () {
+            var (A, bool) p;
             if(this.i == 0U) {
-                p.second = false;
+                p.1 = false;
                 return p;
             }
             this.i--;
-            p.first = this.items.Get(this.i);
-            p.second = true;
+            p.0 = this.items.Get(this.i);
+            p.1 = true;
             return p;
         }
     }

@@ -400,6 +400,31 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 			},
 		},
 		{
+			kind: "tuple",
+			definition: &tupleDefinition{
+				instanceByteSize:       24,
+				initializerInstruction: 42,
+				types: typeListInstance{typeIDs: []typeInstance{
+					{typeInstanceShort: typeInstanceShort{typeID: 4}},
+					{typeInstanceShort: typeInstanceShort{typeID: 6, genericID: 1}, arrayLength: 2},
+				}},
+				offsets: []uint64{0, 8},
+			},
+			want: []string{
+				"instanceByteSize=24",
+				"initializerInstruction=42",
+				"types[0].count=2",
+				"types[0].type[0].shortID=262144",
+				"types[0].type[0].arrayLength=0",
+				"types[0].type[0].tailLength=0",
+				"types[0].type[1].shortID=393217",
+				"types[0].type[1].arrayLength=2",
+				"types[0].type[1].tailLength=0",
+				"offset=0",
+				"offset=8",
+			},
+		},
+		{
 			kind: "thread-type",
 			definition: typeInstance{
 				typeInstanceShort: typeInstanceShort{typeID: 4, genericID: 2},

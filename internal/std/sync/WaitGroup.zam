@@ -12,7 +12,7 @@ public class WaitGroup {
     var uint max;
 
     public static fun WaitGroup*() New = () {
-        return type(WaitGroup).NewWithMaxSize(0U);
+        return WaitGroup::NewWithMaxSize(0U);
     }
 
     public static fun WaitGroup*(uint) NewWithMaxSize = (max) {
@@ -26,8 +26,8 @@ public class WaitGroup {
     }
 
     public fun void(uint) InitWithMaxSize = (max) {
-        this.m = type(Mutex).New();
-        this.c = type(Cond).New(this.m);
+        this.m = Mutex::New();
+        this.c = Cond::New(this.m);
         this.count = 0;
         this.running = 0U;
         this.max = max;
@@ -60,7 +60,7 @@ public class WaitGroup {
         this.m.Lock();
         this.count = this.count + i;
         if(this.count < 0) {
-            type(System).Panic("WaitGroup count is negative");
+            System::Panic("WaitGroup count is negative");
         }
         if(this.count == 0) {
             this.c.Broadcast();

@@ -47,6 +47,8 @@ type (
 		// its own, so a pointer to an array and an array of pointers stay
 		// distinct types rather than collapsing into one depth and one length.
 		PointerTypes TypeSet
+		// TupleTypes is the set of ground tuple types.
+		TupleTypes TypeSet
 		// References records what each name written in the AST refers to,
 		// filled in by semantic validation.
 		References *References

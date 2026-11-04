@@ -1,6 +1,5 @@
 import "../../lang/Arr.zam";
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 import "../Subtle.zam";
@@ -14,36 +13,36 @@ public class HMAC {
     var uint block;
 
     // New starts an HMAC over kind under a key of keyLen bytes.
-    public static fun Pair[HMAC*, Err*](Digest.Kind, byte*, uint) New = (kind, key, keyLen) {
-        var Pair[HMAC*, Err*] out;
-        out.first = null;
-        out.second = null;
+    public static fun (HMAC*, Err*)(Digest.Kind, byte*, uint) New = (kind, key, keyLen) {
+        var (HMAC*, Err*) out;
+        out.0 = null;
+        out.1 = null;
         var uint h = 0U;
         var int n = 0;
         var int block = 0;
         var str errStr;
         native(STD_HMAC_NEW){void(byte, byte*, int, uint*, int*, int*, str*)}(kind{byte}, key, keyLen{int}, &h, &n, &block, &errStr);
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
             return out;
         }
-        out.first = new(HMAC);
-        out.first.handle = h;
-        out.first.size = n{uint};
-        out.first.block = block{uint};
+        out.0 = new(HMAC);
+        out.0.handle = h;
+        out.0.size = n{uint};
+        out.0.block = block{uint};
         return out;
     }
 
     // Of returns the HMAC over kind of n bytes at b.
-    public static fun Pair[Arr[byte]*, Err*](Digest.Kind, byte*, uint, byte*, uint) Of = (kind, key, keyLen, b, n) {
-        var Pair[Arr[byte]*, Err*] out;
-        out.first = null;
-        var Pair[HMAC*, Err*] m = type(HMAC).New(kind, key, keyLen);
-        out.second = m.second;
-        if(m.second == null) {
-            m.first.Write(b, n);
-            out.first = m.first.Sum();
-            m.first.Delete();
+    public static fun (Arr[byte]*, Err*)(Digest.Kind, byte*, uint, byte*, uint) Of = (kind, key, keyLen, b, n) {
+        var (Arr[byte]*, Err*) out;
+        out.0 = null;
+        var (HMAC*, Err*) m = HMAC::New(kind, key, keyLen);
+        out.1 = m.1;
+        if(m.1 == null) {
+            m.0.Write(b, n);
+            out.0 = m.0.Sum();
+            m.0.Delete();
         }
         return out;
     }
@@ -51,11 +50,11 @@ public class HMAC {
     // Verify reports whether the tagLen bytes at tag are the HMAC over kind of
     // n bytes at b.
     public static fun bool(Digest.Kind, byte*, uint, byte*, uint, byte*, uint) Verify = (kind, key, keyLen, b, n, tag, tagLen) {
-        var Pair[Arr[byte]*, Err*] sum = type(HMAC).Of(kind, key, keyLen, b, n);
-        if(sum.second != null || sum.first.Len() != tagLen) {
+        var (Arr[byte]*, Err*) sum = HMAC::Of(kind, key, keyLen, b, n);
+        if(sum.1 != null || sum.0.Len() != tagLen) {
             return false;
         }
-        return type(Subtle).Equal(sum.first.Arr(), tag, tagLen);
+        return Subtle::Equal(sum.0.Arr(), tag, tagLen);
     }
 
     public fun void(byte*, uint) Write = (b, n) {
@@ -63,14 +62,14 @@ public class HMAC {
     }
 
     public fun void(str) WriteStr = (s) {
-        var Pair[byte*, int] p = type(Strs).ToBytes(s);
-        this.Write(p.first, p.second{uint});
+        var (byte*, int) p = Strs::ToBytes(s);
+        this.Write(p.0, p.1{uint});
     }
 
     public fun Arr[byte]*() Sum = () {
         var byte* b = new(byte, this.size);
         native(STD_MAC_SUM){void(uint, byte*)}(this.handle, b);
-        return type(Arr)[byte].New(this.size, b...);
+        return Arr::[byte]New(this.size, b...);
     }
 
     public fun void() Reset = () {

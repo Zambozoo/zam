@@ -1,5 +1,4 @@
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "File.zam";
 
@@ -9,22 +8,22 @@ public class Pipe {
     var File* reader;
     var File* writer;
 
-    public static fun Pair[Pipe*, Err*]() New = () {
-        var Pair[Pipe*, Err*] out;
+    public static fun (Pipe*, Err*)() New = () {
+        var (Pipe*, Err*) out;
         var int r = -1;
         var int w = -1;
         var str errStr;
         native(STD_PIPE_INIT){void(int*, int*, str*)}(&r, &w, &errStr);
         if(errStr != null) {
-            out.first = null;
-            out.second = type(StrErr).New(errStr);
+            out.0 = null;
+            out.1 = StrErr::New(errStr);
             return out;
         }
         var Pipe* p = new(Pipe);
-        p.reader = type(File).FromFD(r);
-        p.writer = type(File).FromFD(w);
-        out.first = p;
-        out.second = null;
+        p.reader = File::FromFD(r);
+        p.writer = File::FromFD(w);
+        out.0 = p;
+        out.1 = null;
         return out;
     }
 

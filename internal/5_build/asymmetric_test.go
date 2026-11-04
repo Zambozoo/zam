@@ -36,121 +36,121 @@ import std("crypto/asymmetric/*");
 
 namespace Main {
     static fun str(Arr[byte]*) hex = (a) {
-        return type(Hex).Encode(a.Arr(), a.Len());
+        return Hex::Encode(a.Arr(), a.Len());
     }
 
     static fun Arr[byte]*(str) unhex = (s) {
-        return type(Hex).Decode(s).first;
+        return Hex::Decode(s).0;
     }
 
     static fun void(str, str) put = (name, value) {
-        type(File).StdOut.WriteStr(name + " " + value + "\n");
+        File::StdOut.WriteStr(name + " " + value + "\n");
     }
 
     static fun void(str, bool) check = (name, ok) {
-        type(Main).put(name, ok{str});
+        Main::put(name, ok{str});
     }
 
     fun void(uint, str...) main = (argC, argV) {
         var str msgStr = "attack at dawn";
-        var Pair[byte*, int] msg = type(Strs).ToBytes(msgStr);
-        var byte* m = msg.first;
-        var uint n = msg.second{uint};
+        var (byte*, int) msg = Strs::ToBytes(msgStr);
+        var byte* m = msg.0;
+        var uint n = msg.1{uint};
 
-        var Key* ed = type(Ed25519).Generate();
-        var Arr[byte]* edSig = type(Ed25519).Sign(ed, m, n).first;
-        type(Main).put("ed25519Pub", type(Main).hex(ed.Public().DER().first));
-        type(Main).put("ed25519Sig", type(Main).hex(edSig));
-        var Arr[byte]* seed = ed.Raw().first;
-        var Key* again = type(Ed25519).PrivateKey(seed.Arr(), seed.Len()).first;
-        type(Main).check("ed25519", type(Ed25519).Verify(ed.Public(), m, n, edSig.Arr(), edSig.Len()) &&
-            !type(Ed25519).Verify(ed, m, n - 1U, edSig.Arr(), edSig.Len()) &&
-            type(Main).hex(again.Public().Raw().first) == type(Main).hex(ed.Public().Raw().first) &&
-            type(Ed25519).Sign(ed.Public(), m, n).second != null &&
-            type(Ed25519).Sign(type(X25519).Generate(), m, n).second != null &&
+        var Key* ed = Ed25519::Generate();
+        var Arr[byte]* edSig = Ed25519::Sign(ed, m, n).0;
+        Main::put("ed25519Pub", Main::hex(ed.Public().DER().0));
+        Main::put("ed25519Sig", Main::hex(edSig));
+        var Arr[byte]* seed = ed.Raw().0;
+        var Key* again = Ed25519::PrivateKey(seed.Arr(), seed.Len()).0;
+        Main::check("ed25519", Ed25519::Verify(ed.Public(), m, n, edSig.Arr(), edSig.Len()) &&
+            !Ed25519::Verify(ed, m, n - 1U, edSig.Arr(), edSig.Len()) &&
+            Main::hex(again.Public().Raw().0) == Main::hex(ed.Public().Raw().0) &&
+            Ed25519::Sign(ed.Public(), m, n).1 != null &&
+            Ed25519::Sign(X25519::Generate(), m, n).1 != null &&
             seed.Len() == 32U);
 
-        var Key* ec = type(ECDSA).Generate(type(Key.Kind).P256).first;
-        var Arr[byte]* ecSig = type(ECDSA).Sign(ec, type(Digest.Kind).SHA256, m, n).first;
-        type(Main).put("ecdsaPub", type(Main).hex(ec.Public().DER().first));
-        type(Main).put("ecdsaSig", type(Main).hex(ecSig));
-        var Key* ecRead = type(Key).ParsePEM(ec.PEM().first).first;
-        var Arr[byte]* ecPubDer = ec.Public().DER().first;
-        var Key* ecPub = type(Key).ParseDER(ecPubDer.Arr(), ecPubDer.Len()).first;
-        type(Main).check("ecdsa", type(ECDSA).Verify(ecPub, type(Digest.Kind).SHA256, m, n, ecSig.Arr(), ecSig.Len()) &&
-            !type(ECDSA).Verify(ecPub, type(Digest.Kind).SHA384, m, n, ecSig.Arr(), ecSig.Len()) &&
-            ecRead.IsPrivate() && ecRead.Kind() == type(Key.Kind).P256 && !ecPub.IsPrivate() &&
-            type(ECDSA).Generate(type(Key.Kind).RSA).second != null &&
-            type(Key).ParsePEM("nonsense").second != null);
+        var Key* ec = ECDSA::Generate(Key.Kind::P256).0;
+        var Arr[byte]* ecSig = ECDSA::Sign(ec, Digest.Kind::SHA256, m, n).0;
+        Main::put("ecdsaPub", Main::hex(ec.Public().DER().0));
+        Main::put("ecdsaSig", Main::hex(ecSig));
+        var Key* ecRead = Key::ParsePEM(ec.PEM().0).0;
+        var Arr[byte]* ecPubDer = ec.Public().DER().0;
+        var Key* ecPub = Key::ParseDER(ecPubDer.Arr(), ecPubDer.Len()).0;
+        Main::check("ecdsa", ECDSA::Verify(ecPub, Digest.Kind::SHA256, m, n, ecSig.Arr(), ecSig.Len()) &&
+            !ECDSA::Verify(ecPub, Digest.Kind::SHA384, m, n, ecSig.Arr(), ecSig.Len()) &&
+            ecRead.IsPrivate() && ecRead.Kind() == Key.Kind::P256 && !ecPub.IsPrivate() &&
+            ECDSA::Generate(Key.Kind::RSA).1 != null &&
+            Key::ParsePEM("nonsense").1 != null);
 
-        var Key* p384 = type(ECDH).Generate(type(Key.Kind).P384).first;
-        var Key* q384 = type(ECDH).Generate(type(Key.Kind).P384).first;
-        var Arr[byte]* pq = type(ECDH).Derive(p384, q384.Public()).first;
-        var Arr[byte]* qp = type(ECDH).Derive(q384, p384.Public()).first;
-        type(Main).check("ecdh", pq.Len() == 48U && type(Main).hex(pq) == type(Main).hex(qp) &&
-            type(ECDH).Derive(p384, ec.Public()).second != null);
+        var Key* p384 = ECDH::Generate(Key.Kind::P384).0;
+        var Key* q384 = ECDH::Generate(Key.Kind::P384).0;
+        var Arr[byte]* pq = ECDH::Derive(p384, q384.Public()).0;
+        var Arr[byte]* qp = ECDH::Derive(q384, p384.Public()).0;
+        Main::check("ecdh", pq.Len() == 48U && Main::hex(pq) == Main::hex(qp) &&
+            ECDH::Derive(p384, ec.Public()).1 != null);
 
-        var Key* rsa = type(RSA).Generate(2048U).first;
-        var Arr[byte]* pss = type(RSA).Sign(rsa, type(Digest.Kind).SHA256, type(RSA.Padding).PSS, m, n).first;
-        var Arr[byte]* v15 = type(RSA).Sign(rsa, type(Digest.Kind).SHA256, type(RSA.Padding).PKCS1V15, m, n).first;
-        var Arr[byte]* sealed = type(RSA).Encrypt(rsa.Public(), type(Digest.Kind).SHA256, m, n).first;
-        type(Main).put("rsaKey", type(Main).hex(rsa.DER().first));
-        type(Main).put("rsaPSS", type(Main).hex(pss));
-        type(Main).put("rsaV15", type(Main).hex(v15));
-        type(Main).put("rsaOAEP", type(Main).hex(sealed));
-        var Arr[byte]* opened = type(RSA).Decrypt(rsa, type(Digest.Kind).SHA256, sealed.Arr(), sealed.Len()).first;
-        type(Main).check("rsa", type(Strs).FromBytes(opened.Arr(), opened.Len(){int}) == msgStr &&
-            type(RSA).Verify(rsa.Public(), type(Digest.Kind).SHA256, type(RSA.Padding).PSS, m, n, pss.Arr(), pss.Len()) &&
-            !type(RSA).Verify(rsa.Public(), type(Digest.Kind).SHA256, type(RSA.Padding).PKCS1V15, m, n, pss.Arr(), pss.Len()) &&
-            type(RSA).Decrypt(rsa.Public(), type(Digest.Kind).SHA256, sealed.Arr(), sealed.Len()).second != null &&
-            type(RSA).Decrypt(rsa, type(Digest.Kind).SHA1, sealed.Arr(), sealed.Len()).second != null &&
-            type(RSA).Generate(1024U).second != null && rsa.Kind() == type(Key.Kind).RSA);
+        var Key* rsa = RSA::Generate(2048U).0;
+        var Arr[byte]* pss = RSA::Sign(rsa, Digest.Kind::SHA256, RSA.Padding::PSS, m, n).0;
+        var Arr[byte]* v15 = RSA::Sign(rsa, Digest.Kind::SHA256, RSA.Padding::PKCS1V15, m, n).0;
+        var Arr[byte]* sealed = RSA::Encrypt(rsa.Public(), Digest.Kind::SHA256, m, n).0;
+        Main::put("rsaKey", Main::hex(rsa.DER().0));
+        Main::put("rsaPSS", Main::hex(pss));
+        Main::put("rsaV15", Main::hex(v15));
+        Main::put("rsaOAEP", Main::hex(sealed));
+        var Arr[byte]* opened = RSA::Decrypt(rsa, Digest.Kind::SHA256, sealed.Arr(), sealed.Len()).0;
+        Main::check("rsa", Strs::FromBytes(opened.Arr(), opened.Len(){int}) == msgStr &&
+            RSA::Verify(rsa.Public(), Digest.Kind::SHA256, RSA.Padding::PSS, m, n, pss.Arr(), pss.Len()) &&
+            !RSA::Verify(rsa.Public(), Digest.Kind::SHA256, RSA.Padding::PKCS1V15, m, n, pss.Arr(), pss.Len()) &&
+            RSA::Decrypt(rsa.Public(), Digest.Kind::SHA256, sealed.Arr(), sealed.Len()).1 != null &&
+            RSA::Decrypt(rsa, Digest.Kind::SHA1, sealed.Arr(), sealed.Len()).1 != null &&
+            RSA::Generate(1024U).1 != null && rsa.Kind() == Key.Kind::RSA);
 
-        var Arr[byte]* goX = type(Main).unhex(argV[0]);
-        var Key* peer = type(X25519).PublicKey(goX.Arr(), goX.Len()).first;
-        var Key* x = type(X25519).Generate();
-        type(Main).put("x25519Pub", type(Main).hex(x.Public().Raw().first));
-        type(Main).put("x25519Secret", type(Main).hex(type(X25519).Derive(x, peer).first));
-        type(Main).check("x25519", type(X25519).Derive(peer, x).second != null && type(X25519).PublicKey(goX.Arr(), 31U).second != null);
+        var Arr[byte]* goX = Main::unhex(argV[0]);
+        var Key* peer = X25519::PublicKey(goX.Arr(), goX.Len()).0;
+        var Key* x = X25519::Generate();
+        Main::put("x25519Pub", Main::hex(x.Public().Raw().0));
+        Main::put("x25519Secret", Main::hex(X25519::Derive(x, peer).0));
+        Main::check("x25519", X25519::Derive(peer, x).1 != null && X25519::PublicKey(goX.Arr(), 31U).1 != null);
 
-        var Arr[byte]* ek = type(Main).unhex(argV[1]);
-        var Key* goKem = type(Key).FromRaw(type(Key.Kind).ML_KEM_768, ek.Arr(), ek.Len(), false).first;
-        var MLKEM.Encapsulation* toGo = type(MLKEM).Encapsulate(goKem).first;
-        type(Main).put("mlkemCiphertext", type(Main).hex(toGo.ciphertext));
-        type(Main).put("mlkemSecret", type(Main).hex(toGo.secret));
-        var Key* kem = type(MLKEM).Generate(type(Key.Kind).ML_KEM_1024).first;
-        var MLKEM.Encapsulation* enc = type(MLKEM).Encapsulate(kem.Public()).first;
-        var Arr[byte]* secret = type(MLKEM).Decapsulate(kem, enc.ciphertext.Arr(), enc.ciphertext.Len()).first;
-        type(Main).check("mlkem", type(Main).hex(secret) == type(Main).hex(enc.secret) && secret.Len() == 32U &&
-            type(MLKEM).Decapsulate(goKem, enc.ciphertext.Arr(), enc.ciphertext.Len()).second != null &&
-            type(MLKEM).Generate(type(Key.Kind).ML_DSA_44).second != null);
+        var Arr[byte]* ek = Main::unhex(argV[1]);
+        var Key* goKem = Key::FromRaw(Key.Kind::ML_KEM_768, ek.Arr(), ek.Len(), false).0;
+        var MLKEM.Encapsulation* toGo = MLKEM::Encapsulate(goKem).0;
+        Main::put("mlkemCiphertext", Main::hex(toGo.ciphertext));
+        Main::put("mlkemSecret", Main::hex(toGo.secret));
+        var Key* kem = MLKEM::Generate(Key.Kind::ML_KEM_1024).0;
+        var MLKEM.Encapsulation* enc = MLKEM::Encapsulate(kem.Public()).0;
+        var Arr[byte]* secret = MLKEM::Decapsulate(kem, enc.ciphertext.Arr(), enc.ciphertext.Len()).0;
+        Main::check("mlkem", Main::hex(secret) == Main::hex(enc.secret) && secret.Len() == 32U &&
+            MLKEM::Decapsulate(goKem, enc.ciphertext.Arr(), enc.ciphertext.Len()).1 != null &&
+            MLKEM::Generate(Key.Kind::ML_DSA_44).1 != null);
 
-        var Key* dsa = type(MLDSA).Generate(type(Key.Kind).ML_DSA_65).first;
-        var Arr[byte]* dsaSig = type(MLDSA).Sign(dsa, m, n).first;
-        type(Main).put("mldsaPub", type(Main).hex(dsa.Public().Raw().first));
-        type(Main).put("mldsaSig", type(Main).hex(dsaSig));
-        var Key* dsaRead = type(Key).ParsePEM(dsa.Public().PEM().first).first;
-        type(Main).check("mldsa", type(MLDSA).Verify(dsaRead, m, n, dsaSig.Arr(), dsaSig.Len()) &&
-            !type(MLDSA).Verify(dsaRead, m, n - 1U, dsaSig.Arr(), dsaSig.Len()) &&
-            dsaRead.Kind() == type(Key.Kind).ML_DSA_65);
+        var Key* dsa = MLDSA::Generate(Key.Kind::ML_DSA_65).0;
+        var Arr[byte]* dsaSig = MLDSA::Sign(dsa, m, n).0;
+        Main::put("mldsaPub", Main::hex(dsa.Public().Raw().0));
+        Main::put("mldsaSig", Main::hex(dsaSig));
+        var Key* dsaRead = Key::ParsePEM(dsa.Public().PEM().0).0;
+        Main::check("mldsa", MLDSA::Verify(dsaRead, m, n, dsaSig.Arr(), dsaSig.Len()) &&
+            !MLDSA::Verify(dsaRead, m, n - 1U, dsaSig.Arr(), dsaSig.Len()) &&
+            dsaRead.Kind() == Key.Kind::ML_DSA_65);
 
         var str infoStr = "zam hpke";
-        var Pair[byte*, int] info = type(Strs).ToBytes(infoStr);
+        var (byte*, int) info = Strs::ToBytes(infoStr);
         var str aadStr = "header";
-        var Pair[byte*, int] aad = type(Strs).ToBytes(aadStr);
-        var Arr[byte]* goHpke = type(Main).unhex(argV[2]);
-        var Key* recipient = type(X25519).PublicKey(goHpke.Arr(), goHpke.Len()).first;
-        var HPKE.Suite suite = type(HPKE).Of(type(HPKE.KEM).X25519_SHA256, type(HPKE.KDF).SHA256, type(HPKE.Cipher).AES_128_GCM);
-        var HPKE.Sealed* toGoHpke = type(HPKE).Seal(suite, recipient, info.first, 8U, aad.first, 6U, m, n).first;
-        type(Main).put("hpkeEnc", type(Main).hex(toGoHpke.enc));
-        type(Main).put("hpkeCiphertext", type(Main).hex(toGoHpke.ciphertext));
-        var HPKE.Suite p256 = type(HPKE).Of(type(HPKE.KEM).P256_SHA256, type(HPKE.KDF).SHA384, type(HPKE.Cipher).CHACHA20_POLY1305);
-        var HPKE.Sealed* local = type(HPKE).Seal(p256, ec.Public(), info.first, 8U, aad.first, 6U, m, n).first;
-        var Arr[byte]* hpkeOpened = type(HPKE).Open(p256, ec, local, info.first, 8U, aad.first, 6U).first;
-        type(Main).check("hpke", type(Strs).FromBytes(hpkeOpened.Arr(), hpkeOpened.Len(){int}) == msgStr &&
-            type(HPKE).Open(p256, ec, local, info.first, 8U, aad.first, 5U).second != null &&
-            type(HPKE).Open(p256, ec.Public(), local, info.first, 8U, aad.first, 6U).second != null &&
-            type(HPKE).Seal(suite, ec.Public(), info.first, 8U, aad.first, 6U, m, n).second != null);
+        var (byte*, int) aad = Strs::ToBytes(aadStr);
+        var Arr[byte]* goHpke = Main::unhex(argV[2]);
+        var Key* recipient = X25519::PublicKey(goHpke.Arr(), goHpke.Len()).0;
+        var HPKE.Suite suite = HPKE::Of(HPKE.KEM::X25519_SHA256, HPKE.KDF::SHA256, HPKE.Cipher::AES_128_GCM);
+        var HPKE.Sealed* toGoHpke = HPKE::Seal(suite, recipient, info.0, 8U, aad.0, 6U, m, n).0;
+        Main::put("hpkeEnc", Main::hex(toGoHpke.enc));
+        Main::put("hpkeCiphertext", Main::hex(toGoHpke.ciphertext));
+        var HPKE.Suite p256 = HPKE::Of(HPKE.KEM::P256_SHA256, HPKE.KDF::SHA384, HPKE.Cipher::CHACHA20_POLY1305);
+        var HPKE.Sealed* local = HPKE::Seal(p256, ec.Public(), info.0, 8U, aad.0, 6U, m, n).0;
+        var Arr[byte]* hpkeOpened = HPKE::Open(p256, ec, local, info.0, 8U, aad.0, 6U).0;
+        Main::check("hpke", Strs::FromBytes(hpkeOpened.Arr(), hpkeOpened.Len(){int}) == msgStr &&
+            HPKE::Open(p256, ec, local, info.0, 8U, aad.0, 5U).1 != null &&
+            HPKE::Open(p256, ec.Public(), local, info.0, 8U, aad.0, 6U).1 != null &&
+            HPKE::Seal(suite, ec.Public(), info.0, 8U, aad.0, 6U, m, n).1 != null);
     }
 }
 `)

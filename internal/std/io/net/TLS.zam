@@ -1,5 +1,4 @@
 import "../../lang/Err.zam";
-import "../../lang/Pair.zam";
 import "../../lang/StrErr.zam";
 import "../../lang/Strs.zam";
 import "../local/Streams.zam";
@@ -13,15 +12,15 @@ public class TLS {
     public class Context {
         var uint handle;
 
-        private static fun Pair[TLS.Context*, Err*](uint, str) of = (h, errStr) {
-            var Pair[TLS.Context*, Err*] out;
-            out.first = null;
-            out.second = null;
+        private static fun (TLS.Context*, Err*)(uint, str) of = (h, errStr) {
+            var (TLS.Context*, Err*) out;
+            out.0 = null;
+            out.1 = null;
             if(errStr != null) {
-                out.second = type(StrErr).New(errStr);
+                out.1 = StrErr::New(errStr);
             } else {
-                out.first = new(TLS.Context);
-                out.first.handle = h;
+                out.0 = new(TLS.Context);
+                out.0.handle = h;
             }
             return out;
         }
@@ -29,20 +28,20 @@ public class TLS {
         // Client trusts the PEM certificates in caFile, or the system's roots
         // for an empty path, and checks the server's certificate and name
         // unless verify is false.
-        public static fun Pair[TLS.Context*, Err*](str, bool) Client = (caFile, verify) {
+        public static fun (TLS.Context*, Err*)(str, bool) Client = (caFile, verify) {
             var uint h = 0U;
             var str errStr;
             native(STD_TLS_CLIENT_CONTEXT){void(str, bool, uint*, str*)}(caFile, verify, &h, &errStr);
-            return type(TLS.Context).of(h, errStr);
+            return TLS.Context::of(h, errStr);
         }
 
         // Server presents the PEM certificate chain in certFile, proven by the
         // PEM private key in keyFile.
-        public static fun Pair[TLS.Context*, Err*](str, str) Server = (certFile, keyFile) {
+        public static fun (TLS.Context*, Err*)(str, str) Server = (certFile, keyFile) {
             var uint h = 0U;
             var str errStr;
             native(STD_TLS_SERVER_CONTEXT){void(str, str, uint*, str*)}(certFile, keyFile, &h, &errStr);
-            return type(TLS.Context).of(h, errStr);
+            return TLS.Context::of(h, errStr);
         }
 
         public fun void() Delete = () {
@@ -55,34 +54,34 @@ public class TLS {
     var Socket* sock;
     var TLS.Context* ctx;
 
-    private static fun Pair[TLS*, Err*](Socket*, TLS.Context*, str, bool) handshake = (sock, ctx, serverName, server) {
-        var Pair[TLS*, Err*] out;
+    private static fun (TLS*, Err*)(Socket*, TLS.Context*, str, bool) handshake = (sock, ctx, serverName, server) {
+        var (TLS*, Err*) out;
         var uint h = 0U;
         var str errStr;
         native(STD_TLS_HANDSHAKE){void(uint, int, str, bool, uint*, str*)}(ctx.handle, sock.FD(), serverName, server, &h, &errStr);
-        out.first = null;
-        out.second = null;
+        out.0 = null;
+        out.1 = null;
         if(errStr != null) {
-            out.second = type(StrErr).New(errStr);
+            out.1 = StrErr::New(errStr);
             return out;
         }
         var TLS* t = new(TLS);
         t.ssl = h;
         t.sock = sock;
         t.ctx = ctx;
-        out.first = t;
+        out.0 = t;
         return out;
     }
 
     // Client runs the client handshake over a connected socket. serverName is
     // the host the certificate must name, and is sent for SNI.
-    public static fun Pair[TLS*, Err*](Socket*, TLS.Context*, str) Client = (sock, ctx, serverName) {
-        return type(TLS).handshake(sock, ctx, serverName, false);
+    public static fun (TLS*, Err*)(Socket*, TLS.Context*, str) Client = (sock, ctx, serverName) {
+        return TLS::handshake(sock, ctx, serverName, false);
     }
 
     // Server runs the server handshake over an accepted socket.
-    public static fun Pair[TLS*, Err*](Socket*, TLS.Context*) Server = (sock, ctx) {
-        return type(TLS).handshake(sock, ctx, "", true);
+    public static fun (TLS*, Err*)(Socket*, TLS.Context*) Server = (sock, ctx) {
+        return TLS::handshake(sock, ctx, "", true);
     }
 
     public fun Socket*() Sock = () {
@@ -91,36 +90,36 @@ public class TLS {
 
     // Read reads up to count bytes into buffer, returning how many it read,
     // zero at the end of the stream.
-    public fun Pair[int, Err*](byte*, int) Read = (buffer, count) {
-        var Pair[int, Err*] p;
+    public fun (int, Err*)(byte*, int) Read = (buffer, count) {
+        var (int, Err*) p;
         var str errStr;
-        native(STD_TLS_READ){void(uint, byte*, int, int*, str*)}(this.ssl, buffer, count, &(p.first), &errStr);
-        p.second = null;
+        native(STD_TLS_READ){void(uint, byte*, int, int*, str*)}(this.ssl, buffer, count, &(p.0), &errStr);
+        p.1 = null;
         if(errStr != null) {
-            p.second = type(StrErr).New(errStr);
+            p.1 = StrErr::New(errStr);
         }
         return p;
     }
 
-    public fun Pair[int, Err*](byte*, int) Write = (buffer, count) {
-        var Pair[int, Err*] p;
+    public fun (int, Err*)(byte*, int) Write = (buffer, count) {
+        var (int, Err*) p;
         var str errStr;
-        native(STD_TLS_WRITE){void(uint, byte*, int, int*, str*)}(this.ssl, buffer, count, &(p.first), &errStr);
-        p.second = null;
+        native(STD_TLS_WRITE){void(uint, byte*, int, int*, str*)}(this.ssl, buffer, count, &(p.0), &errStr);
+        p.1 = null;
         if(errStr != null) {
-            p.second = type(StrErr).New(errStr);
+            p.1 = StrErr::New(errStr);
         }
         return p;
     }
 
-    public fun Pair[int, Err*](str) WriteStr = (s) {
-        var Pair[byte*, int] bytes = type(Strs).ToBytes(s);
-        return this.Write(bytes.first, bytes.second);
+    public fun (int, Err*)(str) WriteStr = (s) {
+        var (byte*, int) bytes = Strs::ToBytes(s);
+        return this.Write(bytes.0, bytes.1);
     }
 
     // ReadAll reads up to the end of the stream.
-    public fun Pair[str, Err*]() ReadAll = () {
-        return type(Streams).ReadAll(this);
+    public fun (str, Err*)() ReadAll = () {
+        return Streams::ReadAll(this);
     }
 
     // Close ends the TLS session and closes the socket under it.

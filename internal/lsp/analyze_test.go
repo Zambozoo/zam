@@ -75,7 +75,7 @@ func TestAnalyzeReportsASemanticErrorOverItsToken(t *testing.T) {
 	diagnostics := check(newOverlay(), paths["Main.zam"])
 	require.Len(t, diagnostics, 1)
 	assert.Equal(t, "variable expression is not a subtype of int", diagnostics[0].Message)
-	assert.Equal(t, rangeOf(2, 8, 2, 11), diagnostics[0].Range)
+	assert.Equal(t, rangeOf(2, 20, 2, 23), diagnostics[0].Range)
 	assert.Equal(t, protocol.DiagnosticSeverityError, *diagnostics[0].Severity)
 }
 
@@ -120,7 +120,7 @@ func TestAnalyzeReportsAnImportedFilesErrorAtTheHead(t *testing.T) {
 		"Main.zam": `import "Other.zam";
 
 namespace Main {
-    static fun int() f = () { return type(Other).g(); }
+    static fun int() f = () { return Other::g(); }
 }
 `,
 		"Other.zam": `
@@ -176,7 +176,7 @@ func TestAnalyzeReportsNothingAboutWhatASyntaxErrorDropped(t *testing.T) {
 `,
 		"an enum value": `namespace Main {
     enum E : int { A(), B(2); }
-    static fun int() f = () { return type(E).A{int}; }
+    static fun int() f = () { return E::A{int}; }
 }
 `,
 		"a return": `namespace Main {
@@ -201,7 +201,7 @@ func TestAnalyzeLeavesOutSemanticErrorsBehindABrokenImport(t *testing.T) {
 	paths := project(t, map[string]string{"Main.zam": `import "Missing/*";
 
 namespace Main {
-    static fun int() f = () { return type(Missing).g(); }
+    static fun int() f = () { return Missing::g(); }
 }
 `})
 

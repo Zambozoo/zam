@@ -82,10 +82,10 @@ public namespace Trig {
     }
 
     public static fun flt(flt) ToRadians = (degrees) {
-        return degrees * type(Constants).Pi / 180.0;
+        return degrees * Constants::Pi / 180.0;
     }
 
     public static fun flt(flt) ToDegrees = (radians) {
-        return radians * 180.0 / type(Constants).Pi;
+        return radians * 180.0 / Constants::Pi;
     }
 }
