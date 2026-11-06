@@ -33,6 +33,10 @@ type (
 		// into rather than being the labelled statement itself, so the label is
 		// left for the loop to take, the way codegen takes it.
 		pendingLabel string
+		// fallsThrough says, for each switch whose bodies are being validated,
+		// whether the body being validated has another after it for a continue
+		// to fall through to.
+		fallsThrough map[*syntax.StmtSwitch]bool
 		// lambdas are the lambdas whose bodies are being validated, innermost
 		// last. A name resolved from outside one of them is a name it closes
 		// over.
@@ -111,7 +115,8 @@ func (b instanceBinding) declaredAt() syntax.Target { return b.target }
 // This includes type checking, scope checking, access checking, and inheritance validation.
 func validateStaticSemantics(ast *syntax.AST) []error {
 	v := &staticSemanticsValidatorVisitor{
-		ast: ast,
+		ast:          ast,
+		fallsThrough: map[*syntax.StmtSwitch]bool{},
 	}
 	for _, entry := range ast.CodeFiles.All() {
 		entry.Value.Decl.Accept(v)
@@ -153,6 +158,29 @@ func (v *staticSemanticsValidatorVisitor) visitDecl(d syntax.Decl) {
 	}
 	v.variableScopes.Pop()
 	v.currentDecl = oldDecl
+}
+
+// VisitDeclAlias implements [syntax.FieldVisitor]. Its parameters stand for
+// whatever satisfies their bounds, so every bound the type it names requires of
+// them has to follow from those.
+func (v *staticSemanticsValidatorVisitor) VisitDeclAlias(alias *syntax.DeclAlias) error {
+	oldDecl := v.currentDecl
+	v.currentDecl = alias
+	defer func() { v.currentDecl = oldDecl }()
+
+	v.reference(alias.NameToken(), syntax.TargetOf(alias), nil)
+	if alias.Generics() != nil {
+		for _, entry := range alias.Generics().All() {
+			if entry.Value == nil {
+				continue
+			}
+			for _, b := range entry.Value.Bounds() {
+				b.Accept(v)
+			}
+		}
+	}
+	alias.Type.Accept(v)
+	return nil
 }
 
 // declStaticScope binds the names a declaration's statics are written under. A
@@ -221,6 +249,12 @@ func (v *staticSemanticsValidatorVisitor) validateBaseDecl(d syntax.DeclSubtypea
 	resolvable, ok := baseType.Type.(syntax.TypeResolvable)
 	if !ok {
 		return true
+	}
+	if generic, ok := resolvable.(*syntax.TypeGeneric); ok {
+		defer v.at(baseType)()
+		if !v.checkBounds(generic) {
+			return false
+		}
 	}
 
 	baseDecl := resolvable.Decl()
@@ -552,6 +586,47 @@ func (v *staticSemanticsValidatorVisitor) VisitStmtIf(s *syntax.StmtIf) error {
 	return nil
 }
 
+// VisitStmtSwitch implements [syntax.StmtVisitor]. Every value of every case is
+// compared with the switch's own as == would compare them. The switch answers
+// to a bare jump in each of its bodies, else included, which is what makes a
+// break leave it and a continue fall through it.
+func (v *staticSemanticsValidatorVisitor) VisitStmtSwitch(s *syntax.StmtSwitch) error {
+	defer v.at(s)()
+
+	err := s.Expr.Accept(v)
+	switchType := v.lastExprType
+	for _, c := range s.Cases {
+		for _, value := range c.Values {
+			if value.Accept(v) == nil && err == nil && !comparableTypes(switchType, v.lastExprType) {
+				v.errfOn(value, "case value %s is not comparable with the switch value %s", v.lastExprType.String(), switchType.String())
+			}
+		}
+	}
+
+	scope := map[string]syntax.Stmt{"": s}
+	if v.pendingLabel != "" {
+		scope[v.pendingLabel] = s
+		v.pendingLabel = ""
+	}
+	v.labelScopes.Push(scope)
+	defer v.labelScopes.Pop()
+	defer delete(v.fallsThrough, s)
+
+	for i, c := range s.Cases {
+		v.fallsThrough[s] = i < len(s.Cases)-1 || s.Else != nil
+		v.variableScopes.Push(map[string]binding{})
+		c.Body.Accept(v)
+		v.variableScopes.Pop()
+	}
+	if s.Else != nil {
+		v.fallsThrough[s] = false
+		v.variableScopes.Push(map[string]binding{})
+		s.Else.Accept(v)
+		v.variableScopes.Pop()
+	}
+	return nil
+}
+
 // VisitStmtLabel implements [syntax.StmtVisitor]. The label is left for the loop
 // to claim rather than put in scope here, so that the loop holds both the names
 // it answers to and can leave them together when its else begins.
@@ -572,9 +647,14 @@ func (v *staticSemanticsValidatorVisitor) VisitStmtLabel(s *syntax.StmtLabel) er
 func (v *staticSemanticsValidatorVisitor) VisitStmtLoopJump(s *syntax.StmtLoopJump) error {
 	defer v.at(s)()
 	for scope := range v.labelScopes.All() {
-		if _, ok := scope[s.Label]; ok {
-			return nil
+		target, ok := scope[s.Label]
+		if !ok {
+			continue
 		}
+		if switchStmt, ok := target.(*syntax.StmtSwitch); ok && s.Kind() == syntax.StmtKindContinue && !v.fallsThrough[switchStmt] {
+			v.errf("continue falls through the last body of a switch, which has no body after it")
+		}
+		return nil
 	}
 
 	jump := "break"
@@ -582,9 +662,9 @@ func (v *staticSemanticsValidatorVisitor) VisitStmtLoopJump(s *syntax.StmtLoopJu
 		jump = "continue"
 	}
 	if s.Label == "" {
-		v.errf("%s is not in a loop", jump)
+		v.errf("%s is not in a loop or switch", jump)
 	} else {
-		v.errf("%s names label %s, which is not a loop in scope", jump, s.Label)
+		v.errf("%s names label %s, which is not a loop or switch in scope", jump, s.Label)
 	}
 	return nil
 }
@@ -617,10 +697,52 @@ func terminates(s syntax.Stmt) bool {
 		return s.Else != nil && terminates(s.Then) && terminates(s.Else)
 	case *syntax.StmtFor:
 		return terminatesLoop(s)
+	case *syntax.StmtSwitch:
+		return terminatesSwitch(s)
 	case *syntax.StmtLabel:
 		return terminates(s.LoopStmt)
 	}
 	return false
+}
+
+// terminatesSwitch reports whether control cannot run past a switch. One with
+// no else runs past it when no case matches, and one that is broken out of runs
+// past it from the break. Otherwise every body has to end or fall through, and
+// the last of them, which cannot fall through, has to end.
+func terminatesSwitch(s *syntax.StmtSwitch) bool {
+	if s.Else == nil {
+		return false
+	}
+	for body := range s.Bodies() {
+		if breaksOut(body, nil) || !endsOrFallsThrough(body) {
+			return false
+		}
+	}
+	return true
+}
+
+// endsOrFallsThrough reports whether control cannot run past the end of a
+// switch body, either because it terminates or because it leaves by a continue.
+// A continue in a loop nested in the body is that loop's, so the loop is asked
+// only whether it terminates.
+func endsOrFallsThrough(s syntax.Stmt) bool {
+	switch s := s.(type) {
+	case *syntax.StmtLoopJump:
+		return s.Kind() == syntax.StmtKindContinue
+	case *syntax.StmtBlock:
+		if s.Broken {
+			return true
+		}
+		for _, stmt := range s.Stmts {
+			if endsOrFallsThrough(stmt) {
+				return true
+			}
+		}
+		return false
+	case *syntax.StmtIf:
+		return s.Else != nil && endsOrFallsThrough(s.Then) && endsOrFallsThrough(s.Else)
+	}
+	return terminates(s)
 }
 
 // terminatesLoop reports whether control cannot run past a loop, which is a
@@ -674,6 +796,14 @@ func breaksOut(s syntax.Stmt, inner []string) bool {
 		return breaksOut(s.Then, inner) || (s.Else != nil && breaksOut(s.Else, inner))
 	case *syntax.StmtLabel:
 		return breaksOut(s.LoopStmt, append(slices.Clone(inner), s.Label))
+	case *syntax.StmtSwitch:
+		// A nested switch claims every bare break written inside its bodies.
+		nested := append(slices.Clone(inner), "")
+		for body := range s.Bodies() {
+			if breaksOut(body, nested) {
+				return true
+			}
+		}
 	case *syntax.StmtFor:
 		// A nested loop claims every bare break written inside its body, so it
 		// stands among the inner loops whether it was labelled or not. Its else
@@ -1980,6 +2110,9 @@ func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) erro
 			return v.errf("method %s::%s expects %d type arguments, got %d",
 				tr.Decl().Name(), e.Field, method.Generics().Len(), len(e.TypeArgs))
 		}
+		if err := unsatisfiedBound(method.Generics(), e.TypeArgs); err != nil {
+			return v.errf("method %s::%s: %v", tr.Decl().Name(), e.Field, err)
+		}
 		bindings := make(map[syntax.GenericArgKey]syntax.Type, len(e.TypeArgs))
 		for i, entry := range method.Generics().All() {
 			bindings[entry.Key] = e.TypeArgs[i]
@@ -2046,7 +2179,22 @@ func (v *staticSemanticsValidatorVisitor) VisitTypeGeneric(t *syntax.TypeGeneric
 	for _, param := range t.ParameterTypes {
 		param.Accept(v)
 	}
+	v.checkBounds(t)
 	return nil
+}
+
+// checkBounds requires that the arguments of t satisfy the bounds of the
+// parameters they are given for, reporting whether they do.
+func (v *staticSemanticsValidatorVisitor) checkBounds(t *syntax.TypeGeneric) bool {
+	generic, ok := t.Type.Decl().(syntax.DeclGeneric)
+	if !ok {
+		return true
+	}
+	if err := unsatisfiedBound(generic.Generics(), t.ParameterTypes); err != nil {
+		v.errf("type %s: %v", t.String(), err)
+		return false
+	}
+	return true
 }
 
 // VisitTypeGenericArg implements [syntax.TypeVisitor]. A generic argument is
@@ -2115,17 +2263,23 @@ func (v *staticSemanticsValidatorVisitor) VisitTypeReference(t *syntax.TypeRefer
 // protected reaches owner's subtypes, private reaches nowhere, and the
 // unmarked default reaches the files of owner's package, its directory.
 func (v *staticSemanticsValidatorVisitor) accessible(modifiers syntax.Modifier, owner syntax.Decl) bool {
+	return accessibleFrom(v.currentDecl, modifiers, owner)
+}
+
+// accessibleFrom reports whether something with modifiers, declared in or as
+// owner, may be named from current.
+func accessibleFrom(current syntax.Decl, modifiers syntax.Modifier, owner syntax.Decl) bool {
 	switch {
-	case owner.File() == v.currentDecl.File(),
+	case owner.File() == current.File(),
 		modifiers.Has(syntax.ModifierPublic),
 		modifiers.Has(syntax.ModifierVirtual):
 		return true
 	case modifiers.Has(syntax.ModifierPrivate):
 		return false
 	case modifiers.Has(syntax.ModifierProtected):
-		return descends(v.currentDecl, owner)
+		return descends(current, owner)
 	}
-	return owner.File().Path.Dir() == v.currentDecl.File().Path.Dir()
+	return owner.File().Path.Dir() == current.File().Path.Dir()
 }
 
 // descends reports whether d is ancestor or extends it, by way of any

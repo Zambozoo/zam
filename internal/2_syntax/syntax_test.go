@@ -109,6 +109,56 @@ func TestNewASTAutoIncludesStdInEveryProjectsDependencies(t *testing.T) {
 	}
 }
 
+// Skipping project files puts every local file in an implicit project that
+// depends only on std, whether or not a project file sits above it.
+func TestNewASTSkipsProjectFilesWhenAsked(t *testing.T) {
+	tests := []struct {
+		name     string
+		manifest bool
+	}{
+		{name: "without a project file"},
+		{name: "under a project file", manifest: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.manifest {
+				writeManifest(t, dir)
+			}
+			writeFile(t, dir, "sub/Leaf.zam", namespaceSource("Leaf"))
+			entry := writeFile(t, dir, "Main.zam", "import leaf = \"sub/Leaf.zam\";\n"+mainSource)
+
+			ast, errs := NewAST(
+				&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 2, NoProject: true},
+				&base.FileProvider{}, &mock_GitProvider{})
+
+			require.Empty(t, errs)
+			assert.Equal(t, []string{"Main.zam", "sub/Leaf.zam"}, codeFilePaths(t, ast, dir))
+			require.Equal(t, 1, ast.Projects.Len())
+			project := ast.MainCodeDecl.File().Project
+			assert.Equal(t, "Main", project.Name)
+			assert.Equal(t, map[string]base.Path{base.StdPackage: *base.StdPath("")}, project.Dependencies)
+			assert.Empty(t, project.Native.Files)
+			for _, entry := range ast.CodeFiles.All() {
+				assert.Same(t, project, entry.Value.Project, entry.Key.String())
+			}
+		})
+	}
+}
+
+// Without the flag, an entry file with no project file above it is an error.
+func TestNewASTRejectsAnEntryWithoutAProjectFile(t *testing.T) {
+	entry := writeFile(t, t.TempDir(), "Main.zam", mainSource)
+
+	_, errs := NewAST(
+		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
+		&base.FileProvider{}, &mock_GitProvider{})
+
+	require.Len(t, errs, 1)
+	assert.ErrorContains(t, errs[0], "project file missing")
+}
+
 // An import names a file beside the file it is written in, which for a file in a
 // subdirectory is a different place than beside the entry file — and a different
 // place again than beside whatever directory the compiler was run from. Only the
@@ -1044,6 +1094,91 @@ namespace Main {
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.NotEmpty(t, parseEntry(t, source(body)))
+		})
+	}
+}
+
+// TestNewASTParsesSwitches pins the forms a switch is written in.
+func TestNewASTParsesSwitches(t *testing.T) {
+	for name, stmt := range map[string]string{
+		"values":       `switch (x) { case (1, 2): return; case (3): {} } else {}`,
+		"tuple values": `switch (x) { case ((1, 1), (2, 2)): return; }`,
+		"empty":        `switch (x) {}`,
+		"labelled":     `label s: switch (x) { case (1): break s; }`,
+		"if body":      `switch (x) { case (1): if (true) return; } else {}`,
+		"if-else body": `switch (x) { case (1): if (true) return; else return; } else {}`,
+		"switch body":  `if (true) switch (x) { case (1): {} } else {}`,
+		"for body":     `switch (x) { case (1): for (;;) {} } else {}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			errs := parseEntry(t, `
+namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        var int x = 1;
+        `+stmt+`
+    }
+}
+`)
+			assert.Empty(t, errs)
+		})
+	}
+}
+
+// TestNewASTSplitsCaseValuesOnCommas pins that the parentheses after case hold
+// one value per comma, so a tuple value is written in parentheses of its own.
+func TestNewASTSplitsCaseValuesOnCommas(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir)
+	entry := writeFile(t, dir, "Main.zam", `
+namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        switch (argc) { case (1, 2): {} case ((1, 2)): {} }
+    }
+}
+`)
+	ast, errs := NewAST(
+		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
+		&base.FileProvider{}, &mock_GitProvider{})
+	require.Empty(t, errs)
+
+	main, ok := ast.MainCodeDecl.GetStaticMethod("main")
+	require.True(t, ok)
+	cases := main.Body.(*StmtBlock).Stmts[0].(*StmtSwitch).Cases
+	require.Len(t, cases, 2)
+	assert.Len(t, cases[0].Values, 2)
+	require.Len(t, cases[1].Values, 1)
+	assert.Equal(t, ExprKindTuple, cases[1].Values[0].Kind())
+}
+
+// TestNewASTRejectsMalformedSwitches holds a switch to its form.
+func TestNewASTRejectsMalformedSwitches(t *testing.T) {
+	for name, test := range map[string]struct {
+		stmt     string
+		expected string
+	}{
+		"case without parentheses": {
+			stmt:     `switch (x) { case 1: {} }`,
+			expected: `unexpected token: "INT_LITERAL", expected "("`,
+		},
+		"else inside the braces": {
+			stmt:     `switch (x) { case (1): {} else {} }`,
+			expected: `unexpected token: "else", expected one of "case", or "}"`,
+		},
+		"label on another statement": {
+			stmt:     `label s: if (true) {}`,
+			expected: `unexpected token: "if", expected one of "for", or "switch"`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			errs := parseEntry(t, `
+namespace Main {
+    static fun void(int, str...) main = (argc, argv) {
+        var int x = 1;
+        `+test.stmt+`
+    }
+}
+`)
+			assert.Contains(t, fmt.Sprint(errs), test.expected)
 		})
 	}
 }

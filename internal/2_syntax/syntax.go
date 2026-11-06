@@ -481,6 +481,18 @@ func (p *projectParser) AddError(err error) {
 	p.errChan <- err
 }
 
+// projectFilePath returns the project file governing path. When the command
+// skips project files, a local path belongs to the entry's implicit project and
+// implicit is true.
+func (p *projectParser) projectFilePath(path *base.Path) (projectFilePath *base.Path, implicit bool, err error) {
+	if p.command.NoProject && !path.InZip() && !base.IsStdPath(path) {
+		return base.ImplicitProjectFilePath(p.command.InputPath), true, nil
+	}
+
+	projectFilePath, err = p.fileProvider.ProjectFilePath(path)
+	return projectFilePath, false, err
+}
+
 func (p *projectParser) parseFile(path *base.Path) (*File, error) {
 	defer p.pathWG.Done()
 
@@ -489,7 +501,7 @@ func (p *projectParser) parseFile(path *base.Path) (*File, error) {
 			return file, nil
 		}
 
-		projectFilePath, err := p.fileProvider.ProjectFilePath(path)
+		projectFilePath, implicit, err := p.projectFilePath(path)
 		if err != nil {
 			return nil, base.NewError(err, base.NewLocation(*path, nil))
 		}
@@ -497,6 +509,12 @@ func (p *projectParser) parseFile(path *base.Path) (*File, error) {
 		project, err, _ := p.projectFileSG.Do(projectFilePath.String(), func() (*Project, error) {
 			if proj, ok := p.projects.Load(*projectFilePath); ok {
 				return proj, nil
+			}
+
+			if implicit {
+				project := newImplicitProject(p.command.InputPath)
+				p.projects.Store(*projectFilePath, project)
+				return project, nil
 			}
 
 			project, err := newProject(projectFilePath, p.fileProvider, p.gitProvider)

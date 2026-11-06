@@ -1,5 +1,7 @@
 package syntax
 
+import "iter"
+
 type (
 	// StmtKind is the kind of statement.
 	StmtKind uint8
@@ -9,6 +11,7 @@ type (
 		VisitStmtExpr(s *StmtExpr) error
 		VisitStmtFor(s *StmtFor) error
 		VisitStmtIf(s *StmtIf) error
+		VisitStmtSwitch(s *StmtSwitch) error
 		VisitStmtLabel(s *StmtLabel) error
 		VisitStmtBlock(s *StmtBlock) error
 		VisitStmtUnpack(s *StmtUnpack) error
@@ -74,13 +77,38 @@ type (
 		Else Stmt
 	}
 
+	// StmtSwitch is a statement that runs the body of the first case holding a
+	// value equal to its expression, testing the cases in order as an if-else
+	// chain would. A body ends the switch unless it falls through with a
+	// continue, which runs the next body without testing its case.
+	StmtSwitch struct {
+		// start is the token that started the statement.
+		start *Token
+		// Expr is the value the cases are compared with, evaluated once.
+		Expr Expr
+		// Cases are the cases, in the order they are tested.
+		Cases []*SwitchCase
+		// Else is the statement run when no case matches, or nil.
+		Else Stmt
+	}
+
+	// SwitchCase is one case of a switch statement.
+	SwitchCase struct {
+		// start is the token that started the case.
+		start *Token
+		// Values are the values the case matches, any one of which is enough.
+		Values []Expr
+		// Body is the statement run when the case matches.
+		Body Stmt
+	}
+
 	// StmtLabel is a statement that is a label statement.
 	StmtLabel struct {
 		// start is the token that started the statement.
 		start *Token
 		// Label is the label of the statement.
 		Label string
-		// LoopStmt is the loop statement of the statement.
+		// LoopStmt is the loop or switch statement the label names.
 		LoopStmt Stmt
 	}
 
@@ -148,6 +176,8 @@ var (
 	StmtKindLabel StmtKind = newStmtKind("label", TTLabel)
 	// If statement with or without an else statement
 	StmtKindIf StmtKind = newStmtKind("if", TTIf)
+	// Switch statement with or without an else statement
+	StmtKindSwitch StmtKind = newStmtKind("switch", TTSwitch)
 	// For statement with or without an initializer, condition, step, and else statement
 	StmtKindFor StmtKind = newStmtKind("for", TTFor)
 	// Variable declaration with or without an initializer
@@ -191,6 +221,8 @@ func newStmt(parser SyntaxParser) (Stmt, error) {
 		stmt, err = newStmtFor(parser, tok)
 	case TTIf:
 		stmt, err = newStmtIf(parser, tok)
+	case TTSwitch:
+		stmt, err = newStmtSwitch(parser, tok)
 	case TTLabel:
 		stmt, err = newStmtLabel(parser, tok)
 	case TTLeftBrace:
@@ -473,6 +505,118 @@ func (s *StmtIf) Accept(visitor StmtVisitor) error {
 	return visitor.VisitStmtIf(s)
 }
 
+// newStmtSwitch creates a new switch statement whose keyword, start, has
+// already been consumed. The parentheses after case hold the values it
+// matches, one per comma, so a tuple value is written in parentheses of its
+// own. The else follows the closing brace, as an if's follows its statement.
+func newStmtSwitch(parser SyntaxParser, start *Token) (*StmtSwitch, error) {
+	if _, err := parser.Consume(TTLeftParen); err != nil {
+		return nil, err
+	}
+	expr, err := newExpr(parser)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := parser.Consume(TTRightParen); err != nil {
+		return nil, err
+	}
+	if _, err := parser.Consume(TTLeftBrace); err != nil {
+		return nil, err
+	}
+
+	stmt := &StmtSwitch{start: start, Expr: expr}
+	for {
+		tok, err := parser.ConsumeAny(TTCase, TTRightBrace)
+		if err != nil {
+			return nil, err
+		} else if tok.Kind == TTRightBrace {
+			break
+		}
+
+		c, err := newSwitchCase(parser, tok)
+		if err != nil {
+			return nil, err
+		}
+		stmt.Cases = append(stmt.Cases, c)
+	}
+
+	if tok, err := parser.Match(TTElse); err != nil {
+		return nil, err
+	} else if tok != nil {
+		if stmt.Else, err = newStmt(parser); err != nil {
+			return nil, err
+		}
+	}
+	return stmt, nil
+}
+
+// newSwitchCase creates a new case whose keyword, start, has already been
+// consumed.
+func newSwitchCase(parser SyntaxParser, start *Token) (*SwitchCase, error) {
+	if _, err := parser.Consume(TTLeftParen); err != nil {
+		return nil, err
+	}
+	c := &SwitchCase{start: start}
+	for {
+		value, err := newExprAssign(parser)
+		if err != nil {
+			return nil, err
+		}
+		c.Values = append(c.Values, value)
+
+		if tok, err := parser.ConsumeAny(TTComma, TTRightParen); err != nil {
+			return nil, err
+		} else if tok.Kind == TTRightParen {
+			break
+		}
+	}
+	if _, err := parser.Consume(TTColon); err != nil {
+		return nil, err
+	}
+
+	body, err := newStmt(parser)
+	if err != nil {
+		return nil, err
+	}
+	c.Body = body
+	return c, nil
+}
+
+// StmtKind implements the [Stmt] interface.
+func (s *StmtSwitch) Kind() StmtKind {
+	return StmtKindSwitch
+}
+
+// Start implements the [Stmt] interface.
+func (s *StmtSwitch) Start() *Token {
+	return s.start
+}
+
+// Accept implements the [Stmt] interface.
+func (s *StmtSwitch) Accept(visitor StmtVisitor) error {
+	return visitor.VisitStmtSwitch(s)
+}
+
+// Bodies yields the body of every case in order, followed by the else if there
+// is one.
+func (s *StmtSwitch) Bodies() iter.Seq[Stmt] {
+	return func(yield func(Stmt) bool) {
+		for _, c := range s.Cases {
+			if !yield(c.Body) {
+				return
+			}
+		}
+		if s.Else != nil {
+			yield(s.Else)
+		}
+	}
+}
+
+// Start returns the token that started the case.
+func (c *SwitchCase) Start() *Token {
+	return c.start
+}
+
 // newStmtLabel creates a new statement that is a label statement.
 func newStmtLabel(parser SyntaxParser, start *Token) (*StmtLabel, error) {
 	tok, err := parser.Consume(TTIdentifier)
@@ -485,12 +629,17 @@ func newStmtLabel(parser SyntaxParser, start *Token) (*StmtLabel, error) {
 		return nil, err
 	}
 
-	forTok, err := parser.Consume(TTFor)
+	tok, err = parser.ConsumeAny(TTFor, TTSwitch)
 	if err != nil {
 		return nil, err
 	}
 
-	forStmt, err := newStmtFor(parser, forTok)
+	var stmt Stmt
+	if tok.Kind == TTFor {
+		stmt, err = newStmtFor(parser, tok)
+	} else {
+		stmt, err = newStmtSwitch(parser, tok)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -498,7 +647,7 @@ func newStmtLabel(parser SyntaxParser, start *Token) (*StmtLabel, error) {
 	return &StmtLabel{
 		start:    start,
 		Label:    label,
-		LoopStmt: forStmt,
+		LoopStmt: stmt,
 	}, nil
 }
 

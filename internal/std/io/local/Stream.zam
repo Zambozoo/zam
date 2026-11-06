@@ -5,7 +5,7 @@ import "../../lang/Err.zam";
 // of the stream; Write may write fewer bytes than asked, which Streams.WriteAll
 // makes up for.
 public interface Stream {
-    virtual fun (int, Err*)(byte*, int) Read;
-    virtual fun (int, Err*)(byte*, int) Write;
-    virtual fun Err*() Close;
+    fun (int, Err*)(byte*, int) Read;
+    fun (int, Err*)(byte*, int) Write;
+    fun Err*() Close;
 }

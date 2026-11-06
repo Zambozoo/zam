@@ -31,6 +31,11 @@ func ValidateAST(syntaxAST *syntax.AST) []error {
 		return errs
 	}
 
+	aliasUses, errs := expandAliases(syntaxAST)
+	if len(errs) > 0 {
+		return errs
+	}
+
 	if errs := detectGenericCycles(syntaxAST); len(errs) > 0 {
 		return errs
 	}
@@ -40,6 +45,10 @@ func ValidateAST(syntaxAST *syntax.AST) []error {
 	}
 
 	if errs := detectMemberCycles(syntaxAST); len(errs) > 0 {
+		return errs
+	}
+
+	if errs := checkAliasUses(aliasUses); len(errs) > 0 {
 		return errs
 	}
 

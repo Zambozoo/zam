@@ -46,7 +46,7 @@
     },
     "keywords": {
       "name": "keyword.zam",
-      "match": "\\b(?:abstract|async|break|class|continue|delete|else|enum|for|free|fun|if|import|interface|label|lambda|mark|namespace|native|new|private|protected|public|return|static|struct|super|this|type|var|virtual|wait)\\b"
+      "match": "\\b(?:abstract|alias|async|break|case|class|continue|delete|else|enum|for|free|fun|if|import|interface|label|lambda|mark|namespace|native|new|private|protected|public|return|static|struct|super|switch|this|type|var|virtual|wait)\\b"
     }
   }
 }

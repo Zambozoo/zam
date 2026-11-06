@@ -76,6 +76,13 @@ func (v *inheritanceCycleDetectorVisitor) VisitDeclNamespace(d *syntax.DeclNames
 	return nil
 }
 
+// VisitDeclAlias implements [syntax.FieldVisitor]. Every reference to an
+// alias has been replaced by the type it names, so it holds nothing for this
+// pass.
+func (v *inheritanceCycleDetectorVisitor) VisitDeclAlias(*syntax.DeclAlias) error {
+	return nil
+}
+
 func (v *inheritanceCycleDetectorVisitor) VisitDeclStruct(d *syntax.DeclStruct) error {
 	return nil
 }

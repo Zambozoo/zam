@@ -5,12 +5,12 @@ import std("lang/*");
 
 namespace Main {
     interface Iter[A] {
-        virtual fun (A, bool)() Next;
+        fun (A, bool)() Next;
     }
     
     interface Iterable[A] {
-        virtual fun Iter[A]*() Iter;
-        virtual fun Arr[A]*() Arr;
+        fun Iter[A]*() Iter;
+        fun Arr[A]*() Arr;
     }
 
     fun[A] void(Iterable[A]*) Print = (i) {

@@ -1051,6 +1051,10 @@ const thisVariableName = "this"
 // write, so nothing shadows it and it shadows nothing.
 const remainingVariableName = "~remaining"
 
+// switchVariableName is bound to the slot a switch's value is held in while
+// its cases are compared with it. It is not a name a program can write.
+const switchVariableName = "~switch"
+
 // unpackVariableName is bound to the slot a tuple is held in while the
 // variables of an unpacking declaration are read out of it. It is not a name a
 // program can write.
@@ -1545,6 +1549,13 @@ func (v *operationVisitor) visitDecl(d syntax.Decl) error {
 			return err
 		}
 	}
+	return nil
+}
+
+// VisitDeclAlias implements [syntax.FieldVisitor]. Every reference to an
+// alias has been replaced by the type it names, so it holds nothing for this
+// pass.
+func (v *operationVisitor) VisitDeclAlias(*syntax.DeclAlias) error {
 	return nil
 }
 
@@ -2763,6 +2774,63 @@ func (v *operationVisitor) emitLoop(s *syntax.StmtFor, loop *loopContext) (*jump
 	v.emitJumpTo(OpJump, condition)
 
 	return exhausted, nil
+}
+
+// VisitStmtSwitch emits a switch as the if-else chain it reads as: the value is
+// held in a scope of its own, each case compares it with its values in order and
+// branches to its body on the first that is equal, and a failed chain branches
+// to the else or past the switch. The bodies follow in order, each branching
+// past the rest when it ends. A continue lands on the next body, and a break
+// lands where the bodies end, both inside the switch's scope so that leaving it
+// closes it once.
+func (v *operationVisitor) VisitStmtSwitch(s *syntax.StmtSwitch) error {
+	v.enterScope()
+	switchType := s.Expr.ResolvedType()
+	v.declareVariable(switchVariableName, switchType)
+	if err := v.emitValue(s.Expr); err != nil {
+		return err
+	}
+	value := syntax.NewExprIdentifier(switchVariableName, switchType)
+
+	matches := make([][]*jumpOperation, len(s.Cases))
+	for i, c := range s.Cases {
+		for _, caseValue := range c.Values {
+			if err := v.emitValue(syntax.NewExprEqual(value, caseValue)); err != nil {
+				return err
+			}
+			unequal := v.emitJump(OpJumpIfFalse)
+			matches[i] = append(matches[i], v.emitJump(OpJump))
+			v.patch(unequal)
+		}
+	}
+	unmatched := v.emitJump(OpJump)
+
+	context := &loopContext{label: v.pendingLabel, scopeDepth: v.scopes.Len()}
+	v.pendingLabel = ""
+	v.loops.Push(context)
+	var ends []*jumpOperation
+	for i, c := range s.Cases {
+		v.patch(context.continues...)
+		context.continues = nil
+		v.patch(matches[i]...)
+		if err := v.visitScoped(c.Body); err != nil {
+			return err
+		}
+		ends = append(ends, v.emitJump(OpJump))
+	}
+	v.patch(context.continues...)
+	v.patch(unmatched)
+	if s.Else != nil {
+		if err := v.visitScoped(s.Else); err != nil {
+			return err
+		}
+	}
+	v.loops.Pop()
+
+	v.patch(ends...)
+	v.patch(context.breaks...)
+	v.exitScope()
+	return nil
 }
 
 // VisitStmtLabel names the loop it introduces. The loop may be nested in the

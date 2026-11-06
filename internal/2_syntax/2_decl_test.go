@@ -2,11 +2,14 @@ package syntax
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	base "github.com/zambozoo/zam/internal/0_base"
+	command "github.com/zambozoo/zam/internal/1_command"
 	"github.com/zambozoo/zam/internal/std"
 )
 
@@ -299,4 +302,119 @@ func TestObjectMethodSlots(t *testing.T) {
 		}
 		assert.Equal(t, expected, declared)
 	})
+}
+
+// TestNewASTParsesAliases pins the forms an alias is written in.
+func TestNewASTParsesAliases(t *testing.T) {
+	for name, alias := range map[string]string{
+		"plain":            `alias Flag = bool;`,
+		"generic":          `alias Pair[A] = (A, bool);`,
+		"bounded":          `alias ObjList[A <: Obj*] = Arr[A]*;`,
+		"bound on another": `alias Both[A, B <: A] = (A, B);`,
+		"function":         `public alias Visit[A] = void(A*, uint);`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			errs := parseEntry(t, `
+namespace Main {
+    `+alias+`
+    static fun void(int, str...) main = (argc, argv) { return; }
+}
+`)
+			assert.Empty(t, errs)
+		})
+	}
+}
+
+// TestNewASTParsesAFileThatIsAnAlias pins that an alias is a declaration a file
+// can hold on its own.
+func TestNewASTParsesAFileThatIsAnAlias(t *testing.T) {
+	assert.Empty(t, parseEntry(t, `public alias Pair[A] = (A, bool);`))
+}
+
+// TestNewASTRejectsMalformedAliases holds an alias to its form: a name, its
+// parameters with their bounds, `=`, and a type whose arguments carry none.
+func TestNewASTRejectsMalformedAliases(t *testing.T) {
+	for name, test := range map[string]struct {
+		alias    string
+		expected string
+	}{
+		"bound among type arguments": {
+			alias:    `alias Set[A <: Obj*] = Map[A <: Obj*, A];`,
+			expected: "bounds belong in the parameter list a generic is declared with",
+		},
+		"subtype in place of equals": {
+			alias:    `alias Set[A] <: Map[A, A];`,
+			expected: `alias Set is written with "="`,
+		},
+		"virtual": {
+			alias:    `class C { virtual alias Flag = bool; }`,
+			expected: "aliases cannot be virtual",
+		},
+		"duplicate of a nested declaration": {
+			alias:    `class Flag {} alias Flag = bool;`,
+			expected: `duplicate static field "Flag"`,
+		},
+		"duplicate of an alias": {
+			alias:    `alias Flag = bool; alias Flag = int;`,
+			expected: `duplicate static field "Flag"`,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			errs := parseEntry(t, `
+namespace Main {
+    `+test.alias+`
+    static fun void(int, str...) main = (argc, argv) { return; }
+}
+`)
+			assert.Contains(t, fmt.Sprint(errs), test.expected)
+		})
+	}
+}
+
+// TestNewASTImpliesVirtualForInterfaceInstanceMethods pins that an interface's
+// non-static methods are virtual whether or not they say so, as a namespace's
+// fields are static.
+func TestNewASTImpliesVirtualForInterfaceInstanceMethods(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir)
+	entry := writeFile(t, dir, "Main.zam", `
+namespace Main {
+    interface I {
+        fun int() Implied;
+        virtual fun int() Written;
+        static fun int() Static = () { return 1; }
+    }
+    static fun void(int, str...) main = (argc, argv) { return; }
+}
+`)
+
+	ast, errs := NewAST(
+		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
+		&base.FileProvider{}, &mock_GitProvider{})
+	require.Empty(t, errs)
+
+	iface, ok := ast.MainCodeDecl.GetDecl("I")
+	require.True(t, ok)
+	for _, name := range []string{"Implied", "Written"} {
+		method, ok := iface.GetInstanceMethod(name)
+		require.True(t, ok, name)
+		assert.True(t, method.Modifiers().Has(ModifierVirtual), name)
+	}
+	method, ok := iface.GetStaticMethod("Static")
+	require.True(t, ok)
+	assert.False(t, method.Modifiers().Has(ModifierVirtual))
+}
+
+// TestNewASTRejectsAnInterfaceInstanceMethodWithABody pins that the implied
+// virtual leaves an interface's instance methods without bodies.
+func TestNewASTRejectsAnInterfaceInstanceMethodWithABody(t *testing.T) {
+	errs := parseEntry(t, `
+namespace Main {
+    interface I {
+        fun int() F = () { return 1; }
+    }
+    static fun void(int, str...) main = (argc, argv) { return; }
+}
+`)
+	assert.Contains(t, fmt.Sprint(errs), "virtual methods cannot have a body")
 }

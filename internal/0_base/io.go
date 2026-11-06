@@ -274,6 +274,12 @@ func ancestorDirs(filePath string) iter.Seq[string] {
 	}
 }
 
+// ImplicitProjectFilePath returns the path a project file for entry would have
+// if it sat beside it. It names the project compiled without a project file.
+func ImplicitProjectFilePath(entry *Path) *Path {
+	return NewPath(filepath.Join(filepath.Dir(entry.Outer), projectFileNameShort), "")
+}
+
 // ProjectFilePath returns the project file path for the given path.
 func (fp *FileProvider) ProjectFilePath(p *Path) (*Path, error) {
 	if IsStdPath(p) {

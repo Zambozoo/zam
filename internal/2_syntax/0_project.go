@@ -2,6 +2,8 @@ package syntax
 
 import (
 	"fmt"
+	"path/filepath"
+	"strings"
 
 	base "github.com/zambozoo/zam/internal/0_base"
 
@@ -57,6 +59,16 @@ type (
 		path base.Path
 	}
 )
+
+// newImplicitProject returns the project of an entry compiled without a project
+// file: named for the entry, depending only on std, and shipping no natives.
+func newImplicitProject(entry *base.Path) *Project {
+	return &Project{
+		Path:         base.ImplicitProjectFilePath(entry),
+		Name:         strings.TrimSuffix(filepath.Base(entry.Outer), base.CodeFileExtension),
+		Dependencies: map[string]base.Path{base.StdPackage: *base.StdPath("")},
+	}
+}
 
 // newProject resolves path via streamer, reads YAML from Reader, and returns a populated Project.
 func newProject(path *base.Path, fp fileProvider, git gitProvider) (*Project, error) {

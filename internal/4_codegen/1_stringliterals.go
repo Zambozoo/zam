@@ -190,6 +190,13 @@ func (v *stringLiteralVisitor) visitDecl(d syntax.Decl) error {
 	return nil
 }
 
+// VisitDeclAlias implements [syntax.FieldVisitor]. Every reference to an
+// alias has been replaced by the type it names, so it holds nothing for this
+// pass.
+func (v *stringLiteralVisitor) VisitDeclAlias(*syntax.DeclAlias) error {
+	return nil
+}
+
 func (v *stringLiteralVisitor) VisitDeclStruct(d *syntax.DeclStruct) error { return v.visitDecl(d) }
 func (v *stringLiteralVisitor) VisitDeclEnum(d *syntax.DeclEnum) error     { return v.visitDecl(d) }
 func (v *stringLiteralVisitor) VisitDeclClass(d *syntax.DeclClass) error   { return v.visitDecl(d) }
@@ -251,6 +258,20 @@ func (v *stringLiteralVisitor) VisitStmtVariable(s *syntax.StmtVariable) error {
 func (v *stringLiteralVisitor) VisitStmtUnpack(s *syntax.StmtUnpack) error {
 	if s.Expr != nil {
 		return s.Expr.Accept(v)
+	}
+	return nil
+}
+
+// VisitStmtSwitch implements [syntax.StmtVisitor].
+func (v *stringLiteralVisitor) VisitStmtSwitch(s *syntax.StmtSwitch) error {
+	s.Expr.Accept(v)
+	for _, switchCase := range s.Cases {
+		for _, value := range switchCase.Values {
+			value.Accept(v)
+		}
+	}
+	for body := range s.Bodies() {
+		body.Accept(v)
 	}
 	return nil
 }

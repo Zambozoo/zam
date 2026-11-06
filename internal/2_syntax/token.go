@@ -102,11 +102,13 @@ var (
 
 	// Keywords
 	TTAbstract  = newKeyword("abstract")
+	TTAlias     = newKeyword("alias")
 	TTAny       = newKeyword("any")
 	TTAsync     = newKeyword("async")
 	TTBool      = newKeyword("bool")
 	TTBreak     = newKeyword("break")
 	TTByte      = newKeyword("byte")
+	TTCase      = newKeyword("case")
 	TTChar      = newKeyword("char")
 	TTClass     = newKeyword("class")
 	TTContinue  = newKeyword("continue")
@@ -137,6 +139,7 @@ var (
 	TTString    = newKeyword("str")
 	TTStruct    = newKeyword("struct")
 	TTSuper     = newKeyword("super")
+	TTSwitch    = newKeyword("switch")
 	TTThis      = newKeyword("this")
 	TTThread    = newKeyword("thread")
 	TTTrue      = newKeyword("true")

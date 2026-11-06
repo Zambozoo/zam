@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 
+	base "github.com/zambozoo/zam/internal/0_base"
 	syntax "github.com/zambozoo/zam/internal/2_syntax"
 )
 
@@ -73,15 +74,20 @@ func (r *referenceTypeResolverVisitor) visitDecl(d syntax.Decl) {
 
 func (r *referenceTypeResolverVisitor) visitDeclGeneric(g syntax.DeclGeneric) {
 	r.visitDecl(g)
-	if g.Generics() == nil {
+	r.visitGenerics(g.Generics())
+}
+
+// visitGenerics resolves the types the bounds of a parameter list are written
+// with.
+func (r *referenceTypeResolverVisitor) visitGenerics(generics *base.StaticOrderedMap[syntax.GenericArgKey, syntax.GenericBound]) {
+	if generics == nil {
 		return
 	}
-	for _, entry := range g.Generics().All() {
+	for _, entry := range generics.All() {
 		if entry.Value == nil {
 			continue
 		}
-		bound := entry.Value.Bounds()
-		for _, b := range bound {
+		for _, b := range entry.Value.Bounds() {
 			b.Accept(r)
 		}
 	}
@@ -130,6 +136,13 @@ func (r *referenceTypeResolverVisitor) VisitDeclStruct(d *syntax.DeclStruct) err
 	return nil
 }
 
+// VisitDeclAlias implements [syntax.FieldVisitor].
+func (r *referenceTypeResolverVisitor) VisitDeclAlias(d *syntax.DeclAlias) error {
+	r.visitGenerics(d.Generics())
+	d.Type.Accept(r)
+	return nil
+}
+
 // VisitFieldEnum implements [syntax.FieldVisitor].
 func (r *referenceTypeResolverVisitor) VisitFieldEnum(f *syntax.FieldEnum) error {
 	for _, param := range f.Parameters {
@@ -152,6 +165,7 @@ func (r *referenceTypeResolverVisitor) VisitFieldMember(f *syntax.FieldMember) e
 
 // VisitFieldMethod implements [syntax.FieldVisitor].
 func (r *referenceTypeResolverVisitor) VisitFieldMethod(f *syntax.FieldMethod) error {
+	r.visitGenerics(f.Generics())
 	f.FieldType().Accept(r)
 	if f.Body != nil {
 		f.Body.Accept(r)
@@ -186,6 +200,20 @@ func (r *referenceTypeResolverVisitor) VisitStmtFor(s *syntax.StmtFor) error {
 	}
 	if s.Else != nil {
 		s.Else.Accept(r)
+	}
+	return nil
+}
+
+// VisitStmtSwitch implements [syntax.StmtVisitor].
+func (r *referenceTypeResolverVisitor) VisitStmtSwitch(s *syntax.StmtSwitch) error {
+	s.Expr.Accept(r)
+	for _, switchCase := range s.Cases {
+		for _, value := range switchCase.Values {
+			value.Accept(r)
+		}
+	}
+	for body := range s.Bodies() {
+		body.Accept(r)
 	}
 	return nil
 }
@@ -346,6 +374,16 @@ func (r *referenceTypeResolverVisitor) VisitTypeGeneric(t *syntax.TypeGeneric) e
 		return nil
 	}
 
+	if tr, ok := t.Type.(*syntax.TypeReference); ok && tr.Alias() != nil {
+		for _, param := range t.ParameterTypes {
+			param.Accept(r)
+		}
+		return nil
+	} else if tt, ok := t.Type.(*syntax.TypeTailed); ok && tt.Type.Alias() != nil {
+		r.errf(t, "alias %q cannot be tailed", tt.Type.String())
+		return nil
+	}
+
 	decl := t.Type.Decl()
 	genericDecl, ok := decl.(syntax.DeclGeneric)
 	if !ok {
@@ -395,13 +433,15 @@ func nestedDecl(d syntax.Decl, ids []string) (syntax.Decl, bool) {
 }
 
 // setDecl points t at the declaration it was resolved to, which has to be one a
-// type can be written of.
+// type can be written of or an alias for one.
 func (r *referenceTypeResolverVisitor) setDecl(t *syntax.TypeReference, d syntax.Decl) error {
-	declTypeable, ok := d.(syntax.DeclTypeable)
-	if !ok {
+	if alias, ok := d.(*syntax.DeclAlias); ok {
+		t.SetAlias(alias)
+	} else if declTypeable, ok := d.(syntax.DeclTypeable); ok {
+		t.SetDecl(declTypeable)
+	} else {
 		return fmt.Errorf("declaration %q is not a typeable", t.String())
 	}
-	t.SetDecl(declTypeable)
 	if n := len(t.IdTokens); n > 0 {
 		r.ast.References.Add(t.OuterDecl().File(), t.IdTokens[n-1], syntax.TargetOf(d), nil)
 	}
@@ -513,6 +553,8 @@ func (r *referenceTypeResolverVisitor) VisitTypeReference(t *syntax.TypeReferenc
 	if err := r.visitTypeReference(t); err != nil {
 		r.err(t, err)
 		return nil
+	} else if t.Alias() != nil {
+		return nil
 	}
 
 	typeDecl := t.Decl()
@@ -528,6 +570,9 @@ func (r *referenceTypeResolverVisitor) VisitTypeReference(t *syntax.TypeReferenc
 func (r *referenceTypeResolverVisitor) VisitTypeTailed(t *syntax.TypeTailed) error {
 	if err := r.visitTypeReference(t.Type); err != nil {
 		r.err(t, err)
+		return nil
+	} else if t.Type.Alias() != nil {
+		r.errf(t, "alias %q cannot be tailed", t.Type.String())
 		return nil
 	}
 

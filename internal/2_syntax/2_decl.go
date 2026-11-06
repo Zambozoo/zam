@@ -252,6 +252,18 @@ type (
 		// isTailed is whether the declaration is tailed.
 		isTailed bool
 	}
+	// DeclAlias is an alias declaration, a name for a type written
+	// `alias Name[Params] = Type;`. It is transparent: a reference to it stands
+	// for the type it names with its arguments substituted, and is replaced by
+	// that type once references are resolved. It declares no fields.
+	DeclAlias struct {
+		decl
+		// generics is the parameters and bounds of the alias, or nil for an
+		// alias written without a parameter list.
+		generics *base.StaticOrderedMap[GenericArgKey, GenericBound]
+		// Type is the type the alias names.
+		Type Type
+	}
 
 	// DeclConcrete is a concrete instantiation of a generic declaration.
 	DeclConcrete interface {
@@ -377,6 +389,8 @@ var (
 	KindEnum = newkind(TTEnum, "enum")
 	// Struct declaration for real non-garbage-collected objects
 	KindStruct = newkind(TTStruct, "struct")
+	// Alias declaration for a name of a type
+	KindAlias = newkind(TTAlias, "alias")
 )
 
 // newDecl creates a new declaration.
@@ -400,6 +414,8 @@ func newDecl(parser SyntaxParser, modifiers Modifier) (Decl, error) {
 		decl, err = newDeclInterface(parser, tok, modifiers)
 	case TTStruct:
 		decl, err = newDeclStruct(parser, tok, modifiers)
+	case TTAlias:
+		decl, err = newDeclAlias(parser, tok, modifiers)
 	}
 
 	if err != nil {
@@ -1110,7 +1126,7 @@ func newDeclAbstract(parser SyntaxParser, start *Token, modifiers Modifier) (*De
 		}
 
 		recoverFrom := parser.Checkpoint()
-		field, err := newField(parser, decl.isTailed, false)
+		field, err := newField(parser, decl.isTailed, 0)
 		if err != nil {
 			partial, isPartial := kept[Field](err)
 			if err := recoverFrom(err); err != nil {
@@ -1335,7 +1351,7 @@ func newDeclClass(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclC
 		}
 
 		recoverFrom := parser.Checkpoint()
-		field, err := newField(parser, decl.isTailed, false)
+		field, err := newField(parser, decl.isTailed, 0)
 		if err != nil {
 			partial, isPartial := kept[Field](err)
 			if err := recoverFrom(err); err != nil {
@@ -1568,7 +1584,7 @@ func newDeclEnum(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclEn
 		}
 
 		recoverFrom := parser.Checkpoint()
-		field, err := newField(parser, false, false)
+		field, err := newField(parser, false, 0)
 		if err != nil {
 			partial, isPartial := kept[Field](err)
 			if err := recoverFrom(err); err != nil {
@@ -1721,7 +1737,7 @@ func newDeclInterface(parser SyntaxParser, start *Token, modifiers Modifier) (*D
 		}
 
 		recoverFrom := parser.Checkpoint()
-		field, err := newField(parser, false, false)
+		field, err := newField(parser, false, ModifierVirtual)
 		if err != nil {
 			partial, isPartial := kept[Field](err)
 			if err := recoverFrom(err); err != nil {
@@ -1746,9 +1762,6 @@ func newDeclInterface(parser SyntaxParser, start *Token, modifiers Modifier) (*D
 			f, ok := field.(*FieldMethod)
 			if !ok {
 				parser.Report(fmt.Errorf("instance member %q is not allowed in interface", field.Name()))
-				continue
-			} else if !field.Modifiers().Has(ModifierVirtual) {
-				parser.Report(fmt.Errorf("instance method %q must be virtual in interface", field.Name()))
 				continue
 			} else if f.Modifiers().Has(ModifierProtected) {
 				parser.Report(fmt.Errorf("instance method %q cannot be protected in interface", field.Name()))
@@ -1868,7 +1881,7 @@ func newDeclNamespace(parser SyntaxParser, start *Token, modifiers Modifier) (*D
 		}
 
 		recoverFrom := parser.Checkpoint()
-		field, err := newField(parser, false, true)
+		field, err := newField(parser, false, ModifierStatic)
 		if err != nil {
 			partial, isPartial := kept[Field](err)
 			if err := recoverFrom(err); err != nil {
@@ -1973,7 +1986,7 @@ func newDeclStruct(parser SyntaxParser, start *Token, modifiers Modifier) (*Decl
 		}
 
 		recoverFrom := parser.Checkpoint()
-		field, err := newField(parser, decl.isTailed, false)
+		field, err := newField(parser, decl.isTailed, 0)
 		if err != nil {
 			partial, isPartial := kept[Field](err)
 			if err := recoverFrom(err); err != nil {
@@ -2446,4 +2459,127 @@ func defaultStrMethod(d Decl) *FieldMethod {
 			Stmts: []Stmt{&StmtExpr{start: at, kind: StmtKindReturn, Expr: str}},
 		},
 	}
+}
+
+// newDeclAlias creates a new alias declaration. The alias is the declaration
+// being parsed while its parameters and type are read, so a generic argument
+// named in either resolves to the alias's own parameter.
+func newDeclAlias(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclAlias, error) {
+	if modifiers.Has(ModifierVirtual) {
+		return nil, fmt.Errorf("aliases cannot be virtual")
+	}
+
+	id, err := parser.Consume(TTIdentifier)
+	if err != nil {
+		return nil, err
+	}
+	decl := &DeclAlias{
+		decl: decl{
+			start:          start,
+			file:           *parser.File(),
+			outerDecl:      *parser.Decl(),
+			kind:           KindAlias,
+			modifiers:      modifiers,
+			name:           id.Value.(string),
+			nameToken:      id,
+			staticFields:   base.NewStaticOrderedMap[string, Field](),
+			instanceFields: base.NewStaticOrderedMap[string, Field](),
+			innerDecls:     base.NewStaticOrderedMap[string, Decl](),
+		},
+	}
+	*parser.Decl() = decl
+	defer func() { *parser.Decl() = decl.outerDecl }()
+
+	if tok, err := parser.Match(TTLeftBracket); err != nil {
+		return nil, keep(decl, err)
+	} else if tok != nil {
+		if decl.generics, err = newGenerics(parser, decl); err != nil {
+			return nil, keep(decl, err)
+		}
+	}
+
+	if tok, err := parser.Match(TTSubtype, TTSupertype); err != nil {
+		return nil, keep(decl, err)
+	} else if tok != nil {
+		return nil, keep(decl, fmt.Errorf("alias %s is written with %q; %q declares a subtype, which takes a class, abstract, struct or interface", decl.name, TTEqual, tok.Kind))
+	}
+	if _, err := parser.Consume(TTEqual); err != nil {
+		return nil, keep(decl, err)
+	}
+
+	if decl.Type, err = newType(parser); err != nil {
+		return nil, keep(decl, err)
+	}
+
+	if _, err := parser.Consume(TTSemiColon); err != nil {
+		return nil, keep(decl, err)
+	}
+	return decl, nil
+}
+
+// Accept implements the [Decl] interface.
+func (d *DeclAlias) Accept(visitor FieldVisitor) error {
+	return visitor.VisitDeclAlias(d)
+}
+
+// Generics implements the [GenericOwner] interface.
+func (d *DeclAlias) Generics() *base.StaticOrderedMap[GenericArgKey, GenericBound] {
+	return d.generics
+}
+
+// GenericTypes implements the [GenericOwner] interface. An alias is never
+// instantiated, so it collects no open types.
+func (d *DeclAlias) GenericTypes() *TypeSet {
+	return nil
+}
+
+// Arity is the number of type arguments the alias takes.
+func (d *DeclAlias) Arity() int {
+	if d.generics == nil {
+		return 0
+	}
+	return d.generics.Len()
+}
+
+// Instantiate returns a copy of t with each generic argument in types replaced
+// by what it is bound to, every node of the copy written at start inside
+// outerDecl. It is how an alias is expanded where it is used: the copy is
+// located at the use, so what is reported about it is reported there rather
+// than at the alias.
+func Instantiate(t Type, types map[GenericArgKey]Type, start *Token, outerDecl Decl) Type {
+	each := func(ts []Type) []Type {
+		if ts == nil {
+			return nil
+		}
+		copied := make([]Type, len(ts))
+		for i, t := range ts {
+			copied[i] = Instantiate(t, types, start, outerDecl)
+		}
+		return copied
+	}
+
+	switch t := t.(type) {
+	case *TypeArray:
+		return &TypeArray{outerDecl: outerDecl, Type: Instantiate(t.Type, types, start, outerDecl), Size: t.Size}
+	case *TypeFunction:
+		return &TypeFunction{outerDecl: outerDecl, ParameterTypes: each(t.ParameterTypes), ReturnType: Instantiate(t.ReturnType, types, start, outerDecl)}
+	case *TypeGeneric:
+		return &TypeGeneric{outerDecl: outerDecl, Type: Instantiate(t.Type, types, start, outerDecl).(TypeResolvable), ParameterTypes: each(t.ParameterTypes)}
+	case *TypeGenericArg:
+		if bound, ok := types[GenericArgKey{Owner: t.owner, Name: t.Name}]; ok {
+			return bound
+		}
+		return t
+	case *TypePrimitive:
+		return &TypePrimitive{start: start, outerDecl: outerDecl, kind: t.kind}
+	case *TypeReference:
+		return &TypeReference{start: start, outerDecl: outerDecl, Ids: t.Ids, decl: t.decl}
+	case *TypeTailed:
+		return &TypeTailed{start: start, outerDecl: outerDecl, Type: Instantiate(t.Type, types, start, outerDecl).(*TypeReference), Size: t.Size}
+	case *TypeTuple:
+		return &TypeTuple{start: start, outerDecl: outerDecl, Types: each(t.Types)}
+	case *TypeWrapped:
+		return &TypeWrapped{start: start, kind: t.kind, outerDecl: outerDecl, Type: Instantiate(t.Type, types, start, outerDecl)}
+	}
+	panic(fmt.Sprintf("unknown type %T", t))
 }

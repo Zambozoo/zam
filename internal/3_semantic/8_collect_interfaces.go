@@ -150,6 +150,13 @@ func (c *interfaceCollector) VisitDeclNamespace(d *syntax.DeclNamespace) error {
 	return nil
 }
 
+// VisitDeclAlias implements [syntax.FieldVisitor]. Every reference to an
+// alias has been replaced by the type it names, so it holds nothing for this
+// pass.
+func (c *interfaceCollector) VisitDeclAlias(*syntax.DeclAlias) error {
+	return nil
+}
+
 func (c *interfaceCollector) VisitDeclStruct(d *syntax.DeclStruct) error {
 	c.visitNested(d)
 	return nil

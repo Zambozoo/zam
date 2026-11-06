@@ -4,6 +4,7 @@ go 1.25.1
 
 require (
 	github.com/hashicorp/go-retryablehttp v0.7.8
+	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.11.1
 	github.com/tliron/glsp v0.2.2
 	go.yaml.in/yaml/v3 v3.0.4

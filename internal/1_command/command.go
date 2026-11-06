@@ -4,13 +4,13 @@ package command
 import (
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
+	"io"
 	"math"
-	"os"
 	"strconv"
 	"strings"
 
+	"github.com/spf13/pflag"
 	base "github.com/zambozoo/zam/internal/0_base"
 )
 
@@ -47,6 +47,14 @@ const (
 	flagKeepBuildLong = "keep-build"
 	usageKeepBuild    = "keep the temporary build directory and print its path on failure or success"
 
+	flagRun     = "r"
+	flagRunLong = "run"
+	usageRun    = "build to a temporary binary and run it, passing any arguments after the input file"
+
+	flagNoProject     = "n"
+	flagNoProjectLong = "no-project"
+	usageNoProject    = "ignore project files and compile local files as one project depending only on std"
+
 	defaultOutput    = "out"
 	defaultThreads   = 1
 	defaultVerbose   = false
@@ -70,9 +78,7 @@ var byteSizeUnits = []struct {
 
 type (
 	// byteSize is a count of bytes written on the command line as a number with
-	// an optional unit suffix. It is a [flag.Value] rather than a plain int so
-	// that the short and long spellings of one flag can share a single target,
-	// as the other flags here do.
+	// an optional unit suffix.
 	byteSize int
 
 	Command struct {
@@ -116,6 +122,19 @@ type (
 		// prints its path, so the generated wrapper and extracted runtime can be
 		// inspected. Uses the -k flag with a default of `false`.
 		KeepBuild bool
+
+		// Run builds the binary to a temporary location and runs it instead of
+		// writing it to OutputPath. Uses the -r flag with a default of `false`.
+		Run bool
+
+		// RunArgs are the arguments after the input file, passed to the program
+		// when Run is set.
+		RunArgs []string
+
+		// NoProject skips the search for project files, so every local file
+		// belongs to an implicit project that depends only on std. Uses the -n
+		// flag with a default of `false`.
+		NoProject bool
 	}
 
 	fileProvider interface {
@@ -123,17 +142,18 @@ type (
 	}
 
 	usageError struct {
-		name string
-		err  error
+		name  string
+		flags string
+		err   error
 	}
 )
 
 var (
-	_ error      = (*usageError)(nil)
-	_ flag.Value = (*byteSize)(nil)
+	_ error       = (*usageError)(nil)
+	_ pflag.Value = (*byteSize)(nil)
 )
 
-// String implements the [flag.Value] interface, writing the size back with the
+// String implements the [pflag.Value] interface, writing the size back with the
 // largest unit that divides it so that what is echoed reads like what was typed.
 func (b byteSize) String() string {
 	for _, unit := range byteSizeUnits {
@@ -144,7 +164,7 @@ func (b byteSize) String() string {
 	return strconv.Itoa(int(b)) + "B"
 }
 
-// Set implements the [flag.Value] interface. A bare number is a count of bytes.
+// Set implements the [pflag.Value] interface. A bare number is a count of bytes.
 func (b *byteSize) Set(s string) error {
 	digits := strings.ToUpper(strings.TrimSpace(s))
 	multiplier := 1
@@ -170,21 +190,18 @@ func (b *byteSize) Set(s string) error {
 	return nil
 }
 
+// Type implements the [pflag.Value] interface.
+func (*byteSize) Type() string {
+	return "size"
+}
+
 // Error implements the [error] interface.
 func (ue *usageError) Error() string {
-	outputLine := fmt.Sprintf("  -%s, --%s string\t%s (default %q)\n", flagOutput, flagOutputLong, usageOutput, defaultOutput)
-	verboseLine := fmt.Sprintf("  -%s, --%s\t%s\n", flagVerbose, flagVerboseLong, usageVerbose)
-	threadsLine := fmt.Sprintf("  -%s, --%s int\t%s (default %d)\n", flagThreads, flagThreadsLong, usageThreads, defaultThreads)
-	gcRatioLine := fmt.Sprintf("  -%s, --%s float\t%s (default %g)\n", flagGCRatio, flagGCRatioLong, usageGCRatio, defaultGCRatio)
-	stackLine := fmt.Sprintf("  -%s, --%s size\t%s (default %s)\n", flagStackSize, flagStackSizeLong, usageStackSize, defaultStackSize)
-	heapLine := fmt.Sprintf("  -%s, --%s size\t%s (default %s)\n", flagHeapSize, flagHeapSizeLong, usageHeapSize, defaultHeapSize)
-	emitImageLine := fmt.Sprintf("  -%s, --%s\t%s\n", flagEmitImage, flagEmitImageLong, usageEmitImage)
-	keepBuildLine := fmt.Sprintf("  -%s, --%s\t%s\n", flagKeepBuild, flagKeepBuildLong, usageKeepBuild)
 	var errorLine string
 	if ue.err != nil {
 		errorLine = fmt.Sprintf("Error: %s\n", ue.err.Error())
 	}
-	return fmt.Sprintf("%sUsage of %s:\n%s%s%s%s%s%s%s%s", errorLine, ue.name, outputLine, verboseLine, threadsLine, gcRatioLine, stackLine, heapLine, emitImageLine, keepBuildLine)
+	return fmt.Sprintf("%sUsage of %s:\n%s", errorLine, ue.name, ue.flags)
 }
 
 // New builds a Command from the given argument list and file provider.
@@ -193,8 +210,10 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 		return nil, errors.New("missing program name")
 	}
 
-	fs := flag.NewFlagSet(argv[0], flag.ContinueOnError)
-	fs.SetOutput(os.Stderr)
+	fs := pflag.NewFlagSet(argv[0], pflag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.SetInterspersed(false)
+	fs.SortFlags = false
 
 	out := new(base.Path)
 	var verbose bool
@@ -202,55 +221,55 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	var gcRatio float64
 	var emitImage bool
 	var keepBuild bool
+	var run bool
+	var noProject bool
 	stackSize, heapSize := defaultStackSize, defaultHeapSize
 
-	fs.StringVar(&out.Outer, flagOutput, defaultOutput, usageOutput)
-	fs.StringVar(&out.Outer, flagOutputLong, defaultOutput, usageOutput)
-	fs.BoolVar(&verbose, flagVerbose, defaultVerbose, usageVerbose)
-	fs.BoolVar(&verbose, flagVerboseLong, defaultVerbose, usageVerbose)
-	fs.IntVar(&threads, flagThreads, defaultThreads, usageThreads)
-	fs.IntVar(&threads, flagThreadsLong, defaultThreads, usageThreads)
-	fs.Float64Var(&gcRatio, flagGCRatio, defaultGCRatio, usageGCRatio)
-	fs.Float64Var(&gcRatio, flagGCRatioLong, defaultGCRatio, usageGCRatio)
-	fs.Var(&stackSize, flagStackSize, usageStackSize)
-	fs.Var(&stackSize, flagStackSizeLong, usageStackSize)
-	fs.Var(&heapSize, flagHeapSize, usageHeapSize)
-	fs.Var(&heapSize, flagHeapSizeLong, usageHeapSize)
-	fs.BoolVar(&emitImage, flagEmitImage, false, usageEmitImage)
-	fs.BoolVar(&emitImage, flagEmitImageLong, false, usageEmitImage)
-	fs.BoolVar(&keepBuild, flagKeepBuild, false, usageKeepBuild)
-	fs.BoolVar(&keepBuild, flagKeepBuildLong, false, usageKeepBuild)
-
-	fs.Usage = func() {}
+	fs.StringVarP(&out.Outer, flagOutputLong, flagOutput, defaultOutput, usageOutput)
+	fs.BoolVarP(&verbose, flagVerboseLong, flagVerbose, defaultVerbose, usageVerbose)
+	fs.IntVarP(&threads, flagThreadsLong, flagThreads, defaultThreads, usageThreads)
+	fs.Float64VarP(&gcRatio, flagGCRatioLong, flagGCRatio, defaultGCRatio, usageGCRatio)
+	fs.VarP(&stackSize, flagStackSizeLong, flagStackSize, usageStackSize)
+	fs.VarP(&heapSize, flagHeapSizeLong, flagHeapSize, usageHeapSize)
+	fs.BoolVarP(&emitImage, flagEmitImageLong, flagEmitImage, false, usageEmitImage)
+	fs.BoolVarP(&keepBuild, flagKeepBuildLong, flagKeepBuild, false, usageKeepBuild)
+	fs.BoolVarP(&run, flagRunLong, flagRun, false, usageRun)
+	fs.BoolVarP(&noProject, flagNoProjectLong, flagNoProject, false, usageNoProject)
 
 	if err := fs.Parse(argv[1:]); err != nil {
-		usageErr := &usageError{name: argv[0]}
-		if !errors.Is(err, flag.ErrHelp) {
+		usageErr := &usageError{name: argv[0], flags: fs.FlagUsages()}
+		if !errors.Is(err, pflag.ErrHelp) {
 			usageErr.err = err
 		}
 		return nil, usageErr
 	}
 
-	var inputPath *base.Path
-	switch args := fs.Args(); len(args) {
-	case 0:
+	if run && emitImage {
+		return nil, fmt.Errorf("-%s and -%s cannot be combined", flagRun, flagEmitImage)
+	}
+
+	args := fs.Args()
+	switch {
+	case len(args) == 0:
 		return nil, errors.New("missing input file argument")
-	case 1:
-		// The entry file is named on the command line but is otherwise an
-		// ordinary file, and every other path reaches the parser normalized.
-		// Taken as typed, the bytecode would depend on how the compiler was
-		// invoked, and a file importing the entry by another spelling would
-		// parse it a second time under a second name.
-		p, err := base.ParsePath(args[0])
-		if err != nil {
-			return nil, err
-		}
-		inputPath = p
-	default:
+	case len(args) > 1 && !run:
 		return nil, fmt.Errorf("too many arguments: %v", args)
 	}
 
-	if _, err := fileProvider.FileExists(out); err != nil {
+	// The entry file is named on the command line but is otherwise an
+	// ordinary file, and every other path reaches the parser normalized.
+	// Taken as typed, the bytecode would depend on how the compiler was
+	// invoked, and a file importing the entry by another spelling would
+	// parse it a second time under a second name.
+	inputPath, err := base.ParsePath(args[0])
+	if err != nil {
+		return nil, err
+	}
+
+	var runArgs []string
+	if run {
+		runArgs = args[1:]
+	} else if _, err := fileProvider.FileExists(out); err != nil {
 		return nil, err
 	}
 
@@ -281,6 +300,9 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 		InitialHeapSize:  int(heapSize),
 		EmitImage:        emitImage,
 		KeepBuild:        keepBuild,
+		Run:              run,
+		RunArgs:          runArgs,
+		NoProject:        noProject,
 	}, nil
 }
 

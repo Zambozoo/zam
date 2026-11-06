@@ -106,6 +106,13 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) visitStaticFields(d synt
 	}
 }
 
+// VisitDeclAlias implements [syntax.FieldVisitor]. Every reference to an
+// alias has been replaced by the type it names, so it holds nothing for this
+// pass.
+func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitDeclAlias(*syntax.DeclAlias) error {
+	return nil
+}
+
 func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitDeclStruct(d *syntax.DeclStruct) error {
 	r := p.reader
 	if d.Generics() != nil {

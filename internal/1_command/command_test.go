@@ -92,7 +92,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name: "help flag",
-			argv: []string{"zam", "-help"},
+			argv: []string{"zam", "--help"},
 			errFunc: func(tt assert.TestingT, err error, a ...any) bool {
 				var ue *usageError
 				return assert.ErrorAs(tt, err, &ue) && assert.NoError(tt, ue.err)
@@ -100,8 +100,8 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name:    "invalid flag",
-			argv:    []string{"zam", "-invalid"},
-			errFunc: errorContains("flag provided but not defined: -invalid"),
+			argv:    []string{"zam", "--invalid"},
+			errFunc: errorContains("unknown flag: --invalid"),
 		},
 		{
 			name:    "missing input file",
@@ -147,7 +147,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name: "invalid threads",
-			argv: []string{"zam", "-threads", "0", "input"},
+			argv: []string{"zam", "--threads", "0", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
 				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
@@ -191,7 +191,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name: "sizes take a unit suffix",
-			argv: []string{"zam", "-stack-size", "1MB", "-heap-size", "2GB", "-gc-ratio", "0.5", "input"},
+			argv: []string{"zam", "--stack-size", "1MB", "--heap-size", "2GB", "--gc-ratio", "0.5", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
 				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
@@ -210,18 +210,89 @@ func TestNew(t *testing.T) {
 			errFunc: assert.NoError,
 		},
 		{
+			name: "run passes trailing arguments and skips the output check",
+			argv: []string{"zam", "-r", "input", "a", "-b"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(inputPath).Return(true, nil)
+				return m
+			}(),
+			want: &Command{
+				InputPath:        inputPath,
+				OutputPath:       base.NewPath("out", ""),
+				MaxThreads:       1,
+				GCTriggerRatio:   defaultGCRatio,
+				InitialStackSize: int(defaultStackSize),
+				InitialHeapSize:  int(defaultHeapSize),
+				Run:              true,
+				RunArgs:          []string{"a", "-b"},
+			},
+			errFunc: assert.NoError,
+		},
+		{
+			name: "no project",
+			argv: []string{"zam", "-n", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(inputPath).Return(true, nil)
+				return m
+			}(),
+			want: &Command{
+				InputPath:        inputPath,
+				OutputPath:       base.NewPath("out", ""),
+				MaxThreads:       1,
+				GCTriggerRatio:   defaultGCRatio,
+				InitialStackSize: int(defaultStackSize),
+				InitialHeapSize:  int(defaultHeapSize),
+				NoProject:        true,
+			},
+			errFunc: assert.NoError,
+		},
+		{
+			name: "short flags combine",
+			argv: []string{"zam", "-rn", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(inputPath).Return(true, nil)
+				return m
+			}(),
+			want: &Command{
+				InputPath:        inputPath,
+				OutputPath:       base.NewPath("out", ""),
+				MaxThreads:       1,
+				GCTriggerRatio:   defaultGCRatio,
+				InitialStackSize: int(defaultStackSize),
+				InitialHeapSize:  int(defaultHeapSize),
+				Run:              true,
+				RunArgs:          []string{},
+				NoProject:        true,
+			},
+			errFunc: assert.NoError,
+		},
+		{
+			name:    "single dash long flag",
+			argv:    []string{"zam", "-run", "input"},
+			errFunc: errorContains("unknown shorthand flag: 'u'"),
+		},
+		{
+			name:    "run with emit image",
+			argv:    []string{"zam", "-r", "-E", "input"},
+			errFunc: errorContains("-r and -E cannot be combined"),
+		},
+		{
 			name:    "unparsable size",
-			argv:    []string{"zam", "-heap-size", "16TB", "input"},
+			argv:    []string{"zam", "--heap-size", "16TB", "input"},
 			errFunc: errorContains(`invalid size "16TB"`),
 		},
 		{
 			name:    "non positive size",
-			argv:    []string{"zam", "-stack-size", "0KB", "input"},
+			argv:    []string{"zam", "--stack-size", "0KB", "input"},
 			errFunc: errorContains(`size must be positive: "0KB"`),
 		},
 		{
 			name: "gc ratio the heap can never reach",
-			argv: []string{"zam", "-gc-ratio", "1.5", "input"},
+			argv: []string{"zam", "--gc-ratio", "1.5", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
 				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
@@ -231,7 +302,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name: "gc ratio of zero",
-			argv: []string{"zam", "-gc-ratio", "0", "input"},
+			argv: []string{"zam", "--gc-ratio", "0", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
 				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
@@ -268,7 +339,7 @@ func TestCommand_String(t *testing.T) {
 				InitialStackSize: 1 << 19,
 				InitialHeapSize:  1 << 24,
 			},
-			want: `{"InputPath":{"Outer":"input"},"OutputPath":{"Outer":"out"},"Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"EmitImage":false,"KeepBuild":false}`,
+			want: `{"InputPath":{"Outer":"input"},"OutputPath":{"Outer":"out"},"Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"EmitImage":false,"KeepBuild":false,"Run":false,"RunArgs":null,"NoProject":false}`,
 		},
 	}
 

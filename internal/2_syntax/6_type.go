@@ -135,6 +135,9 @@ type (
 
 		// decl is the declaration of the tailed type.
 		decl DeclTypeable
+		// alias is the alias the reference resolved to in place of a
+		// declaration, until the reference is replaced by what the alias names.
+		alias *DeclAlias
 	}
 
 	// TypeTailed is a type that is a tailed type.
@@ -497,6 +500,12 @@ func newTypeHelper(parser SyntaxParser, canBeTailed bool) (Type, error) {
 // generic shadows a class generic of the same name because the method's
 // parameter was written later and inside the class's scope.
 func resolveGenericArg(parser SyntaxParser, id string) (GenericOwner, bool) {
+	if alias, ok := (*parser.Decl()).(*DeclAlias); ok && alias.Generics() != nil {
+		key := GenericArgKey{Owner: alias, Name: id}
+		if _, i := alias.Generics().Get(key); i >= 0 {
+			return alias, true
+		}
+	}
 	if methodPtr := parser.Method(); methodPtr != nil && *methodPtr != nil {
 		method := *methodPtr
 		if method.Generics() != nil {
@@ -676,6 +685,12 @@ func newTypeBase(parser SyntaxParser, canBeTailed bool) (Type, error) {
 			return nil, err
 		}
 		parameters = append(parameters, t)
+
+		if tok, err := parser.Match(TTSubtype, TTSupertype); err != nil {
+			return nil, err
+		} else if tok != nil {
+			return nil, fmt.Errorf("bound %q cannot be written among type arguments; bounds belong in the parameter list a generic is declared with", tok.Kind)
+		}
 
 		if tok, err := parser.ConsumeAny(TTComma, TTRightBracket); err != nil {
 			return nil, err
@@ -1306,6 +1321,17 @@ func (t *TypeReference) SetDecl(decl DeclTypeable) {
 // Decl implements the [TypeResolvable] interface.
 func (t *TypeReference) Decl() DeclTypeable {
 	return t.decl
+}
+
+// SetAlias sets the alias the type reference resolved to.
+func (t *TypeReference) SetAlias(alias *DeclAlias) {
+	t.alias = alias
+}
+
+// Alias returns the alias the type reference resolved to, or nil for one that
+// resolved to a declaration.
+func (t *TypeReference) Alias() *DeclAlias {
+	return t.alias
 }
 
 // Equals implements the [syntax.Type] interface.

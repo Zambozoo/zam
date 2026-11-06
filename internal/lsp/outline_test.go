@@ -51,6 +51,18 @@ func TestOutlineListsWhatADeclarationDeclares(t *testing.T) {
 	}))
 }
 
+func TestOutlineListsAliases(t *testing.T) {
+	files := map[string]string{"Main.zam": "namespace Main {\n" +
+		"    public alias Pair[A] = (A, bool);\n" +
+		"    static fun void(uint, str...) main = (argc, argv) { return; }\n" +
+		"}\n"}
+
+	assert.Equal(t, "namespace Main {\n"+
+		"    public alias Pair[A] = (A, bool);\n"+
+		"    static fun void(uint, str...) main\n"+
+		"}", outlineOf(t, files, "Main.zam", func(f *syntax.File) *syntax.Token { return f.Decl.NameToken() }))
+}
+
 func TestOutlineListsWhatAClassInherits(t *testing.T) {
 	files := map[string]string{
 		"Shape.zam": "abstract Shape {\n" +

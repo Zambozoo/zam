@@ -1,0 +1,11 @@
+import std("io/local/*");
+import std("lang/*");
+
+namespace Main {
+    fun void(uint, str...) main = (_, _) {
+        var char q = 34{char};
+        var char n = 10{char};
+        var str s = "import std(%vio/local/*%v);%vimport std(%vlang/*%v);%v%vnamespace Main {%v    fun void(uint, str...) main = (_, _) {%v        var str q = 34{char};%v        var str n = 10{char};%v        var str s = %v%v%v;%v        File::StdOut.WriteStr(Strs::Sprintf(s, q, q, n, q, q, n, n, n, n, n, n, q, s, q, n, n, n, n));%v    }%v}%v";
+        File::StdOut.WriteStr(Strs::Sprintf(s, q, q, n, q, q, n, n, n, n, n, n, q, s, q, n, n, n, n));
+    }
+}

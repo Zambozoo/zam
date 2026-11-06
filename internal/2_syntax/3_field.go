@@ -24,6 +24,7 @@ type (
 		VisitDeclInterface(d *DeclInterface) error
 		VisitDeclNamespace(d *DeclNamespace) error
 		VisitDeclStruct(d *DeclStruct) error
+		VisitDeclAlias(d *DeclAlias) error
 	}
 
 	// Field is a field in the AST.
@@ -261,6 +262,7 @@ var (
 		TTVar,
 		TTFun,
 		TTAbstract,
+		TTAlias,
 		TTClass,
 		TTEnum,
 		TTInterface,
@@ -308,17 +310,20 @@ func (f *field) Index() *int {
 	return &f.index
 }
 
-// newField creates a new field. defaultStatic says the enclosing declaration
-// holds no instance and so every field it holds is implicitly static — a
-// namespace is the one such declaration. A user who writes `static` on a field
-// in one is writing what the compiler would have added, so the modifier is
-// accepted rather than rejected as redundant.
-func newField(parser SyntaxParser, canBeTailed, defaultStatic bool) (Field, error) {
+// newField creates a new field. implied is the modifier the enclosing
+// declaration gives its fields without their saying so. [ModifierStatic] is
+// given to every field of a namespace, which holds no instance.
+// [ModifierVirtual] is given to every non-static method of an interface, which
+// has no bodies for them. A user who writes the implied modifier is writing
+// what the compiler would have added, so it is accepted rather than rejected as
+// redundant.
+func newField(parser SyntaxParser, canBeTailed bool, implied Modifier) (Field, error) {
 	modifiers, err := newModifiers(parser)
 	if err != nil {
 		return nil, err
 	}
 
+	defaultStatic := implied.Has(ModifierStatic)
 	if defaultStatic && !modifiers.Has(ModifierStatic) {
 		modifiers |= ModifierStatic
 		if err := checkModifierCollisions(modifiers); err != nil {
@@ -336,6 +341,9 @@ func newField(parser SyntaxParser, canBeTailed, defaultStatic bool) (Field, erro
 	case TTVar:
 		field, err = newFieldMember(parser, tok, modifiers, canBeTailed && !modifiers.Has(ModifierStatic))
 	case TTFun:
+		if implied.Has(ModifierVirtual) && !modifiers.Has(ModifierStatic) {
+			modifiers |= ModifierVirtual
+		}
 		field, err = newFieldMethod(parser, tok, modifiers)
 	}
 
@@ -359,6 +367,8 @@ func newField(parser SyntaxParser, canBeTailed, defaultStatic bool) (Field, erro
 	switch tok.Kind {
 	case TTAbstract:
 		field, err = newDeclAbstract(parser, tok, modifiers)
+	case TTAlias:
+		field, err = newDeclAlias(parser, tok, modifiers)
 	case TTClass:
 		field, err = newDeclClass(parser, tok, modifiers)
 	case TTEnum:
@@ -454,6 +464,11 @@ func (f *FieldMember) Modifiers() Modifier {
 // FieldType implements the [FieldTypeable] interface.
 func (f *FieldMember) FieldType() Type {
 	return f.fieldType
+}
+
+// SetFieldType sets the type of the member.
+func (f *FieldMember) SetFieldType(t Type) {
+	f.fieldType = t
 }
 
 // Offset is where the member lies within an instance, once codegen has laid the

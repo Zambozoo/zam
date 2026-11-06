@@ -151,6 +151,13 @@ func (c *functionTypeCollector) VisitDeclNamespace(d *syntax.DeclNamespace) erro
 	return nil
 }
 
+// VisitDeclAlias implements [syntax.FieldVisitor]. Every reference to an
+// alias has been replaced by the type it names, so it holds nothing for this
+// pass.
+func (c *functionTypeCollector) VisitDeclAlias(*syntax.DeclAlias) error {
+	return nil
+}
+
 func (c *functionTypeCollector) VisitDeclStruct(d *syntax.DeclStruct) error {
 	c.collectDecl(d)
 	c.visitDecls(d)
@@ -225,6 +232,20 @@ func (c *functionTypeCollector) VisitStmtFor(s *syntax.StmtFor) error {
 	}
 	if s.Else != nil {
 		s.Else.Accept(c)
+	}
+	return nil
+}
+
+// VisitStmtSwitch implements [syntax.StmtVisitor].
+func (c *functionTypeCollector) VisitStmtSwitch(s *syntax.StmtSwitch) error {
+	s.Expr.Accept(c)
+	for _, switchCase := range s.Cases {
+		for _, value := range switchCase.Values {
+			value.Accept(c)
+		}
+	}
+	for body := range s.Bodies() {
+		body.Accept(c)
 	}
 	return nil
 }

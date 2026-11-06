@@ -22,6 +22,7 @@ const (
 	stepCodegen  step = "codegen"
 	stepExport   step = "export"
 	stepBuild    step = "build"
+	stepRun      step = "run"
 	stepLSP      step = "lsp"
 )
 
@@ -71,6 +72,16 @@ func main() {
 
 	result, err := codegen.GenerateCode(cmd, syntaxAST)
 	handleErrors(&logger, stepCodegen, err)
+
+	if cmd.Run {
+		code, err := build.Run(result.Image, result.NativeNames, build.Options{
+			Project:      syntaxAST.MainCodeDecl.File().Project,
+			KeepBuildDir: cmd.KeepBuild,
+		}, cmd.RunArgs)
+		handleErrors(&logger, stepRun, err)
+		logger.Flush()
+		base.Exit(base.ExitCode(code))
+	}
 
 	if cmd.EmitImage {
 		err = fileProvider.WriteFile(cmd.OutputPath.String(), bytes.NewReader(result.Image))

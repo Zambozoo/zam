@@ -627,6 +627,13 @@ func (cv *typeDefinitionsInstantiatorVisitor) visitNestedDecls(d syntax.Decl) {
 	}
 }
 
+// VisitDeclAlias implements [syntax.FieldVisitor]. Every reference to an
+// alias has been replaced by the type it names, so it holds nothing for this
+// pass.
+func (cv *typeDefinitionsInstantiatorVisitor) VisitDeclAlias(*syntax.DeclAlias) error {
+	return nil
+}
+
 func (cv *typeDefinitionsInstantiatorVisitor) VisitDeclStruct(d *syntax.DeclStruct) error {
 	r := cv.reader
 	if d.Generics() != nil {

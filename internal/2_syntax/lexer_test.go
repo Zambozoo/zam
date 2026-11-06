@@ -136,6 +136,8 @@ func TestLexer_Next(t *testing.T) {
 		newSingleTokenTestCase("TTSupertype", ":>", TTSupertype, nil),
 
 		newSingleTokenTestCase("TTBreak", "break", TTBreak, nil),
+		newSingleTokenTestCase("TTCase", "case", TTCase, nil),
+		newSingleTokenTestCase("TTSwitch", "switch", TTSwitch, nil),
 		newSingleTokenTestCase("TTContinue", "continue", TTContinue, nil),
 		newSingleTokenTestCase("TTFor", "for", TTFor, nil),
 		newSingleTokenTestCase("TTFun", "fun", TTFun, nil),
@@ -144,6 +146,7 @@ func TestLexer_Next(t *testing.T) {
 		newSingleTokenTestCase("TTInterface", "interface", TTInterface, nil),
 		newSingleTokenTestCase("TTClass", "class", TTClass, nil),
 		newSingleTokenTestCase("TTAbstract", "abstract", TTAbstract, nil),
+		newSingleTokenTestCase("TTAlias", "alias", TTAlias, nil),
 		newSingleTokenTestCase("TTEnum", "enum", TTEnum, nil),
 		newSingleTokenTestCase("TTElse", "else", TTElse, nil),
 		newSingleTokenTestCase("TTLambda", "lambda", TTLambda, nil),

@@ -645,6 +645,15 @@ func NewExprIdentifier(name string, t Type) *ExprSymbol {
 	}
 }
 
+// NewExprEqual returns an equality comparison of left and right.
+func NewExprEqual(left, right Expr) *ExprNAry {
+	return &ExprNAry{
+		kind:         ExprKindEqual,
+		Exprs:        []Expr{left, right},
+		ComputedType: TypeBool,
+	}
+}
+
 // newExprField selects the field written at tok out of expr. An integer
 // literal names a tuple element by its index.
 func newExprField(expr Expr, tok *Token) *ExprField {

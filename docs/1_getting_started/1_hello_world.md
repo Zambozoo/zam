@@ -16,6 +16,9 @@ A project file has a one-to-many relationship with code files.
 Each code file belongs to the closest project file found in its parent directories.
 Zam's convention is that the project file and main code file are in the project's root directory.
 
+A program that needs no dependencies or natives can skip the project file with the `-n` flag.
+Every code file is then compiled into an implicit project named after the main code file.
+
 For this first project file, we only need the name:
 ```yaml
 # zam.yml
