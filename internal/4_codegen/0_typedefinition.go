@@ -784,12 +784,11 @@ func (cv *typeDefinitionsInstantiatorVisitor) VisitFieldEnum(f *syntax.FieldEnum
 // maps. In the same traversal it lays out every declaration's static members and
 // methods into the static region; this is safe because the static sizes come
 // from the skeleton pass, not from the referential fields filled here.
-func populateTypeDefinitions(ast *syntax.AST, reader *codegenReader, typeIndices *syntax.TypeMap[int], staticByteOffset uint64) {
+func populateTypeDefinitions(ast *syntax.AST, reader *codegenReader, typeIndices *syntax.TypeMap[int]) {
 	populator := &staticTypesandTypeDefinitionsPopulatorVisitor{
 		typeResolver: typeResolver{typeIndices: typeIndices, counts: reader.counts},
 		ast:          ast,
 		reader:       reader,
-		offset:       staticByteOffset,
 	}
 	for _, entry := range ast.CodeFiles.All() {
 		entry.Value.Decl.Accept(populator)

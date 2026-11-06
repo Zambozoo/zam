@@ -153,9 +153,9 @@ int main(int argc, char **argv) {
         // left, the allocation OpNewLambda made and the copy OpStore did all
         // named the same eight bytes.
         //
-        // Slot 3, not slot 0: the image these tests build interns three literals,
-        // and literals hold the slots that begin the static region. This is
-        // mainStaticSlot in run_conformance_test.go and moves with it.
+        // Slot 3, not slot 0: the image these tests build lays three literals
+        // ahead of its statics. This is mainStaticSlot in
+        // run_conformance_test.go and moves with it.
         void *closureWord = *(void **)zam_vm_static(&vm, 3);
         const ZamClosure *closure = zam_closure_of(closureWord);
 
@@ -247,7 +247,7 @@ int main(int argc, char **argv) {
     }
 
     if (wantStatic) {
-        // Slot 4: the literals begin the region and main's closure follows them,
+        // Slot 4: the fixture lays its literals first and main's closure after,
         // so a value of the program's own is the slot after those. This is
         // fixtureInstanceSlot in run_conformance_test.go and moves with it.
         uint8_t *slot = zam_vm_static(&vm, 4);

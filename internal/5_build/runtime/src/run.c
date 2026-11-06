@@ -614,8 +614,8 @@ static void pushMethodClosure(ZamThread *thread, const ZamImage *image,
     // which is traced where it lies.
     //
     // A pointer's own id could not be written here in any case. Pointer types
-    // are collected from the ones the source writes — see collectTypes in
-    // 3_semantic/7_collect_types.go — so a receiver the program never took the
+    // are collected from the ones the source writes — see monomorphize in
+    // 3_semantic/6_monomorphize.go — so a receiver the program never took the
     // address of has no pointer type in the image, and nothing at runtime maps a
     // type to a pointer to it.
     if (homeless) {
@@ -3389,7 +3389,7 @@ static ZamResult step(ZamThread *thread) {
         uint64_t arraySize = zam_thread_pop(thread);
 
         // A tail length is written either into the type or as new's third
-        // operand and never both — VisitExprNew in 3_semantic/4_static.go
+        // operand and never both — VisitExprNew in 3_semantic/5_static.go
         // rejects the pair, because the two could disagree and only one of them
         // would ever be allocated. So whichever is nonzero is the length, and an
         // untailed allocation has neither.

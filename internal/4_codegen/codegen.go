@@ -139,9 +139,13 @@ type (
 		// map however it was declared.
 		staticInstanceMaps []int
 		// stringLiterals maps each interned string literal to its static slot
-		// index, in the layout order of the literal region at the head of the
-		// static region.
+		// index, in the order the literals were interned.
 		stringLiterals *base.StaticOrderedMap[stringLiteral, uint64]
+		// literalImage is the interned literals' bytes, laid out from zero until
+		// [codegenReader.placeLiterals] moves the statics past them.
+		literalImage []byte
+		// staticAlign is the widest alignment any static is laid out to.
+		staticAlign uint64
 		// staticImage is what the static region begins as: every interned
 		// literal's bytes, and the header of every static whose value is a
 		// markable one. It is not the whole region. Nothing else in it needs
@@ -725,15 +729,12 @@ func GenerateCode(cmd *command.Command, ast *syntax.AST) (*Result, error) {
 	// build type definition skeletons
 	typeIndices := buildTypeDefinitionSkeletons(ast, reader)
 
-	// intern every string literal into the head of the static region, so their
-	// slots are known before the static fields are laid out after them
-	staticByteOffset := populateStringLiterals(ast, reader)
-
 	// run through type definitions again to populate referential ids/offsets and
 	// lay out the static instance maps in the same traversal
-	populateTypeDefinitions(ast, reader, typeIndices, staticByteOffset)
+	populateTypeDefinitions(ast, reader, typeIndices)
 
-	// run through operations to populate operations
+	// run through operations to populate operations, interning each string
+	// literal as it is first emitted and laying them ahead of the statics
 	if err := populateOperations(ast, reader, typeIndices); err != nil {
 		return nil, err
 	}

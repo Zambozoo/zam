@@ -50,28 +50,21 @@ func compileTypes(t *testing.T, body string) (
 
 	reader := &codegenReader{}
 	typeIndices := buildTypeDefinitionSkeletons(ast, reader)
-	populateTypeDefinitions(ast, reader, typeIndices,
-		populateStringLiterals(ast, reader))
+	populateTypeDefinitions(ast, reader, typeIndices)
 	return ast, reader, typeIndices
 }
 
 // compileStatics lays out the statics of a one-file project and answers the
-// reader holding what the static region begins as, together with the slot the
-// first static took.
+// reader holding what the static region begins as.
 //
-// The operations pass is not run. Nothing it emits reaches the region: a static's
-// value is the program's business and only the headers in front of it are the
-// compiler's.
-func compileStatics(t *testing.T, body string) (*codegenReader, uint64) {
+// The operations pass is not run, so the statics begin the region: the literals
+// it interns are laid ahead of them only once it ends. A static's value is the
+// program's business, and only the headers in front of it are the compiler's.
+func compileStatics(t *testing.T, body string) *codegenReader {
 	t.Helper()
 
 	_, reader, _ := compileTypes(t, body)
-
-	// The literals hold the slots that begin the region, populateStringLiterals
-	// running first, so the statics are numbered from where they end. The count
-	// is asked rather than written down because a project interns names of its
-	// own whether or not the fixture mentions any.
-	return reader, uint64(reader.stringLiterals.Len())
+	return reader
 }
 
 // staticHeader is a stamped header read back the way the runtime reads one.
@@ -134,7 +127,7 @@ func classShortID(reader *codegenReader, index int) uint64 {
 // which does not crash and is not visible in the program that did it, the write
 // and the read being wrong by the same amount.
 func TestStaticSlotCarriesItsHeader(t *testing.T) {
-	reader, firstStatic := compileStatics(t, `
+	reader := compileStatics(t, `
 namespace Main {
     static var Point origin;
 `+mainMethod+`
@@ -144,7 +137,7 @@ namespace Main {
 }
 `)
 
-	offset := slotOffset(t, reader, firstStatic)
+	offset := slotOffset(t, reader, 0)
 	header := headerAt(t, reader, offset)
 
 	// White, because the state is the collector's and the collector has not run.
@@ -164,7 +157,7 @@ namespace Main {
 	// What follows is main's own slot, holding a closure the program builds, and
 	// the loader zeroes the region before laying this over the head of it.
 	assert.Equal(t, int(offset+2*wordByteSize), len(reader.staticImage))
-	assert.Greater(t, slotOffset(t, reader, firstStatic+1), offset)
+	assert.Greater(t, slotOffset(t, reader, 1), offset)
 }
 
 // TestStaticSlotSaysNothingWhereThereIsNoHeader covers the other side of it. A
@@ -172,7 +165,7 @@ namespace Main {
 // runtime does not expect one displaces every member of the slot just as surely
 // as a missing one does.
 func TestStaticSlotSaysNothingWhereThereIsNoHeader(t *testing.T) {
-	reader, firstStatic := compileStatics(t, `
+	reader := compileStatics(t, `
 namespace Main {
     static var int count;
     static var Point* somewhere;
@@ -196,12 +189,12 @@ namespace Main {
 	// A primitive is its bytes; a pointer is one word naming something whose
 	// header is its own, whether it names a class or an abstract; a struct is the
 	// coder's own memory and is never collected. None of the four has a header,
-	// so the region says nothing past the literals that begin it.
+	// so the region says nothing at all.
 	//
 	// An abstract is only ever written as a pointer — it is a reference to the
 	// implementor it names and semantic rejects it as a value — so a pointer is
 	// the only way the case arises at all.
-	assert.Equal(t, int(slotOffset(t, reader, firstStatic)), len(reader.staticImage))
+	assert.Empty(t, reader.staticImage)
 }
 
 // TestStaticArrayFrontAnswersForTheRun covers a slot holding more than one
@@ -211,7 +204,7 @@ namespace Main {
 // there, which is what the distances have to make possible.
 func TestStaticArrayFrontAnswersForTheRun(t *testing.T) {
 	const elementCount = 3
-	reader, firstStatic := compileStatics(t, `
+	reader := compileStatics(t, `
 namespace Main {
     static var Point[3] points;
 `+mainMethod+`
@@ -226,7 +219,7 @@ namespace Main {
 	// numbers at the last element.
 	const stride = 2*wordByteSize + wordByteSize
 
-	offset := slotOffset(t, reader, firstStatic)
+	offset := slotOffset(t, reader, 0)
 	front := headerAt(t, reader, offset)
 	assert.Equal(t, uint64(objectKindInstance), front.kind)
 	assert.Equal(t, uint64(1), front.contained)
@@ -259,7 +252,7 @@ namespace Main {
 // it says is the whole of what makes an interior pointer resolvable: one step
 // back of that many bytes lands on the mark word of the thing holding it.
 func TestStaticInlineMemberCarriesItsDistanceBack(t *testing.T) {
-	reader, firstStatic := compileStatics(t, `
+	reader := compileStatics(t, `
 namespace Main {
     static var Nest nest;
 `+mainMethod+`
@@ -273,7 +266,7 @@ namespace Main {
 }
 `)
 
-	offset := slotOffset(t, reader, firstStatic)
+	offset := slotOffset(t, reader, 0)
 	outer := headerAt(t, reader, offset)
 	assert.Equal(t, classShortID(reader, 0), outer.shortID)
 	assert.Zero(t, outer.upvalue)
@@ -307,7 +300,7 @@ namespace Main {
 // the value that answers for the length.
 func TestStaticInlineArrayMemberIsStampedThrough(t *testing.T) {
 	const elementCount = 3
-	reader, firstStatic := compileStatics(t, `
+	reader := compileStatics(t, `
 namespace Main {
     static var Nest nest;
 `+mainMethod+`
@@ -329,7 +322,7 @@ namespace Main {
 	// zero begins where the container's header ends.
 	const back = 2 * wordByteSize
 
-	offset := slotOffset(t, reader, firstStatic)
+	offset := slotOffset(t, reader, 0)
 	assert.Equal(t, classShortID(reader, 0), headerAt(t, reader, offset).shortID)
 
 	front := headerAt(t, reader, offset+back)
@@ -366,7 +359,7 @@ namespace Main {
 // that cannot state a length only the concrete type has. A slot laid out for a
 // tail and stamped as untailed would have its members read a word early.
 func TestStaticTailedSlotCarriesItsTailLength(t *testing.T) {
-	reader, firstStatic := compileStatics(t, `
+	reader := compileStatics(t, `
 namespace Main {
     static var Buffer~5 buffer;
 `+mainMethod+`
@@ -377,7 +370,7 @@ namespace Main {
 }
 `)
 
-	header := headerAt(t, reader, slotOffset(t, reader, firstStatic))
+	header := headerAt(t, reader, slotOffset(t, reader, 0))
 	assert.Equal(t, uint64(objectKindTailedInstance), header.kind)
 	assert.Equal(t, uint64(1), header.contained)
 	assert.Zero(t, header.upvalue)

@@ -56,9 +56,7 @@ func ValidateAST(syntaxAST *syntax.AST) []error {
 		return errs
 	}
 
-	populateGenericDecls(syntaxAST)
-	collectGenericTypes(syntaxAST)
-	collectTypes(syntaxAST)
+	monomorphize(syntaxAST)
 	collectInterfaces(syntaxAST)
 	return nil
 }

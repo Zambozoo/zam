@@ -1517,17 +1517,10 @@ func genericTypeIndex(t syntax.Type) uint64 {
 	return uint64(d.GenericTypes().Index(t))
 }
 
-// stringLiteralSlot returns the static slot of an interned string literal. Every
-// literal is interned by the string literal pass, so a miss is a compiler bug.
+// stringLiteralSlot returns the static slot of a string literal, interning it
+// the first time it is emitted.
 func (v *operationVisitor) stringLiteralSlot(s string) uint64 {
-	slot, index := v.reader.stringLiterals.Get(stringLiteral(s))
-	if index < 0 {
-		// Slot 0 is a literal like any other, so a miss that returned it would
-		// be emitted as a working push of the wrong string rather than as
-		// anything a reader of the image could tell was wrong.
-		panic("unreachable")
-	}
-	return slot
+	return v.reader.internString(stringLiteral(s))
 }
 
 // visitDecl dispatches each of d's static fields, nested declarations and
@@ -3061,7 +3054,7 @@ func (v *operationVisitor) emitValue(e syntax.Expr) error {
 // type words above it are simply let go of.
 //
 // This is the one place an array is read as an address rather than as the run it
-// is. checkAdditive in 3_semantic/4_static.go says the same thing from the other
+// is. checkAdditive in 3_semantic/5_static.go says the same thing from the other
 // side: it gives array + int the type of a pointer to the element, and it
 // requires the array to be an lvalue, which is what makes the location this
 // needs one the operand always has.
@@ -4940,6 +4933,7 @@ func selectedStatic(e *syntax.ExprType) syntax.FieldIndexable {
 func populateOperations(ast *syntax.AST, reader *codegenReader, typeIndices *syntax.TypeMap[int]) error {
 	mainMethod, _ := ast.MainCodeDecl.GetStaticMethod(base.MainMethodName)
 	reader.natives = base.NewStaticOrderedMap[string, uint64]()
+	reader.stringLiterals = base.NewStaticOrderedMap[stringLiteral, uint64]()
 	visitor := &operationVisitor{
 		typeResolver: typeResolver{typeIndices: typeIndices, counts: reader.counts},
 		ast:          ast,
@@ -4974,5 +4968,8 @@ func populateOperations(ast *syntax.AST, reader *codegenReader, typeIndices *syn
 	// method tables can be filled in: a table entry is where a body turned out
 	// to lie, and until the body is emitted that is not yet a thing to know.
 	visitor.recordMethodInstructions()
+
+	// Every literal has been interned by here, so the region can be settled.
+	reader.placeLiterals()
 	return nil
 }

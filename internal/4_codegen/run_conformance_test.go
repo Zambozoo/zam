@@ -609,14 +609,11 @@ func fixtureLiterals() []stringLiteral {
 		fixtureStringLiteral, fixtureSameWidthLiteral, fixturePrefixedLiteral}
 }
 
-// The slots of the static region, in the order the compiler lays them.
-//
-// A literal takes the lower slot because populateStringLiterals runs before the
-// static fields are laid out and returns the offset they start at, so literals
-// hold the slots that begin the region. That ordering is load-bearing rather than
-// incidental: zam_vm_init copies the literal section over the head of the static
-// region, so a literal's slot has to be one that begins there.
-// The third slot holds a fixture class value, which is the one static whose
+// The slots of the fixture's static region. The literals are laid ahead of the
+// statics here, where the compiler lays them after: a slot is reached through
+// the slot map wherever it lies, and zam_vm_init copies the whole static image
+// over the region, so the order is the fixture's to choose.
+// The last slot holds a fixture class value, which is the one static whose
 // storage the compiler has anything to say about: a markable value is read
 // through a header, and a static gets no initializer to write one.
 const (

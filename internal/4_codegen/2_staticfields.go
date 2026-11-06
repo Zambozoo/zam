@@ -154,7 +154,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) layEnumValues(def *typeD
 
 	r := p.reader
 	size, align := fieldByteInfo(primitive)
-	p.offset = alignUp(p.offset, align)
+	p.alignStatic(align)
 	def.valueSlot = uint64(len(r.staticInstanceMaps))
 	for _, value := range enumValues(d) {
 		*value.ValueIndex() = len(r.staticInstanceMaps)
@@ -222,7 +222,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitDeclNamespace(d *sy
 func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitFieldMember(f *syntax.FieldMember) error {
 	r := p.reader
 	size, align := fieldByteInfo(f.FieldType())
-	p.offset = alignUp(p.offset, align)
+	p.alignStatic(align)
 	*f.Index() = len(r.staticInstanceMaps)
 	r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
 	p.addStaticRoot(*f.Index(), f.FieldType())
@@ -409,7 +409,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitFieldMethod(f *synt
 	r := p.reader
 	if f.Generics() != nil {
 		for _, concrete := range f.Concretes() {
-			p.offset = alignUp(p.offset, wordByteSize)
+			p.alignStatic(wordByteSize)
 			*concrete.Index() = len(r.staticInstanceMaps)
 			r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
 			p.addStaticRoot(*concrete.Index(), concrete.FieldType())
@@ -417,7 +417,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitFieldMethod(f *synt
 		}
 		return nil
 	}
-	p.offset = alignUp(p.offset, wordByteSize)
+	p.alignStatic(wordByteSize)
 	*f.Index() = len(r.staticInstanceMaps)
 	r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
 	p.addStaticRoot(*f.Index(), f.FieldType())
@@ -428,7 +428,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitFieldMethod(f *synt
 func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitFieldEnum(f *syntax.FieldEnum) error {
 	r := p.reader
 	size, _, align := layoutOf(f.OuterDecl())
-	p.offset = alignUp(p.offset, align)
+	p.alignStatic(align)
 	*f.Index() = len(r.staticInstanceMaps)
 	r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
 	p.addStaticRoot(*f.Index(), f.Type())
@@ -797,7 +797,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) fillGenericConcrete(
 
 	// The same resolution fillMethods makes for a plain declaration. A concrete's
 	// field types are already substituted, so the signature met here is ground —
-	// and collectTypes walks a template's instance fields once per concrete with
+	// and monomorphize walks a template's instance fields once per concrete with
 	// that binding in effect, which is what makes it one of the function types
 	// the program numbered rather than one only this entry knows.
 	gm.instanceMethodTypeIDs = make([]uint64, instanceFieldCount[*syntax.FieldMethod](concrete))
@@ -824,6 +824,13 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) fillGenericAbstractConcr
 	for gid, instantiation := range instantiations {
 		p.fillGenericConcrete(&def.concreteTypesSizeMap[gid], d, instantiation)
 	}
+}
+
+// alignStatic moves the layout cursor up to the next multiple of align and
+// records align as one the statics are laid out to.
+func (p *staticTypesandTypeDefinitionsPopulatorVisitor) alignStatic(align uint64) {
+	p.offset = alignUp(p.offset, align)
+	p.reader.staticAlign = max(p.reader.staticAlign, align)
 }
 
 // alignUp rounds offset up to the next multiple of align.
