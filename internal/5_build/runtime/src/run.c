@@ -4741,6 +4741,55 @@ uint64_t zam_value_words(const ZamImage *image, ZamTypeID type) {
     return valueWordsOf(image, type);
 }
 
+void zam_type_stamp(const ZamImage *image, void *object, ZamTypeID element,
+                    uint64_t elementCount, uint64_t backDistance) {
+    uint8_t *at = (uint8_t *)object;
+    if (isMarkableInstance(image, element)) {
+        stampContained(image, at, element, backDistance, elementCount);
+        return;
+    }
+    if (!isTailedStruct(image, element))
+        return;
+    uint64_t elementBytes = zam_type_bytes(image, element);
+    for (uint64_t index = 0; index < elementCount; index++)
+        *(ZamWord *)(at + index * elementBytes) = element.tailLength;
+}
+
+void *zam_thread_new_instance(ZamThread *thread, ZamTypeID element) {
+    const ZamImage *image = &thread->vm->image;
+    bool tailed = element.tailLength != 0;
+    void *object = zam_vm_alloc(
+        thread->vm, thread,
+        tailed ? ZAMOBJECT_TAILED_INSTANCE : ZAMOBJECT_INSTANCE,
+        element.shortID, 1, zam_type_bytes(image, element));
+    if (tailed)
+        ((ZamWord *)object)[2] = element.tailLength;
+    stampArrayTail(image, object, element, 1);
+    return object;
+}
+
+ZamResult zam_thread_initialize(ZamThread *thread, void *object,
+                                ZamTypeID element, uint64_t elementCount) {
+    const ZamImage *image = &thread->vm->image;
+    if (primitiveOf(image, element) != ZAMPRIMITIVE_COUNT ||
+        isReferenceType(image, element))
+        return ZAMRESULT_CONTINUE;
+    uint64_t initializer = zam_type_initializer(image, element.shortID);
+    if (initializer == 0)
+        return ZAMRESULT_CONTINUE;
+
+    // The frame OpNew enters the initializer on, run here to its return.
+    uint64_t outerEntry = thread->functionEntry;
+    zam_thread_push(thread, (ZamWord)(uintptr_t)object);
+    if (isMarkableInstance(image, element))
+        zam_thread_push_mark(thread, thread->operandCount - 1);
+    zam_thread_push(thread, elementCount);
+    zam_thread_push_function(thread, thread->instructionOffset,
+                             thread->operandCount - 2);
+    thread->instructionOffset = initializer;
+    return runEntered(thread, outerEntry);
+}
+
 ZamResult zam_thread_call_method(ZamThread *thread, ZamWord receiver,
                                  uint64_t slot) {
     const ZamImage *image = &thread->vm->image;

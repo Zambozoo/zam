@@ -1,38 +1,18 @@
 # Hello World
 ## Project
-Every Zam project is composed of two kinds of files, project files and code files.
-This first project will have two files, with the following directory structure:
-
+Let's make a directory for the code, like so:
 ```bash
 helloworld/
-|-zam.yml
 |-Main.zam
-```
-
-### Program Files
-A project files specifies a project name, its version and dependencies.
-It is always named `zam.yml` or `zam.yaml`.
-A project file has a one-to-many relationship with code files.
-Each code file belongs to the closest project file found in its parent directories.
-Zam's convention is that the project file and main code file are in the project's root directory.
-
-A program that needs no dependencies or natives can skip the project file with the `-n` flag.
-Every code file is then compiled into an implicit project named after the main code file.
-
-For this first project file, we only need the name:
-```yaml
-# zam.yml
-name: "helloworld"
 ```
 
 ## Code Files
 Code files contain the program structures and logic.
 They always end in `.zam`, and the name of the file must match the name of the root declaration.
 They contain imports and a root declaration, further discussed in the [language guide](../2_language_guide/).
-Zam's convention is that they are `PascalCase`.
+Zam's convention is that their names are `PascalCase`, mirroring the name of its root declaration, detailed below.
 
 Let's step through the first code file.
-
 It'll start with an import, as we need to print to `stdout`.
 To access it, we'll import the standard library `std/io/local/File.zam` file.
 ```go
@@ -68,7 +48,7 @@ namespace Main {
 ```
 
 Lastly, let's print!
-First, we'll statically reference `std/io/File.zam` with a static type expression, `type(File)`.
+First, we'll statically reference `std/io/File.zam` with a static type expression, `File::`.
 Then, we'll grab the `stdout` file from it, `File::StdOut`.
 Next, we'll call its `WriteStr` method with the `"Hello World!"` string argument, `File::StdOut.WriteStr("Hello World!\n")`.
 Lastly, we end the statement with a semicolon.
@@ -84,8 +64,7 @@ namespace Main {
 ```
 
 ## Running
-To build the program, run the following from just outside the project directory:
+To run the program, run the following from just outside the project directory:
 ```bash
-zam -o helloworld helloworld/Main.zam
-./helloworld
+zam -rn helloworld/Main.zam
 ```

@@ -1,0 +1,16 @@
+// Memory holds byte sizes in powers of 1024.
+public namespace Memory {
+    public var uint$ Byte = 1U;
+    public var uint$ Kilobyte = Byte * 1000U;
+    public var uint$ Kibibyte = Byte << 10U;
+    public var uint$ Megabyte = Kilobyte * 1000U;
+    public var uint$ Mebibyte = Megabyte << 10U;
+    public var uint$ Gigabyte = Megabyte * 1000U;
+    public var uint$ Gibibyte = Gigabyte << 10U;
+    public var uint$ Terabyte = Gigabyte * 1000U;
+    public var uint$ Tebibyte = Terabyte << 10U;
+    public var uint$ Petabyte = Terabyte * 1000U;
+    public var uint$ Pebibyte = Petabyte << 10U;
+    public var uint$ Exabyte = Petabyte * 1000U;
+    public var uint$ Exbibyte = Exabyte << 10U;
+}

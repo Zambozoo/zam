@@ -27,6 +27,23 @@ uint64_t zam_value_header_bytes(const ZamImage *image, ZamTypeID type);
 // zam_value_words is how many operand words a value of the type stands on.
 uint64_t zam_value_words(const ZamImage *image, ZamTypeID type);
 
+// zam_type_stamp writes the headers of a fresh, zeroed run of elementCount
+// values of the type at object, as new would. A markable run is stamped as
+// contained by whatever lies backDistance before it, or by nothing when the
+// distance is zero.
+void zam_type_stamp(const ZamImage *image, void *object, ZamTypeID element,
+                    uint64_t elementCount, uint64_t backDistance);
+
+// zam_thread_new_instance allocates one class instance of the type for the
+// collector, as new would, with its headers written and its initializer not
+// yet run.
+void *zam_thread_new_instance(ZamThread *thread, ZamTypeID element);
+
+// zam_thread_initialize runs the type's initializer over a stamped run of
+// elementCount values at object, to its return.
+ZamResult zam_thread_initialize(ZamThread *thread, void *object,
+                                ZamTypeID element, uint64_t elementCount);
+
 // zam_thread_call_method runs one of Object's methods on the instance at a
 // location, through the method table of the instance's own type, to its
 // return. The location is an address or, for an instance on the thread's own

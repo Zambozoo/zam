@@ -461,6 +461,14 @@ func (r *referenceTypeResolverVisitor) setDecl(t *syntax.TypeReference, d syntax
 // An import shadowed this way is reached by renaming it where it is imported,
 // there being no other way to write it.
 func (r *referenceTypeResolverVisitor) visitTypeReference(t *syntax.TypeReference) error {
+	if t.Path != nil {
+		file, i := r.ast.CodeFiles.Get(*t.Path)
+		if i < 0 {
+			return fmt.Errorf("declaration %q not found", t.String())
+		}
+		return r.setDecl(t, file.Decl)
+	}
+
 	for outerDecl := t.OuterDecl(); outerDecl != nil; outerDecl = outerDecl.OuterDecl() {
 		// The head is bound by the nearest rung that has a name for it, either
 		// its own — a declaration being named from outside itself looking in —

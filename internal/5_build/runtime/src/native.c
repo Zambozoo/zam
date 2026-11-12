@@ -53,6 +53,10 @@ static void stdDelete(ZamThread *thread) {
         zam_native_panic(thread, "STD_DELETE: null receiver");
 
    ZamMarkWord *mark = zam_mark_word_of(pointer);
+    if (mark->contained && pointer == thread->finalizing) {
+        zam_native_return_void(thread);
+        return;
+    }
     if (mark->contained)
         zam_native_panic(thread,
                          mark->upvalue != 0
@@ -1258,6 +1262,8 @@ extern const ZamNativeEntry zamPkiNativeTable[];
 extern const uint64_t zamPkiNativeTableCount;
 extern const ZamNativeEntry zamTimeNativeTable[];
 extern const uint64_t zamTimeNativeTableCount;
+extern const ZamNativeEntry zamArenaNativeTable[];
+extern const uint64_t zamArenaNativeTableCount;
 
 // stdTables are the standard library's tables, searched in order.
 static const struct {
@@ -1280,6 +1286,7 @@ static const struct {
     {zamCryptoNativeTable, &zamCryptoNativeTableCount},
     {zamPkiNativeTable, &zamPkiNativeTableCount},
     {zamTimeNativeTable, &zamTimeNativeTableCount},
+    {zamArenaNativeTable, &zamArenaNativeTableCount},
 };
 
 // matchNative searches a table for a name of the given length and returns the

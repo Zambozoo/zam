@@ -285,6 +285,11 @@ struct ZamThread {
     ZamThreadState state;
     uint64_t gcBlockDepth;
 
+    // finalizing is the contained value an arena is running Delete on, which
+    // STD_DELETE leaves alone rather than refusing: it has no allocation of
+    // its own, and the arena's is freed with it.
+    const void *finalizing;
+
     // joined is whether a join has reaped the system thread, which the
     // collector otherwise does when it frees a finished thread.
     bool joined;

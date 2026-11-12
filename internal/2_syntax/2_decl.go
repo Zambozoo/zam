@@ -942,27 +942,10 @@ func objectBaseDeclType(parser SyntaxParser, d Decl) *TypeWrapped {
 		return nil
 	}
 
-	// Obj sits under the std package key beside anything else the file
-	// imports from std. The user may have written `import std("Err.zam")`,
-	// which already claims the key for Err, but Obj still has to be
-	// reachable from here — the base of every class — so this appends rather
-	// than overwrites, and skips when a previous call has already appended it.
-	already := false
-	for _, imp := range f.Imports[base.StdPackage] {
-		if imp.Path != nil && imp.Path.String() == objectPath.String() {
-			already = true
-			break
-		}
-	}
-	if !already {
-		pkg := base.StdPackage
-		f.Imports[base.StdPackage] = append(f.Imports[base.StdPackage], &Import{
-			File:    f,
-			Package: &pkg,
-			Path:    objectPath,
-		})
-		parser.AddPath(objectPath)
-	}
+	// The base is bound by path rather than by an import, so that Obj is
+	// reachable by name only through an import the user wrote. The file is
+	// still added so that it is parsed.
+	parser.AddPath(objectPath)
 
 	return &TypeWrapped{
 		kind:      TypeKindPointer,
@@ -970,6 +953,7 @@ func objectBaseDeclType(parser SyntaxParser, d Decl) *TypeWrapped {
 		Type: &TypeReference{
 			outerDecl: d,
 			Ids:       []string{base.StdPackage, "Obj"},
+			Path:      objectPath,
 		},
 	}
 }
@@ -2573,7 +2557,7 @@ func Instantiate(t Type, types map[GenericArgKey]Type, start *Token, outerDecl D
 	case *TypePrimitive:
 		return &TypePrimitive{start: start, outerDecl: outerDecl, kind: t.kind}
 	case *TypeReference:
-		return &TypeReference{start: start, outerDecl: outerDecl, Ids: t.Ids, decl: t.decl}
+		return &TypeReference{start: start, outerDecl: outerDecl, Ids: t.Ids, Path: t.Path, decl: t.decl}
 	case *TypeTailed:
 		return &TypeTailed{start: start, outerDecl: outerDecl, Type: Instantiate(t.Type, types, start, outerDecl).(*TypeReference), Size: t.Size}
 	case *TypeTuple:

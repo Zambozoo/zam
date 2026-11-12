@@ -176,8 +176,9 @@ func TestPutObjectMethods(t *testing.T) {
 			assert.True(t, method.Modifiers().Has(ModifierPublic), "%s is not public", name)
 		}
 
-		// Obj is named by the methods now asked for, so the file reads it.
-		assert.Contains(t, file.Imports, base.StdPackage)
+		// Obj is named by the methods now asked for, so it is parsed, but it
+		// is not imported into the file.
+		assert.NotContains(t, file.Imports, base.StdPackage)
 		assert.Equal(t, []*base.Path{base.StdPath("lang/Obj" + base.CodeFileExtension)}, parser.paths)
 	})
 

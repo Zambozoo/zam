@@ -179,7 +179,7 @@ func (v *staticSemanticsValidatorVisitor) VisitDeclAlias(alias *syntax.DeclAlias
 			}
 		}
 	}
-	alias.Type.Accept(v)
+	v.acceptStaticHead(alias.Type)
 	return nil
 }
 
@@ -2059,15 +2059,15 @@ func (v *staticSemanticsValidatorVisitor) VisitExprSymbol(e *syntax.ExprSymbol) 
 // VisitExprType implements [syntax.ExprVisitor].
 func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) error {
 	defer v.at(e)()
-	e.Type.Accept(v)
-
 	if e.Field == "" {
+		e.Type.Accept(v)
 		if len(e.TypeArgs) > 0 {
 			return v.errf("type arguments %v cannot be written without a field name", e.TypeArgs)
 		}
 		v.lastExprType = syntax.TypeType
 		return nil
 	}
+	v.acceptStaticHead(e.Type)
 
 	// A static field lives on the template, not on any one instantiation of it:
 	// it serves every binding alike, and the field pass already rejects a static
@@ -2250,9 +2250,30 @@ func (v *staticSemanticsValidatorVisitor) VisitTypePrimitive(t *syntax.TypePrimi
 // answer with that same file every time, the reference being part of what is
 // written there.
 func (v *staticSemanticsValidatorVisitor) VisitTypeReference(t *syntax.TypeReference) error {
+	return v.visitTypeReference(t, false)
+}
+
+// acceptStaticHead visits t where it may be written whole as a namespace: the
+// head of `::`, or the type an alias names, which is checked again wherever the
+// alias is used.
+func (v *staticSemanticsValidatorVisitor) acceptStaticHead(t syntax.Type) {
+	if ref, ok := t.(*syntax.TypeReference); ok {
+		v.visitTypeReference(ref, true)
+		return
+	}
+	t.Accept(v)
+}
+
+// visitTypeReference checks that t is accessible and, unless namespaceAllowed,
+// that it names something a value can have the type of. A namespace has no
+// instances, so it can only be named to reach its statics.
+func (v *staticSemanticsValidatorVisitor) visitTypeReference(t *syntax.TypeReference, namespaceAllowed bool) error {
 	defer v.at(t)()
 	if !v.accessible(t.Decl().Modifiers(), t.Decl()) {
 		v.errf("type %s is not accessible", t.String())
+	}
+	if _, ok := t.Decl().(*syntax.DeclNamespace); ok && !namespaceAllowed {
+		v.errf("namespace %s is not a type and can only be used to name its statics", t.String())
 	}
 	return nil
 }

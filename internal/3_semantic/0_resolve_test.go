@@ -105,6 +105,59 @@ namespace Sec {
 	assert.Empty(t, errs)
 }
 
+// A class descends from std.Obj without its file importing it, so Obj is not
+// nameable there unless the file imports it itself.
+func TestValidateASTDoesNotImportTheImplicitBase(t *testing.T) {
+	for _, name := range []string{"Obj", "std.Obj"} {
+		t.Run(name, func(t *testing.T) {
+			errs := validate(t, `
+namespace Main {
+    class C { }
+`+mainMethod+`
+    static var `+name+`* o;
+}
+`, nil)
+
+			require.NotEmpty(t, errs)
+			assert.Contains(t, errs[0].Error(), fmt.Sprintf("declaration %q not found", name))
+		})
+	}
+}
+
+// An import of std.Obj the user wrote reaches it like any other import.
+func TestValidateASTResolvesAnImportedImplicitBase(t *testing.T) {
+	errs := validate(t, `
+import std("lang/Obj.zam");
+
+namespace Main {
+    class C { }
+`+mainMethod+`
+    static var Obj* o;
+}
+`, nil)
+
+	assert.Empty(t, errs)
+}
+
+// A user's own Obj is not ambiguous with the implicit base of a class beside it.
+func TestValidateASTDoesNotConfuseAnImportedObjWithTheImplicitBase(t *testing.T) {
+	errs := validate(t, `
+import "Obj.zam";
+
+namespace Main {
+    class C { }
+`+mainMethod+`
+    static var Obj.Inner inner;
+}
+`, map[string]string{"Obj.zam": `
+namespace Obj {
+    public class Inner { }
+}
+`})
+
+	assert.Empty(t, errs)
+}
+
 // TestValidateASTAcceptsBlankVariable covers the easy case: a `var _` declares
 // a slot the collector and the destructor can walk but no later expression can
 // name. The expression is still typed, so a type mismatch would still fail

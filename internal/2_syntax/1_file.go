@@ -39,10 +39,9 @@ type (
 
 		// Imports maps each id to the imports written under it. The common case
 		// is one import per id, but a package name may hold several: a user who
-		// writes `import std("Err.zam")` has reached one file in the stdlib
-		// through the std package, and the implicit `std.Object` auto-import
-		// still has to find its own, so both sit here under the "std" key and a
-		// lookup picks the one whose top-level decl answers to the type name.
+		// writes `import std("Err.zam")` and `import std("Strs.zam")` has both
+		// under the "std" key, and a lookup picks the one whose top-level decl
+		// answers to the type name.
 		Imports map[string][]*Import
 		// Decl is the declaration of the file.
 		Decl Decl

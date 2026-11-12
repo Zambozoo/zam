@@ -1,0 +1,54 @@
+// Arena is a fixed block of memory that values are laid out in one after
+// another. A value in an arena lives as long as the arena does: any reference
+// to one keeps the whole arena reachable, and when the arena is collected each
+// class value in it has its Delete run. A value in an arena must not be
+// deleted or freed on its own. An arena is not safe for concurrent use.
+public class Arena~ {
+    var uint size;
+    var uint used;
+    var byte[~] mem;
+
+    // New makes an arena of size bytes.
+    public static fun Arena~*(uint) New = (size) {
+        var Arena~* a;
+        native(STD_ARENA_MAKE){void(type, uint, Arena~**)}(type(Arena~1), size, &a);
+        a.size = size;
+        return a;
+    }
+
+    // Alloc lays out length values of A in arena, as new(A, length) would, and
+    // returns the first, or null if length is zero or the arena has no room.
+    // A tailed A is written with its tail length, as Arena::[T~4]Alloc. Each
+    // allocation also takes up a record of 32 bytes.
+    public static fun[A] A*(Arena~*, uint) Alloc = (arena, length) {
+        var A* p;
+        native(STD_ARENA_NEW){void(Arena~*, type, uint, uint*, A**)}(arena, type(A), length, &arena.used, &p);
+        return p;
+    }
+
+    // Size returns how many bytes the arena holds.
+    public fun uint() Size = () {
+        return this.size;
+    }
+
+    // Used returns how many of the arena's bytes have been laid out.
+    public fun uint() Used = () {
+        return this.used;
+    }
+
+    // Reset runs Delete on each class value in the arena, as collecting the
+    // arena would, and then empties it for reuse. Nothing checks that the
+    // values are unreachable: any pointer into the arena still held after a
+    // reset names memory that the next Alloc will reuse.
+    public fun void() Reset = () {
+        native(STD_ARENA_RESET){void(void*, uint*)}(this{void*}, &this.used);
+    }
+
+    public fun void() Mark = () {
+        native(STD_ARENA_MARK){void(void*, uint)}(this{void*}, this.used);
+    }
+
+    public fun void() Delete = () {
+        native(STD_ARENA_DELETE){void(void*, uint)}(this{void*}, this.used);
+    }
+}
