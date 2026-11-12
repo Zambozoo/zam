@@ -418,6 +418,10 @@ uint64_t zam_type_member_count(const ZamImage *image, ZamTypeShort shortID) {
     return fieldTables(image, shortID).memberCount;
 }
 
+uint64_t zam_type_method_count(const ZamImage *image, ZamTypeShort shortID) {
+    return fieldTables(image, shortID).methodCount;
+}
+
 ZamMethodDefinition zam_type_method(const ZamImage *image, ZamTypeShort shortID,
                                     uint64_t index) {
    ZamFieldTables tables = fieldTables(image, shortID);

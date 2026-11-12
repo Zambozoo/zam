@@ -42,6 +42,18 @@ public namespace System {
             native(STD_GC_UNBLOCK){void()}();
         }
 
+        // Minor collects the young generation before the caller's next
+        // instruction, or the whole heap if it has grown to its threshold.
+        public fun void() Minor = () {
+            native(STD_GC_MINOR){void()}();
+        }
+
+        // Major collects the whole heap before the caller's next instruction,
+        // running every Delete of what has become unreachable.
+        public fun void() Major = () {
+            native(STD_GC_MAJOR){void()}();
+        }
+
         // Markable reports whether a value of t holds anything the collector
         // must visit, so that a Mark override can skip what holds nothing.
         public fun bool(type) Markable = (t) {

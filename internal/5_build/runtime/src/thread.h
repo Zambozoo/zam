@@ -4,6 +4,7 @@
 #include <signal.h>
 
 #include "common.h"
+#include "heap.h"
 #include "instance.h"
 #include "type.h"
 
@@ -275,9 +276,18 @@ struct ZamThread {
     // begins, in bytes. A jump target is one of these.
     uint64_t instructionOffset;
 
-    // allocatedByteCount is what this thread has allocated since the last
-    // collection, which is what the collection after it is triggered by.
-    uint64_t allocatedByteCount;
+    // young is what this thread has allocated since the last collection. Only
+    // the thread pushes onto it; a collection splices it onto the VM's young
+    // generation with every thread stopped.
+    ZamObjectList young[ZAMYOUNG_COUNT];
+
+    // pendingByteCount is what the thread has allocated and not yet added to
+    // the VM's counts, which it adds a slice at a time rather than on every
+    // allocation.
+    uint64_t pendingByteCount;
+
+    // heapCache is the pages this thread allocates from without the heap lock.
+    ZamHeapCache heapCache;
 
     // state is guarded by the VM's collectionLock. gcBlockDepth is how many
     // GC.Block calls this thread has made that no GC.Unblock has matched yet,

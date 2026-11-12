@@ -4,10 +4,35 @@
 #include <stdatomic.h>
 
 #include "common.h"
+#include "heap.h"
 #include "zam/native.h"
 #include "image.h"
 #include "instance.h"
 #include "thread.h"
+
+// ZamCollectionStats is what one collection did, for ZAM_GC_STATS.
+typedef struct ZamCollectionStats {
+    uint64_t cards;
+    uint64_t retraced;
+    uint64_t finalized;
+    uint64_t survived;
+    uint64_t promoted;
+    uint64_t returned;
+} ZamCollectionStats;
+
+// The old generation's four lists, by which of Mark and Delete are the
+// program's own. A Mark may decide what is reachable from anything at all, so
+// a minor collection runs every Mark of the program's own again rather than
+// trusting the card table to have seen what it depends on; and a collection
+// has to find every Delete of the program's own to run it. The index is the
+// two answers as bits.
+typedef enum ZamOldList {
+    ZAMOLD_PLAIN = 0,
+    ZAMOLD_MARKS = 1,
+    ZAMOLD_DELETES = 2,
+    ZAMOLD_BOTH = ZAMOLD_MARKS | ZAMOLD_DELETES,
+    ZAMOLD_COUNT,
+} ZamOldList;
 
 //ZamVM is everything one program has that is not one thread's: the image it
 // was loaded from, the static region every thread shares, the heap the
@@ -26,11 +51,17 @@ typedef struct ZamVM {
    ZamNativeFn *natives;
     uint64_t nativeCount;
 
-    // allocations is the head of every allocation the collector owns, threaded
-    // through the upvalue field of each one's mark word. It costs no memory
-    // beyond the word a markable allocation already carries, and it is the half
-    // of a sweep the roots cannot supply: an allocation nothing refers to is
-    // exactly the one to be freed, and it has to be findable to be freed.
+    // heap is the range every allocation the collector owns and every block
+    // of the program's own memory is carved from.
+    ZamHeap heap;
+
+    // young is the young generation's newest allocations while a collection
+    // runs: every allocation made since the last one, threaded through the
+    // upvalue field of each one's mark word. Between collections each thread
+    // keeps its own, and the collection splices them all on here first. It costs no memory beyond the word a markable
+    // allocation already carries, and it is the half of a sweep the roots
+    // cannot supply: an allocation nothing refers to is exactly the one to be
+    // freed, and it has to be findable to be freed.
     //
     // Only the heap is on it. A markable value laid out on the operand stack
     // carries the same header — OpDefaultValue writes one — but is not an
@@ -38,20 +69,58 @@ typedef struct ZamVM {
     // That is what makes the link a reliable answer to "did the allocator hand
     // this out", rather than only to "does this have a mark word".
     //
-    // Every thread allocates onto it, so the head is swapped in atomically
-    // rather than under a lock.
-    _Atomic(void *) allocations;
+    // What the collector allocates while collecting goes here directly: it is
+    // allocated black, and has to survive the sweep it was made during.
+    //
+    // survivors is the rest of the young generation: what has survived one
+    // minor collection, left white for the next to trace. What survives a
+    // second is promoted.
+    ZamObjectList young[ZAMYOUNG_COUNT];
+    ZamObjectList survivors[ZAMYOUNG_COUNT];
+
+    // old is the old generation, linked the same way: everything promoted.
+    // Its marks are left black between collections, which is what stops a
+    // minor collection tracing into it, and only the collector touches it.
+    // Each old allocation is on one of its lists.
+    ZamObjectList old[ZAMOLD_COUNT];
+
+    // heldCards is every card a minor collection found pointing into the young
+    // generation, which it marks dirty again once it has swept: what those
+    // cards hold may have survived without being promoted, and the next minor
+    // collection has to see it again.
+    uint8_t **heldCards;
+    uint64_t heldCardCount;
+    uint64_t heldCardCapacity;
 
     // allocatedByteCount is what the heap holds, and nextCollectionByteCount is
-    // what it has to reach for a collection to be asked for: the trigger ratio
-    // of heapByteCount, the size the heap is let grow to. The heap starts at the
-    // size the image asks for and doubles whenever what a collection leaves
-    // would already ask for the next one. The ratio is the program's to set,
-    // and comes in on the image.
+    // what it has to reach for a major collection to be asked for: the trigger
+    // ratio of heapByteCount, the size the heap is let grow to. The heap starts
+    // at the size the image asks for and doubles whenever what a major
+    // collection leaves would already ask for the next one. The ratio is the
+    // program's to set, and comes in on the image.
+    //
+    // youngByteCount is what has been allocated since the last collection, and
+    // a minor collection is asked for once it reaches nurseryByteCount.
+    //
+    // Threads add to both counts flushByteCount at a time, so neither is
+    // contended on every allocation. A collection flushes every thread first.
     _Atomic uint64_t allocatedByteCount;
     _Atomic uint64_t nextCollectionByteCount;
+    _Atomic uint64_t youngByteCount;
+    uint64_t nurseryByteCount;
+    uint64_t flushByteCount;
     uint64_t heapByteCount;
     double gcTriggerRatio;
+
+    // verify has every collection check that a minor collection in its place
+    // would have freed nothing reachable, and then collect in full.
+    bool verify;
+
+    // stats has every collection write a line of what it did to stderr, and
+    // collections counts them. The counts are the current collection's.
+    bool stats;
+    uint64_t collections;
+    ZamCollectionStats current;
 
     // collectionRequested is set by whichever thread crossed the threshold.
     // A collection happens only at a safepoint, between instructions: a thread
@@ -62,6 +131,10 @@ typedef struct ZamVM {
     // safepoint. Both are read without the lock on every instruction, and
     // changed only under it.
     atomic_bool collectionRequested;
+
+    // majorRequested is set by GC.Major, and makes the next collection major
+    // whatever the heap holds.
+    atomic_bool majorRequested;
     atomic_bool stopRequested;
 
     // collectionLock guards every thread's state and the two flags above, and
@@ -77,6 +150,12 @@ typedef struct ZamVM {
     // and two for yes.
     _Atomic uint8_t *markableDecls;
 
+    // customMarkDecls caches, the same way, whether marking a value of a
+    // declaration runs any Mark but Object's own, and customDeleteDecls
+    // whether a class's Delete is anything but Object's own.
+    _Atomic uint8_t *customMarkDecls;
+    _Atomic uint8_t *customDeleteDecls;
+
     // collector is the thread collecting, while one is. Everything a
     // collection runs runs on it, and every other thread is stopped.
     ZamThread *collector;
@@ -86,6 +165,13 @@ typedef struct ZamVM {
     void **gray;
     uint64_t grayCount;
     uint64_t grayCapacity;
+
+    // youngSpans is the young generation sorted by address during a minor
+    // collection, as a start and an end for each allocation, which is what a
+    // word on a dirty card is looked up in.
+    uintptr_t *youngSpans;
+    uint64_t youngSpanCount;
+    uint64_t youngSpanCapacity;
 
     // main is the thread control begins on and the head of the list of every
     // live thread. That list is what the collector walks to find every root, so
@@ -146,11 +232,21 @@ uint8_t *zam_vm_static(ZamVM *vm, uint64_t slot);
 // then given its length by the caller, that being the one header word the
 // allocator is not told.
 //
-// Every allocation is threaded onto vm->allocations as it is made, so the heap
-// is walkable from the VM alone.
+// Every allocation is threaded onto its thread's young list as it is made, and
+// every list is reachable from the VM's thread list, so the heap is walkable
+// from the VM alone.
 void *zam_vm_alloc(ZamVM *vm, ZamThread *thread, ZamObjectKind kind,
                   ZamTypeShort shortID, uint64_t elementCount,
                    uint64_t objectBytes);
+
+// zam_vm_alloc_raw carves a block of the program's own memory, which the
+// collector does not free and which the program releases with
+// zam_vm_free_raw. It is not zeroed.
+void *zam_vm_alloc_raw(ZamThread *thread, uint64_t byteCount);
+
+// zam_vm_free_raw releases a block of the program's own memory, whether the
+// heap or the C allocator handed it out.
+void zam_vm_free_raw(ZamThread *thread, void *block);
 
 // zam_vm_collect is the collection itself, run by collector. It is run only
 // by zam_vm_safepoint, with every other thread stopped.

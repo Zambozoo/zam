@@ -80,6 +80,7 @@ void zam_thread_init(ZamThread *thread, ZamVM *vm, uint64_t initialStackSize) {
 }
 
 void zam_thread_free(ZamThread *thread) {
+    zam_heap_release_cache(&thread->vm->heap, &thread->heapCache);
     free(thread->operands);
     free(thread->marks);
 

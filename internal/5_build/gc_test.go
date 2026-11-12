@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -17,8 +18,8 @@ import (
 	build "github.com/zambozoo/zam/internal/5_build"
 )
 
-// compile builds a one-file project into a binary whose heap starts small
-// enough that the program collects many times over.
+// compile builds a one-file project into a binary whose heap and nursery are
+// small enough that the program collects many times over, minor and major.
 func compile(t *testing.T, source string) string {
 	t.Helper()
 
@@ -29,7 +30,7 @@ func compile(t *testing.T, source string) string {
 	out := filepath.Join(dir, "out")
 
 	files := &base.FileProvider{}
-	cmd, err := command.New([]string{"zam", "-m", "16KB", "-o", out, entry}, files)
+	cmd, err := command.New([]string{"zam", "-m", "16KB", "-N", "4KB", "-o", out, entry}, files)
 	require.NoError(t, err)
 	ast, errs := syntax.NewAST(cmd, files, base.NewGitProvider(files))
 	require.Empty(t, errs)
@@ -55,6 +56,362 @@ func run(t *testing.T, binary string, args ...string) (stdout, stderr string, st
 	}
 	require.NoError(t, err)
 	return string(out), "", 0
+}
+
+// runVerified runs a binary as run does, with every collection checking that a
+// minor collection in its place would have freed nothing reachable.
+func runVerified(t *testing.T, binary string, args ...string) (stdout, stderr string, status int) {
+	t.Helper()
+	return runWith(t, []string{"ZAM_GC_VERIFY=1"}, binary, args...)
+}
+
+// runWith runs a binary as run does, with variables added to its environment.
+func runWith(t *testing.T, variables []string, binary string, args ...string) (stdout, stderr string, status int) {
+	t.Helper()
+
+	var out, errOut strings.Builder
+	cmd := exec.Command(binary, args...)
+	cmd.Env = append(os.Environ(), variables...)
+	cmd.Stdout = &out
+	cmd.Stderr = &errOut
+	err := cmd.Run()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		return out.String(), errOut.String(), exit.ExitCode()
+	}
+	require.NoError(t, err)
+	return out.String(), errOut.String(), 0
+}
+
+// TestMinorCollectionKeepsWhatTheOldHold stores young values into old objects,
+// containers and an arena, so that only the write barrier tells a minor
+// collection they are reachable. Each is promoted by churning before it is
+// stored into, and stored into again while churning.
+func TestMinorCollectionKeepsWhatTheOldHold(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+import std("data/list/*");
+import std("data/map/*");
+
+namespace Main {
+    class Node {
+        var str name;
+        var Node* next;
+    }
+
+    struct Pair {
+        var str s;
+        var int i;
+    }
+
+    static var str last = "";
+
+    static fun void() churn = () {
+        for (var int i = 0; i < 300; i++) {
+            Main::last = i{str} + "-churn";
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Node* root = new(Node);
+        var ArrList[str]* list = ArrList::[str]New(0U);
+        var HashMap[str, str]* map = HashMap::[str, str]New(0U);
+        var Arena~* arena = Arena::New(8192U);
+        var Pair* pairs = Arena::[Pair]Alloc(arena, 100U);
+        Main::churn();
+
+        for (var int i = 0; i < 100; i++) {
+            var Node* n = new(Node);
+            n.name = i{str} + "-node";
+            n.next = root.next;
+            root.next = n;
+            list.AddLast(i{str} + "-list");
+            map.Put(i{str}, i{str} + "-map");
+            pairs[i{uint}].s = i{str} + "-arena";
+            Main::churn();
+        }
+
+        var int bad = 0;
+        var Node* n = root.next;
+        for (var int i = 99; i >= 0; i--) {
+            if (n.name != i{str} + "-node") {
+                bad++;
+            }
+            n = n.next;
+        }
+        for (var int i = 0; i < 100; i++) {
+            if (list.Get(i{uint}) != i{str} + "-list" || map.Get(i{str}).0 != i{str} + "-map") {
+                bad++;
+            }
+            if (pairs[i{uint}].s != i{str} + "-arena") {
+                bad++;
+            }
+        }
+        File::StdOut.WriteStr(bad{str} + "\n");
+    }
+}
+`)
+	for _, runner := range []func(*testing.T, string, ...string) (string, string, int){run, runVerified} {
+		stdout, stderr, status := runner(t, binary)
+		require.Zero(t, status, stderr)
+		assert.Equal(t, "0\n", stdout)
+	}
+}
+
+// TestMinorCollectionRerunsOldMarks keeps the only reference to each young
+// box encoded, where only an old object's own Mark can decode it: in a struct
+// laid inline, in an object the Mark reads through and that is written through
+// an alias, and in memory of the program's own. A minor collection has to run
+// those Marks again to keep the boxes.
+func TestMinorCollectionRerunsOldMarks(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    class Box {
+        var str name;
+    }
+
+    struct S {
+        var uint i;
+    }
+
+    // Nested keeps an encoded box in a struct laid inline.
+    class Nested {
+        var S s;
+
+        public fun void() Mark = () {
+            if (this.s.i != 0U) {
+                mark((this.s.i ^ 4099U){void*}{Box*});
+            }
+        }
+    }
+
+    class Cell {
+        var uint c;
+    }
+
+    // Reader decodes a box out of a cell it only points at.
+    class Reader {
+        var Cell* cell;
+
+        public fun void() Mark = () {
+            mark(this.cell);
+            if (this.cell.c != 0U) {
+                mark((this.cell.c ^ 65537U){void*}{Box*});
+            }
+        }
+    }
+
+    // Bag keeps encoded boxes in memory of the program's own.
+    class Bag {
+        var uint* slots;
+
+        public fun void() Mark = () {
+            for (var uint i = 0U; i < 4U; i++) {
+                if (this.slots[i] != 0U) {
+                    mark((this.slots[i] ^ 257U){void*}{Box*});
+                }
+            }
+        }
+    }
+
+    static var str last = "";
+
+    static fun void() churn = () {
+        for (var int i = 0; i < 300; i++) {
+            Main::last = i{str} + "-churn";
+        }
+    }
+
+    static fun Box*(str) box = (name) {
+        var Box* b = new(Box);
+        b.name = name;
+        return b;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Nested* n = new(Nested);
+        var Reader* r = new(Reader);
+        r.cell = new(Cell);
+        var Bag* bag = new(Bag);
+        bag.slots = new(uint, 4U);
+        Main::churn();
+
+        var int bad = 0;
+        for (var int i = 0; i < 100; i++) {
+            var Box* b1 = Main::box(i{str} + "-nested");
+            var Box* b2 = Main::box(i{str} + "-reader");
+            var Box* b3 = Main::box(i{str} + "-bag");
+            n.s.i = b1{uint} ^ 4099U;
+            var Cell* other = r.cell;
+            other.c = b2{uint} ^ 65537U;
+            bag.slots[(i % 4){uint}] = b3{uint} ^ 257U;
+            b1 = null;
+            b2 = null;
+            b3 = null;
+            Main::churn();
+            if ((n.s.i ^ 4099U){void*}{Box*}.name != i{str} + "-nested") {
+                bad++;
+            }
+            if ((r.cell.c ^ 65537U){void*}{Box*}.name != i{str} + "-reader") {
+                bad++;
+            }
+            if ((bag.slots[(i % 4){uint}] ^ 257U){void*}{Box*}.name != i{str} + "-bag") {
+                bad++;
+            }
+        }
+        File::StdOut.WriteStr(bad{str} + "\n");
+    }
+}
+`)
+	for _, runner := range []func(*testing.T, string, ...string) (string, string, int){run, runVerified} {
+		stdout, stderr, status := runner(t, binary)
+		require.Zero(t, status, stderr)
+		assert.Equal(t, "0\n", stdout)
+	}
+}
+
+// TestCollectionStats churns past the nursery and the heap with ZAM_GC_STATS
+// set, which reports both kinds of collection, survivors kept young, and one
+// Delete of the program's own being run.
+func TestCollectionStats(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+import std("data/list/*");
+
+namespace Main {
+    static var int deleted = 0;
+
+    class Tracked {
+        fun void() Delete = () {
+            Main::deleted++;
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var ArrList[str]* kept = ArrList::[str]New(0U);
+        for (var int i = 0; i < 3000; i++) {
+            var str s = i{str} + "-churn";
+            if (i % 10 == 0) {
+                kept.AddLast(s);
+                new(Tracked);
+            }
+        }
+        File::StdOut.WriteStr(kept.Len(){str} + " " + (Main::deleted > 0){str} + "\n");
+    }
+}
+`)
+	stdout, stderr, status := runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY="}, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "300 true\n", stdout)
+	assert.Contains(t, stderr, " minor pause=")
+	assert.Contains(t, stderr, " major pause=")
+	assert.Regexp(t, `finalized=[1-9]`, stderr)
+	assert.Regexp(t, `survived=[1-9]`, stderr)
+}
+
+// TestRequestedCollections asks for a minor and then a major collection,
+// which ZAM_GC_STATS reports running one after the other, in that order.
+func TestRequestedCollections(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        System.GC::Minor();
+        System.GC::Major();
+        File::StdOut.WriteStr("done");
+    }
+}
+`)
+	stdout, stderr, status := runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY="}, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "done", stdout)
+	assert.Regexp(t, `gc \d+ minor [^\n]*\ngc \d+ major `, stderr)
+}
+
+// TestFreedPagesAreReturned frees a large block of the program's own memory
+// and collects until its pages have stayed free long enough to be given back
+// to the system, which ZAM_GC_STATS reports.
+func TestFreedPagesAreReturned(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        var uint n = 1048576U;
+        var byte* b = new(byte, n);
+        for (var uint i = 0U; i < n; i = i + 4096U) {
+            b[i] = 1{byte};
+        }
+        free(b);
+        for (var int i = 0; i < 4; i++) {
+            System.GC::Minor();
+        }
+        File::StdOut.WriteStr("done");
+    }
+}
+`)
+	stdout, stderr, status := runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY="}, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "done", stdout)
+	assert.Regexp(t, `returned=[1-9]`, stderr)
+}
+
+// TestMinorCollectionAcrossThreads promotes a shared list and has several
+// threads add young values to it while each churns, so cards are dirtied from
+// every thread and blocks are freed into pages other threads own.
+func TestMinorCollectionAcrossThreads(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+import std("sync/*");
+import std("data/list/*");
+
+namespace Main {
+    static var ArrList[str]* shared = null;
+    static var Mutex* lock = null;
+
+    static fun int(int) fill = (id) {
+        var int total = 0;
+        for (var int i = 0; i < 200; i++) {
+            var str s = id{str} + ":" + i{str};
+            Main::lock.Lock();
+            Main::shared.AddLast(s);
+            Main::lock.Unlock();
+            for (var int j = 0; j < 50; j++) {
+                total = total + Strs::ByteLen(j{str} + "-churn");
+            }
+        }
+        return total;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        Main::shared = ArrList::[str]New(0U);
+        Main::lock = Mutex::New();
+        var thread[int] a = async(Main::fill(1));
+        var thread[int] b = async(Main::fill(2));
+        var thread[int] c = async(Main::fill(3));
+        var int total = wait(a) + wait(b) + wait(c);
+        var int bytes = 0;
+        for (var uint i = 0U; i < Main::shared.Len(); i++) {
+            bytes = bytes + Strs::ByteLen(Main::shared.Get(i));
+        }
+        File::StdOut.WriteStr(Main::shared.Len(){str} + " " + bytes{str} + "\n");
+    }
+}
+`)
+	for _, runner := range []func(*testing.T, string, ...string) (string, string, int){run, runVerified} {
+		stdout, stderr, status := runner(t, binary)
+		require.Zero(t, status, stderr)
+		assert.Equal(t, "600 2670\n", stdout)
+	}
 }
 
 // TestCollectionKeepsWhatIsReachable allocates far past the heap while holding

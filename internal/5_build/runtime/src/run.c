@@ -3425,7 +3425,7 @@ static ZamResult step(ZamThread *thread) {
         void *object;
 
         if (markable && manual) {
-            object = zam_alloc(objectBytes);
+            object = zam_vm_alloc_raw(thread, objectBytes);
             memset(object, 0, objectBytes);
             for (uint64_t index = 0; index < elementCount; index++)
                 stampContained(image, (uint8_t *)object + index * elementBytes,
@@ -3462,13 +3462,13 @@ static ZamResult step(ZamThread *thread) {
             // walks: an array that outlives the frame it was declared in is
             // what a standard library array list is for, which stores the
             // slots behind a kind the collector does know about.
-            object = zam_alloc(objectBytes);
+            object = zam_vm_alloc_raw(thread, objectBytes);
             memset(object, 0, objectBytes);
         } else {
             // A struct, an enum, a plain primitive or a pointer. The whole of
             // the block is the value — none of these carries a word saying what
-            // it is — so the pointer handed back is the one malloc returned, and
-            // the free in OpDelete is a free of that same address.
+            // it is — so the pointer handed back is the one the heap returned,
+            // and the free in OpDelete is a free of that same address.
             //
             // It is not linked onto the sweep list, which is what makes this
             // memory the program's to release rather than the collector's. The
@@ -3476,7 +3476,7 @@ static ZamResult step(ZamThread *thread) {
             // the same reason: a collection would find nothing here it could
             // reclaim, so counting these bytes would only bring one on sooner
             // for no gain.
-            object = zam_alloc(objectBytes);
+            object = zam_vm_alloc_raw(thread, objectBytes);
             memset(object, 0, objectBytes);
 
             // The one header a struct has, and it is written per element rather
@@ -3531,9 +3531,11 @@ static ZamResult step(ZamThread *thread) {
         // handed over instead and the loop is the compiler's, which is also what
         // lets it be a number only this run knows — new's first operand is the
         // program's own value and not something the type could have said.
+        //
+        // Slot 0 is not marked. The loop steps it from element to element and
+        // leaves it one past the last, which names whatever block follows; the
+        // instance is kept by the copy pushed beneath the frame.
         zam_thread_push(thread, (ZamWord)(uintptr_t)object);
-        if (markable)
-            zam_thread_push_mark(thread, thread->operandCount - 1);
         zam_thread_push(thread, elementCount);
         zam_thread_push_function(thread, thread->instructionOffset,
                                  thread->operandCount - 2);
@@ -3608,7 +3610,7 @@ static ZamResult step(ZamThread *thread) {
             // Nothing is zeroed, the copy below covering every byte of it: the
             // elements lie at exactly their own width, so the run has no
             // padding between them and the last one ends the block.
-            object = zam_alloc(objectBytes);
+            object = zam_vm_alloc_raw(thread, objectBytes);
         }
 
         // Copied whole, headers and all, and then stamped afresh. A header says
@@ -3621,6 +3623,8 @@ static ZamResult step(ZamThread *thread) {
             memcpy((uint8_t *)object + index * elementBytes,
                    source + index * elementWords * ZAMWORD_BYTES,
                    elementBytes);
+        if (!markable)
+            zam_heap_dirty(&thread->vm->heap, object, objectBytes);
 
         if (markable) {
             // The front element is the array, so what stands at the front of it
@@ -3717,7 +3721,7 @@ static ZamResult step(ZamThread *thread) {
                 if (mark->upvalue != 0)
                     zam_die(ZAMEXIT_PANIC,
                             "freed an instance that lies inside another\n");
-                free((void *)(uintptr_t)pointer);
+                zam_vm_free_raw(thread, (void *)(uintptr_t)pointer);
                 return ZAMRESULT_CONTINUE;
             }
         }
@@ -3727,7 +3731,7 @@ static ZamResult step(ZamThread *thread) {
                 zam_image_bucket_of(image, ZAMTYPE_DECL(type.shortID)) ==
                     ZAMBUCKET_POINTER;
             if (typeIsPointer && !isMarkableInstance(image, pointee)) {
-                free((void *)(uintptr_t)pointer);
+                zam_vm_free_raw(thread, (void *)(uintptr_t)pointer);
                 return ZAMRESULT_CONTINUE;
             }
 
@@ -3736,7 +3740,7 @@ static ZamResult step(ZamThread *thread) {
             return ZAMRESULT_CONTINUE;
         }
 
-        free((void *)(uintptr_t)pointer);
+        zam_vm_free_raw(thread, (void *)(uintptr_t)pointer);
         return ZAMRESULT_CONTINUE;
     }
 
@@ -4069,6 +4073,8 @@ static ZamResult step(ZamThread *thread) {
                               valueWords);
         memcpy(at + headerBytes, value + headerBytes,
                locationBytes - headerBytes);
+        zam_heap_dirty(&thread->vm->heap, at + headerBytes,
+                       locationBytes - headerBytes);
 
         popValue(thread, image, valueType);
         return ZAMRESULT_CONTINUE;
@@ -4778,11 +4784,10 @@ ZamResult zam_thread_initialize(ZamThread *thread, void *object,
     if (initializer == 0)
         return ZAMRESULT_CONTINUE;
 
-    // The frame OpNew enters the initializer on, run here to its return.
+    // The frame OpNew enters the initializer on, run here to its return, and
+    // like OpNew's with its stepping first slot left unmarked.
     uint64_t outerEntry = thread->functionEntry;
     zam_thread_push(thread, (ZamWord)(uintptr_t)object);
-    if (isMarkableInstance(image, element))
-        zam_thread_push_mark(thread, thread->operandCount - 1);
     zam_thread_push(thread, elementCount);
     zam_thread_push_function(thread, thread->instructionOffset,
                              thread->operandCount - 2);
@@ -4939,10 +4944,12 @@ ZamResult zam_vm_run(ZamVM *vm, int argC, const char *argV[]) {
     // which an empty one has no need of.
    ZamWord argvArray = 0;
     if (argC > 0) {
-        argvArray = (ZamWord)(uintptr_t)zam_alloc((uint64_t)argC * ZAMWORD_BYTES);
+        argvArray = (ZamWord)(uintptr_t)zam_vm_alloc_raw(
+            main, (uint64_t)argC * ZAMWORD_BYTES);
        ZamWord *slots = (ZamWord *)(uintptr_t)argvArray;
         for (int i = 0; i < argC; i++)
             slots[i] = zam_native_new_string(main, argV[i], strlen(argV[i]));
+        zam_heap_dirty(&vm->heap, slots, (uint64_t)argC * ZAMWORD_BYTES);
     }
     zam_thread_push(main, 0);
     zam_thread_push(main, (ZamWord)(uint64_t)(unsigned)argC);

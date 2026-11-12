@@ -156,7 +156,7 @@ func TestCalculateByteCounts(t *testing.T) {
 	// The map runs from type id zero, so the reserved primitive ids are part of
 	// its length even though they name no definition.
 	mapWordCount := int(reservedTypeIDCount) + 3
-	definitionsStart := 3*wordByteSize + mapWordCount*wordByteSize
+	definitionsStart := configurationWords*wordByteSize + mapWordCount*wordByteSize
 	// Two pointer definitions of three words, then an empty struct: two empty
 	// counted lists and the three trailing sizes.
 	definitionsEnd := definitionsStart + 2*3*wordByteSize + 5*wordByteSize

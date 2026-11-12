@@ -32,7 +32,7 @@ var (
 func buildRunHarness(t *testing.T) string {
 	t.Helper()
 	return buildHarness(t, "run_harness.c", "run",
-		"run.c", "thread.c", "vm.c", "gc.c", "native.c", "opcode.c", "json.c", "yaml.c", "xml.c", "bson.c", "compress.c", "cbor.c", "archive.c", "net.c", "tls.c", "curl.c", "http.c", "ws.c", "crypto.c", "pki.c", "time.c", "arena.c")
+		"run.c", "thread.c", "vm.c", "gc.c", "heap.c", "native.c", "opcode.c", "json.c", "yaml.c", "xml.c", "bson.c", "compress.c", "cbor.c", "archive.c", "net.c", "tls.c", "curl.c", "http.c", "ws.c", "crypto.c", "pki.c", "time.c", "arena.c")
 }
 
 // valueEntryBytes is how wide the mark entry a markable value standing on the
@@ -668,6 +668,8 @@ func writeImage(t *testing.T, operations []operation, routines ...uint64) string
 		gcTriggerRatio:   0.7,
 		initialStackSize: 16,
 		initialHeapSize:  1 << 20,
+		nurserySize:      1 << 20,
+		maxHeapSize:      1 << 30,
 
 		functionTypeDefinitions: fixtureFunctionTypes(),
 		pointerDefinitions:      fixturePointers(),

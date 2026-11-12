@@ -72,15 +72,17 @@ static void parseAndValidate(ZamImage *image, const char *label) {
                 ZAMVERSION_MINOR, ZAMVERSION_PATCH);
     }
 
-    // The body opens with the three words of runtime configuration, so the type
+    // The body opens with the five words of runtime configuration, so the type
     // definition map begins after them.
     const ZamWord *configuration = (const ZamWord *)image->body;
     memcpy(&image->gcTriggerRatio, &configuration[0], sizeof(double));
     image->initialStackSize = configuration[1];
     image->initialHeapSize = configuration[2];
+    image->nurserySize = configuration[3];
+    image->maxHeapSize = configuration[4];
 
     image->typeDefinitionCount = image->header[ZAMHEADER_TYPE_DEFINITION_COUNT];
-    image->typeDefinitionMap = &configuration[3];
+    image->typeDefinitionMap = &configuration[5];
 
     image->staticSlots =
         (const ZamWord *)section(image, ZAMHEADER_STATIC_SLOTS_OFFSET,

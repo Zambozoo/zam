@@ -13,8 +13,8 @@ public class Arr[A] {
     }
 
     public fun void(uint, A...) Init = (count, args) {
-        this.len = count;
         this.arr = args;
+        this.len = count;
     }
 
     public fun uint() Len = () {

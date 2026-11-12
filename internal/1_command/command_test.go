@@ -162,6 +162,8 @@ func TestNew(t *testing.T) {
 				GCTriggerRatio:   defaultGCRatio,
 				InitialStackSize: int(defaultStackSize),
 				InitialHeapSize:  int(defaultHeapSize),
+				NurserySize:      int(defaultNursery),
+				MaxHeapSize:      int(defaultMaxHeap),
 			},
 			errFunc: assert.NoError,
 		},
@@ -186,12 +188,14 @@ func TestNew(t *testing.T) {
 				GCTriggerRatio:   defaultGCRatio,
 				InitialStackSize: int(defaultStackSize),
 				InitialHeapSize:  int(defaultHeapSize),
+				NurserySize:      int(defaultNursery),
+				MaxHeapSize:      int(defaultMaxHeap),
 			},
 			errFunc: assert.NoError,
 		},
 		{
 			name: "sizes take a unit suffix",
-			argv: []string{"zam", "--stack-size", "1MB", "--heap-size", "2GB", "--gc-ratio", "0.5", "input"},
+			argv: []string{"zam", "--stack-size", "1MB", "--heap-size", "2GB", "--gc-ratio", "0.5", "-N", "1MB", "-M", "4GB", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
 				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
@@ -206,6 +210,8 @@ func TestNew(t *testing.T) {
 				GCTriggerRatio:   0.5,
 				InitialStackSize: 1 << 20,
 				InitialHeapSize:  2 << 30,
+				NurserySize:      1 << 20,
+				MaxHeapSize:      4 << 30,
 			},
 			errFunc: assert.NoError,
 		},
@@ -224,6 +230,8 @@ func TestNew(t *testing.T) {
 				GCTriggerRatio:   defaultGCRatio,
 				InitialStackSize: int(defaultStackSize),
 				InitialHeapSize:  int(defaultHeapSize),
+				NurserySize:      int(defaultNursery),
+				MaxHeapSize:      int(defaultMaxHeap),
 				Run:              true,
 				RunArgs:          []string{"a", "-b"},
 			},
@@ -245,6 +253,8 @@ func TestNew(t *testing.T) {
 				GCTriggerRatio:   defaultGCRatio,
 				InitialStackSize: int(defaultStackSize),
 				InitialHeapSize:  int(defaultHeapSize),
+				NurserySize:      int(defaultNursery),
+				MaxHeapSize:      int(defaultMaxHeap),
 				NoProject:        true,
 			},
 			errFunc: assert.NoError,
@@ -264,6 +274,8 @@ func TestNew(t *testing.T) {
 				GCTriggerRatio:   defaultGCRatio,
 				InitialStackSize: int(defaultStackSize),
 				InitialHeapSize:  int(defaultHeapSize),
+				NurserySize:      int(defaultNursery),
+				MaxHeapSize:      int(defaultMaxHeap),
 				Run:              true,
 				RunArgs:          []string{},
 				NoProject:        true,
@@ -289,6 +301,16 @@ func TestNew(t *testing.T) {
 			name:    "non positive size",
 			argv:    []string{"zam", "--stack-size", "0KB", "input"},
 			errFunc: errorContains(`size must be positive: "0KB"`),
+		},
+		{
+			name: "heap larger than its maximum",
+			argv: []string{"zam", "--max-heap-size", "1MB", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				return m
+			}(),
+			errFunc: errorContains("heap size 16MB and nursery size 8MB must not exceed max heap size 1MB"),
 		},
 		{
 			name: "gc ratio the heap can never reach",
@@ -339,7 +361,7 @@ func TestCommand_String(t *testing.T) {
 				InitialStackSize: 1 << 19,
 				InitialHeapSize:  1 << 24,
 			},
-			want: `{"InputPath":{"Outer":"input"},"OutputPath":{"Outer":"out"},"Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"EmitImage":false,"KeepBuild":false,"Run":false,"RunArgs":null,"NoProject":false}`,
+			want: `{"InputPath":{"Outer":"input"},"OutputPath":{"Outer":"out"},"Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"EmitImage":false,"KeepBuild":false,"Run":false,"RunArgs":null,"NoProject":false}`,
 		},
 	}
 

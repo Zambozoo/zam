@@ -178,25 +178,25 @@ int main(int argc, char **argv) {
     }
 
     if (wantHeap) {
-        // How long the sweep list is, which is the whole claim that an
-        // allocation was linked as it was made. A count is enough: an
+        // How long the main thread's young list is, which is the whole claim
+        // that an allocation was linked as it was made. A count is enough: an
         // allocation the allocator handed out and did not link is
         // indistinguishable from one it never made, and that is exactly the
         // failure the count catches.
         uint64_t count = 0;
-        for (void *object = vm.allocations; object != NULL; count++)
+        for (void *object = vm.main.young[ZAMYOUNG_PLAIN].head; object != NULL; count++)
             object = (void *)(uintptr_t)zam_mark_word_of(object)->upvalue;
         put("heap.count", count);
 
         // The head, which is the most recent allocation because the list is
         // pushed onto rather than appended to. Its header is what says the
         // allocator was told the right kind and the right type.
-        if (vm.allocations != NULL) {
-            put("heap.state", zam_mark_word_of(vm.allocations)->state);
-            put("heap.kind", zam_mark_word_of(vm.allocations)->kind);
-            put("heap.shortID", zam_object_header_of(vm.allocations)->shortID);
+        if (vm.main.young[ZAMYOUNG_PLAIN].head != NULL) {
+            put("heap.state", zam_mark_word_of(vm.main.young[ZAMYOUNG_PLAIN].head)->state);
+            put("heap.kind", zam_mark_word_of(vm.main.young[ZAMYOUNG_PLAIN].head)->kind);
+            put("heap.shortID", zam_object_header_of(vm.main.young[ZAMYOUNG_PLAIN].head)->shortID);
             put("heap.elementCount",
-                zam_object_header_of(vm.allocations)->elementCount);
+                zam_object_header_of(vm.main.young[ZAMYOUNG_PLAIN].head)->elementCount);
         }
     }
 
@@ -327,11 +327,11 @@ int main(int argc, char **argv) {
         putArray(&vm.image, first);
     }
 
-    // The head of the sweep list, which for a program that allocated once is the
+    // The head of the young list, which for a program that allocated once is the
     // array. Reached from there rather than from the pointer the program left,
     // so that what is read is the block the allocator linked.
     if (wantHeapArray)
-        putArray(&vm.image, (uint8_t *)vm.allocations);
+        putArray(&vm.image, (uint8_t *)vm.main.young[ZAMYOUNG_PLAIN].head);
 
     zam_vm_free(&vm);
     return 0;

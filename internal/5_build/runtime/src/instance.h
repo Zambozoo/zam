@@ -327,6 +327,48 @@ static inline ZamMarkWord *zam_mark_word_of(void *object) {
     return (ZamMarkWord *)object;
 }
 
+// ZamObjectList is a list of allocations linked through the upvalue of each
+// one's mark word, newest first. The tail is the oldest, which is what lets a
+// whole list be spliced onto another at once.
+typedef struct ZamObjectList {
+    void *head;
+    void *tail;
+} ZamObjectList;
+
+// The young lists, a thread's and the VM's survivors alike, come in pairs:
+// allocations whose class has a Delete of the program's own, which a
+// collection has to find to run, and every other.
+typedef enum ZamYoungList {
+    ZAMYOUNG_PLAIN,
+    ZAMYOUNG_DELETES,
+    ZAMYOUNG_COUNT,
+} ZamYoungList;
+
+// zam_list_push puts an allocation at the front of a list, leaving the rest of
+// its mark word as it was.
+static inline void zam_list_push(ZamObjectList *list, void *object) {
+    zam_mark_word_of(object)->upvalue = (uintptr_t)list->head;
+    if (list->head == NULL)
+        list->tail = object;
+    list->head = object;
+}
+
+// zam_list_splice moves every allocation on from onto the front of into.
+static inline void zam_list_splice(ZamObjectList *into, ZamObjectList *from) {
+    if (from->head == NULL)
+        return;
+    zam_mark_word_of(from->tail)->upvalue = (uintptr_t)into->head;
+    if (into->head == NULL)
+        into->tail = from->tail;
+    into->head = from->head;
+    *from = (ZamObjectList){0};
+}
+
+// zam_list_next is the allocation after one on its list.
+static inline void *zam_list_next(void *object) {
+    return (void *)(uintptr_t)zam_mark_word_of(object)->upvalue;
+}
+
 // zam_object_header_of is the word after that, and is there for every kind but
 // ZAMOBJECT_STRING. A string is the one allocation whose kind settles its whole
 // shape, so it is the one that stores no type id to be read here.

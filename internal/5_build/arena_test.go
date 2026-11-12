@@ -93,7 +93,8 @@ namespace Main {
 
 // TestArenaLivesThroughItsValues drops every reference to an arena but one to
 // a value inside it, which keeps the arena and its neighbours alive; once that
-// goes too, the arena is collected and each class value in it is deleted.
+// goes too, the next major collection collects the arena and deletes each
+// class value in it.
 func TestArenaLivesThroughItsValues(t *testing.T) {
 	t.Parallel()
 	binary := compile(t, `import std("lang/*");
@@ -135,7 +136,7 @@ namespace Main {
         File::StdOut.WriteStr(c.other.name + " " + c.other.other.name + " " + Main::deleted{str} + "\n");
         c = null;
         Main::churn();
-        Main::churn();
+        System.GC::Major();
         File::StdOut.WriteStr(Main::deleted{str} + "\n");
     }
 }

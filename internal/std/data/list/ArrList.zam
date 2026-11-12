@@ -27,13 +27,14 @@ public class ArrList[A] {
         if(cap < len) {
             cap = len;
         }
+        this.len = 0U;
         this.arr = new(A, cap);
         this.cap = cap;
-        this.len = len;
         this.start = cap / 4U;
         for(var uint i = 0U; i < len; i++) {
             this.arr[(this.start + i) % cap] = args[i];
         }
+        this.len = len;
     }
 
     private fun void() grow = () {
@@ -50,7 +51,11 @@ public class ArrList[A] {
             Arrs::[A]Copy(firstCount, this.arr + this.start, a + newStart);
             Arrs::[A]Copy(this.len - firstCount, this.arr, a + newStart + firstCount);
         }
-        free(this.arr);
+        // Mark reads arr, cap and start apart, so a collection between the
+        // stores below may walk the wrong range of either buffer. The old one
+        // is held whole until they are done, which keeps every element
+        // reached, and is freed once it is collected.
+        var Arr[A]* old = Arr::[A]New(this.cap, this.arr...);
         this.arr = a;
         this.cap = newCap;
         this.start = newStart;
@@ -110,9 +115,10 @@ public class ArrList[A] {
         if(this.len == this.cap) {
             this.grow();
         }
-        this.start = (this.start + this.cap - 1U) % this.cap;
-        this.arr[this.start] = v;
+        var uint p = (this.start + this.cap - 1U) % this.cap;
+        this.arr[p] = v;
         this.len++;
+        this.start = p;
     }
 
     public fun void(A) AddLast = (v) {
@@ -155,6 +161,8 @@ public class ArrList[A] {
             System::Panic("Arr out of bounds");
         }
         var A old = this.arr[this.start];
+        var A zero;
+        this.arr[this.start] = zero;
         this.start = (this.start + 1U) % this.cap;
         this.len--;
         return old;
@@ -164,8 +172,12 @@ public class ArrList[A] {
         if(this.len == 0U) {
             System::Panic("Arr out of bounds");
         }
+        var uint p = (this.start + this.len - 1U) % this.cap;
+        var A old = this.arr[p];
+        var A zero;
+        this.arr[p] = zero;
         this.len--;
-        return this.arr[(this.start + this.len) % this.cap];
+        return old;
     }
 
     public fun A(uint) Remove = (i) {
@@ -173,18 +185,20 @@ public class ArrList[A] {
             System::Panic("Arr out of bounds");
         }
         var A old = this.arr[(this.start + i) % this.cap];
-        this.len--;
 
         var uint srcPhys = (this.start + i + 1U) % this.cap;
         var uint dstPhys = (this.start + i) % this.cap;
-        var uint count = this.len - i;
+        var uint count = this.len - i - 1U;
         if(srcPhys + count <= this.cap && dstPhys + count <= this.cap) {
             Arrs::[A]Copy(count, this.arr + srcPhys, this.arr + dstPhys);
         } else {
-            for(var uint j = i; j < this.len; j++) {
+            for(var uint j = i; j + 1U < this.len; j++) {
                 this.arr[(this.start + j) % this.cap] = this.arr[(this.start + j + 1U) % this.cap];
             }
         }
+        var A zero;
+        this.arr[(this.start + this.len - 1U) % this.cap] = zero;
+        this.len--;
         return old;
     }
 
@@ -193,8 +207,9 @@ public class ArrList[A] {
     }
 
     public fun void() Clear = () {
-        this.Delete();
+        var A* old = this.arr;
         this.InitWithCap(1U, 0U);
+        free(old);
     }
 
     public fun Arr[A]*() Arr = () {

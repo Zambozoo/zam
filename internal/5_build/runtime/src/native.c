@@ -537,6 +537,7 @@ static void stdArrsCopy(ZamThread *thread) {
 
     uint64_t stride = zam_type_bytes(&thread->vm->image, type);
     memmove(dst, src, (size_t)len * stride);
+    zam_native_write_barrier(thread, dst, (uint64_t)len * stride);
     zam_native_return_void(thread);
 }
 
@@ -573,6 +574,21 @@ static void stdGcUnblock(ZamThread *thread) {
     if (thread->gcBlockDepth == 0)
         zam_native_panic(thread, "GC.Unblock without a matching GC.Block");
     thread->gcBlockDepth--;
+    zam_native_return_void(thread);
+}
+
+// stdGcMinor and stdGcMajor ask for a collection of that kind, which the
+// calling thread runs at its next safepoint, before its next instruction,
+// unless another thread reaches one first. A minor collection asked for is
+// major all the same if the heap has already grown to its threshold.
+static void stdGcMinor(ZamThread *thread) {
+    atomic_store(&thread->vm->collectionRequested, true);
+    zam_native_return_void(thread);
+}
+
+static void stdGcMajor(ZamThread *thread) {
+    atomic_store(&thread->vm->majorRequested, true);
+    atomic_store(&thread->vm->collectionRequested, true);
     zam_native_return_void(thread);
 }
 
@@ -1148,6 +1164,8 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_GC_BLOCK", stdGcBlock},
     {"STD_GC_UNBLOCK", stdGcUnblock},
     {"STD_GC_MARKABLE", stdGcMarkable},
+    {"STD_GC_MINOR", stdGcMinor},
+    {"STD_GC_MAJOR", stdGcMajor},
     {"STD_SYSTEM_EXIT", stdSystemExit},
     {"STD_SYSTEM_PROCESS_ID", stdSystemProcessID},
     {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},
@@ -1368,8 +1386,15 @@ uint64_t zam_native_argument(ZamThread *thread, uint64_t wordIndex) {
 }
 
 void *zam_native_argument_pointer(ZamThread *thread, uint64_t wordIndex) {
-    return zam_thread_location_address(
+    void *at = zam_thread_location_address(
         thread, zam_native_argument(thread, wordIndex));
+    zam_heap_dirty(&thread->vm->heap, at, ZAMHEAP_CARD_BYTES);
+    return at;
+}
+
+void zam_native_write_barrier(ZamThread *thread, const void *at,
+                              uint64_t byteCount) {
+    zam_heap_dirty(&thread->vm->heap, at, byteCount);
 }
 
 // zam_native_return pops the native's frame and lays the result where the

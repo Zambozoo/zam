@@ -534,6 +534,9 @@ ZamMethodDefinition zam_type_method(const ZamImage *image, ZamTypeShort shortID,
 // wrote.
 uint64_t zam_type_member_count(const ZamImage *image, ZamTypeShort shortID);
 
+// zam_type_method_count is how many methods zam_type_method will answer for.
+uint64_t zam_type_method_count(const ZamImage *image, ZamTypeShort shortID);
+
 // zam_type_initializer is the routine a fresh instance of the type is filled in
 // by, and zero where the type names none — offset zero being where the program
 // begins and so never a routine. A type that names none is left as it was

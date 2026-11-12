@@ -29,6 +29,9 @@ const (
 	versionWord = versionMajor<<32 | versionMinor<<16 | versionPatch
 )
 
+// configurationWords is how many words of runtime configuration open the body.
+const configurationWords = 5
+
 // magicWord is [magic] as the word it is written as. Assembling it little-endian
 // is what makes the bytes spell the name in the file, since that is the order
 // every word is written in: a reader that compares eight bytes and a reader that
@@ -105,6 +108,11 @@ type (
 		initialStackSize int
 		// initialHeapSize is the initial size of the heap.
 		initialHeapSize int
+		// nurserySize is how many bytes may be allocated between collections
+		// before a minor collection is triggered.
+		nurserySize int
+		// maxHeapSize is the most memory the heap may ever hold.
+		maxHeapSize int
 
 		// functionTypeDefinitions are the readers for the function type definitions.
 		functionTypeDefinitions []typeDefinition
@@ -406,7 +414,7 @@ func (cr *codegenReader) nativeNames() []stringLiteral {
 //
 // The offsets it writes are measured from the end of the counts header rather
 // than from the start of the file, so the header is not among what they count:
-// the first byte after it is offset zero. What follows it are the three words of
+// the first byte after it is offset zero. What follows it are the five words of
 // runtime configuration, which is where the walk begins.
 func (cr *codegenReader) calculateByteCounts() (*counts, []int) {
 	bc := *cr.counts
@@ -421,7 +429,7 @@ func (cr *codegenReader) calculateByteCounts() (*counts, []int) {
 		bc.typeDefinitionCount += len(bucket)
 	}
 
-	offset := 3*wordByteSize + bc.typeDefinitionCount*wordByteSize
+	offset := configurationWords*wordByteSize + bc.typeDefinitionCount*wordByteSize
 
 	typeDefinitionMap := make([]int, bc.typeDefinitionCount)
 	typeID := int(reservedTypeIDCount)
@@ -590,6 +598,18 @@ func (cr *codegenReader) Read(p []byte) (int, error) {
 	}
 	totalBytes += n
 
+	n, err = readInt(p[totalBytes:], cr.nurserySize)
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
+	n, err = readInt(p[totalBytes:], cr.maxHeapSize)
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
 	n, err = readAllWords(p[totalBytes:], typeDefinitionMap...)
 	if err != nil {
 		return 0, err
@@ -723,6 +743,8 @@ func GenerateCode(cmd *command.Command, ast *syntax.AST) (*Result, error) {
 		gcTriggerRatio:         cmd.GCTriggerRatio,
 		initialStackSize:       cmd.InitialStackSize,
 		initialHeapSize:        cmd.InitialHeapSize,
+		nurserySize:            cmd.NurserySize,
+		maxHeapSize:            cmd.MaxHeapSize,
 		genericStaticMethodIDs: map[*syntax.FieldMethod]uint16{},
 	}
 

@@ -95,13 +95,15 @@ typedef struct ZamImage {
     const ZamWord *header;
     const uint8_t *body;
 
-    // The three words of runtime configuration, which are the first thing in
+    // The five words of runtime configuration, which are the first thing in
     // the body. They are how the program asks to be run rather than anything
     // about the program, which is why they are copied out here and the sections
     // after them are not.
     double gcTriggerRatio;
     uint64_t initialStackSize;
     uint64_t initialHeapSize;
+    uint64_t nurserySize;
+    uint64_t maxHeapSize;
 
     // typeDefinitionMap gives the body-relative byte offset of each type's
     // definition, indexed by type id. Definitions are not all the same width,

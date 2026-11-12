@@ -39,6 +39,14 @@ const (
 	flagHeapSizeLong = "heap-size"
 	usageHeapSize    = "initial heap size"
 
+	flagNurserySize     = "N"
+	flagNurserySizeLong = "nursery-size"
+	usageNurserySize    = "bytes allocated since the last collection that trigger a minor collection"
+
+	flagMaxHeapSize     = "M"
+	flagMaxHeapSizeLong = "max-heap-size"
+	usageMaxHeapSize    = "most memory the heap may ever hold"
+
 	flagEmitImage     = "E"
 	flagEmitImageLong = "emit-image"
 	usageEmitImage    = "write the raw bytecode image instead of linking a binary"
@@ -61,6 +69,8 @@ const (
 	defaultGCRatio   = 0.75
 	defaultStackSize = byteSize(512 << 10)
 	defaultHeapSize  = byteSize(16 << 20)
+	defaultNursery   = byteSize(8 << 20)
+	defaultMaxHeap   = byteSize(64 << 30)
 )
 
 // byteSizeUnits are the suffixes a size may be written with, longest first so
@@ -112,6 +122,16 @@ type (
 		// InitialHeapSize is the number of bytes of heap the program starts with.
 		// Uses the -m flag with a default of `16MB`
 		InitialHeapSize int
+
+		// NurserySize is how many bytes may be allocated since the last
+		// collection before a minor collection is triggered.
+		// Uses the -N flag with a default of `8MB`
+		NurserySize int
+
+		// MaxHeapSize is the most memory the heap may ever hold, and is reserved
+		// up front as address space.
+		// Uses the -M flag with a default of `64GB`
+		MaxHeapSize int
 
 		// EmitImage skips the build driver and writes the raw bytecode image to
 		// OutputPath instead of linking a native binary. Uses the -E flag with a
@@ -224,6 +244,7 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	var run bool
 	var noProject bool
 	stackSize, heapSize := defaultStackSize, defaultHeapSize
+	nurserySize, maxHeapSize := defaultNursery, defaultMaxHeap
 
 	fs.StringVarP(&out.Outer, flagOutputLong, flagOutput, defaultOutput, usageOutput)
 	fs.BoolVarP(&verbose, flagVerboseLong, flagVerbose, defaultVerbose, usageVerbose)
@@ -231,6 +252,8 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	fs.Float64VarP(&gcRatio, flagGCRatioLong, flagGCRatio, defaultGCRatio, usageGCRatio)
 	fs.VarP(&stackSize, flagStackSizeLong, flagStackSize, usageStackSize)
 	fs.VarP(&heapSize, flagHeapSizeLong, flagHeapSize, usageHeapSize)
+	fs.VarP(&nurserySize, flagNurserySizeLong, flagNurserySize, usageNurserySize)
+	fs.VarP(&maxHeapSize, flagMaxHeapSizeLong, flagMaxHeapSize, usageMaxHeapSize)
 	fs.BoolVarP(&emitImage, flagEmitImageLong, flagEmitImage, false, usageEmitImage)
 	fs.BoolVarP(&keepBuild, flagKeepBuildLong, flagKeepBuild, false, usageKeepBuild)
 	fs.BoolVarP(&run, flagRunLong, flagRun, false, usageRun)
@@ -284,6 +307,11 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 		return nil, fmt.Errorf("gc trigger ratio must be within (0, 1]: %g", gcRatio)
 	}
 
+	if heapSize > maxHeapSize || nurserySize > maxHeapSize {
+		return nil, fmt.Errorf("heap size %s and nursery size %s must not exceed max heap size %s",
+			heapSize, nurserySize, maxHeapSize)
+	}
+
 	if exists, err := fileProvider.FileExists(inputPath); err != nil {
 		return nil, err
 	} else if !exists {
@@ -298,6 +326,8 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 		GCTriggerRatio:   gcRatio,
 		InitialStackSize: int(stackSize),
 		InitialHeapSize:  int(heapSize),
+		NurserySize:      int(nurserySize),
+		MaxHeapSize:      int(maxHeapSize),
 		EmitImage:        emitImage,
 		KeepBuild:        keepBuild,
 		Run:              run,

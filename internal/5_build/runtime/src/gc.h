@@ -7,10 +7,19 @@
 // unreachable instance nothing else unreachable reaches, and frees what is
 // left unreachable. Every thread but collector is stopped.
 //
+// A minor collection does all of that over the young generation alone, taking
+// the old generation's dirty cards as roots, and promotes what survives. A
+// major one does it over both. It answers whether the collection was major,
+// which verification makes every one.
+//
 // Marking runs every reached instance's Mark: Object's own walks the
 // instance's members, and an override walks whatever it says to instead.
 // Mark bodies are run on collector, between its instructions.
-void zam_gc_collect(ZamVM *vm, ZamThread *collector);
+bool zam_gc_collect(ZamVM *vm, ZamThread *collector, bool major);
+
+// zam_gc_deletes_custom reports whether an allocation of the kind and type has
+// a Delete of the program's own, which decides the list it is kept on.
+bool zam_gc_deletes_custom(ZamVM *vm, ZamObjectKind kind, ZamTypeShort shortID);
 
 // zam_gc_collecting reports whether the thread is running a collection, which
 // is when mark(x) and Object's Mark mean anything.

@@ -1,0 +1,480 @@
+#include "heap.h"
+
+#include <sys/mman.h>
+
+#ifndef MAP_NORESERVE
+#define MAP_NORESERVE 0
+#endif
+
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ZAMHEAP_ASAN 1
+#endif
+#endif
+#if defined(__SANITIZE_ADDRESS__)
+#define ZAMHEAP_ASAN 1
+#endif
+
+#ifdef ZAMHEAP_ASAN
+#include <sanitizer/asan_interface.h>
+// A free block is poisoned but for the link at its front, so that a sanitized
+// build reports a write through a dangling pointer where it happens.
+#define POISON(at, bytes) ASAN_POISON_MEMORY_REGION((at), (bytes))
+#define UNPOISON(at, bytes) ASAN_UNPOISON_MEMORY_REGION((at), (bytes))
+#else
+#define POISON(at, bytes) ((void)(at), (void)(bytes))
+#define UNPOISON(at, bytes) ((void)(at), (void)(bytes))
+#endif
+
+typedef enum PageState {
+    PAGE_FREE,
+    PAGE_SMALL,
+    PAGE_LARGE,
+    PAGE_LARGE_TAIL,
+} PageState;
+
+// A page of a free run has its length on the run's first and last page, which
+// is what lets a run being freed find the runs either side of it. The first
+// page also says when the run was freed, as the heap's epoch, and whether its
+// memory has been returned to the system since. A small page
+// keeps its own free list; a block freed into it by a thread other than the
+// one allocating from it goes onto remoteFree instead, for the owner to take.
+struct ZamHeapPage {
+    uint8_t state;
+    uint8_t sizeClass;
+    bool listed;
+    uint32_t used;
+    uint32_t carved;
+    uint64_t runPages;
+    uint64_t freedAt;
+    bool returned;
+    const ZamHeapCache *owner;
+    void *freeList;
+    _Atomic(void *) remoteFree;
+    uint64_t next;
+    uint64_t prev;
+};
+
+static const uint32_t classBytes[ZAMHEAP_CLASS_COUNT] = {
+    16,    32,    48,    64,    80,    96,    112,   128,   160,   192,
+    224,   256,   320,   384,   448,   512,   640,   768,   896,   1024,
+    1280,  1536,  1792,  2048,  2560,  3072,  3584,  4096,  5120,  6144,
+    7168,  8192,  10240, 12288, 14336, 16384, 20480, 24576, 28672, 32768,
+};
+
+_Static_assert(ZAMHEAP_SMALL_MAX_BYTES == 32768,
+               "the last size class must be the largest small block");
+
+static unsigned classOf(uint64_t byteCount) {
+    if (byteCount <= 128)
+        return (unsigned)((byteCount + 15) / 16) - 1;
+    unsigned c = 8;
+    while (classBytes[c] < byteCount)
+        c++;
+    return c;
+}
+
+static void poisonFree(void *block, uint64_t bytes) {
+#ifdef ZAMHEAP_ASAN
+    if (__asan_address_is_poisoned((uint8_t *)block + sizeof(void *)))
+        zam_die(ZAMEXIT_PANIC, "heap block %p freed twice\n", block);
+#endif
+    POISON((uint8_t *)block + sizeof(void *), bytes - sizeof(void *));
+}
+
+static uint64_t slotsOf(unsigned sizeClass) {
+    return ZAMHEAP_PAGE_BYTES / classBytes[sizeClass];
+}
+
+static void *reserve(uint64_t byteCount) {
+    void *at = mmap(NULL, byteCount, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
+    if (at == MAP_FAILED)
+        zam_die(ZAMEXIT_OOM,
+                "could not reserve %llu bytes of address space for the heap\n",
+                (unsigned long long)byteCount);
+    return at;
+}
+
+void zam_heap_init(ZamHeap *heap, uint64_t byteCount) {
+    *heap = (ZamHeap){0};
+    if (byteCount < ZAMHEAP_PAGE_BYTES)
+        byteCount = ZAMHEAP_PAGE_BYTES;
+    heap->pageCount = (byteCount + ZAMHEAP_PAGE_BYTES - 1) / ZAMHEAP_PAGE_BYTES;
+    heap->byteCount = heap->pageCount * ZAMHEAP_PAGE_BYTES;
+
+    // Over-reserved by a page so the base can be rounded up to one, which is
+    // what makes a block's page its address divided by the page size.
+    uint8_t *raw = reserve(heap->byteCount + ZAMHEAP_PAGE_BYTES);
+    uint8_t *base = (uint8_t *)(((uintptr_t)raw + ZAMHEAP_PAGE_BYTES - 1) &
+                                ~(uintptr_t)(ZAMHEAP_PAGE_BYTES - 1));
+    heap->reservation = raw;
+    heap->base = base;
+    heap->cards = reserve(heap->byteCount >> ZAMHEAP_CARD_SHIFT);
+    heap->pages = reserve(heap->pageCount * sizeof *heap->pages);
+    pthread_mutex_init(&heap->lock, NULL);
+}
+
+void zam_heap_destroy(ZamHeap *heap) {
+    if (heap->reservation == NULL)
+        return;
+    munmap(heap->reservation, heap->byteCount + ZAMHEAP_PAGE_BYTES);
+    munmap(heap->cards, heap->byteCount >> ZAMHEAP_CARD_SHIFT);
+    munmap(heap->pages, heap->pageCount * sizeof *heap->pages);
+    pthread_mutex_destroy(&heap->lock);
+    *heap = (ZamHeap){0};
+}
+
+static uint64_t pageIndexOf(const ZamHeap *heap, const void *at) {
+    return ((uintptr_t)at - (uintptr_t)heap->base) / ZAMHEAP_PAGE_BYTES;
+}
+
+static uint8_t *pageAddress(const ZamHeap *heap, uint64_t index) {
+    return heap->base + index * ZAMHEAP_PAGE_BYTES;
+}
+
+static void listPush(ZamHeap *heap, uint64_t *head, uint64_t index) {
+    ZamHeapPage *page = &heap->pages[index];
+    page->prev = 0;
+    page->next = *head;
+    if (*head != 0)
+        heap->pages[*head - 1].prev = index + 1;
+    *head = index + 1;
+}
+
+static void listRemove(ZamHeap *heap, uint64_t *head, uint64_t index) {
+    ZamHeapPage *page = &heap->pages[index];
+    if (page->prev != 0)
+        heap->pages[page->prev - 1].next = page->next;
+    else
+        *head = page->next;
+    if (page->next != 0)
+        heap->pages[page->next - 1].prev = page->prev;
+    page->next = page->prev = 0;
+}
+
+// returnPages gives a run's memory back to the system, keeping the address
+// range. What it held may read as anything afterwards, which is no more than
+// the allocator ever promises of a fresh block.
+static void returnPages(uint8_t *at, uint64_t byteCount) {
+#if defined(MADV_FREE_REUSABLE)
+    madvise(at, byteCount, MADV_FREE_REUSABLE);
+#elif defined(MADV_FREE)
+    madvise(at, byteCount, MADV_FREE);
+#else
+    madvise(at, byteCount, MADV_DONTNEED);
+#endif
+}
+
+// reusePages takes back memory returnPages gave away, which only the system
+// whose accounting needs telling has a word for.
+static void reusePages(uint8_t *at, uint64_t byteCount) {
+#if defined(MADV_FREE_REUSE)
+    madvise(at, byteCount, MADV_FREE_REUSE);
+#else
+    (void)at;
+    (void)byteCount;
+#endif
+}
+
+static void runInsert(ZamHeap *heap, uint64_t first, uint64_t count,
+                      uint64_t freedAt, bool returned) {
+    for (uint64_t index = first; index < first + count; index++)
+        heap->pages[index] = (ZamHeapPage){.state = PAGE_FREE};
+    heap->pages[first].runPages = count;
+    heap->pages[first].freedAt = freedAt;
+    heap->pages[first].returned = returned;
+    heap->pages[first + count - 1].runPages = count;
+    listPush(heap, &heap->freeRuns, first);
+}
+
+// releaseRun frees a run of pages, joining it with a free run either side.
+// The run is freed now and its memory still held, whatever its neighbours had
+// been. The caller holds the lock.
+static void releaseRun(ZamHeap *heap, uint64_t first, uint64_t count) {
+    if (first > 0 && heap->pages[first - 1].state == PAGE_FREE) {
+        uint64_t before = first - heap->pages[first - 1].runPages;
+        uint64_t beforeCount = heap->pages[before].runPages;
+        listRemove(heap, &heap->freeRuns, before);
+        first = before;
+        count += beforeCount;
+    }
+    uint64_t after = first + count;
+    if (after < heap->frontier && heap->pages[after].state == PAGE_FREE) {
+        uint64_t afterCount = heap->pages[after].runPages;
+        listRemove(heap, &heap->freeRuns, after);
+        count += afterCount;
+    }
+    runInsert(heap, first, count, heap->epoch, false);
+}
+
+// takeRun hands out count contiguous pages, from the first free run long
+// enough or else from past the frontier. The caller holds the lock.
+static uint64_t takeRun(ZamHeap *heap, uint64_t count) {
+    for (uint64_t entry = heap->freeRuns; entry != 0;
+         entry = heap->pages[entry - 1].next) {
+        uint64_t first = entry - 1;
+        uint64_t length = heap->pages[first].runPages;
+        if (length < count)
+            continue;
+        uint64_t freedAt = heap->pages[first].freedAt;
+        bool returned = heap->pages[first].returned;
+        listRemove(heap, &heap->freeRuns, first);
+        if (length > count)
+            runInsert(heap, first + count, length - count, freedAt, returned);
+        if (returned)
+            reusePages(pageAddress(heap, first), count * ZAMHEAP_PAGE_BYTES);
+        return first;
+    }
+
+    if (count > heap->pageCount - heap->frontier)
+        zam_die(ZAMEXIT_OOM,
+                "the heap is out of its %llu bytes; raise the maximum heap "
+                "size\n",
+                (unsigned long long)heap->byteCount);
+    uint64_t first = heap->frontier;
+    heap->frontier += count;
+    return first;
+}
+
+// drainRemote takes back what other threads freed into a page.
+static void drainRemote(ZamHeapPage *page) {
+    void *remote = atomic_exchange(&page->remoteFree, NULL);
+    while (remote != NULL) {
+        void *next = *(void **)remote;
+        *(void **)remote = page->freeList;
+        page->freeList = remote;
+        page->used--;
+        remote = next;
+    }
+}
+
+static void *takeSlot(ZamHeap *heap, uint64_t index) {
+    ZamHeapPage *page = &heap->pages[index];
+    if (page->freeList == NULL && page->carved == slotsOf(page->sizeClass))
+        drainRemote(page);
+    if (page->freeList != NULL) {
+        void *block = page->freeList;
+        page->freeList = *(void **)block;
+        page->used++;
+        UNPOISON(block, classBytes[page->sizeClass]);
+        return block;
+    }
+    if (page->carved < slotsOf(page->sizeClass)) {
+        void *block = pageAddress(heap, index) +
+                      (uint64_t)page->carved * classBytes[page->sizeClass];
+        page->carved++;
+        page->used++;
+        return block;
+    }
+    return NULL;
+}
+
+// settle puts a page no cache owns where its occupancy says it belongs: freed
+// when empty, on its class's list when it has room. The caller holds the lock.
+static void settle(ZamHeap *heap, uint64_t index) {
+    ZamHeapPage *page = &heap->pages[index];
+    uint64_t *list = &heap->available[page->sizeClass];
+    if (page->used == 0) {
+        if (page->listed)
+            listRemove(heap, list, index);
+        releaseRun(heap, index, 1);
+        return;
+    }
+    if (!page->listed && page->used < slotsOf(page->sizeClass)) {
+        listPush(heap, list, index);
+        page->listed = true;
+    }
+}
+
+// retire gives a page back from a cache. The caller holds the lock, which is
+// what keeps a thread freeing into the page from seeing it owned after its
+// last remote push was drained.
+static void retire(ZamHeap *heap, uint64_t index) {
+    ZamHeapPage *page = &heap->pages[index];
+    drainRemote(page);
+    page->owner = NULL;
+    settle(heap, index);
+}
+
+static uint64_t acquire(ZamHeap *heap, const ZamHeapCache *cache,
+                        unsigned sizeClass) {
+    uint64_t *list = &heap->available[sizeClass];
+    if (*list != 0) {
+        uint64_t index = *list - 1;
+        listRemove(heap, list, index);
+        heap->pages[index].listed = false;
+        heap->pages[index].owner = cache;
+        return index;
+    }
+
+    uint64_t index = takeRun(heap, 1);
+    heap->pages[index] = (ZamHeapPage){
+        .state = PAGE_SMALL,
+        .sizeClass = (uint8_t)sizeClass,
+        .owner = cache,
+    };
+    return index;
+}
+
+static void *allocLarge(ZamHeap *heap, uint64_t byteCount) {
+    uint64_t count = (byteCount + ZAMHEAP_PAGE_BYTES - 1) / ZAMHEAP_PAGE_BYTES;
+    pthread_mutex_lock(&heap->lock);
+    uint64_t first = takeRun(heap, count);
+    heap->pages[first] = (ZamHeapPage){.state = PAGE_LARGE, .runPages = count};
+    for (uint64_t index = first + 1; index < first + count; index++)
+        heap->pages[index] = (ZamHeapPage){.state = PAGE_LARGE_TAIL};
+    pthread_mutex_unlock(&heap->lock);
+    return pageAddress(heap, first);
+}
+
+void *zam_heap_alloc(ZamHeap *heap, ZamHeapCache *cache, uint64_t byteCount) {
+    if (byteCount > ZAMHEAP_SMALL_MAX_BYTES)
+        return allocLarge(heap, byteCount);
+
+    unsigned sizeClass = classOf(byteCount == 0 ? 1 : byteCount);
+    for (;;) {
+        uint64_t entry = cache->pages[sizeClass];
+        if (entry != 0) {
+            void *block = takeSlot(heap, entry - 1);
+            if (block != NULL)
+                return block;
+        }
+
+        pthread_mutex_lock(&heap->lock);
+        if (entry != 0)
+            retire(heap, entry - 1);
+        cache->pages[sizeClass] = acquire(heap, cache, sizeClass) + 1;
+        pthread_mutex_unlock(&heap->lock);
+    }
+}
+
+void zam_heap_free(ZamHeap *heap, ZamHeapCache *cache, void *block) {
+    uint64_t index = pageIndexOf(heap, block);
+    ZamHeapPage *page = &heap->pages[index];
+
+    if (page->state == PAGE_LARGE) {
+        pthread_mutex_lock(&heap->lock);
+        releaseRun(heap, index, page->runPages);
+        pthread_mutex_unlock(&heap->lock);
+        return;
+    }
+
+    poisonFree(block, classBytes[page->sizeClass]);
+    if (cache != NULL && page->owner == cache) {
+        *(void **)block = page->freeList;
+        page->freeList = block;
+        page->used--;
+        return;
+    }
+
+    pthread_mutex_lock(&heap->lock);
+    if (page->owner != NULL) {
+        void *head = atomic_load(&page->remoteFree);
+        do
+            *(void **)block = head;
+        while (!atomic_compare_exchange_weak(&page->remoteFree, &head, block));
+    } else {
+        *(void **)block = page->freeList;
+        page->freeList = block;
+        page->used--;
+        settle(heap, index);
+    }
+    pthread_mutex_unlock(&heap->lock);
+}
+
+void zam_heap_free_stopped(ZamHeap *heap, void *block) {
+    uint64_t index = pageIndexOf(heap, block);
+    ZamHeapPage *page = &heap->pages[index];
+    if (page->state == PAGE_LARGE) {
+        releaseRun(heap, index, page->runPages);
+        return;
+    }
+
+    poisonFree(block, classBytes[page->sizeClass]);
+    *(void **)block = page->freeList;
+    page->freeList = block;
+    page->used--;
+    if (page->owner == NULL)
+        settle(heap, index);
+}
+
+uint64_t zam_heap_size(const ZamHeap *heap, const void *block) {
+    const ZamHeapPage *page = &heap->pages[pageIndexOf(heap, block)];
+    if (page->state == PAGE_LARGE)
+        return page->runPages * ZAMHEAP_PAGE_BYTES;
+    return classBytes[page->sizeClass];
+}
+
+void zam_heap_release_cache(ZamHeap *heap, ZamHeapCache *cache) {
+    pthread_mutex_lock(&heap->lock);
+    for (unsigned sizeClass = 0; sizeClass < ZAMHEAP_CLASS_COUNT; sizeClass++) {
+        if (cache->pages[sizeClass] != 0)
+            retire(heap, cache->pages[sizeClass] - 1);
+        cache->pages[sizeClass] = 0;
+    }
+    pthread_mutex_unlock(&heap->lock);
+}
+
+uint64_t zam_heap_scavenge(ZamHeap *heap) {
+    pthread_mutex_lock(&heap->lock);
+    heap->epoch++;
+    uint64_t returned = 0;
+    for (uint64_t entry = heap->freeRuns; entry != 0;
+         entry = heap->pages[entry - 1].next) {
+        ZamHeapPage *page = &heap->pages[entry - 1];
+        if (page->returned || heap->epoch - page->freedAt < ZAMHEAP_RETURN_AGE)
+            continue;
+        uint64_t bytes = page->runPages * ZAMHEAP_PAGE_BYTES;
+        returnPages(pageAddress(heap, entry - 1), bytes);
+        page->returned = true;
+        returned += bytes;
+    }
+    pthread_mutex_unlock(&heap->lock);
+    return returned;
+}
+
+static uint64_t cardCount(const ZamHeap *heap) {
+    return heap->frontier * (ZAMHEAP_PAGE_BYTES >> ZAMHEAP_CARD_SHIFT);
+}
+
+void zam_heap_dirty_cards(ZamHeap *heap,
+                          void (*visit)(void *context, const uint8_t *start,
+                                        const uint8_t *end),
+                          void *context) {
+    uint64_t count = cardCount(heap);
+    for (uint64_t card = 0; card < count;) {
+        // A word of clean cards is skipped whole, the table being mostly clean.
+        if (card % sizeof(uint64_t) == 0 && card + sizeof(uint64_t) <= count) {
+            uint64_t word;
+            memcpy(&word, heap->cards + card, sizeof word);
+            if (word == 0) {
+                card += sizeof word;
+                continue;
+            }
+        }
+        if (heap->cards[card] == 0) {
+            card++;
+            continue;
+        }
+        uint64_t first = card;
+        while (card < count && heap->cards[card] != 0)
+            heap->cards[card++] = 0;
+
+        // A run is visited a page at a time, and a free page not at all:
+        // nothing on it is anything's to hold.
+        uint64_t perPage = ZAMHEAP_PAGE_BYTES >> ZAMHEAP_CARD_SHIFT;
+        for (uint64_t at = first; at < card;) {
+            uint64_t page = at / perPage;
+            uint64_t end = (page + 1) * perPage < card ? (page + 1) * perPage : card;
+            if (heap->pages[page].state != PAGE_FREE)
+                visit(context, heap->base + (at << ZAMHEAP_CARD_SHIFT),
+                      heap->base + (end << ZAMHEAP_CARD_SHIFT));
+            at = end;
+        }
+    }
+}
+
+void zam_heap_clear_cards(ZamHeap *heap) {
+    memset(heap->cards, 0, cardCount(heap));
+}

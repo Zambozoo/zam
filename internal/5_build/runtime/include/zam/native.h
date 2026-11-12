@@ -55,7 +55,18 @@ uint64_t zam_native_argument(ZamThread *thread, uint64_t wordIndex);
 // tells them apart by the top bit of the word. A native that treats a frame
 // location as a plain address segfaults as soon as it dereferences it; this
 // helper is the one safe way to read a pointer out of the frame.
+//
+// The card the pointer lands on, and the one after it, are marked as written
+// to, so a native may store references through it without telling the
+// collector. One that stores references further from the pointer than that
+// must call zam_native_write_barrier over what it wrote.
 void *zam_native_argument_pointer(ZamThread *thread, uint64_t wordIndex);
+
+// zam_native_write_barrier tells the collector that byteCount bytes at an
+// address may now hold references. A minor collection finds what old memory
+// holds of the young only through what it has been told was written.
+void zam_native_write_barrier(ZamThread *thread, const void *at,
+                              uint64_t byteCount);
 
 // zam_native_return leaves a value where the caller reads one, and
 // zam_native_return_void leaves the caller the stack it had before the call.
