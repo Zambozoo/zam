@@ -353,6 +353,27 @@ static inline void zam_list_push(ZamObjectList *list, void *object) {
     list->head = object;
 }
 
+// zam_list_push_shared is zam_list_push for an allocation the program may be
+// deleting meanwhile: the link is written in a single step that leaves the
+// state as the program left it.
+static inline void zam_list_push_shared(ZamObjectList *list, void *object) {
+    uint64_t *word = (uint64_t *)object;
+    uint64_t seen = __atomic_load_n(word, __ATOMIC_RELAXED);
+    for (;;) {
+        ZamMarkWord mark;
+        memcpy(&mark, &seen, sizeof mark);
+        mark.upvalue = (uintptr_t)list->head;
+        uint64_t next;
+        memcpy(&next, &mark, sizeof next);
+        if (__atomic_compare_exchange_n(word, &seen, next, true,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            break;
+    }
+    if (list->head == NULL)
+        list->tail = object;
+    list->head = object;
+}
+
 // zam_list_splice moves every allocation on from onto the front of into.
 static inline void zam_list_splice(ZamObjectList *into, ZamObjectList *from) {
     if (from->head == NULL)
@@ -367,6 +388,55 @@ static inline void zam_list_splice(ZamObjectList *into, ZamObjectList *from) {
 // zam_list_next is the allocation after one on its list.
 static inline void *zam_list_next(void *object) {
     return (void *)(uintptr_t)zam_mark_word_of(object)->upvalue;
+}
+
+// zam_mark_load is a copy of an allocation's mark word, read as a single step:
+// the collector may be changing its state or its link while the program
+// reads the rest.
+static inline ZamMarkWord zam_mark_load(const void *object) {
+    uint64_t seen = __atomic_load_n((const uint64_t *)object, __ATOMIC_RELAXED);
+    ZamMarkWord mark;
+    memcpy(&mark, &seen, sizeof mark);
+    return mark;
+}
+
+// zam_mark_kind_of is an allocation's kind, which never changes.
+static inline ZamObjectKind zam_mark_kind_of(const void *object) {
+    return (ZamObjectKind)zam_mark_load(object).kind;
+}
+
+// zam_mark_state_of is an allocation's state, read as a single step.
+static inline ZamMarkState zam_mark_state_of(const void *object) {
+    return (ZamMarkState)zam_mark_load(object).state;
+}
+
+// zam_mark_swap_state moves an allocation's state from one to another as a
+// single step, and reports whether it was in from. The concurrent marker and a
+// program deleting an allocation both change its state, and neither may lose
+// the other's change.
+static inline bool zam_mark_swap_state(void *object, ZamMarkState from,
+                                       ZamMarkState to) {
+    uint64_t *word = (uint64_t *)zam_mark_word_of(object);
+    uint64_t seen = __atomic_load_n(word, __ATOMIC_RELAXED);
+    for (;;) {
+        ZamMarkWord mark;
+        memcpy(&mark, &seen, sizeof mark);
+        if (mark.state != from)
+            return false;
+        mark.state = to;
+        uint64_t next;
+        memcpy(&next, &mark, sizeof next);
+        if (__atomic_compare_exchange_n(word, &seen, next, true,
+                                        __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+            return true;
+    }
+}
+
+// zam_mark_kill leaves an allocation dead whatever state it was in.
+static inline void zam_mark_kill(void *object) {
+    for (ZamMarkState state = ZAMMARK_STATE_WHITE;
+         !zam_mark_swap_state(object, state, ZAMMARK_STATE_DEAD);)
+        state = (ZamMarkState)zam_mark_word_of(object)->state;
 }
 
 // zam_object_header_of is the word after that, and is there for every kind but

@@ -54,9 +54,6 @@ public class Socket <: File* {
             native(STD_NET_LISTENER_FREE){void(uint)}(this.handle);
             this.handle = 0U;
         }
-
-        public fun void() Mark = () {
-        }
     }
 
     // Of wraps a connected socket's descriptor, which the Socket then owns.

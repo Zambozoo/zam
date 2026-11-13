@@ -149,8 +149,10 @@ public class TreeTrieMap[A, B] {
             joined[n.edgeLen + i] = c.edge[i];
         }
         var A* old = c.edge;
+        System.GC::Block();
         c.edge = joined;
         c.edgeLen = total;
+        System.GC::Unblock();
         free(old);
         this.setChild(parent, joined[0], c);
         free(n.edge);
@@ -244,8 +246,10 @@ public class TreeTrieMap[A, B] {
                 var A* rest = this.copyRun(c.edge, p, c.edgeLen - p);
                 this.setChild(mid, rest[0], c);
                 var A* old = c.edge;
+                System.GC::Block();
                 c.edge = rest;
                 c.edgeLen = c.edgeLen - p;
+                System.GC::Unblock();
                 free(old);
                 this.setChild(n, key[i], mid);
                 pin.s = null;

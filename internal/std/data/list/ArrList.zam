@@ -145,15 +145,17 @@ public class ArrList[A] {
         var uint srcPhys = (this.start + i) % this.cap;
         var uint dstPhys = (this.start + i + 1U) % this.cap;
         var uint count = this.len - i;
+        // Counted before the shift, so the last element is within what Mark
+        // walks once it has moved out of the slot it was in.
+        this.len++;
         if(srcPhys + count <= this.cap && dstPhys + count <= this.cap) {
             Arrs::[A]Copy(count, this.arr + srcPhys, this.arr + dstPhys);
         } else {
-            for(var uint j = this.len; j > i; j--) {
+            for(var uint j = this.len - 1U; j > i; j--) {
                 this.arr[(this.start + j) % this.cap] = this.arr[(this.start + j - 1U) % this.cap];
             }
         }
         this.arr[(this.start + i) % this.cap] = v;
-        this.len++;
     }
 
     public fun A() RemoveFirst = () {
@@ -236,8 +238,15 @@ public class ArrList[A] {
         return s + "]";
     }
 
+    // The list is emptied before its buffer is freed, so Mark never reads it
+    // freed.
     public fun void() Delete = () {
-        free(this.arr);
+        var A* arr = this.arr;
+        this.len = 0U;
+        this.cap = 0U;
+        this.start = 0U;
+        this.arr = null;
+        free(arr);
     }
 
     // Live elements of a circular buffer are at most two runs: from start to the

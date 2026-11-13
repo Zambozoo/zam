@@ -57,6 +57,9 @@ typedef enum ZamMarkKind {
     // address of one of its members, which keeps the object alive the way a
     // pointer to it would. Its distance is how far back the object lies.
     ZAMMARK_INTERIOR,
+    // ZAMMARK_PACK is a call whose variadic arguments are kept on the operand
+    // stack beneath its frame until it returns.
+    ZAMMARK_PACK,
 } ZamMarkKind;
 
 // The kind byte is the first field of every entry, sharing its word with one
@@ -92,7 +95,9 @@ typedef struct ZamMarkFunction {
     // receiverType is the type the receiver was passed as.
     uint64_t receiverType : 32;
     uint64_t direct : 1;
-    uint64_t spare : 31;
+    // heldBase is how many values the thread held when the call was made,
+    // which returning lets go of the rest of.
+    uint64_t heldBase : 31;
 } ZamMarkFunction;
 
 typedef struct ZamMarkObject {
@@ -146,6 +151,16 @@ typedef struct ZamMarkInterior {
     uint64_t distance;
 } ZamMarkInterior;
 
+typedef struct ZamMarkPack {
+    uint64_t kind : 8;
+    // previous is the mark offset of the enclosing pack entry.
+    uint64_t previous : ZAMMARK_LOCATION_BITS;
+    // frame is the operand stack offset the call began at, where the packed
+    // values lie once they are packed, and values is how many words they are.
+    uint64_t frame;
+    uint64_t values;
+} ZamMarkPack;
+
 // Entries are stacked with nothing between them, so a width that stopped being
 // a multiple of a word would misalign every entry above it.
 _Static_assert(sizeof(ZamMarkFunction) == 4 * ZAMWORD_BYTES, "function entry");
@@ -154,6 +169,7 @@ _Static_assert(sizeof(ZamMarkArray) == 3 * ZAMWORD_BYTES, "array entry");
 _Static_assert(sizeof(ZamMarkScope) == 2 * ZAMWORD_BYTES, "scope entry");
 _Static_assert(sizeof(ZamMarkValue) == 4 * ZAMWORD_BYTES, "value entry");
 _Static_assert(sizeof(ZamMarkInterior) == 2 * ZAMWORD_BYTES, "interior entry");
+_Static_assert(sizeof(ZamMarkPack) == 3 * ZAMWORD_BYTES, "pack entry");
 
 // zam_mark_entry_bytes is how wide an entry of the given kind is, header
 // included. Walking the stack forward is this applied to each header in turn.
@@ -266,11 +282,18 @@ struct ZamThread {
     uint64_t visitedCount;
     uint64_t visitedCapacity;
 
-    // functionEntry and scopeEntry are the mark offsets of the innermost open
-    // call and the innermost open scope, the heads of the two back pointer
+    // functionEntry, scopeEntry and packEntry are the mark offsets of the
+    // innermost open call, scope and pack, the heads of the three back pointer
     // chains. ZAMMARK_NONE when nothing of that kind is open.
     uint64_t functionEntry;
     uint64_t scopeEntry;
+    uint64_t packEntry;
+
+    // held is every receiver a method was called on that no location names,
+    // kept reachable until the expression it was called in ends.
+    ZamWord *held;
+    uint64_t heldCount;
+    uint64_t heldCapacity;
 
     // instructionOffset is where in the operations section the next instruction
     // begins, in bytes. A jump target is one of these.
@@ -289,10 +312,18 @@ struct ZamThread {
     // heapCache is the pages this thread allocates from without the heap lock.
     ZamHeapCache heapCache;
 
+    // dirtied is every address a native running on the thread was handed
+    // through zam_native_argument_pointer, whose cards are dirtied again once
+    // the native returns: the native writes through it after it is dirtied,
+    // and the marker may clean the card in between.
+    const void **dirtied;
+    uint64_t dirtiedCount;
+    uint64_t dirtiedCapacity;
+
     // state is guarded by the VM's collectionLock. gcBlockDepth is how many
     // GC.Block calls this thread has made that no GC.Unblock has matched yet,
     // and is read and written only by the thread itself.
-    ZamThreadState state;
+    _Atomic(ZamThreadState) state;
     uint64_t gcBlockDepth;
 
     // finalizing is the contained value an arena is running Delete on, which
@@ -458,6 +489,29 @@ bool zam_thread_frame_direct(const ZamThread *thread, ZamTypeID *receiverType);
 // began.
 void zam_thread_push_scope(ZamThread *thread);
 void zam_thread_pop_scope(ZamThread *thread);
+
+// zam_thread_hold keeps a value reachable until zam_thread_release, which lets
+// go of every value held since the innermost open call was made.
+void zam_thread_hold(ZamThread *thread, ZamWord value);
+void zam_thread_release(ZamThread *thread);
+
+// zam_thread_push_pack opens a pack at the top of the operand stack, where the
+// call it is for begins.
+void zam_thread_push_pack(ZamThread *thread);
+
+// zam_thread_sink_pack moves the innermost pack's call frame, everything from
+// where it began up to the top valueWords words, above those words, so that
+// they lie beneath the frame, and moves the frame's mark entries with it.
+void zam_thread_sink_pack(ZamThread *thread, uint64_t valueWords);
+
+// zam_thread_pop_pack drops the innermost pack's values from beneath what its
+// call left above them, with their mark entries, and closes it.
+void zam_thread_pop_pack(ZamThread *thread);
+
+// zam_thread_pack_of reports the innermost pack whose values lie directly
+// beneath the frame beginning at base, writing it to pack.
+bool zam_thread_pack_of(const ZamThread *thread, uint64_t base,
+                        ZamMarkPack *pack);
 
 // zam_thread_push_visited opens a set over a structural comparison and
 // zam_thread_pop_visited closes the innermost one. A descent that records

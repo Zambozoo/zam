@@ -52,17 +52,17 @@ static void stdDelete(ZamThread *thread) {
     if (pointer == NULL)
         zam_native_panic(thread, "STD_DELETE: null receiver");
 
-   ZamMarkWord *mark = zam_mark_word_of(pointer);
-    if (mark->contained && pointer == thread->finalizing) {
+   ZamMarkWord mark = zam_mark_load(pointer);
+    if (mark.contained && pointer == thread->finalizing) {
         zam_native_return_void(thread);
         return;
     }
-    if (mark->contained)
+    if (mark.contained)
         zam_native_panic(thread,
-                         mark->upvalue != 0
+                         mark.upvalue != 0
                              ? "deleted a member of another object"
                              : "deleted a value with no allocation");
-    mark->state = ZAMMARK_STATE_DEAD;
+    zam_mark_kill(pointer);
     zam_native_return_void(thread);
 }
 
@@ -1388,7 +1388,16 @@ uint64_t zam_native_argument(ZamThread *thread, uint64_t wordIndex) {
 void *zam_native_argument_pointer(ZamThread *thread, uint64_t wordIndex) {
     void *at = zam_thread_location_address(
         thread, zam_native_argument(thread, wordIndex));
+    if (!zam_heap_contains(&thread->vm->heap, at))
+        return at;
     zam_heap_dirty(&thread->vm->heap, at, ZAMHEAP_CARD_BYTES);
+    if (thread->dirtiedCount == thread->dirtiedCapacity) {
+        thread->dirtiedCapacity =
+            thread->dirtiedCapacity == 0 ? 8 : thread->dirtiedCapacity * 2;
+        thread->dirtied = zam_realloc(
+            thread->dirtied, thread->dirtiedCapacity * sizeof *thread->dirtied);
+    }
+    thread->dirtied[thread->dirtiedCount++] = at;
     return at;
 }
 

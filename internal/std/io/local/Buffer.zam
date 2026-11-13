@@ -187,7 +187,4 @@ public class Buffer {
         this.start = 0U;
         this.end = 0U;
     }
-
-    public fun void() Mark = () {
-    }
 }

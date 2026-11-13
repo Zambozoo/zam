@@ -2,6 +2,7 @@
 
 #include <pthread.h>
 #include <stdatomic.h>
+#include <time.h>
 
 #include "common.h"
 #include "heap.h"
@@ -13,6 +14,7 @@
 // ZamCollectionStats is what one collection did, for ZAM_GC_STATS.
 typedef struct ZamCollectionStats {
     uint64_t cards;
+    uint64_t precleaned;
     uint64_t retraced;
     uint64_t finalized;
     uint64_t survived;
@@ -78,11 +80,25 @@ typedef struct ZamVM {
     ZamObjectList young[ZAMYOUNG_COUNT];
     ZamObjectList survivors[ZAMYOUNG_COUNT];
 
+    // fresh is what was allocated while the marker runs, grey as it was
+    // allocated, and freshSurvivors what of it has survived one minor
+    // collection alongside the marker. What survives a second is promoted
+    // black for the marker to trace. The remark gathers both with the rest of
+    // the young generation.
+    ZamObjectList fresh[ZAMYOUNG_COUNT];
+    ZamObjectList freshSurvivors[ZAMYOUNG_COUNT];
+
     // old is the old generation, linked the same way: everything promoted.
     // Its marks are left black between collections, which is what stops a
     // minor collection tracing into it, and only the collector touches it.
     // Each old allocation is on one of its lists.
     ZamObjectList old[ZAMOLD_COUNT];
+
+    // The unswept lists are what a collection has yet to sweep, set aside
+    // from the lists above so that what survives can be put back on them.
+    ZamObjectList unsweptYoung[ZAMYOUNG_COUNT];
+    ZamObjectList unsweptSurvivors[ZAMYOUNG_COUNT];
+    ZamObjectList unsweptOld[ZAMOLD_COUNT];
 
     // heldCards is every card a minor collection found pointing into the young
     // generation, which it marks dirty again once it has swept: what those
@@ -122,6 +138,54 @@ typedef struct ZamVM {
     uint64_t collections;
     ZamCollectionStats current;
 
+    // concurrent has a major collection asked for by the heap's growth mark
+    // alongside the program, which ZAM_GC_CONCURRENT=0 turns off.
+    //
+    // A concurrent collection stops the program twice. The first stop marks
+    // what the threads and statics hold and sets marking; marker then traces
+    // from there while the program runs, allocating grey. The second, the
+    // remark, is the marker's: it marks again everything the program could
+    // have hidden a reference in meanwhile, and sweeps.
+    //
+    // finishRequested has the marker stop tracing and remark at once: the
+    // heap has grown too far, a major collection was asked for, or the VM is
+    // going. markerQuit has it end once it has.
+    //
+    // A minor collection asked for meanwhile collects only what was allocated
+    // since marking began, with the marker paused: markerPause asks it to
+    // stop at its next checkpoint, and markerParked says it has. markerBusy is
+    // set while it traces, when only a checkpoint is somewhere it can stop.
+    bool concurrent;
+    atomic_bool marking;
+
+    // sweeping is set from the remark until the marker has swept what it set
+    // aside, alongside the program; no collection starts meanwhile.
+    atomic_bool sweeping;
+    atomic_bool finishRequested;
+    bool markerQuit;
+    atomic_bool markerPause;
+    bool markerParked;
+    bool markerBusy;
+    _Atomic(ZamThread *) marker;
+    pthread_t markerThread;
+
+    // retrace is what the marker reached and could not trace alongside the
+    // program, for the remark to trace.
+    void **retrace;
+    uint64_t retraceCount;
+    uint64_t retraceCapacity;
+
+    // cycleStart is when the concurrent collection under way first stopped
+    // the program, cycleBefore and cycleYoung what the heap and the young
+    // generation held then, and initialPause, markTime and remarkPause how
+    // long its first stop, its marking and its remark took.
+    struct timespec cycleStart;
+    uint64_t cycleBefore;
+    uint64_t cycleYoung;
+    double initialPause;
+    double markTime;
+    double remarkPause;
+
     // collectionRequested is set by whichever thread crossed the threshold.
     // A collection happens only at a safepoint, between instructions: a thread
     // mid-instruction is a thread whose stacks do not yet say what they will.
@@ -156,9 +220,20 @@ typedef struct ZamVM {
     _Atomic uint8_t *customMarkDecls;
     _Atomic uint8_t *customDeleteDecls;
 
-    // collector is the thread collecting, while one is. Everything a
-    // collection runs runs on it, and every other thread is stopped.
-    ZamThread *collector;
+    // collector is the thread collecting, while one is. It and marker are read
+    // by threads in a safe region, which run alongside a collection. Everything a
+    // collection runs runs on it, and every other thread is stopped; the
+    // marker is the one thread that also runs what a collection does, while
+    // marking.
+    _Atomic(ZamThread *) collector;
+
+    // traceAllocations is set while the collector marks, when what a Mark
+    // allocates has to be traced as anything reached is.
+    bool traceAllocations;
+
+    // freshOnly is set while a minor collection runs alongside the marker, when
+    // only the fresh allocations youngSpans lays out are reached.
+    bool freshOnly;
 
     // gray is the collector's work: allocations it has reached and not yet
     // traced through.
@@ -178,6 +253,10 @@ typedef struct ZamVM {
     // a thread not reachable from here is a thread whose stack is not scanned.
    ZamThread main;
 } ZamVM;
+
+// zam_vm_marker_checkpoint is where the marker stops for a minor collection
+// that asked it to, between one piece of its work and the next.
+void zam_vm_marker_checkpoint(ZamVM *vm);
 
 void zam_vm_init(ZamVM *vm, const char *imagePath);
 

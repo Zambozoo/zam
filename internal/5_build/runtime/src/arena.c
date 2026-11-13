@@ -44,7 +44,7 @@ static uint8_t *arenaMemory(const ZamImage *image, uint8_t *arena,
     uint64_t count = zam_type_member_count(image, shortID);
     ZamMemberDefinition memory = zam_type_member(image, shortID, count - 1);
     // An arena made with no memory is laid out untailed, with no length word.
-   ZamObjectKind kind = (ZamObjectKind)zam_mark_word_of(arena)->kind;
+   ZamObjectKind kind = zam_mark_kind_of(arena);
     *capacity = kind == ZAMOBJECT_TAILED_INSTANCE ? zam_object_tail_length_of(arena) : 0;
     return arena + zam_object_header_bytes(kind) + memory.offset;
 }

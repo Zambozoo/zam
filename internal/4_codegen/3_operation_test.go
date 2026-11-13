@@ -282,7 +282,7 @@ namespace Main {
 
 // TestCallVariadicBoxesEachArg pins the same rule for a variadic any: each
 // element of the packed array is a box, not a word of the argument's own type.
-// Three ints means three boxes, because the array OpNewArray lays down is a
+// Three ints means three boxes, because the array OpPackArray lays down is a
 // run of one-word any pointers and each slot needs the pointer OpBoxAny
 // returns.
 func TestCallVariadicBoxesEachArg(t *testing.T) {
@@ -524,7 +524,7 @@ func countOpcodes(ops []operation, op Opcode) int {
 }
 
 // countUnaryOp returns how many times a unary opcode appears, which is what
-// catches an OpNewArray that would be hidden behind the length operand it
+// catches an OpPackArray that would be hidden behind the length operand it
 // takes as its immediate.
 func countUnaryOp(ops []operation, op Opcode) int {
 	count := 0
@@ -539,7 +539,7 @@ func countUnaryOp(ops []operation, op Opcode) int {
 // TestCallSpreadForwardsPointer pins the one shape a spread compiles to: the
 // callee's variadic parameter is one word of pointer regardless of how the
 // caller wrote it, so when a pointer is handed on with ... there is nothing
-// to pack and OpNewArray is not emitted. Writing the arguments out one at a
+// to pack and OpPackArray is not emitted. Writing the arguments out one at a
 // time would have landed one — the TestCallVariadicBoxesEachArg case covers
 // that path — so the opcode being absent is what says the forward took.
 func TestCallSpreadForwardsPointer(t *testing.T) {
@@ -555,8 +555,8 @@ namespace Main {
     }
 }
 `)
-	assert.Zero(t, countUnaryOp(reader.operations, OpNewArray),
-		"a spread of a pointer should not pack a fresh run with OpNewArray")
+	assert.Zero(t, countUnaryOp(reader.operations, OpPackArray),
+		"a spread of a pointer should not pack a fresh run with OpPackArray")
 }
 
 // TestCallSpreadForwardsAnotherVariadic covers the forwarding case: a function
@@ -577,14 +577,14 @@ namespace Main {
     }
 }
 `)
-	assert.Zero(t, countUnaryOp(reader.operations, OpNewArray),
-		"forwarding a variadic with ... should not pack a fresh run with OpNewArray")
+	assert.Zero(t, countUnaryOp(reader.operations, OpPackArray),
+		"forwarding a variadic with ... should not pack a fresh run with OpPackArray")
 }
 
 // TestCallSpreadDecaysArrayToPointer pins the array case: a run of elements
 // lies inline and is not a pointer, so what reaches the callee has to be the
 // address of its first element. That is the same decay a sum over an array
-// takes — emitArrayBase leaves OpAddressOf — and OpNewArray is still absent
+// takes — emitArrayBase leaves OpAddressOf — and OpPackArray is still absent
 // because the elements are not copied.
 func TestCallSpreadDecaysArrayToPointer(t *testing.T) {
 	reader := compileOperations(t, `
@@ -600,7 +600,7 @@ namespace Main {
     }
 }
 `)
-	assert.Zero(t, countUnaryOp(reader.operations, OpNewArray),
+	assert.Zero(t, countUnaryOp(reader.operations, OpPackArray),
 		"a spread of an array should decay to a pointer, not pack a fresh run")
 	assert.NotZero(t, countOpcodes(reader.operations, OpAddressOf),
 		"an array spread should decay to the array's address with OpAddressOf")

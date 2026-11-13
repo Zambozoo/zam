@@ -348,15 +348,18 @@ public class PairPriorityQueue[A, B] {
         return s + "]";
     }
 
+    // The heap is emptied before its nodes are freed, so Mark never walks a
+    // node already freed.
     public fun void() Delete = () {
         var Node[A, B]** ns = this.nodes();
-        for(var uint i = 0U; i < this.len; i++) {
-            free(ns[i]);
-        }
-        free(ns);
+        var uint len = this.len;
         this.roots[0] = null;
         this.roots[1] = null;
         this.len = 0U;
+        for(var uint i = 0U; i < len; i++) {
+            free(ns[i]);
+        }
+        free(ns);
     }
 
     public fun void() Mark = () {

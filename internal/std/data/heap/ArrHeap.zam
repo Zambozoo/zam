@@ -128,9 +128,10 @@ public class ArrHeap[A] {
 
     private fun A(uint) removeAt = (i) {
         var A old = this.arr[i];
-        this.len--;
-        if(i < this.len) {
-            this.arr[i] = this.arr[this.len];
+        var uint last = this.len - 1U;
+        this.arr[i] = this.arr[last];
+        this.len = last;
+        if(i < last) {
             this.trickleDown(i);
         }
         return old;
@@ -148,10 +149,11 @@ public class ArrHeap[A] {
         for(; this.cap < n;) {
             this.cap = this.cap * 2U;
         }
-        this.arr = new(A, this.cap);
+        var A* arr = new(A, this.cap);
         for(var uint i = 0U; i < this.len; i++) {
-            this.arr[i] = old[i];
+            arr[i] = old[i];
         }
+        this.arr = arr;
         free(old);
     }
 
@@ -242,11 +244,14 @@ public class ArrHeap[A] {
         return s + "]";
     }
 
+    // The heap is emptied before its storage is freed, so Mark never reads it
+    // freed.
     public fun void() Delete = () {
-        free(this.arr);
-        this.arr = null;
+        var A* arr = this.arr;
         this.len = 0U;
         this.cap = 0U;
+        this.arr = null;
+        free(arr);
     }
 
     public fun void() Mark = () {

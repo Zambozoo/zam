@@ -302,7 +302,4 @@ public class Matrix {
         this.rows = 0U;
         this.cols = 0U;
     }
-
-    public fun void() Mark = () {
-    }
 }

@@ -68,7 +68,8 @@ public class HashSet[A] {
 
     // rehash moves every element into fresh arrays, which are filled while the
     // old ones are still the set's, so the collector reaches every element
-    // throughout, and installed once they are full.
+    // throughout, and installed once they are full, with collection blocked
+    // so that Mark never reads the old arrays against the new capacity.
     private fun void() rehash = () {
         var uint newCap = HashSet::minCap;
         for(; newCap < (this.len + 1U) * 2U;) {
@@ -92,9 +93,11 @@ public class HashSet[A] {
         }
         var A* oldVals = this.vals;
         var byte* oldStates = this.states;
+        System.GC::Block();
         this.vals = vals;
         this.states = states;
         this.cap = newCap;
+        System.GC::Unblock();
         this.shift = shift;
         this.used = this.len;
         free(oldVals);
@@ -109,8 +112,8 @@ public class HashSet[A] {
         if(this.states[i] == HashSet::empty) {
             this.used++;
         }
-        this.states[i] = HashSet::full;
         this.vals[i] = v;
+        this.states[i] = HashSet::full;
         this.len++;
     }
 
@@ -178,14 +181,18 @@ public class HashSet[A] {
         return s + "}";
     }
 
+    // The set is emptied before its arrays are freed, so Mark never reads
+    // them freed.
     public fun void() Delete = () {
-        free(this.vals);
-        free(this.states);
-        this.vals = null;
-        this.states = null;
+        var A* vals = this.vals;
+        var byte* states = this.states;
         this.cap = 0U;
         this.len = 0U;
         this.used = 0U;
+        this.vals = null;
+        this.states = null;
+        free(vals);
+        free(states);
     }
 
     public fun void() Mark = () {

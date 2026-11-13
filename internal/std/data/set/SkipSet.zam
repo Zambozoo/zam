@@ -186,19 +186,23 @@ public class SkipSet[A] {
         return s + "}";
     }
 
+    // The SkipSet is emptied before its nodes are freed, so Mark never walks a
+    // node already freed.
     public fun void() Delete = () {
         if(this.heads == null) {
             return;
         }
-        for(var Node~[A]* n = this.heads[0].n; n != null;) {
+        var Node.Link[A]* heads = this.heads;
+        var Node~[A]* n = heads[0].n;
+        this.len = 0U;
+        this.heads = null;
+        this.tail = null;
+        for(; n != null;) {
             var Node~[A]* old = n;
             n = n.nexts[0].n;
             free(old);
         }
-        free(this.heads);
-        this.len = 0U;
-        this.heads = null;
-        this.tail = null;
+        free(heads);
     }
 
     public fun void() Mark = () {

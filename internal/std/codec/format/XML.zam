@@ -137,7 +137,4 @@ public class XML {
         native(STD_XML_RELEASE){void(uint)}(this.node);
         this.node = 0U;
     }
-
-    public fun void() Mark = () {
-    }
 }

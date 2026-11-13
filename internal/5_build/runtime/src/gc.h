@@ -17,6 +17,41 @@
 // Mark bodies are run on collector, between its instructions.
 bool zam_gc_collect(ZamVM *vm, ZamThread *collector, bool major);
 
+// zam_gc_begin is the first stop of a concurrent major collection: it leaves
+// both generations unreached, cleans the cards so that every store from here
+// on is seen, and marks what the threads and statics hold without tracing it.
+// Every thread but collector is stopped.
+void zam_gc_begin(ZamThread *collector);
+
+// zam_gc_mark_concurrently traces on the marker, alongside the program, until
+// there is nothing left to trace or the remark is asked for. An allocation
+// whose marking runs a Mark of the program's own is left for the remark. The
+// cards the program dirtied meanwhile are scanned and cleaned as it runs, so
+// the remark scans only those dirtied since.
+void zam_gc_mark_concurrently(ZamThread *marker);
+
+// zam_gc_collect_fresh is a minor collection of what was allocated while the
+// marker runs, with every thread stopped and the marker paused. What survives
+// stays grey for the remark.
+void zam_gc_collect_fresh(ZamThread *collector);
+
+// zam_gc_remark ends the marking of a concurrent major collection with every
+// thread but collector stopped. Whatever the program could have hidden a
+// reference in while the marker ran is marked again: the threads and statics
+// and every dirty card. Every Mark of the program's own runs here, once, for
+// everything reached. Then it finalizes, and sets aside what is to be swept.
+void zam_gc_remark(ZamThread *collector);
+
+// zam_gc_sweep_concurrently sweeps, on the marker and alongside the program,
+// what the remark set aside, and gives back to the system what has stayed
+// free. No collection runs until it is done.
+void zam_gc_sweep_concurrently(ZamThread *marker);
+
+// zam_gc_allocated is told of every allocation the collector makes, which is
+// reached already. One made while marking, by a Mark, is traced as well, since
+// it may hold what nothing else does; one a Delete makes is only kept.
+void zam_gc_allocated(ZamVM *vm, void *object);
+
 // zam_gc_deletes_custom reports whether an allocation of the kind and type has
 // a Delete of the program's own, which decides the list it is kept on.
 bool zam_gc_deletes_custom(ZamVM *vm, ZamObjectKind kind, ZamTypeShort shortID);

@@ -140,10 +140,11 @@ public class ArrPriorityQueue[A, B] {
 
     private fun (A, B)(uint) removeAt = (i) {
         var (A, B) old = this.entry(i);
-        this.len--;
-        if(i < this.len) {
-            this.arr[i] = this.arr[this.len];
-            this.vals[i] = this.vals[this.len];
+        var uint last = this.len - 1U;
+        this.arr[i] = this.arr[last];
+        this.vals[i] = this.vals[last];
+        this.len = last;
+        if(i < last) {
             this.trickleDown(i);
         }
         return old;
@@ -162,12 +163,14 @@ public class ArrPriorityQueue[A, B] {
         for(; this.cap < n;) {
             this.cap = this.cap * 2U;
         }
-        this.arr = new(A, this.cap);
-        this.vals = new(B, this.cap);
+        var A* arr = new(A, this.cap);
+        var B* vals = new(B, this.cap);
         for(var uint i = 0U; i < this.len; i++) {
-            this.arr[i] = old[i];
-            this.vals[i] = oldVals[i];
+            arr[i] = old[i];
+            vals[i] = oldVals[i];
         }
+        this.arr = arr;
+        this.vals = vals;
         free(old);
         free(oldVals);
     }
@@ -262,13 +265,17 @@ public class ArrPriorityQueue[A, B] {
         return s + "]";
     }
 
+    // The queue is emptied before its storage is freed, so Mark never reads
+    // it freed.
     public fun void() Delete = () {
-        free(this.arr);
-        free(this.vals);
-        this.arr = null;
-        this.vals = null;
+        var A* arr = this.arr;
+        var B* vals = this.vals;
         this.len = 0U;
         this.cap = 0U;
+        this.arr = null;
+        this.vals = null;
+        free(arr);
+        free(vals);
     }
 
     public fun void() Mark = () {

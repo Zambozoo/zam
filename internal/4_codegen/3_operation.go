@@ -393,6 +393,25 @@ const (
 	// worth drawing rather than a disagreement about it.
 	//   (code, elementCount) | [elements...,typeID] {elementMarkEntries?} -> [array] {markEntry?}
 	OpNewArray
+	// OpPackBegin opens a pack where a call with packed variadic arguments
+	// begins, before its callee is pushed.
+	//   (code) | [] -> [] {packEntry}
+	OpPackBegin
+	// OpPackArray is OpNewArray for a call's variadic arguments: the elements
+	// are kept, moved beneath the call's frame so that they stay rooted until
+	// the call returns, however the callee treats the array.
+	//   (code, elementCount) | [frame...,elements...,typeID] -> [elements...,frame...,array] {markEntry?}
+	OpPackArray
+	// OpPackEnd drops a pack's elements from beneath what its call left.
+	//   (code) | [elements...,result...] {packEntry} -> [result...]
+	OpPackEnd
+	// OpHold keeps the receiver on top of the stack reachable until the full
+	// expression it was called in ends, for one no location names.
+	//   (code) | [receiver] -> [receiver]
+	OpHold
+	// OpRelease ends a full expression, letting go of what it held.
+	//   (code) | [] -> []
+	OpRelease
 
 	// OpNewThread allocates a thread of the given type, moves the frame lying
 	// beneath its type id into that allocation, and pushes a reference to it. The
@@ -1009,6 +1028,9 @@ type (
 		// length of its body, since returning from one goes back to whatever
 		// called it rather than ending the run.
 		inMain bool
+		// held says the full expression being emitted holds a receiver, which
+		// is let go of once it ends.
+		held bool
 		// receiverInFrame says slot 0 of the frame holds the receiver itself
 		// rather than the closure the call was made through. That is true only of
 		// an initializer routine, which is entered by OpDefaultValue rather than
@@ -2479,6 +2501,13 @@ func (v *operationVisitor) VisitStmtExpr(s *syntax.StmtExpr) error {
 	if s.Expr == nil {
 		return nil
 	}
+	return v.fullExpression(func() error {
+		return v.emitExprStmt(s)
+	})
+}
+
+// emitExprStmt emits a statement made of one expression other than a return.
+func (v *operationVisitor) emitExprStmt(s *syntax.StmtExpr) error {
 	if s.Kind() == syntax.StmtKindDelete {
 		return v.emitDelete(s.Expr)
 	}
@@ -2609,7 +2638,9 @@ func (v *operationVisitor) VisitStmtVariable(s *syntax.StmtVariable) error {
 		v.emitDefaultValue(s.Type)
 		return nil
 	}
-	return v.emitValueAs(s.Expr, s.Type)
+	return v.fullExpression(func() error {
+		return v.emitValueAs(s.Expr, s.Type)
+	})
 }
 
 // VisitStmtUnpack declares each variable over the element of the tuple at its
@@ -2628,6 +2659,13 @@ func (v *operationVisitor) VisitStmtUnpack(s *syntax.StmtUnpack) error {
 		return nil
 	}
 
+	return v.fullExpression(func() error {
+		return v.emitUnpack(s)
+	})
+}
+
+// emitUnpack emits an unpack that has a tuple to unpack.
+func (v *operationVisitor) emitUnpack(s *syntax.StmtUnpack) error {
 	if literal, ok := s.Expr.(*syntax.ExprNAry); ok && literal.Kind() == syntax.ExprKindTuple && len(literal.Exprs) == len(s.Variables) {
 		for i, variable := range s.Variables {
 			if err := v.emitValueAs(literal.Exprs[i], variable.Type); err != nil {
@@ -2688,7 +2726,9 @@ func (v *operationVisitor) visitScoped(s syntax.Stmt) error {
 }
 
 func (v *operationVisitor) VisitStmtIf(s *syntax.StmtIf) error {
-	if err := v.emitValue(s.Condition); err != nil {
+	if err := v.fullExpression(func() error {
+		return v.emitValue(s.Condition)
+	}); err != nil {
 		return err
 	}
 	otherwise := v.emitJump(OpJumpIfFalse)
@@ -2749,7 +2789,9 @@ func (v *operationVisitor) emitLoop(s *syntax.StmtFor, loop *loopContext) (*jump
 	defer v.loops.Pop()
 
 	condition := v.byteOffset
-	if err := v.emitValue(s.Condition); err != nil {
+	if err := v.fullExpression(func() error {
+		return v.emitValue(s.Condition)
+	}); err != nil {
 		return nil, err
 	}
 	exhausted := v.emitJump(OpJumpIfFalse)
@@ -2780,7 +2822,9 @@ func (v *operationVisitor) VisitStmtSwitch(s *syntax.StmtSwitch) error {
 	v.enterScope()
 	switchType := s.Expr.ResolvedType()
 	v.declareVariable(switchVariableName, switchType)
-	if err := v.emitValue(s.Expr); err != nil {
+	if err := v.fullExpression(func() error {
+		return v.emitValue(s.Expr)
+	}); err != nil {
 		return err
 	}
 	value := syntax.NewExprIdentifier(switchVariableName, switchType)
@@ -2788,7 +2832,9 @@ func (v *operationVisitor) VisitStmtSwitch(s *syntax.StmtSwitch) error {
 	matches := make([][]*jumpOperation, len(s.Cases))
 	for i, c := range s.Cases {
 		for _, caseValue := range c.Values {
-			if err := v.emitValue(syntax.NewExprEqual(value, caseValue)); err != nil {
+			if err := v.fullExpression(func() error {
+				return v.emitValue(syntax.NewExprEqual(value, caseValue))
+			}); err != nil {
 				return err
 			}
 			unequal := v.emitJump(OpJumpIfFalse)
@@ -3107,8 +3153,28 @@ func (v *operationVisitor) emitVariadicPayload(packed []syntax.Expr, element syn
 		}
 	}
 	v.emitPushTypeID(element)
-	v.emit(newUnaryOp(OpNewArray, uint64(len(packed))))
+	if len(packed) == 0 {
+		v.emit(newUnaryOp(OpNewArray, 0))
+		return nil
+	}
+	v.emit(newUnaryOp(OpPackArray, uint64(len(packed))))
 	return nil
+}
+
+// packs reports whether the arguments feeding a variadic are packed into a
+// fresh run, which keeps them beneath the call's frame until it returns.
+func packs(packed []syntax.Expr) bool {
+	if len(packed) == 1 && spreadInner(packed[0]) != nil {
+		return false
+	}
+	return len(packed) != 0
+}
+
+// emitPackEnd drops a packed call's arguments from beneath what it left.
+func (v *operationVisitor) emitPackEnd(frame callFrame) {
+	if frame.packed {
+		v.emit(OpPackEnd)
+	}
 }
 
 // variadicElement returns what one argument of a function's trailing variadic
@@ -3169,10 +3235,6 @@ func (v *operationVisitor) emitValueAs(e syntax.Expr, target syntax.Type) error 
 // many slots as its layout does. Words are what say where the frame begins.
 func (v *operationVisitor) emitCallFrame(e *syntax.ExprNAry) (callFrame, error) {
 	callee := e.Exprs[0]
-	if err := v.emitValue(callee); err != nil {
-		return callFrame{}, err
-	}
-
 	parameters := callee.ResolvedType().(*syntax.TypeFunction).ParameterTypes
 	element := variadicElement(parameters)
 	fixed := len(parameters)
@@ -3181,6 +3243,14 @@ func (v *operationVisitor) emitCallFrame(e *syntax.ExprNAry) (callFrame, error) 
 	}
 
 	arguments := e.Exprs[1:]
+	packed := element != nil && packs(arguments[fixed:])
+	if packed {
+		v.emit(OpPackBegin)
+	}
+	if err := v.emitValue(callee); err != nil {
+		return callFrame{}, err
+	}
+
 	for i, argument := range arguments[:fixed] {
 		if err := v.emitValueAs(argument, parameters[i]); err != nil {
 			return callFrame{}, err
@@ -3194,7 +3264,9 @@ func (v *operationVisitor) emitCallFrame(e *syntax.ExprNAry) (callFrame, error) 
 		}
 	}
 
-	return v.frameShape(parameters)
+	frame, err := v.frameShape(parameters)
+	frame.packed = packed
+	return frame, err
 }
 
 // frameShape is how a call frame over the given parameters is measured: the
@@ -3215,8 +3287,9 @@ func (v *operationVisitor) frameShape(parameters []syntax.Type) (callFrame, erro
 
 // callFrame is the measure [operationVisitor.frameShape] gives a call frame.
 type callFrame struct {
-	words uint64
-	open  []syntax.Type
+	words  uint64
+	open   []syntax.Type
+	packed bool
 }
 
 // emitFrameCall emits a call over a frame of the given shape, pushing the type
@@ -3260,9 +3333,11 @@ func (v *operationVisitor) emitCall(e *syntax.ExprNAry) error {
 			panic("unreachable")
 		}
 		v.emit(newUnaryOp(OpCallNative, frame.words))
+		v.emitPackEnd(frame)
 		return nil
 	}
 	v.emitFrameCall(OpCallMethod, OpCallMethodOpen, frame)
+	v.emitPackEnd(frame)
 	return nil
 }
 
@@ -3306,11 +3381,6 @@ func (v *operationVisitor) directMethodCallee(callee syntax.Expr) (syntax.Expr, 
 // slot 0, the arguments above it, and the receiver's type id above the frame
 // for OpCallMethodDirect to resolve the method against.
 func (v *operationVisitor) emitDirectMethodCall(e *syntax.ExprNAry, object syntax.Expr, method *syntax.FieldMethod) error {
-	receiverType, err := v.emitDirectReceiver(object)
-	if err != nil {
-		return err
-	}
-
 	parameters := method.FieldType().(*syntax.TypeFunction).ParameterTypes
 	element := variadicElement(parameters)
 	fixed := len(parameters)
@@ -3319,6 +3389,15 @@ func (v *operationVisitor) emitDirectMethodCall(e *syntax.ExprNAry, object synta
 	}
 
 	arguments := e.Exprs[1:]
+	packed := element != nil && packs(arguments[fixed:])
+	if packed {
+		v.emit(OpPackBegin)
+	}
+	receiverType, err := v.emitDirectReceiver(object)
+	if err != nil {
+		return err
+	}
+
 	for i, argument := range arguments[:fixed] {
 		if err := v.emitValueAs(argument, parameters[i]); err != nil {
 			return err
@@ -3334,6 +3413,7 @@ func (v *operationVisitor) emitDirectMethodCall(e *syntax.ExprNAry, object synta
 	if err != nil {
 		return err
 	}
+	frame.packed = packed
 
 	// The receiver type sits beneath any open-width argument types, matching
 	// OpNewThreadOpen: openWords spends the open ids first and what remains is
@@ -3342,12 +3422,14 @@ func (v *operationVisitor) emitDirectMethodCall(e *syntax.ExprNAry, object synta
 	index := uint64(*method.Index())
 	if len(frame.open) == 0 {
 		v.emit(newBinaryOp(OpCallMethodDirect, index, frame.words))
+		v.emitPackEnd(frame)
 		return nil
 	}
 	for _, t := range frame.open {
 		v.emitPushTypeID(t)
 	}
 	v.emit(newTernaryOp(OpCallMethodDirectOpen, index, frame.words, uint64(len(frame.open))))
+	v.emitPackEnd(frame)
 	return nil
 }
 
@@ -3369,6 +3451,7 @@ func (v *operationVisitor) emitDirectReceiver(object syntax.Expr) (syntax.Type, 
 		if err := v.emitValue(object); err != nil {
 			return nil, err
 		}
+		v.emitHold(object)
 		return objectType, nil
 	}
 	if err := object.Accept(v); err != nil {
@@ -3412,6 +3495,7 @@ func (v *operationVisitor) emitAsync(e *syntax.ExprNAry) error {
 
 	v.emitPushTypeID(e.ResolvedType())
 	v.emitFrameCall(OpNewThread, OpNewThreadOpen, frame)
+	v.emitPackEnd(frame)
 	return nil
 }
 
@@ -4192,6 +4276,7 @@ func (v *operationVisitor) emitMethodSelection(object syntax.Expr, objectType sy
 		}
 		v.emitPushTypeID(objectType)
 		v.emit(selection)
+		v.emitHold(object)
 		return nil
 	}
 
@@ -4205,6 +4290,7 @@ func (v *operationVisitor) emitMethodSelection(object syntax.Expr, objectType sy
 	if !v.addressable(object) {
 		v.emitPushTypeID(objectType)
 		v.emit(selection)
+		v.emitHold(object)
 		return nil
 	}
 
@@ -4212,6 +4298,30 @@ func (v *operationVisitor) emitMethodSelection(object syntax.Expr, objectType sy
 	v.emitPushTypeID(syntax.NewWrappedType(syntax.TypeKindPointer, objectType))
 	v.emit(selection)
 	return nil
+}
+
+// emitHold keeps the receiver on top of the stack reachable until the full
+// expression ends, where no location names it: what its method returned may
+// point into it, and nothing else keeps it once the call returns.
+func (v *operationVisitor) emitHold(object syntax.Expr) {
+	if v.addressable(object) {
+		return
+	}
+	v.emit(OpHold)
+	v.held = true
+}
+
+// fullExpression emits a full expression, letting go of what it held once it
+// ends. The value it leaves is untouched.
+func (v *operationVisitor) fullExpression(emit func() error) error {
+	outer := v.held
+	v.held = false
+	err := emit()
+	if v.held {
+		v.emit(OpRelease)
+	}
+	v.held = outer
+	return err
 }
 
 // methodOpcode is how a method of the given declaration is reached. An interface

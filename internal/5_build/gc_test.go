@@ -210,6 +210,9 @@ namespace Main {
         var uint* slots;
 
         public fun void() Mark = () {
+            if (this.slots == null) {
+                return;
+            }
             for (var uint i = 0U; i < 4U; i++) {
                 if (this.slots[i] != 0U) {
                     mark((this.slots[i] ^ 257U){void*}{Box*});
@@ -275,8 +278,9 @@ namespace Main {
 }
 
 // TestCollectionStats churns past the nursery and the heap with ZAM_GC_STATS
-// set, which reports both kinds of collection, survivors kept young, and one
-// Delete of the program's own being run.
+// set, which reports minor collections and concurrent major ones, or major
+// ones stopping the program where concurrent collection is off, survivors kept
+// young, and one Delete of the program's own being run.
 func TestCollectionStats(t *testing.T) {
 	t.Parallel()
 	binary := compile(t, `import std("lang/*");
@@ -305,13 +309,384 @@ namespace Main {
     }
 }
 `)
-	stdout, stderr, status := runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY="}, binary)
+	for concurrent, major := range map[string]string{
+		"":  ` concurrent pause=[^\n]* remark=`,
+		"0": ` major pause=`,
+	} {
+		stdout, stderr, status := runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY=", "ZAM_GC_CONCURRENT=" + concurrent}, binary)
+		require.Zero(t, status, stderr)
+		assert.Equal(t, "300 true\n", stdout)
+		assert.Contains(t, stderr, " minor pause=")
+		assert.Regexp(t, major, stderr)
+		assert.Regexp(t, `finalized=[1-9]`, stderr)
+		assert.Regexp(t, `survived=[1-9]`, stderr)
+	}
+}
+
+// TestConcurrentMarkKeepsWhatTheProgramMoves holds an old chain long enough to
+// keep the marker busy, and while it marks moves a young box along the chain
+// through the stack, rewrites an encoded word only a Mark of the program's own
+// decodes, replaces and frees memory of the program's own that another such
+// Mark reads, and grows a list. The remark, and every minor collection run
+// alongside the marker meanwhile, has to find each of them.
+func TestConcurrentMarkKeepsWhatTheProgramMoves(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+import std("data/list/*");
+
+namespace Main {
+    class Box {
+        var str name;
+    }
+
+    class Node {
+        var Box* box;
+        var Node* next;
+    }
+
+    // Coded keeps a box only as a word its Mark decodes.
+    class Coded {
+        var uint word;
+
+        public fun void() Mark = () {
+            if (this.word != 0U) {
+                mark((this.word ^ 4099U){void*}{Box*});
+            }
+        }
+    }
+
+    // Slots keeps boxes encoded in memory of the program's own.
+    class Slots {
+        var uint* at;
+
+        public fun void() Mark = () {
+            if (this.at == null) {
+                return;
+            }
+            for (var uint i = 0U; i < 4U; i++) {
+                if (this.at[i] != 0U) {
+                    mark((this.at[i] ^ 257U){void*}{Box*});
+                }
+            }
+        }
+    }
+
+    static var str last = "";
+
+    static fun Box*(str) box = (name) {
+        var Box* b = new(Box);
+        b.name = name;
+        return b;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Node* head = null;
+        for (var int i = 0; i < 2000; i++) {
+            var Node* node = new(Node);
+            node.next = head;
+            head = node;
+        }
+        var Coded* coded = new(Coded);
+        var Slots* slots = new(Slots);
+        slots.at = new(uint, 4U);
+        for (var uint k = 0U; k < 4U; k++) {
+            slots.at[k] = 0U;
+        }
+        var ArrList[Box*]* list = ArrList::[Box*]New(0U);
+
+        var int bad = 0;
+        for (var int i = 0; i < 200; i++) {
+            var Node* n = head;
+            n.box = Main::box(i{str});
+            for (var int j = 0; j < 50; j++) {
+                var Box* held = n.box;
+                n.box = null;
+                n = n.next;
+                n.box = held;
+                Main::last = j{str} + "-churn";
+            }
+
+            var Box* c = Main::box(i{str} + "-coded");
+            coded.word = c{uint} ^ 4099U;
+            c = null;
+
+            var Box* s = Main::box(i{str} + "-slot");
+            var uint* old = slots.at;
+            var uint* fresh = new(uint, 4U);
+            for (var uint k = 0U; k < 4U; k++) {
+                fresh[k] = old[k];
+            }
+            slots.at = fresh;
+            fresh[(i % 4){uint}] = s{uint} ^ 257U;
+            s = null;
+            free(old);
+
+            list.AddLast(Main::box(i{str} + "-list"));
+            for (var int j = 0; j < 50; j++) {
+                Main::last = j{str} + "-churn";
+            }
+
+            if (n.box.name != i{str}) {
+                bad++;
+            }
+            if ((coded.word ^ 4099U){void*}{Box*}.name != i{str} + "-coded") {
+                bad++;
+            }
+            if ((slots.at[(i % 4){uint}] ^ 257U){void*}{Box*}.name != i{str} + "-slot") {
+                bad++;
+            }
+            if (list.Get(i{uint}).name != i{str} + "-list") {
+                bad++;
+            }
+        }
+        File::StdOut.WriteStr(bad{str} + "\n");
+    }
+}
+`)
+	// Where the remark lands is up to timing, so the program runs several
+	// times over.
+	for range 5 {
+		stdout, stderr, status := run(t, binary)
+		require.Zero(t, status, stderr)
+		assert.Equal(t, "0\n", stdout)
+	}
+	stdout, stderr, status := runVerified(t, binary)
 	require.Zero(t, status, stderr)
-	assert.Equal(t, "300 true\n", stdout)
-	assert.Contains(t, stderr, " minor pause=")
-	assert.Contains(t, stderr, " major pause=")
-	assert.Regexp(t, `finalized=[1-9]`, stderr)
-	assert.Regexp(t, `survived=[1-9]`, stderr)
+	assert.Equal(t, "0\n", stdout)
+	stdout, stderr, status = runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY=1"}, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "0\n", stdout)
+	assert.Regexp(t, ` concurrent pause=[^\n]* mark=[^\n]* precleaned=\d`, stderr)
+	assert.Regexp(t, ` minor pause=[^\n]* promoted=[1-9][^\n]* alongside=1`, stderr)
+}
+
+// TestConcurrentMarkKeepsContainersWhole churns containers through rehashes,
+// reused slots, edge splits and merges, growth and removal while concurrent
+// majors run, so that a remark lands mid-operation.
+func TestConcurrentMarkKeepsContainersWhole(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+import std("data/map/*");
+import std("data/trie/*");
+import std("data/heap/*");
+
+namespace Main {
+    // Key holds the strings of a key's run, which the collector does not
+    // trace.
+    class Key {
+        var str a;
+        var str b;
+        var str c;
+        var str* run;
+    }
+
+    static fun Key*(int) key = (i) {
+        var Key* k = new(Key);
+        k.a = (i % 3){str} + "a";
+        k.b = (i % 9){str} + "b";
+        k.c = i{str} + "c";
+        k.run = new(str, 3U);
+        k.run[0] = k.a;
+        k.run[1] = k.b;
+        k.run[2] = k.c;
+        return k;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var HashMap[str, str]* m = HashMap::[str, str]New(0U);
+        var HashTrieMap[str, int]* t = HashTrieMap::[str, int]New();
+        var ArrPriorityQueue[int, str]* q = ArrPriorityQueue::[int, str]New(0U);
+        var int bad = 0;
+        for(var int r = 0; r < 20; r++) {
+            for(var int i = 0; i < 100; i++) {
+                m.Put(i{str} + "k", i{str} + "v");
+                var Key* k = Main::key(i);
+                t.Put(3U, k.run, i);
+                free(k.run);
+                q.Add(i, i{str} + "q");
+            }
+            for(var int i = 0; i < 100; i = i + 2) {
+                m.Remove(i{str} + "k");
+                var Key* k = Main::key(i);
+                t.Remove(3U, k.run);
+                free(k.run);
+            }
+            for(var int i = 0; i < 100; i++) {
+                var Key* k = Main::key(i);
+                if(i % 2 == 1) {
+                    if(m.Get(i{str} + "k").0 != i{str} + "v" || t.Get(3U, k.run).0 != i) {
+                        bad++;
+                    }
+                    m.Remove(i{str} + "k");
+                    t.Remove(3U, k.run);
+                } else if(m.Get(i{str} + "k").1 || t.Get(3U, k.run).1) {
+                    bad++;
+                }
+                free(k.run);
+                var (int, str) e = q.RemoveMin();
+                if(e.0 != i || e.1 != i{str} + "q") {
+                    bad++;
+                }
+            }
+        }
+        File::StdOut.WriteStr(bad{str} + "\n");
+    }
+}
+`)
+	// Where the remark lands is up to timing, so the program runs several
+	// times over.
+	for range 5 {
+		stdout, stderr, status := run(t, binary)
+		require.Zero(t, status, stderr)
+		assert.Equal(t, "0\n", stdout)
+	}
+	stdout, stderr, status := runVerified(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "0\n", stdout)
+}
+
+// TestCollectionKeepsVariadicArguments passes freshly built references to
+// variadic calls whose callees allocate before storing them, let go of the
+// parameter, free the run, or run on a thread of their own, all of which the
+// arguments kept beneath the call's frame have to survive.
+func TestCollectionKeepsVariadicArguments(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+import std("data/list/*");
+
+namespace Main {
+    class Box {
+        var str name;
+    }
+
+    static fun Box*(str) box = (name) {
+        var Box* b = new(Box);
+        b.name = name;
+        return b;
+    }
+
+    static fun void() churn = () {
+        for(var int i = 0; i < 200; i++) {
+            var str s = i{str} + "-churn";
+        }
+    }
+
+    // last keeps its run only in a local, the parameter let go of.
+    static fun Box*(uint, Box*...) last = (n, boxes) {
+        var Box** run = boxes;
+        boxes = null;
+        Main::churn();
+        return run[n - 1U];
+    }
+
+    // freed releases its run before collecting.
+    static fun str(uint, Box*...) freed = (n, boxes) {
+        var str name = boxes[n - 1U].name;
+        free(boxes);
+        Main::churn();
+        return name;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int bad = 0;
+        for(var int i = 0; i < 300; i++) {
+            var ArrList[Box*]* l = ArrList::[Box*]New(2U, Main::box(i{str} + "a"), Main::box(i{str} + "b"));
+            if(l.Get(0U).name != i{str} + "a" || l.Get(1U).name != i{str} + "b") {
+                bad++;
+            }
+            var Box* nested = Main::last(2U, Main::box(i{str} + "c"), Main::last(1U, Main::box(i{str} + "d")));
+            if(nested.name != i{str} + "d") {
+                bad++;
+            }
+            if(Main::freed(1U, Main::box(i{str} + "e")) != i{str} + "e") {
+                bad++;
+            }
+            var thread[Box*] spawned = async(Main::last(2U, Main::box(i{str} + "f"), Main::box(i{str} + "g")));
+            Main::churn();
+            var Box* g = wait(spawned);
+            if(g.name != i{str} + "g") {
+                bad++;
+            }
+        }
+        File::StdOut.WriteStr(bad{str} + "\n");
+    }
+}
+`)
+	for _, concurrent := range []string{"0", "1"} {
+		stdout, stderr, status := runWith(t, []string{"ZAM_GC_VERIFY=", "ZAM_GC_CONCURRENT=" + concurrent}, binary)
+		require.Zero(t, status, stderr)
+		assert.Equal(t, "0\n", stdout)
+	}
+	stdout, stderr, status := runVerified(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "0\n", stdout)
+}
+
+// TestCollectionKeepsATemporaryReceiver reads memory a method hands out of an
+// owner nothing names, whose Delete frees that memory, while collections run
+// before the expression the owner was called in ends.
+func TestCollectionKeepsATemporaryReceiver(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    class Owner {
+        var uint* words;
+
+        public fun uint*() Words = () {
+            return this.words;
+        }
+
+        public fun void() Delete = () {
+            var uint* w = this.words;
+            this.words = null;
+            free(w);
+        }
+    }
+
+    static fun Owner*(uint) owner = (i) {
+        var Owner* o = new(Owner);
+        o.words = new(uint, 8U);
+        for(var uint k = 0U; k < 8U; k++) {
+            o.words[k] = i;
+        }
+        return o;
+    }
+
+    static fun uint(uint*) sum = (w) {
+        for(var int i = 0; i < 200; i++) {
+            var str s = i{str} + "-churn";
+        }
+        var uint total = 0U;
+        for(var uint k = 0U; k < 8U; k++) {
+            total = total + w[k];
+        }
+        return total;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int bad = 0;
+        for(var uint i = 0U; i < 2000U; i++) {
+            if(Main::sum(Main::owner(i).Words()) != i * 8U) {
+                bad++;
+            }
+        }
+        File::StdOut.WriteStr(bad{str} + "\n");
+    }
+}
+`)
+	for _, concurrent := range []string{"0", "1"} {
+		stdout, stderr, status := runWith(t, []string{"ZAM_GC_VERIFY=", "ZAM_GC_CONCURRENT=" + concurrent}, binary)
+		require.Zero(t, status, stderr)
+		assert.Equal(t, "0\n", stdout)
+	}
+	stdout, stderr, status := runVerified(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "0\n", stdout)
 }
 
 // TestRequestedCollections asks for a minor and then a major collection,

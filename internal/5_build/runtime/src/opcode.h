@@ -89,6 +89,11 @@
     OP(OpNew, 0)                                                               \
     OP(OpNewRun, 0)                                                            \
     OP(OpNewArray, 1)                                                          \
+    OP(OpPackBegin, 0)                                                         \
+    OP(OpPackArray, 1)                                                         \
+    OP(OpPackEnd, 0)                                                           \
+    OP(OpHold, 0)                                                              \
+    OP(OpRelease, 0)                                                           \
                                                                                \
     OP(OpNewThread, 1)                                                         \
     OP(OpNewThreadOpen, 2)                                                     \

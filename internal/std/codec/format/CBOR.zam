@@ -274,7 +274,4 @@ public class CBOR {
         native(STD_CBOR_RELEASE){void(uint)}(this.handle);
         this.handle = 0U;
     }
-
-    public fun void() Mark = () {
-    }
 }

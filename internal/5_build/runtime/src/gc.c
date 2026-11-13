@@ -4,30 +4,22 @@
 #include "opcode.h"
 #include "run.h"
 
+#include <sched.h>
+
 bool zam_gc_collecting(const ZamThread *thread) {
-    return thread->vm->collector == thread;
+    return thread->vm->collector == thread || thread->vm->marker == thread;
 }
 
 // allocationOf is the allocation a word points into, or NULL where it points
-// into nothing the collector owns: a frame location, the static region, or a
-// value standing inside nothing. An interior value is stepped out of to the
-// allocation that holds it.
+// into nothing the collector owns: a frame location, the static region, the
+// program's own memory, or nothing at all. An interior value is stepped out of
+// to the allocation that holds it. The heap answers rather than the word's
+// mark word, so that a word the marker read while the program was changing it
+// is never trusted to point at one.
 static void *allocationOf(ZamVM *vm, ZamWord word) {
     if (word == 0 || zam_is_frame_location(word))
         return NULL;
-
-    uint8_t *at = (uint8_t *)(uintptr_t)word;
-    if (at >= vm->statics && at < vm->statics + vm->image.staticRegionByteCount)
-        return NULL;
-
-    for (;;) {
-       ZamMarkWord *mark = zam_mark_word_of(at);
-        if (!mark->contained)
-            return at;
-        if (mark->upvalue == 0)
-            return NULL;
-        at -= mark->upvalue;
-    }
+    return zam_heap_object_of(&vm->heap, (const void *)(uintptr_t)word);
 }
 
 static void pushGray(ZamVM *vm, void *object) {
@@ -38,17 +30,23 @@ static void pushGray(ZamVM *vm, void *object) {
     vm->gray[vm->grayCount++] = object;
 }
 
+static void *youngAllocationOf(const ZamVM *vm, ZamWord word);
+
 // reach says the allocation a word points into is reachable, queueing it to be
-// traced the first time it is said.
+// traced the first time it is said. A minor collection alongside the marker
+// reaches only what it collects, leaving everything else to the marker.
 static void reach(ZamVM *vm, ZamWord word) {
-    void *object = allocationOf(vm, word);
-    if (object == NULL)
+    void *object = vm->freshOnly ? youngAllocationOf(vm, word)
+                                 : allocationOf(vm, word);
+    if (object == NULL ||
+        !zam_mark_swap_state(object, ZAMMARK_STATE_WHITE, ZAMMARK_STATE_BLACK))
         return;
-   ZamMarkWord *mark = zam_mark_word_of(object);
-    if (mark->state != ZAMMARK_STATE_WHITE)
-        return;
-    mark->state = ZAMMARK_STATE_BLACK;
     pushGray(vm, object);
+}
+
+void zam_gc_allocated(ZamVM *vm, void *object) {
+    if (vm->traceAllocations)
+        pushGray(vm, object);
 }
 
 // call runs one of Object's methods on the instance at a location. What a
@@ -245,10 +243,13 @@ static void markStack(ZamThread *collector, ZamThread *thread) {
         }
         case ZAMMARK_FUNCTION:
         case ZAMMARK_SCOPE:
+        case ZAMMARK_PACK:
             break;
         }
         at += zam_mark_entry_bytes(kind);
     }
+    for (uint64_t index = 0; index < thread->heldCount; index++)
+        reach(vm, thread->held[index]);
 }
 
 static int compareSpans(const void *left, const void *right) {
@@ -266,25 +267,41 @@ static ZamObjectList *youngLists(ZamVM *vm, uint64_t index) {
 
 #define YOUNG_LIST_COUNT (2 * ZAMYOUNG_COUNT)
 
+// addSpans adds every allocation on a list to the spans.
+static void addSpans(ZamVM *vm, const ZamObjectList *list) {
+    for (void *object = list->head; object != NULL;
+         object = zam_list_next(object)) {
+        if (vm->youngSpanCount == vm->youngSpanCapacity) {
+            vm->youngSpanCapacity =
+                vm->youngSpanCapacity == 0 ? 64 : vm->youngSpanCapacity * 2;
+            vm->youngSpans = zam_realloc(
+                vm->youngSpans,
+                vm->youngSpanCapacity * 2 * sizeof *vm->youngSpans);
+        }
+        uintptr_t *span = vm->youngSpans + vm->youngSpanCount * 2;
+        span[0] = (uintptr_t)object;
+        span[1] = span[0] + zam_heap_size(&vm->heap, object);
+        vm->youngSpanCount++;
+    }
+}
+
 // collectYoungSpans lays the young generation out by address, so a word can be
 // asked which young allocation, if any, it points into.
 static void collectYoungSpans(ZamVM *vm) {
     vm->youngSpanCount = 0;
     for (uint64_t list = 0; list < YOUNG_LIST_COUNT; list++)
-        for (void *object = youngLists(vm, list)->head; object != NULL;
-             object = zam_list_next(object)) {
-            if (vm->youngSpanCount == vm->youngSpanCapacity) {
-                vm->youngSpanCapacity =
-                    vm->youngSpanCapacity == 0 ? 64 : vm->youngSpanCapacity * 2;
-                vm->youngSpans = zam_realloc(
-                    vm->youngSpans,
-                    vm->youngSpanCapacity * 2 * sizeof *vm->youngSpans);
-            }
-            uintptr_t *span = vm->youngSpans + vm->youngSpanCount * 2;
-            span[0] = (uintptr_t)object;
-            span[1] = span[0] + zam_heap_size(&vm->heap, object);
-            vm->youngSpanCount++;
-        }
+        addSpans(vm, youngLists(vm, list));
+    qsort(vm->youngSpans, vm->youngSpanCount, 2 * sizeof *vm->youngSpans,
+          compareSpans);
+}
+
+// collectFreshSpans is collectYoungSpans over the fresh lists alone.
+static void collectFreshSpans(ZamVM *vm) {
+    vm->youngSpanCount = 0;
+    for (uint64_t list = 0; list < ZAMYOUNG_COUNT; list++) {
+        addSpans(vm, &vm->fresh[list]);
+        addSpans(vm, &vm->freshSurvivors[list]);
+    }
     qsort(vm->youngSpans, vm->youngSpanCount, 2 * sizeof *vm->youngSpans,
           compareSpans);
 }
@@ -517,11 +534,10 @@ static void retraceCustom(ZamThread *collector) {
             }
 }
 
-// markRoots marks everything a thread or a static holds, and in a minor
-// collection everything a dirty card holds and every old Mark of the
-// program's own reaches. The thread list is read before
-// anything is marked, a Mark body being able to start a thread.
-static void markRoots(ZamThread *collector, bool major) {
+// markHeld marks everything a thread or a static holds, without tracing it.
+// The thread list is read before anything is marked, a Mark body being able to
+// start a thread.
+static void markHeld(ZamThread *collector) {
    ZamVM *vm = collector->vm;
 
     pthread_mutex_lock(&vm->threadLock);
@@ -551,7 +567,14 @@ static void markRoots(ZamThread *collector, bool major) {
         uint64_t slot = zam_image_static_root(&vm->image, index, &type);
         markValue(collector, (ZamWord)(uintptr_t)zam_vm_static(vm, slot), type);
     }
+}
 
+// markRoots marks everything a thread or a static holds, and in a minor
+// collection everything a dirty card holds and every old Mark of the
+// program's own reaches.
+static void markRoots(ZamThread *collector, bool major) {
+   ZamVM *vm = collector->vm;
+    markHeld(collector);
     if (!major) {
         zam_heap_dirty_cards(&vm->heap, markCards, vm);
         retraceCustom(collector);
@@ -566,17 +589,14 @@ static void markRoots(ZamThread *collector, bool major) {
 // collection rather than finalized alongside it, so that an instance deleting
 // what it owns never deletes what the collector has already finalized.
 // Whatever it deletes is freed with it.
-static void finalize(ZamThread *collector, bool major) {
+static void finalizeLists(ZamThread *collector, ZamObjectList *const *lists,
+                          size_t listCount) {
    ZamVM *vm = collector->vm;
 
     uint64_t count = 0;
     uint64_t capacity = 0;
     void **unreachable = NULL;
-    ZamObjectList *lists[] = {
-        &vm->young[ZAMYOUNG_DELETES], &vm->survivors[ZAMYOUNG_DELETES],
-        major ? &vm->old[ZAMOLD_DELETES] : NULL,
-        major ? &vm->old[ZAMOLD_BOTH] : NULL};
-    for (size_t list = 0; list < sizeof lists / sizeof *lists; list++)
+    for (size_t list = 0; list < listCount; list++)
         for (void *object = lists[list] != NULL ? lists[list]->head : NULL;
              object != NULL; object = zam_list_next(object)) {
             if (zam_mark_word_of(object)->state != ZAMMARK_STATE_WHITE)
@@ -603,6 +623,7 @@ static void finalize(ZamThread *collector, bool major) {
             mark->state = ZAMMARK_STATE_WHITE;
     }
 
+    vm->traceAllocations = false;
     for (uint64_t index = 0; index < count; index++)
         if (zam_mark_word_of(unreachable[index])->state == ZAMMARK_STATE_WHITE) {
             call(collector, (ZamWord)(uintptr_t)unreachable[index],
@@ -610,6 +631,15 @@ static void finalize(ZamThread *collector, bool major) {
             vm->current.finalized++;
         }
     free(unreachable);
+}
+
+static void finalize(ZamThread *collector, bool major) {
+   ZamVM *vm = collector->vm;
+    ZamObjectList *const lists[] = {
+        &vm->young[ZAMYOUNG_DELETES], &vm->survivors[ZAMYOUNG_DELETES],
+        major ? &vm->old[ZAMOLD_DELETES] : NULL,
+        major ? &vm->old[ZAMOLD_BOTH] : NULL};
+    finalizeLists(collector, lists, sizeof lists / sizeof *lists);
 }
 
 // release forgets a finished thread: it leaves the VM's list, its system
@@ -639,29 +669,55 @@ typedef enum SweepFate {
     SWEEP_PROMOTE,
     // A major collection's: promoted, nothing being young once it is done.
     SWEEP_KEEP,
+    // A first survival of a minor collection alongside the marker: onto the
+    // fresh survivors, grey, for the remark to mark as it marks anything
+    // allocated meanwhile.
+    SWEEP_FRESH,
+    // A second: promoted as SWEEP_PROMOTE is, and queued for the marker to
+    // trace, since what it holds may be reachable from nothing else.
+    SWEEP_HAND_OVER,
 } SweepFate;
 
 // sweepList frees every allocation on a list left unreachable or deleted, and
 // sends every other one where its fate says. An old allocation is left black
 // until the next major collection whitens it, which is what keeps a minor
 // collection from tracing into it.
+//
+// A sweep alongside the program frees through the heap's lock and keeps what
+// survives without disturbing a delete the program makes meanwhile. Only a
+// major collection's sweep runs alongside, so every survivor is kept.
 static void sweepList(ZamThread *collector, void *object, bool deletes,
-                      SweepFate fate) {
+                      SweepFate fate, bool alongside) {
    ZamVM *vm = collector->vm;
     uint64_t freed = 0;
     while (object != NULL) {
        ZamMarkWord *mark = zam_mark_word_of(object);
         void *next = zam_list_next(object);
 
-        bool live = mark->state == ZAMMARK_STATE_BLACK ||
-                    mark->state == ZAMMARK_STATE_GREY ||
+        ZamMarkState state = zam_mark_state_of(object);
+        bool live = state == ZAMMARK_STATE_BLACK ||
+                    state == ZAMMARK_STATE_GREY ||
                     (mark->kind == ZAMOBJECT_THREAD &&
                      ((ZamThread *)object)->state != ZAMTHREAD_EXITED);
         if (!live) {
             if (mark->kind == ZAMOBJECT_THREAD)
                 release(vm, (ZamThread *)object);
             freed += zam_heap_size(&vm->heap, object);
-            zam_heap_free_stopped(&vm->heap, object);
+            if (alongside)
+                zam_heap_free(&vm->heap, &collector->heapCache, object);
+            else
+                zam_heap_free_stopped(&vm->heap, object);
+        } else if (alongside) {
+            zam_mark_swap_state(object, ZAMMARK_STATE_GREY, ZAMMARK_STATE_BLACK);
+            ZamOldList list = (tracesCustom(vm, object) ? ZAMOLD_MARKS : 0) |
+                              (deletes ? ZAMOLD_DELETES : 0);
+            zam_list_push_shared(&vm->old[list], object);
+        } else if (fate == SWEEP_FRESH) {
+            mark->state = ZAMMARK_STATE_GREY;
+            zam_list_push(&vm->freshSurvivors[deletes ? ZAMYOUNG_DELETES
+                                                      : ZAMYOUNG_PLAIN],
+                          object);
+            vm->current.survived += zam_heap_size(&vm->heap, object);
         } else if (fate == SWEEP_SURVIVE) {
             mark->state = ZAMMARK_STATE_WHITE;
             zam_list_push(&vm->survivors[deletes ? ZAMYOUNG_DELETES
@@ -673,46 +729,60 @@ static void sweepList(ZamThread *collector, void *object, bool deletes,
             ZamOldList list = (tracesCustom(vm, object) ? ZAMOLD_MARKS : 0) |
                               (deletes ? ZAMOLD_DELETES : 0);
             zam_list_push(&vm->old[list], object);
-            if (fate == SWEEP_PROMOTE) {
+            if (fate != SWEEP_KEEP) {
                 uint64_t bytes = zam_heap_size(&vm->heap, object);
                 zam_heap_dirty(&vm->heap, object, bytes);
                 vm->current.promoted += bytes;
             }
+            if (fate == SWEEP_HAND_OVER)
+                pushGray(vm, object);
         }
         object = next;
     }
     atomic_fetch_sub(&vm->allocatedByteCount, freed);
 }
 
-// sweep frees what the collection left unreached. A minor collection promotes
-// its survivors' survivors and keeps the rest of the young generation as
-// survivors, then dirties again every card that held a young address. A major
-// collection promotes everything it keeps.
-static void sweep(ZamThread *collector, bool major) {
-   ZamVM *vm = collector->vm;
-    ZamObjectList young[ZAMYOUNG_COUNT];
-    ZamObjectList survivors[ZAMYOUNG_COUNT];
-    memcpy(young, vm->young, sizeof young);
-    memcpy(survivors, vm->survivors, sizeof survivors);
+// detach takes every list a collection is to sweep off the VM, onto the
+// unswept lists, leaving the VM's lists empty for what survives.
+static void detach(ZamVM *vm, bool major) {
+    memcpy(vm->unsweptYoung, vm->young, sizeof vm->young);
+    memcpy(vm->unsweptSurvivors, vm->survivors, sizeof vm->survivors);
     memset(vm->young, 0, sizeof vm->young);
     memset(vm->survivors, 0, sizeof vm->survivors);
-
+    memset(vm->unsweptOld, 0, sizeof vm->unsweptOld);
     if (major) {
-        ZamObjectList old[ZAMOLD_COUNT];
-        memcpy(old, vm->old, sizeof old);
+        memcpy(vm->unsweptOld, vm->old, sizeof vm->old);
         memset(vm->old, 0, sizeof vm->old);
-        for (int list = 0; list < ZAMOLD_COUNT; list++)
-            sweepList(collector, old[list].head,
-                      (list & ZAMOLD_DELETES) != 0, SWEEP_KEEP);
     }
+}
+
+// sweepDetached sweeps the unswept lists. A minor collection promotes its
+// survivors' survivors and keeps the rest of the young generation as
+// survivors. A major collection promotes everything it keeps.
+static void sweepDetached(ZamThread *collector, bool major, bool alongside) {
+   ZamVM *vm = collector->vm;
+    for (int list = 0; list < ZAMOLD_COUNT; list++)
+        sweepList(collector, vm->unsweptOld[list].head,
+                  (list & ZAMOLD_DELETES) != 0, SWEEP_KEEP, alongside);
     for (int list = 0; list < ZAMYOUNG_COUNT; list++) {
         bool deletes = list == ZAMYOUNG_DELETES;
-        sweepList(collector, survivors[list].head, deletes,
-                  major ? SWEEP_KEEP : SWEEP_PROMOTE);
-        sweepList(collector, young[list].head, deletes,
-                  major ? SWEEP_KEEP : SWEEP_SURVIVE);
+        sweepList(collector, vm->unsweptSurvivors[list].head, deletes,
+                  major ? SWEEP_KEEP : SWEEP_PROMOTE, alongside);
+        sweepList(collector, vm->unsweptYoung[list].head, deletes,
+                  major ? SWEEP_KEEP : SWEEP_SURVIVE, alongside);
     }
+    memset(vm->unsweptOld, 0, sizeof vm->unsweptOld);
+    memset(vm->unsweptSurvivors, 0, sizeof vm->unsweptSurvivors);
+    memset(vm->unsweptYoung, 0, sizeof vm->unsweptYoung);
+}
 
+// sweep frees what the collection left unreached, with every thread
+// stopped. A minor collection then dirties again every card that held a young
+// address.
+static void sweep(ZamThread *collector, bool major) {
+   ZamVM *vm = collector->vm;
+    detach(vm, major);
+    sweepDetached(collector, major, false);
     if (!major)
         for (uint64_t index = 0; index < vm->heldCardCount; index++)
             zam_heap_dirty(&vm->heap, vm->heldCards[index], 1);
@@ -727,19 +797,18 @@ static void whiten(void *object) {
     }
 }
 
-// condemnYoung marks as a minor collection would and answers every young
-// allocation it would free, then leaves both generations unreached for a
-// major collection to mark afresh.
-static void **condemnYoung(ZamThread *collector, uint64_t *count) {
-   ZamVM *vm = collector->vm;
-    collectYoungSpans(vm);
-    markRoots(collector, false);
-
+// condemn answers every unreached allocation on the first count lists of the
+// young generation and then of the old, and leaves all of them unreached for a
+// collection to mark afresh.
+static void **condemn(ZamVM *vm, uint64_t lists, uint64_t *count) {
     uint64_t capacity = 0;
     void **condemned = NULL;
     *count = 0;
-    for (uint64_t list = 0; list < YOUNG_LIST_COUNT; list++)
-        for (void *object = youngLists(vm, list)->head; object != NULL;
+    for (uint64_t list = 0; list < lists; list++) {
+        ZamObjectList *at = list < YOUNG_LIST_COUNT
+                                ? youngLists(vm, list)
+                                : &vm->old[list - YOUNG_LIST_COUNT];
+        for (void *object = at->head; object != NULL;
              object = zam_list_next(object)) {
             if (zam_mark_word_of(object)->state != ZAMMARK_STATE_WHITE)
                 continue;
@@ -749,18 +818,47 @@ static void **condemnYoung(ZamThread *collector, uint64_t *count) {
             }
             condemned[(*count)++] = object;
         }
-
-    for (uint64_t list = 0; list < YOUNG_LIST_COUNT; list++)
-        whiten(youngLists(vm, list)->head);
+        whiten(at->head);
+    }
     return condemned;
 }
 
+// acquit dies if a collection marking in full reached anything condemned.
+static void acquit(void **condemned, uint64_t count, const char *by) {
+    for (uint64_t index = 0; index < count; index++) {
+       ZamMarkWord *mark = zam_mark_word_of(condemned[index]);
+        if (mark->state != ZAMMARK_STATE_WHITE)
+            zam_die(ZAMEXIT_PANIC,
+                    "%s would have freed the reachable allocation at %p, of "
+                    "kind %u\n",
+                    by, condemned[index], (unsigned)mark->kind);
+    }
+    free(condemned);
+}
+
+// reclaim finalizes and sweeps what marking left unreached, and gives back to
+// the system what has stayed free.
+static void reclaim(ZamThread *collector, bool major) {
+   ZamVM *vm = collector->vm;
+    finalize(collector, major);
+    sweep(collector, major);
+    // A minor collection cleaned the cards it scanned. One a Mark or Delete
+    // dirtied since is left for the next to scan, which costs no more than
+    // the scan.
+    if (major)
+        zam_heap_clear_cards(&vm->heap);
+    vm->current.returned = zam_heap_scavenge(&vm->heap);
+}
+
 bool zam_gc_collect(ZamVM *vm, ZamThread *collector, bool major) {
+    vm->traceAllocations = true;
     vm->heldCardCount = 0;
     uint64_t condemnedCount = 0;
     void **condemned = NULL;
     if (vm->verify) {
-        condemned = condemnYoung(collector, &condemnedCount);
+        collectYoungSpans(vm);
+        markRoots(collector, false);
+        condemned = condemn(vm, YOUNG_LIST_COUNT, &condemnedCount);
         major = true;
     }
 
@@ -770,26 +868,310 @@ bool zam_gc_collect(ZamVM *vm, ZamThread *collector, bool major) {
     } else
         collectYoungSpans(vm);
     markRoots(collector, major);
-
-    for (uint64_t index = 0; index < condemnedCount; index++) {
-       ZamMarkWord *mark = zam_mark_word_of(condemned[index]);
-        if (mark->state != ZAMMARK_STATE_WHITE)
-            zam_die(ZAMEXIT_PANIC,
-                    "a minor collection would have freed the reachable "
-                    "allocation at %p, of kind %u\n",
-                    condemned[index], (unsigned)mark->kind);
-    }
-    free(condemned);
-
-    finalize(collector, major);
-    sweep(collector, major);
-    // A minor collection cleaned the cards it scanned. One a Mark or Delete
-    // dirtied since is left for the next to scan, which costs no more than
-    // the scan.
-    if (major)
-        zam_heap_clear_cards(&vm->heap);
-    vm->current.returned = zam_heap_scavenge(&vm->heap);
+    acquit(condemned, condemnedCount, "a minor collection");
+    reclaim(collector, major);
     return major;
+}
+
+void zam_gc_begin(ZamThread *collector) {
+   ZamVM *vm = collector->vm;
+    vm->traceAllocations = true;
+    for (int list = 0; list < ZAMOLD_COUNT; list++)
+        whiten(vm->old[list].head);
+    zam_heap_clear_cards(&vm->heap);
+    vm->retraceCount = 0;
+    markHeld(collector);
+    vm->traceAllocations = false;
+}
+
+static void pushRetrace(ZamVM *vm, void *object) {
+    if (vm->retraceCount == vm->retraceCapacity) {
+        vm->retraceCapacity =
+            vm->retraceCapacity == 0 ? 64 : vm->retraceCapacity * 2;
+        vm->retrace =
+            zam_realloc(vm->retrace, vm->retraceCapacity * sizeof *vm->retrace);
+    }
+    vm->retrace[vm->retraceCount++] = object;
+}
+
+// A Mark of the program's own may read anything at all, which the program may
+// be changing, so the marker leaves every allocation with one reached and
+// untraced for the remark to run its Mark, once, with the program stopped.
+// Object's own reads only what the allocation's type says it holds.
+static void drainConcurrently(ZamThread *marker) {
+   ZamVM *vm = marker->vm;
+    while (vm->grayCount != 0 && !atomic_load(&vm->finishRequested)) {
+        zam_vm_marker_checkpoint(vm);
+        void *object = vm->gray[--vm->grayCount];
+        if (tracesCustom(vm, object))
+            continue;
+        // An any box's payload and the type it was boxed under are written
+        // apart, so a box the program is filling is traced at the remark.
+        if (zam_mark_word_of(object)->kind == ZAMOBJECT_ANY)
+            pushRetrace(vm, object);
+        else
+            trace(marker, object);
+        // Verification widens every window the program has to change what
+        // the marker is looking at.
+        if (vm->verify)
+            sched_yield();
+    }
+}
+
+// precleanCard reaches every allocation a word on a card the marker cleaned
+// points into, the words being read as markCards reads them while the program
+// may be writing them. A card pointing into an allocation made while the
+// marker runs is dirtied again: the remark leaves that allocation unreached,
+// and only the card says what holds it.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
+__attribute__((no_sanitize("address", "thread")))
+#endif
+#endif
+static void precleanCard(void *context, const uint8_t *start,
+                         const uint8_t *end) {
+    ZamVM *vm = context;
+    bool holdsNew = false;
+    for (const uint8_t *at = start; at < end; at += ZAMWORD_BYTES) {
+        void *object = allocationOf(vm, *(const volatile ZamWord *)at);
+        if (object == NULL)
+            continue;
+        if (zam_mark_state_of(object) == ZAMMARK_STATE_GREY)
+            holdsNew = true;
+        else if (zam_mark_swap_state(object, ZAMMARK_STATE_WHITE,
+                                     ZAMMARK_STATE_BLACK))
+            pushGray(vm, object);
+    }
+    if (holdsNew)
+        zam_heap_dirty(&vm->heap, start, (uint64_t)(end - start));
+    zam_vm_marker_checkpoint(vm);
+}
+
+// PRECLEAN_PASSES is how many times the marker cleans the cards the program
+// dirtied while it traced, tracing what they held after each, before the remark.
+#define PRECLEAN_PASSES 2
+
+// zam_gc_mark_concurrently also scans, alongside the program, the cards it
+// dirtied while the marker traced, so that the remark scans only those dirtied
+// since.
+void zam_gc_mark_concurrently(ZamThread *marker) {
+   ZamVM *vm = marker->vm;
+    drainConcurrently(marker);
+    for (int pass = 0;
+         pass < PRECLEAN_PASSES && !atomic_load(&vm->finishRequested); pass++) {
+        uint64_t cleaned =
+            zam_heap_preclean_cards(&vm->heap, precleanCard, vm);
+        vm->current.precleaned += cleaned;
+        if (cleaned == 0)
+            break;
+        drainConcurrently(marker);
+    }
+}
+
+// markEveryCard reaches every allocation a word on a run of dirty cards points
+// into, the words being read as markCards reads them.
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+__attribute__((no_sanitize("address")))
+#endif
+#endif
+static void markEveryCard(void *context, const uint8_t *start,
+                          const uint8_t *end) {
+    ZamVM *vm = context;
+    vm->current.cards += (uint64_t)(end - start) / ZAMHEAP_CARD_BYTES;
+    for (const uint8_t *at = start; at < end; at += ZAMWORD_BYTES)
+        reach(vm, *(const ZamWord *)at);
+}
+
+// traceReachedCustom runs the Mark of the program's own of every allocation
+// reached so far, against what memory holds now. What is reached from here on
+// is traced as it is reached, so each Mark runs once.
+static void traceReachedCustom(ZamThread *collector) {
+   ZamVM *vm = collector->vm;
+    uint64_t kept = 0;
+    for (uint64_t index = 0; index < vm->grayCount; index++)
+        if (!tracesCustom(vm, vm->gray[index]))
+            vm->gray[kept++] = vm->gray[index];
+    vm->grayCount = kept;
+
+    uint64_t count = 0;
+    uint64_t capacity = 0;
+    void **reached = NULL;
+    for (uint64_t list = 0; list < YOUNG_LIST_COUNT + ZAMOLD_COUNT; list++) {
+        bool old = list >= YOUNG_LIST_COUNT;
+        if (old && ((list - YOUNG_LIST_COUNT) & ZAMOLD_MARKS) == 0)
+            continue;
+        ZamObjectList *at =
+            old ? &vm->old[list - YOUNG_LIST_COUNT] : youngLists(vm, list);
+        for (void *object = at->head; object != NULL;
+             object = zam_list_next(object)) {
+            if (zam_mark_word_of(object)->state != ZAMMARK_STATE_BLACK ||
+                (!old && !tracesCustom(vm, object)))
+                continue;
+            if (count == capacity) {
+                capacity = capacity == 0 ? 64 : capacity * 2;
+                reached = zam_realloc(reached, capacity * sizeof *reached);
+            }
+            reached[count++] = object;
+        }
+    }
+    for (uint64_t index = 0; index < count; index++)
+        trace(collector, reached[index]);
+    vm->current.retraced += count;
+    free(reached);
+}
+
+void zam_gc_remark(ZamThread *collector) {
+   ZamVM *vm = collector->vm;
+    vm->traceAllocations = true;
+    traceReachedCustom(collector);
+    for (uint64_t index = 0; index < vm->retraceCount; index++)
+        trace(collector, vm->retrace[index]);
+    vm->retraceCount = 0;
+
+    markHeld(collector);
+    zam_heap_dirty_cards(&vm->heap, markEveryCard, vm);
+    drain(collector);
+
+    if (vm->verify) {
+        uint64_t condemnedCount;
+        void **condemned =
+            condemn(vm, YOUNG_LIST_COUNT + ZAMOLD_COUNT, &condemnedCount);
+        markRoots(collector, true);
+        acquit(condemned, condemnedCount, "a concurrent collection");
+    }
+    finalize(collector, true);
+    detach(vm, true);
+    // Cleaned now rather than after the sweep, the program storing into the
+    // heap again from here on and the next minor collection needing to see it.
+    zam_heap_clear_cards(&vm->heap);
+}
+
+// verifyFresh dies if a collection marking in full would reach a fresh
+// allocation the minor collection alongside the marker left unreached. Every
+// allocation that is not fresh is given back the state the marker left it in.
+static void verifyFresh(ZamThread *collector) {
+   ZamVM *vm = collector->vm;
+    uint64_t condemnedCount = 0;
+    uint64_t capacity = 0;
+    void **condemned = NULL;
+    for (int list = 0; list < 2 * ZAMYOUNG_COUNT; list++)
+        for (void *object = list < ZAMYOUNG_COUNT
+                                ? vm->fresh[list].head
+                                : vm->freshSurvivors[list - ZAMYOUNG_COUNT].head;
+             object != NULL; object = zam_list_next(object)) {
+            if (zam_mark_word_of(object)->state != ZAMMARK_STATE_WHITE)
+                continue;
+            if (condemnedCount == capacity) {
+                capacity = capacity == 0 ? 64 : capacity * 2;
+                condemned = zam_realloc(condemned, capacity * sizeof *condemned);
+            }
+            condemned[condemnedCount++] = object;
+        }
+
+    uint64_t savedCount = 0;
+    uint64_t savedCapacity = 0;
+    void **saved = NULL;
+    uint8_t *states = NULL;
+    for (uint64_t list = 0; list < YOUNG_LIST_COUNT + ZAMOLD_COUNT; list++) {
+        ZamObjectList *at = list < YOUNG_LIST_COUNT
+                                ? youngLists(vm, list)
+                                : &vm->old[list - YOUNG_LIST_COUNT];
+        for (void *object = at->head; object != NULL;
+             object = zam_list_next(object)) {
+            if (savedCount == savedCapacity) {
+                savedCapacity = savedCapacity == 0 ? 64 : savedCapacity * 2;
+                saved = zam_realloc(saved, savedCapacity * sizeof *saved);
+                states = zam_realloc(states, savedCapacity * sizeof *states);
+            }
+            saved[savedCount] = object;
+            states[savedCount++] = (uint8_t)zam_mark_word_of(object)->state;
+        }
+        whiten(at->head);
+    }
+
+    vm->freshOnly = false;
+    markRoots(collector, true);
+    vm->freshOnly = true;
+    acquit(condemned, condemnedCount, "a minor collection alongside the marker");
+
+    for (uint64_t index = 0; index < savedCount; index++)
+        zam_mark_word_of(saved[index])->state = states[index];
+    free(saved);
+    free(states);
+}
+
+// What the program holds of a fresh allocation is on its stacks and statics,
+// on a card dirtied since marking began, which precleaning leaves dirty, or
+// where a Mark of the program's own decodes it, of any allocation that is not
+// fresh. The cards are scanned without cleaning them, the remark needing them
+// still, and the marker's work is set aside and given back with what was
+// promoted added to it.
+void zam_gc_collect_fresh(ZamThread *collector) {
+   ZamVM *vm = collector->vm;
+    void **gray = vm->gray;
+    uint64_t grayCount = vm->grayCount;
+    uint64_t grayCapacity = vm->grayCapacity;
+    vm->gray = NULL;
+    vm->grayCount = 0;
+    vm->grayCapacity = 0;
+
+    vm->traceAllocations = true;
+    vm->heldCardCount = 0;
+    for (int list = 0; list < ZAMYOUNG_COUNT; list++) {
+        whiten(vm->fresh[list].head);
+        whiten(vm->freshSurvivors[list].head);
+    }
+    collectFreshSpans(vm);
+    vm->freshOnly = true;
+
+    markHeld(collector);
+    zam_heap_scan_cards(&vm->heap, markCards, vm);
+    retraceCustom(collector);
+    for (uint64_t list = 0; list < YOUNG_LIST_COUNT; list++)
+        for (void *object = youngLists(vm, list)->head; object != NULL;
+             object = zam_list_next(object))
+            if (zam_mark_word_of(object)->state != ZAMMARK_STATE_DEAD &&
+                tracesCustom(vm, object)) {
+                trace(collector, object);
+                vm->current.retraced++;
+            }
+    drain(collector);
+    if (vm->verify)
+        verifyFresh(collector);
+
+    ZamObjectList *const deletes[] = {&vm->fresh[ZAMYOUNG_DELETES],
+                                      &vm->freshSurvivors[ZAMYOUNG_DELETES]};
+    finalizeLists(collector, deletes, 2);
+    ZamObjectList unswept[ZAMYOUNG_COUNT];
+    ZamObjectList unsweptSurvivors[ZAMYOUNG_COUNT];
+    memcpy(unswept, vm->fresh, sizeof unswept);
+    memcpy(unsweptSurvivors, vm->freshSurvivors, sizeof unsweptSurvivors);
+    memset(vm->fresh, 0, sizeof vm->fresh);
+    memset(vm->freshSurvivors, 0, sizeof vm->freshSurvivors);
+    for (int list = 0; list < ZAMYOUNG_COUNT; list++) {
+        bool deletes = list == ZAMYOUNG_DELETES;
+        sweepList(collector, unsweptSurvivors[list].head, deletes,
+                  SWEEP_HAND_OVER, false);
+        sweepList(collector, unswept[list].head, deletes, SWEEP_FRESH, false);
+    }
+
+    vm->freshOnly = false;
+    vm->traceAllocations = false;
+    void **promoted = vm->gray;
+    uint64_t promotedCount = vm->grayCount;
+    vm->gray = gray;
+    vm->grayCount = grayCount;
+    vm->grayCapacity = grayCapacity;
+    for (uint64_t index = 0; index < promotedCount; index++)
+        pushGray(vm, promoted[index]);
+    free(promoted);
+}
+
+void zam_gc_sweep_concurrently(ZamThread *marker) {
+   ZamVM *vm = marker->vm;
+    sweepDetached(marker, true, true);
+    vm->current.returned = zam_heap_scavenge(&vm->heap);
 }
 
 void zam_gc_mark_value(ZamThread *thread, ZamWord location, ZamTypeID type) {

@@ -244,7 +244,4 @@ public class YAML {
         native(STD_YAML_RELEASE){void(uint)}(this.doc);
         this.doc = 0U;
     }
-
-    public fun void() Mark = () {
-    }
 }

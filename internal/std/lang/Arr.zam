@@ -41,10 +41,13 @@ public class Arr[A] {
         return old;
     }
 
+    // The array is emptied before its run is freed, so Mark never reads it
+    // freed.
     public fun void() Delete = () {
-        free(this.arr);
-        this.arr = null;
+        var A* arr = this.arr;
         this.len = 0U;
+        this.arr = null;
+        free(arr);
     }
 
     public fun void() Mark = () {

@@ -545,7 +545,4 @@ public class BigInt {
         this.limbs = null;
         this.len = 0U;
     }
-
-    public fun void() Mark = () {
-    }
 }

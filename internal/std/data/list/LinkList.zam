@@ -274,17 +274,20 @@ public class LinkList[A] {
         return s + "]";
     }
 
+    // The list is emptied before its nodes are freed, so Mark never walks a
+    // node already freed.
     public fun void() Delete = () {
+        var Node[A]* n = this.head;
+        this.len = 0U;
+        this.head = null;
+        this.tail = null;
         var uint prev = 0U;
-        for(var Node[A]* n = this.head; n != null;) {
+        for(; n != null;) {
             var Node[A]* next = (prev ^ n.xor){void*}{Node[A]*};
             prev = n{uint};
             free(n);
             n = next;
         }
-        this.len = 0U;
-        this.head = null;
-        this.tail = null;
     }
 
     public fun void() Mark = () {

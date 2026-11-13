@@ -43,6 +43,10 @@ typedef struct ZamHeap {
     ZamHeapPage *pages;
     uint64_t pageCount;
 
+    // objects has a bit for every block holding an allocation the collector
+    // owns, set once the allocation is whole and cleared when it is freed.
+    uint8_t *objects;
+
     // frontier is how many pages from the base have ever been handed out;
     // everything past it is untouched. It moves only under the lock.
     uint64_t frontier;
@@ -82,6 +86,17 @@ void zam_heap_free(ZamHeap *heap, ZamHeapCache *cache, void *block);
 // goes straight onto its page whoever owns it, and no lock is taken.
 void zam_heap_free_stopped(ZamHeap *heap, void *block);
 
+// zam_heap_set_object records that a block holds an allocation the collector
+// owns, which zam_heap_object_of answers for from then until it is freed. It is
+// called once the allocation is whole, so that one found by it reads as one.
+void zam_heap_set_object(ZamHeap *heap, const void *block);
+
+// zam_heap_object_of is the allocation the collector owns that an address lies
+// in, or NULL where there is none: outside the heap, in a free block, or in a
+// block of the program's own memory. It is safe on any address at all, and
+// while the program runs.
+void *zam_heap_object_of(const ZamHeap *heap, const void *at);
+
 // zam_heap_size is how many bytes the block was given, which is at least what
 // was asked for.
 uint64_t zam_heap_size(const ZamHeap *heap, const void *block);
@@ -104,6 +119,23 @@ void zam_heap_dirty_cards(ZamHeap *heap,
                                         const uint8_t *end),
                           void *context);
 
+// zam_heap_scan_cards is zam_heap_dirty_cards leaving every card as it found
+// it.
+void zam_heap_scan_cards(ZamHeap *heap,
+                         void (*visit)(void *context, const uint8_t *start,
+                                       const uint8_t *end),
+                         void *context);
+
+// zam_heap_preclean_cards is zam_heap_dirty_cards run while the program runs
+// and dirties cards of its own. Each card is cleaned before its words are
+// read, so a store landing on it after is seen by whatever next scans it. It
+// answers how many cards it cleaned.
+uint64_t zam_heap_preclean_cards(ZamHeap *heap,
+                                 void (*visit)(void *context,
+                                               const uint8_t *start,
+                                               const uint8_t *end),
+                                 void *context);
+
 // zam_heap_clear_cards marks every card clean.
 void zam_heap_clear_cards(ZamHeap *heap);
 
@@ -123,8 +155,13 @@ static inline void zam_heap_dirty(ZamHeap *heap, const void *at,
         last = heap->byteCount - 1;
     uint64_t first = offset >> ZAMHEAP_CARD_SHIFT;
     uint64_t end = last >> ZAMHEAP_CARD_SHIFT;
-    if (first == end)
-        heap->cards[first] = 1;
-    else
-        memset(heap->cards + first, 1, end - first + 1);
+    // Released, so that a marker that finds the card dirty and cleans it
+    // reads what was stored before it was dirtied.
+    if (first == end) {
+        __atomic_store_n(&heap->cards[first], 1, __ATOMIC_RELEASE);
+        return;
+    }
+    __atomic_thread_fence(__ATOMIC_RELEASE);
+    for (uint64_t card = first; card <= end; card++)
+        __atomic_store_n(&heap->cards[card], 1, __ATOMIC_RELAXED);
 }

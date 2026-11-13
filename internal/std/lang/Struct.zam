@@ -26,9 +26,14 @@ public class Struct[A] {
         }
     }
 
+    // The functions are dropped before deleteFun runs, so Mark never reads a
+    // value being released and a second Delete releases nothing.
     public fun void() Delete = () {
-        if(this.deleteFun != null) {
-            this.deleteFun(this.s);
+        var void(A) deleteFun = this.deleteFun;
+        this.markFun = null;
+        this.deleteFun = null;
+        if(deleteFun != null) {
+            deleteFun(this.s);
         }
     }
 }

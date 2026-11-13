@@ -222,7 +222,4 @@ public class JSON {
         native(STD_JSON_RELEASE){void(uint)}(this.handle);
         this.handle = 0U;
     }
-
-    public fun void() Mark = () {
-    }
 }

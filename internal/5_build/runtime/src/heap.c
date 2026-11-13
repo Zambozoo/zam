@@ -86,6 +86,10 @@ static uint64_t slotsOf(unsigned sizeClass) {
     return ZAMHEAP_PAGE_BYTES / classBytes[sizeClass];
 }
 
+// OBJECT_MAP_BYTES is a page's share of the object map: a bit for each slot of
+// the smallest class, a large block taking the first.
+#define OBJECT_MAP_BYTES (ZAMHEAP_PAGE_BYTES / 16 / 8)
+
 static void *reserve(uint64_t byteCount) {
     void *at = mmap(NULL, byteCount, PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
@@ -112,6 +116,7 @@ void zam_heap_init(ZamHeap *heap, uint64_t byteCount) {
     heap->base = base;
     heap->cards = reserve(heap->byteCount >> ZAMHEAP_CARD_SHIFT);
     heap->pages = reserve(heap->pageCount * sizeof *heap->pages);
+    heap->objects = reserve(heap->pageCount * OBJECT_MAP_BYTES);
     pthread_mutex_init(&heap->lock, NULL);
 }
 
@@ -121,6 +126,7 @@ void zam_heap_destroy(ZamHeap *heap) {
     munmap(heap->reservation, heap->byteCount + ZAMHEAP_PAGE_BYTES);
     munmap(heap->cards, heap->byteCount >> ZAMHEAP_CARD_SHIFT);
     munmap(heap->pages, heap->pageCount * sizeof *heap->pages);
+    munmap(heap->objects, heap->pageCount * OBJECT_MAP_BYTES);
     pthread_mutex_destroy(&heap->lock);
     *heap = (ZamHeap){0};
 }
@@ -131,6 +137,24 @@ static uint64_t pageIndexOf(const ZamHeap *heap, const void *at) {
 
 static uint8_t *pageAddress(const ZamHeap *heap, uint64_t index) {
     return heap->base + index * ZAMHEAP_PAGE_BYTES;
+}
+
+// objectBit is the byte of the object map a block's bit lies in, and the bit.
+static uint8_t *objectBit(const ZamHeap *heap, const void *block, uint8_t *bit) {
+    uint64_t index = pageIndexOf(heap, block);
+    const ZamHeapPage *page = &heap->pages[index];
+    uint64_t slot = page->state == PAGE_LARGE
+                        ? 0
+                        : ((uintptr_t)block - (uintptr_t)pageAddress(heap, index)) /
+                              classBytes[page->sizeClass];
+    *bit = (uint8_t)(1u << (slot % 8));
+    return heap->objects + index * OBJECT_MAP_BYTES + slot / 8;
+}
+
+static void forgetObject(const ZamHeap *heap, const void *block) {
+    uint8_t bit;
+    uint8_t *byte = objectBit(heap, block, &bit);
+    __atomic_fetch_and(byte, (uint8_t)~bit, __ATOMIC_RELAXED);
 }
 
 static void listPush(ZamHeap *heap, uint64_t *head, uint64_t index) {
@@ -265,6 +289,9 @@ static void *takeSlot(ZamHeap *heap, uint64_t index) {
                       (uint64_t)page->carved * classBytes[page->sizeClass];
         page->carved++;
         page->used++;
+        // A page freed whole and handed out again may still be poisoned
+        // from the blocks it held before.
+        UNPOISON(block, classBytes[page->sizeClass]);
         return block;
     }
     return NULL;
@@ -323,8 +350,10 @@ static void *allocLarge(ZamHeap *heap, uint64_t byteCount) {
     uint64_t first = takeRun(heap, count);
     heap->pages[first] = (ZamHeapPage){.state = PAGE_LARGE, .runPages = count};
     for (uint64_t index = first + 1; index < first + count; index++)
-        heap->pages[index] = (ZamHeapPage){.state = PAGE_LARGE_TAIL};
+        heap->pages[index] = (ZamHeapPage){.state = PAGE_LARGE_TAIL,
+                                           .runPages = index - first};
     pthread_mutex_unlock(&heap->lock);
+    UNPOISON(pageAddress(heap, first), count * ZAMHEAP_PAGE_BYTES);
     return pageAddress(heap, first);
 }
 
@@ -353,6 +382,7 @@ void zam_heap_free(ZamHeap *heap, ZamHeapCache *cache, void *block) {
     uint64_t index = pageIndexOf(heap, block);
     ZamHeapPage *page = &heap->pages[index];
 
+    forgetObject(heap, block);
     if (page->state == PAGE_LARGE) {
         pthread_mutex_lock(&heap->lock);
         releaseRun(heap, index, page->runPages);
@@ -386,6 +416,7 @@ void zam_heap_free(ZamHeap *heap, ZamHeapCache *cache, void *block) {
 void zam_heap_free_stopped(ZamHeap *heap, void *block) {
     uint64_t index = pageIndexOf(heap, block);
     ZamHeapPage *page = &heap->pages[index];
+    forgetObject(heap, block);
     if (page->state == PAGE_LARGE) {
         releaseRun(heap, index, page->runPages);
         return;
@@ -397,6 +428,63 @@ void zam_heap_free_stopped(ZamHeap *heap, void *block) {
     page->used--;
     if (page->owner == NULL)
         settle(heap, index);
+}
+
+void zam_heap_set_object(ZamHeap *heap, const void *block) {
+    uint8_t bit;
+    uint8_t *byte = objectBit(heap, block, &bit);
+    __atomic_fetch_or(byte, bit, __ATOMIC_RELEASE);
+}
+
+// blockOf is the block an address lies in by what the page table says now,
+// which a page being handed out at the same moment may make nonsense of; the
+// bit is what says whether to believe it. The block's bit is answered through
+// byte and bit.
+static uint8_t *blockOf(const ZamHeap *heap, const uint8_t *at, uint8_t **byte,
+                        uint8_t *bit) {
+    uint64_t index = pageIndexOf(heap, at);
+    const ZamHeapPage *page = &heap->pages[index];
+    uint8_t state = __atomic_load_n(&page->state, __ATOMIC_RELAXED);
+    if (state == PAGE_LARGE_TAIL) {
+        uint64_t back = __atomic_load_n(&page->runPages, __ATOMIC_RELAXED);
+        if (back == 0 || back > index)
+            return NULL;
+        index -= back;
+        page = &heap->pages[index];
+        state = __atomic_load_n(&page->state, __ATOMIC_RELAXED);
+        if (state != PAGE_LARGE)
+            return NULL;
+    }
+
+    uint64_t slot = 0;
+    uint8_t *block = pageAddress(heap, index);
+    if (state == PAGE_SMALL) {
+        uint8_t sizeClass = __atomic_load_n(&page->sizeClass, __ATOMIC_RELAXED);
+        if (sizeClass >= ZAMHEAP_CLASS_COUNT)
+            return NULL;
+        slot = (uint64_t)(at - block) / classBytes[sizeClass];
+        if (slot >= slotsOf(sizeClass))
+            return NULL;
+        block += slot * classBytes[sizeClass];
+    } else if (state != PAGE_LARGE)
+        return NULL;
+    *byte = heap->objects + index * OBJECT_MAP_BYTES + slot / 8;
+    *bit = (uint8_t)(1u << (slot % 8));
+    return block;
+}
+
+void *zam_heap_object_of(const ZamHeap *heap, const void *at) {
+    if (!zam_heap_contains(heap, at))
+        return NULL;
+    uint8_t *byte;
+    uint8_t bit;
+    uint8_t *block = blockOf(heap, at, &byte, &bit);
+    if (block == NULL || (__atomic_load_n(byte, __ATOMIC_ACQUIRE) & bit) == 0)
+        return NULL;
+    // Read again now that the bit has said the page was set up: a page holding
+    // an object is not handed out anew while a collection may look at it.
+    uint8_t *again = blockOf(heap, at, &byte, &bit);
+    return again == block ? block : NULL;
 }
 
 uint64_t zam_heap_size(const ZamHeap *heap, const void *block) {
@@ -438,10 +526,10 @@ static uint64_t cardCount(const ZamHeap *heap) {
     return heap->frontier * (ZAMHEAP_PAGE_BYTES >> ZAMHEAP_CARD_SHIFT);
 }
 
-void zam_heap_dirty_cards(ZamHeap *heap,
-                          void (*visit)(void *context, const uint8_t *start,
-                                        const uint8_t *end),
-                          void *context) {
+static void visitDirtyCards(ZamHeap *heap,
+                            void (*visit)(void *context, const uint8_t *start,
+                                          const uint8_t *end),
+                            void *context, bool clean) {
     uint64_t count = cardCount(heap);
     for (uint64_t card = 0; card < count;) {
         // A word of clean cards is skipped whole, the table being mostly clean.
@@ -458,8 +546,11 @@ void zam_heap_dirty_cards(ZamHeap *heap,
             continue;
         }
         uint64_t first = card;
-        while (card < count && heap->cards[card] != 0)
-            heap->cards[card++] = 0;
+        while (card < count && heap->cards[card] != 0) {
+            if (clean)
+                heap->cards[card] = 0;
+            card++;
+        }
 
         // A run is visited a page at a time, and a free page not at all:
         // nothing on it is anything's to hold.
@@ -473,6 +564,55 @@ void zam_heap_dirty_cards(ZamHeap *heap,
             at = end;
         }
     }
+}
+
+void zam_heap_dirty_cards(ZamHeap *heap,
+                          void (*visit)(void *context, const uint8_t *start,
+                                        const uint8_t *end),
+                          void *context) {
+    visitDirtyCards(heap, visit, context, true);
+}
+
+void zam_heap_scan_cards(ZamHeap *heap,
+                         void (*visit)(void *context, const uint8_t *start,
+                                       const uint8_t *end),
+                         void *context) {
+    visitDirtyCards(heap, visit, context, false);
+}
+
+// It reads the page table as the program changes it, which a sanitized build
+// is told is deliberate.
+#if defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+__attribute__((no_sanitize("thread")))
+#endif
+#endif
+uint64_t zam_heap_preclean_cards(ZamHeap *heap,
+                                 void (*visit)(void *context,
+                                               const uint8_t *start,
+                                               const uint8_t *end),
+                                 void *context) {
+    uint64_t perPage = ZAMHEAP_PAGE_BYTES >> ZAMHEAP_CARD_SHIFT;
+    uint64_t count = *(const volatile uint64_t *)&heap->frontier * perPage;
+    uint64_t cleaned = 0;
+    for (uint64_t card = 0; card < count;) {
+        if (card % sizeof(uint64_t) == 0 && card + sizeof(uint64_t) <= count &&
+            __atomic_load_n((const uint64_t *)(heap->cards + card),
+                            __ATOMIC_RELAXED) == 0) {
+            card += sizeof(uint64_t);
+            continue;
+        }
+        if (__atomic_load_n(&heap->cards[card], __ATOMIC_RELAXED) != 0 &&
+            __atomic_exchange_n(&heap->cards[card], 0, __ATOMIC_ACQUIRE) != 0) {
+            cleaned++;
+            if (*(const volatile uint8_t *)&heap->pages[card / perPage].state !=
+                PAGE_FREE)
+                visit(context, heap->base + (card << ZAMHEAP_CARD_SHIFT),
+                      heap->base + ((card + 1) << ZAMHEAP_CARD_SHIFT));
+        }
+        card++;
+    }
+    return cleaned;
 }
 
 void zam_heap_clear_cards(ZamHeap *heap) {
