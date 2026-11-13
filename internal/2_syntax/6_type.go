@@ -224,6 +224,9 @@ var (
 	// runtime's ZamPrimitive table counts up from TypeKindVoid and a kind
 	// inserted among them would renumber every one of them past it.
 	TypeKindUint = newTypeKind("uint")
+	// Posit type for 64-bit posits with two exponent bits. Appended after
+	// TypeKindUint for the same reason.
+	TypeKindPosit = newTypeKind("pst")
 	// Array type for a sequence of values
 	TypeKindArray = newTypeKind("array")
 	// Pointer type for a reference to a value
@@ -257,6 +260,7 @@ var (
 		TTInt:    TypeKindInt,
 		TTUint:   TypeKindUint,
 		TTFloat:  TypeKindFloat,
+		TTPosit:  TypeKindPosit,
 		TTString: TypeKindString,
 		TTType:   TypeKindType,
 	}
@@ -271,6 +275,7 @@ var (
 		TTInt,
 		TTUint,
 		TTFloat,
+		TTPosit,
 		TTString,
 		TTType,
 		TTThread,
@@ -301,6 +306,9 @@ var (
 	}
 	TypeFloat = &TypePrimitive{
 		kind: TypeKindFloat,
+	}
+	TypePosit = &TypePrimitive{
+		kind: TypeKindPosit,
 	}
 	TypeString = &TypePrimitive{
 		kind: TypeKindString,

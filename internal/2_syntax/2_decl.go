@@ -1623,6 +1623,7 @@ var enumPrimitives = map[TypeKind]struct{}{
 	TypeKindInt:    {},
 	TypeKindUint:   {},
 	TypeKindFloat:  {},
+	TypeKindPosit:  {},
 	TypeKindString: {},
 }
 

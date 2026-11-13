@@ -16,6 +16,7 @@ type (
 		VisitStmtBlock(s *StmtBlock) error
 		VisitStmtUnpack(s *StmtUnpack) error
 		VisitStmtVariable(s *StmtVariable) error
+		VisitStmtDefer(s *StmtDefer) error
 	}
 
 	// Stmt is a statement in the AST.
@@ -138,6 +139,16 @@ type (
 		Expr Expr
 	}
 
+	// StmtDefer is a statement run when control leaves the block the defer is
+	// written in, however it leaves, after every statement deferred later in
+	// that block.
+	StmtDefer struct {
+		// start is the token that started the statement.
+		start *Token
+		// Stmt is the statement deferred.
+		Stmt Stmt
+	}
+
 	// StmtUnpack is a declaration of several variables at once, each taking the
 	// element of a tuple at its position.
 	StmtUnpack struct {
@@ -197,6 +208,8 @@ var (
 	// allocation (string, closure, thread, run of class instances) and a raw
 	// free otherwise.
 	StmtKindFree StmtKind = newStmtKind("free", TTFree)
+	// Runs a statement when control leaves the enclosing block
+	StmtKindDefer StmtKind = newStmtKind("defer", TTDefer)
 )
 
 // newStmt creates a new statement.
@@ -233,6 +246,8 @@ func newStmt(parser SyntaxParser) (Stmt, error) {
 		stmt, err = newStmtReturn(parser, tok)
 	case TTVar:
 		stmt, err = newStmtVariable(parser, tok)
+	case TTDefer:
+		stmt, err = newStmtDefer(parser, tok)
 	}
 
 	if err != nil {
@@ -283,6 +298,33 @@ func (s *StmtLoopJump) Start() *Token {
 // Accept implements the [Stmt] interface.
 func (s *StmtLoopJump) Accept(visitor StmtVisitor) error {
 	return visitor.VisitStmtLoopJump(s)
+}
+
+// newStmtDefer creates a new statement that defers another.
+func newStmtDefer(parser SyntaxParser, start *Token) (*StmtDefer, error) {
+	stmt, err := newStmt(parser)
+	if err != nil {
+		return nil, err
+	}
+	return &StmtDefer{
+		start: start,
+		Stmt:  stmt,
+	}, nil
+}
+
+// StmtKind implements the [Stmt] interface.
+func (s *StmtDefer) Kind() StmtKind {
+	return StmtKindDefer
+}
+
+// Start implements the [Stmt] interface.
+func (s *StmtDefer) Start() *Token {
+	return s.start
+}
+
+// Accept implements the [Stmt] interface.
+func (s *StmtDefer) Accept(visitor StmtVisitor) error {
+	return visitor.VisitStmtDefer(s)
 }
 
 // newStmtReturn creates a new statement that returns from a function.

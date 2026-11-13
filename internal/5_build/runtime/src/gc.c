@@ -7,7 +7,7 @@
 #include <sched.h>
 
 bool zam_gc_collecting(const ZamThread *thread) {
-    return thread->vm->collector == thread || thread->vm->marker == thread;
+    return thread->vm->collector == thread || thread->collects;
 }
 
 // allocationOf is the allocation a word points into, or NULL where it points
@@ -22,31 +22,41 @@ static void *allocationOf(ZamVM *vm, ZamWord word) {
     return zam_heap_object_of(&vm->heap, (const void *)(uintptr_t)word);
 }
 
-static void pushGray(ZamVM *vm, void *object) {
-    if (vm->grayCount == vm->grayCapacity) {
-        vm->grayCapacity = vm->grayCapacity == 0 ? 64 : vm->grayCapacity * 2;
-        vm->gray = zam_realloc(vm->gray, vm->grayCapacity * sizeof *vm->gray);
-    }
-    vm->gray[vm->grayCount++] = object;
+// reserveGray makes room on a thread's gray stack for count more.
+static void reserveGray(ZamThread *thread, uint64_t count) {
+    if (thread->grayCount + count <= thread->grayCapacity)
+        return;
+    uint64_t capacity = thread->grayCapacity == 0 ? 64 : thread->grayCapacity;
+    while (capacity < thread->grayCount + count)
+        capacity *= 2;
+    thread->gray = zam_realloc(thread->gray, capacity * sizeof *thread->gray);
+    thread->grayCapacity = capacity;
+}
+
+static void pushGray(ZamThread *thread, void *object) {
+    reserveGray(thread, 1);
+    thread->gray[thread->grayCount++] = object;
 }
 
 static void *youngAllocationOf(const ZamVM *vm, ZamWord word);
 
-// reach says the allocation a word points into is reachable, queueing it to be
-// traced the first time it is said. A minor collection alongside the marker
-// reaches only what it collects, leaving everything else to the marker.
-static void reach(ZamVM *vm, ZamWord word) {
+// reach says the allocation a word points into is reachable, queueing it on
+// the thread to be traced the first time it is said. A minor collection
+// alongside the marker reaches only what it collects, leaving everything else
+// to the markers.
+static void reach(ZamThread *thread, ZamWord word) {
+    ZamVM *vm = thread->vm;
     void *object = vm->freshOnly ? youngAllocationOf(vm, word)
                                  : allocationOf(vm, word);
     if (object == NULL ||
         !zam_mark_swap_state(object, ZAMMARK_STATE_WHITE, ZAMMARK_STATE_BLACK))
         return;
-    pushGray(vm, object);
+    pushGray(thread, object);
 }
 
-void zam_gc_allocated(ZamVM *vm, void *object) {
-    if (vm->traceAllocations)
-        pushGray(vm, object);
+void zam_gc_allocated(ZamThread *thread, void *object) {
+    if (thread->vm->traceAllocations)
+        pushGray(thread, object);
 }
 
 // call runs one of Object's methods on the instance at a location. What a
@@ -83,7 +93,7 @@ static void markValue(ZamThread *collector, ZamWord location, ZamTypeID type) {
        ZamWord word;
         memcpy(&word, zam_thread_location_address(collector, location),
                sizeof word);
-        reach(vm, word);
+        reach(collector, word);
         return;
     }
     if (!zam_type_contains_markable(vm, type))
@@ -166,7 +176,7 @@ static void trace(ZamThread *collector, void *object) {
         // The payload carries the body of the value it boxed and none of that
         // value's own header, the box's standing in for it.
        ZamTypeID stored = zam_type_id_read(body);
-        zam_mark_word_of(payload)->state = ZAMMARK_STATE_BLACK;
+        zam_mark_swap_state(payload, ZAMMARK_STATE_WHITE, ZAMMARK_STATE_BLACK);
         markValue(collector,
                   (ZamWord)(uintptr_t)(payload + typedHeader -
                                        zam_value_header_bytes(image, stored)),
@@ -182,9 +192,315 @@ static void trace(ZamThread *collector, void *object) {
 }
 
 static void drain(ZamThread *collector) {
-   ZamVM *vm = collector->vm;
-    while (vm->grayCount != 0)
-        trace(collector, vm->gray[--vm->grayCount]);
+    while (collector->grayCount != 0)
+        trace(collector, collector->gray[--collector->grayCount]);
+}
+
+// SHARE_CHUNK is the most work a marker hands over or takes up at once.
+#define SHARE_CHUNK 64
+
+// giveWork moves the top count of a marker's gray stack onto the shared one,
+// and takeWork the top count of the shared one onto a marker's. The caller
+// holds markLock.
+static void giveWork(ZamVM *vm, ZamThread *marker, uint64_t count) {
+    if (vm->sharedCount + count > vm->sharedCapacity) {
+        uint64_t capacity = vm->sharedCapacity == 0 ? 64 : vm->sharedCapacity;
+        while (capacity < vm->sharedCount + count)
+            capacity *= 2;
+        vm->shared = zam_realloc(vm->shared, capacity * sizeof *vm->shared);
+        vm->sharedCapacity = capacity;
+    }
+    marker->grayCount -= count;
+    memcpy(vm->shared + vm->sharedCount, marker->gray + marker->grayCount,
+           count * sizeof *vm->shared);
+    vm->sharedCount += count;
+}
+
+static void takeWork(ZamVM *vm, ZamThread *marker, uint64_t count) {
+    reserveGray(marker, count);
+    vm->sharedCount -= count;
+    memcpy(marker->gray + marker->grayCount, vm->shared + vm->sharedCount,
+           count * sizeof *vm->shared);
+    marker->grayCount += count;
+}
+
+// checkpoint is where a marker stops, between one piece of its work and the
+// next, for a minor collection that asked it to.
+static void checkpoint(ZamVM *vm) {
+    if (!atomic_load(&vm->markerPause))
+        return;
+    pthread_mutex_lock(&vm->markLock);
+    vm->markersWorking--;
+    pthread_cond_broadcast(&vm->markChanged);
+    while (atomic_load(&vm->markerPause))
+        pthread_cond_wait(&vm->markChanged, &vm->markLock);
+    vm->markersWorking++;
+    pthread_mutex_unlock(&vm->markLock);
+}
+
+void zam_gc_pause_markers(ZamVM *vm) {
+    pthread_mutex_lock(&vm->markLock);
+    atomic_store(&vm->markerPause, true);
+    while (vm->markersWorking != 0)
+        pthread_cond_wait(&vm->markChanged, &vm->markLock);
+    pthread_mutex_unlock(&vm->markLock);
+}
+
+void zam_gc_resume_markers(ZamVM *vm) {
+    pthread_mutex_lock(&vm->markLock);
+    atomic_store(&vm->markerPause, false);
+    pthread_cond_broadcast(&vm->markChanged);
+    pthread_mutex_unlock(&vm->markLock);
+}
+
+void zam_gc_request_finish(ZamVM *vm) {
+    if (atomic_exchange(&vm->finishRequested, true))
+        return;
+    pthread_mutex_lock(&vm->markLock);
+    pthread_cond_broadcast(&vm->markChanged);
+    pthread_mutex_unlock(&vm->markLock);
+}
+
+static bool tracesCustom(ZamVM *vm, void *object);
+
+static void pushRetrace(ZamVM *vm, void *object) {
+    if (vm->retraceCount == vm->retraceCapacity) {
+        vm->retraceCapacity =
+            vm->retraceCapacity == 0 ? 64 : vm->retraceCapacity * 2;
+        vm->retrace =
+            zam_realloc(vm->retrace, vm->retraceCapacity * sizeof *vm->retrace);
+    }
+    vm->retrace[vm->retraceCount++] = object;
+}
+
+// traceAlongside traces an allocation as a marker does alongside the program.
+// A Mark of the program's own may read anything at all, which the program may
+// be changing, so every allocation with one reached is left for the remark to
+// run its Mark, once, with the program stopped. Object's own reads only what
+// the allocation's type says it holds. An any box's payload and the type it
+// was boxed under are written apart, so a box the program is filling is
+// traced at the remark too.
+static void traceAlongside(ZamThread *marker, void *object) {
+   ZamVM *vm = marker->vm;
+    if (tracesCustom(vm, object))
+        return;
+    if (zam_mark_word_of(object)->kind == ZAMOBJECT_ANY) {
+        pthread_mutex_lock(&vm->markLock);
+        pushRetrace(vm, object);
+        pthread_mutex_unlock(&vm->markLock);
+    } else
+        trace(marker, object);
+    // Verification widens every window the program has to change what the
+    // marker is looking at.
+    if (vm->verify)
+        sched_yield();
+}
+
+// drainShared traces until no marker taking part in the round has work left,
+// handing half of its own over whenever another is waiting for some, and
+// taking up what is handed over once its own runs out. It answers how many
+// allocations it traced.
+//
+// Alongside the program a marker stops at its checkpoints, and counts as
+// stopped while it waits for work, when it touches nothing. It gives up once
+// the remark is asked for, leaving what it has on the shared stack.
+static uint64_t drainShared(ZamThread *marker, bool alongside) {
+   ZamVM *vm = marker->vm;
+    uint64_t traced = 0;
+    for (;;) {
+        while (marker->grayCount != 0 &&
+               !(alongside && atomic_load(&vm->finishRequested))) {
+            if (alongside)
+                checkpoint(vm);
+            void *object = marker->gray[--marker->grayCount];
+            if (alongside)
+                traceAlongside(marker, object);
+            else
+                trace(marker, object);
+            traced++;
+            if (marker->grayCount > 1 &&
+                atomic_load_explicit(&vm->markersIdle, memory_order_relaxed) !=
+                    0) {
+                uint64_t count = marker->grayCount / 2;
+                pthread_mutex_lock(&vm->markLock);
+                giveWork(vm, marker,
+                         count < SHARE_CHUNK ? count : SHARE_CHUNK);
+                pthread_cond_broadcast(&vm->markChanged);
+                pthread_mutex_unlock(&vm->markLock);
+            }
+        }
+
+        pthread_mutex_lock(&vm->markLock);
+        giveWork(vm, marker, marker->grayCount);
+        vm->markersActive--;
+        atomic_fetch_add(&vm->markersIdle, 1);
+        if (alongside)
+            vm->markersWorking--;
+        pthread_cond_broadcast(&vm->markChanged);
+        for (;;) {
+            bool finishing = alongside && atomic_load(&vm->finishRequested);
+            bool over = vm->sharedCount == 0 && vm->markersActive == 0;
+            bool paused = alongside && atomic_load(&vm->markerPause);
+            if (!paused && (finishing || over || vm->sharedCount != 0))
+                break;
+            pthread_cond_wait(&vm->markChanged, &vm->markLock);
+        }
+        atomic_fetch_sub(&vm->markersIdle, 1);
+        if (alongside)
+            vm->markersWorking++;
+        if (vm->sharedCount == 0 ||
+            (alongside && atomic_load(&vm->finishRequested))) {
+            pthread_mutex_unlock(&vm->markLock);
+            return traced;
+        }
+        vm->markersActive++;
+        takeWork(vm, marker,
+                 vm->sharedCount < SHARE_CHUNK ? vm->sharedCount : SHARE_CHUNK);
+        pthread_mutex_unlock(&vm->markLock);
+    }
+}
+
+// helperMain is a helper's thread: it takes part in every round of marking
+// until the VM is done with it.
+static void *helperMain(void *context) {
+   ZamThread *helper = context;
+   ZamVM *vm = helper->vm;
+    uint64_t seen = 0;
+    pthread_mutex_lock(&vm->markLock);
+    for (;;) {
+        while (!vm->helpersQuit && vm->markRound == seen)
+            pthread_cond_wait(&vm->markChanged, &vm->markLock);
+        if (vm->helpersQuit)
+            break;
+        seen = vm->markRound;
+        bool alongside = vm->markRoundAlongside;
+        pthread_mutex_unlock(&vm->markLock);
+        uint64_t traced = drainShared(helper, alongside);
+        pthread_mutex_lock(&vm->markLock);
+        vm->current.helped += traced;
+        if (alongside)
+            vm->markersWorking--;
+        vm->helpersDone++;
+        pthread_cond_broadcast(&vm->markChanged);
+    }
+    pthread_mutex_unlock(&vm->markLock);
+    return NULL;
+}
+
+// startHelpers makes the helpers the first time a collection marks in
+// parallel. Each runs Mark bodies on a stack of its own.
+static void startHelpers(ZamVM *vm) {
+    if (vm->helpers != NULL || vm->markerCount <= 1)
+        return;
+    uint32_t count = vm->markerCount - 1;
+    vm->helpers = zam_alloc(count * sizeof *vm->helpers);
+    vm->helperThreads = zam_alloc(count * sizeof *vm->helperThreads);
+    for (uint32_t index = 0; index < count; index++) {
+       ZamThread *helper = zam_alloc(sizeof *helper);
+        memset(helper, 0, sizeof *helper);
+        zam_thread_init(helper, vm, vm->image.initialStackSize);
+        helper->collects = true;
+        vm->helpers[index] = helper;
+        if (pthread_create(&vm->helperThreads[index], NULL, helperMain,
+                           helper) != 0)
+            zam_die(ZAMEXIT_PANIC, "could not start the collector's helpers\n");
+    }
+    vm->helperCount = count;
+}
+
+void zam_gc_stop_helpers(ZamVM *vm) {
+    pthread_mutex_lock(&vm->markLock);
+    vm->helpersQuit = true;
+    pthread_cond_broadcast(&vm->markChanged);
+    pthread_mutex_unlock(&vm->markLock);
+    for (uint32_t index = 0; index < vm->helperCount; index++) {
+        pthread_join(vm->helperThreads[index], NULL);
+        zam_thread_free(vm->helpers[index]);
+        free(vm->helpers[index]);
+    }
+    free(vm->helpers);
+    free(vm->helperThreads);
+    vm->helpers = NULL;
+    vm->helperThreads = NULL;
+    vm->helperCount = 0;
+}
+
+// shareAll moves the whole of a thread's gray stack onto the shared one, for
+// the markers to take up.
+static void shareAll(ZamThread *thread) {
+   ZamVM *vm = thread->vm;
+    pthread_mutex_lock(&vm->markLock);
+    giveWork(vm, thread, thread->grayCount);
+    pthread_cond_broadcast(&vm->markChanged);
+    pthread_mutex_unlock(&vm->markLock);
+}
+
+// RECRUIT_AFTER is how many allocations the coordinator traces alone before it
+// sets the helpers going on what is left, so that a mark too small to repay
+// waking them never does.
+#define RECRUIT_AFTER 1024
+
+// drainParallel is drain shared with every helper, the coordinator taking
+// part as one more marker. What a helper allocates with the program stopped is
+// black, and is put with the collector's own allocations once the round is
+// over, to be swept with them.
+static void drainParallel(ZamThread *coordinator, bool alongside) {
+   ZamVM *vm = coordinator->vm;
+    pthread_mutex_lock(&vm->markLock);
+    takeWork(vm, coordinator, vm->sharedCount);
+    pthread_mutex_unlock(&vm->markLock);
+    for (uint64_t traced = 0;
+         coordinator->grayCount != 0 &&
+         !(alongside && atomic_load(&vm->finishRequested)) &&
+         (vm->markerCount <= 1 || traced < RECRUIT_AFTER ||
+          coordinator->grayCount < 2);
+         traced++) {
+        if (alongside)
+            checkpoint(vm);
+        void *object = coordinator->gray[--coordinator->grayCount];
+        if (alongside)
+            traceAlongside(coordinator, object);
+        else
+            trace(coordinator, object);
+    }
+    if (coordinator->grayCount == 0 ||
+        (alongside && atomic_load(&vm->finishRequested))) {
+        shareAll(coordinator);
+        return;
+    }
+
+    startHelpers(vm);
+    pthread_mutex_lock(&vm->markLock);
+    vm->markersActive = 1 + vm->helperCount;
+    vm->helpersDone = 0;
+    if (alongside)
+        vm->markersWorking += vm->helperCount;
+    vm->markRoundAlongside = alongside;
+    vm->markRound++;
+    pthread_cond_broadcast(&vm->markChanged);
+    pthread_mutex_unlock(&vm->markLock);
+
+    drainShared(coordinator, alongside);
+
+    // A helper waits out a minor collection before it is done, so the
+    // coordinator counts as stopped while it waits for them.
+    pthread_mutex_lock(&vm->markLock);
+    if (alongside) {
+        vm->markersWorking--;
+        pthread_cond_broadcast(&vm->markChanged);
+    }
+    while (vm->helpersDone < vm->helperCount ||
+           (alongside && atomic_load(&vm->markerPause)))
+        pthread_cond_wait(&vm->markChanged, &vm->markLock);
+    if (alongside)
+        vm->markersWorking++;
+    pthread_mutex_unlock(&vm->markLock);
+
+    if (!alongside)
+        for (uint32_t index = 0; index < vm->helperCount; index++)
+            for (int list = 0; list < ZAMYOUNG_COUNT; list++)
+                zam_list_splice(&vm->young[list],
+                                &vm->helpers[index]->young[list]);
 }
 
 // operandLocation names an operand word of a thread's stack. The collector's
@@ -201,7 +517,6 @@ static ZamWord operandLocation(const ZamThread *collector, ZamThread *thread,
 // afresh each step, since a Mark body run from here may grow the stack they
 // lie on; it leaves the entries beneath it as it found them.
 static void markStack(ZamThread *collector, ZamThread *thread) {
-   ZamVM *vm = collector->vm;
     uint64_t end = thread->markByteCount;
     for (uint64_t at = 0; at < end;) {
        ZamMarkKind kind = zam_mark_kind_at(thread, at);
@@ -209,7 +524,7 @@ static void markStack(ZamThread *collector, ZamThread *thread) {
         case ZAMMARK_OBJECT: {
            ZamMarkObject entry;
             memcpy(&entry, thread->marks + at, sizeof entry);
-            reach(vm, thread->operands[entry.operand]);
+            reach(collector, thread->operands[entry.operand]);
             break;
         }
         case ZAMMARK_ARRAY: {
@@ -238,7 +553,7 @@ static void markStack(ZamThread *collector, ZamThread *thread) {
         case ZAMMARK_INTERIOR: {
            ZamMarkInterior entry;
             memcpy(&entry, thread->marks + at, sizeof entry);
-            reach(vm, thread->operands[entry.operand] - entry.distance);
+            reach(collector, thread->operands[entry.operand] - entry.distance);
             break;
         }
         case ZAMMARK_FUNCTION:
@@ -249,7 +564,7 @@ static void markStack(ZamThread *collector, ZamThread *thread) {
         at += zam_mark_entry_bytes(kind);
     }
     for (uint64_t index = 0; index < thread->heldCount; index++)
-        reach(vm, thread->held[index]);
+        reach(collector, thread->held[index]);
 }
 
 static int compareSpans(const void *left, const void *right) {
@@ -336,7 +651,8 @@ __attribute__((no_sanitize("address")))
 #endif
 #endif
 static void markCards(void *context, const uint8_t *start, const uint8_t *end) {
-    ZamVM *vm = context;
+    ZamThread *collector = context;
+    ZamVM *vm = collector->vm;
     vm->current.cards += (uint64_t)(end - start) / ZAMHEAP_CARD_BYTES;
     for (const uint8_t *at = start; at < end; at += ZAMWORD_BYTES) {
         ZamWord word = *(const ZamWord *)at;
@@ -345,7 +661,7 @@ static void markCards(void *context, const uint8_t *start, const uint8_t *end) {
         void *object = youngAllocationOf(vm, word);
         if (object == NULL)
             continue;
-        reach(vm, (ZamWord)(uintptr_t)object);
+        reach(collector, (ZamWord)(uintptr_t)object);
 
         uint8_t *card = (uint8_t *)((uintptr_t)at & ~(uintptr_t)(ZAMHEAP_CARD_BYTES - 1));
         if (vm->heldCardCount != 0 && vm->heldCards[vm->heldCardCount - 1] == card)
@@ -554,11 +870,11 @@ static void markHeld(ZamThread *collector) {
        ZamThread *thread = threads[index];
         markStack(collector, thread);
         for (int sig = 0; sig < ZAM_SIGNAL_MAX; sig++)
-            reach(vm, (ZamWord)(uintptr_t)thread->signalHandlers[sig]);
+            reach(collector, (ZamWord)(uintptr_t)thread->signalHandlers[sig]);
 
         // A thread still running is alive whatever refers to it.
         if (thread != &vm->main && thread->state != ZAMTHREAD_EXITED)
-            reach(vm, (ZamWord)(uintptr_t)thread);
+            reach(collector, (ZamWord)(uintptr_t)thread);
     }
     free(threads);
 
@@ -576,11 +892,16 @@ static void markRoots(ZamThread *collector, bool major) {
    ZamVM *vm = collector->vm;
     markHeld(collector);
     if (!major) {
-        zam_heap_dirty_cards(&vm->heap, markCards, vm);
+        zam_heap_dirty_cards(&vm->heap, markCards, collector);
         retraceCustom(collector);
     }
 
-    drain(collector);
+    // A minor collection alongside the marker has its helpers paused
+    // mid-round, and one of its own is too short to share.
+    if (major && !atomic_load(&vm->marking))
+        drainParallel(collector, false);
+    else
+        drain(collector);
 }
 
 // finalize runs Delete on every unreachable instance with a Delete of the
@@ -735,7 +1056,7 @@ static void sweepList(ZamThread *collector, void *object, bool deletes,
                 vm->current.promoted += bytes;
             }
             if (fate == SWEEP_HAND_OVER)
-                pushGray(vm, object);
+                pushGray(collector, object);
         }
         object = next;
     }
@@ -882,40 +1203,7 @@ void zam_gc_begin(ZamThread *collector) {
     vm->retraceCount = 0;
     markHeld(collector);
     vm->traceAllocations = false;
-}
-
-static void pushRetrace(ZamVM *vm, void *object) {
-    if (vm->retraceCount == vm->retraceCapacity) {
-        vm->retraceCapacity =
-            vm->retraceCapacity == 0 ? 64 : vm->retraceCapacity * 2;
-        vm->retrace =
-            zam_realloc(vm->retrace, vm->retraceCapacity * sizeof *vm->retrace);
-    }
-    vm->retrace[vm->retraceCount++] = object;
-}
-
-// A Mark of the program's own may read anything at all, which the program may
-// be changing, so the marker leaves every allocation with one reached and
-// untraced for the remark to run its Mark, once, with the program stopped.
-// Object's own reads only what the allocation's type says it holds.
-static void drainConcurrently(ZamThread *marker) {
-   ZamVM *vm = marker->vm;
-    while (vm->grayCount != 0 && !atomic_load(&vm->finishRequested)) {
-        zam_vm_marker_checkpoint(vm);
-        void *object = vm->gray[--vm->grayCount];
-        if (tracesCustom(vm, object))
-            continue;
-        // An any box's payload and the type it was boxed under are written
-        // apart, so a box the program is filling is traced at the remark.
-        if (zam_mark_word_of(object)->kind == ZAMOBJECT_ANY)
-            pushRetrace(vm, object);
-        else
-            trace(marker, object);
-        // Verification widens every window the program has to change what
-        // the marker is looking at.
-        if (vm->verify)
-            sched_yield();
-    }
+    shareAll(collector);
 }
 
 // precleanCard reaches every allocation a word on a card the marker cleaned
@@ -930,7 +1218,8 @@ __attribute__((no_sanitize("address", "thread")))
 #endif
 static void precleanCard(void *context, const uint8_t *start,
                          const uint8_t *end) {
-    ZamVM *vm = context;
+   ZamThread *marker = context;
+   ZamVM *vm = marker->vm;
     bool holdsNew = false;
     for (const uint8_t *at = start; at < end; at += ZAMWORD_BYTES) {
         void *object = allocationOf(vm, *(const volatile ZamWord *)at);
@@ -940,32 +1229,41 @@ static void precleanCard(void *context, const uint8_t *start,
             holdsNew = true;
         else if (zam_mark_swap_state(object, ZAMMARK_STATE_WHITE,
                                      ZAMMARK_STATE_BLACK))
-            pushGray(vm, object);
+            pushGray(marker, object);
     }
     if (holdsNew)
         zam_heap_dirty(&vm->heap, start, (uint64_t)(end - start));
-    zam_vm_marker_checkpoint(vm);
+    checkpoint(vm);
 }
 
-// PRECLEAN_PASSES is how many times the marker cleans the cards the program
-// dirtied while it traced, tracing what they held after each, before the remark.
-#define PRECLEAN_PASSES 2
-
 // zam_gc_mark_concurrently also scans, alongside the program, the cards it
-// dirtied while the marker traced, so that the remark scans only those dirtied
-// since.
+// dirtied while the markers traced, so that the remark scans only those
+// dirtied since. The marker counts as working from when no minor collection
+// is under way until it is done.
 void zam_gc_mark_concurrently(ZamThread *marker) {
    ZamVM *vm = marker->vm;
-    drainConcurrently(marker);
-    for (int pass = 0;
-         pass < PRECLEAN_PASSES && !atomic_load(&vm->finishRequested); pass++) {
+    pthread_mutex_lock(&vm->markLock);
+    while (atomic_load(&vm->markerPause))
+        pthread_cond_wait(&vm->markChanged, &vm->markLock);
+    vm->markersWorking++;
+    pthread_mutex_unlock(&vm->markLock);
+
+    drainParallel(marker, true);
+    for (uint64_t pass = 0;
+         pass < vm->precleanPasses && !atomic_load(&vm->finishRequested);
+         pass++) {
         uint64_t cleaned =
-            zam_heap_preclean_cards(&vm->heap, precleanCard, vm);
+            zam_heap_preclean_cards(&vm->heap, precleanCard, marker);
         vm->current.precleaned += cleaned;
         if (cleaned == 0)
             break;
-        drainConcurrently(marker);
+        drainParallel(marker, true);
     }
+
+    pthread_mutex_lock(&vm->markLock);
+    vm->markersWorking--;
+    pthread_cond_broadcast(&vm->markChanged);
+    pthread_mutex_unlock(&vm->markLock);
 }
 
 // markEveryCard reaches every allocation a word on a run of dirty cards points
@@ -977,22 +1275,27 @@ __attribute__((no_sanitize("address")))
 #endif
 static void markEveryCard(void *context, const uint8_t *start,
                           const uint8_t *end) {
-    ZamVM *vm = context;
-    vm->current.cards += (uint64_t)(end - start) / ZAMHEAP_CARD_BYTES;
+   ZamThread *collector = context;
+    collector->vm->current.cards +=
+        (uint64_t)(end - start) / ZAMHEAP_CARD_BYTES;
     for (const uint8_t *at = start; at < end; at += ZAMWORD_BYTES)
-        reach(vm, *(const ZamWord *)at);
+        reach(collector, *(const ZamWord *)at);
 }
 
-// traceReachedCustom runs the Mark of the program's own of every allocation
-// reached so far, against what memory holds now. What is reached from here on
-// is traced as it is reached, so each Mark runs once.
-static void traceReachedCustom(ZamThread *collector) {
+// queueReachedCustom queues the Mark of the program's own of every allocation
+// reached so far to run against what memory holds then, along with what the
+// markers left untraced. What is reached from here on is queued as it is
+// reached, so each Mark runs once.
+static void queueReachedCustom(ZamThread *collector) {
    ZamVM *vm = collector->vm;
+    pthread_mutex_lock(&vm->markLock);
+    takeWork(vm, collector, vm->sharedCount);
+    pthread_mutex_unlock(&vm->markLock);
     uint64_t kept = 0;
-    for (uint64_t index = 0; index < vm->grayCount; index++)
-        if (!tracesCustom(vm, vm->gray[index]))
-            vm->gray[kept++] = vm->gray[index];
-    vm->grayCount = kept;
+    for (uint64_t index = 0; index < collector->grayCount; index++)
+        if (!tracesCustom(vm, collector->gray[index]))
+            collector->gray[kept++] = collector->gray[index];
+    collector->grayCount = kept;
 
     uint64_t count = 0;
     uint64_t capacity = 0;
@@ -1016,7 +1319,7 @@ static void traceReachedCustom(ZamThread *collector) {
         }
     }
     for (uint64_t index = 0; index < count; index++)
-        trace(collector, reached[index]);
+        pushGray(collector, reached[index]);
     vm->current.retraced += count;
     free(reached);
 }
@@ -1024,14 +1327,14 @@ static void traceReachedCustom(ZamThread *collector) {
 void zam_gc_remark(ZamThread *collector) {
    ZamVM *vm = collector->vm;
     vm->traceAllocations = true;
-    traceReachedCustom(collector);
+    queueReachedCustom(collector);
     for (uint64_t index = 0; index < vm->retraceCount; index++)
-        trace(collector, vm->retrace[index]);
+        pushGray(collector, vm->retrace[index]);
     vm->retraceCount = 0;
 
     markHeld(collector);
-    zam_heap_dirty_cards(&vm->heap, markEveryCard, vm);
-    drain(collector);
+    zam_heap_dirty_cards(&vm->heap, markEveryCard, collector);
+    drainParallel(collector, false);
 
     if (vm->verify) {
         uint64_t condemnedCount;
@@ -1105,17 +1408,9 @@ static void verifyFresh(ZamThread *collector) {
 // on a card dirtied since marking began, which precleaning leaves dirty, or
 // where a Mark of the program's own decodes it, of any allocation that is not
 // fresh. The cards are scanned without cleaning them, the remark needing them
-// still, and the marker's work is set aside and given back with what was
-// promoted added to it.
+// still, and what was promoted is handed to the markers.
 void zam_gc_collect_fresh(ZamThread *collector) {
    ZamVM *vm = collector->vm;
-    void **gray = vm->gray;
-    uint64_t grayCount = vm->grayCount;
-    uint64_t grayCapacity = vm->grayCapacity;
-    vm->gray = NULL;
-    vm->grayCount = 0;
-    vm->grayCapacity = 0;
-
     vm->traceAllocations = true;
     vm->heldCardCount = 0;
     for (int list = 0; list < ZAMYOUNG_COUNT; list++) {
@@ -1126,7 +1421,7 @@ void zam_gc_collect_fresh(ZamThread *collector) {
     vm->freshOnly = true;
 
     markHeld(collector);
-    zam_heap_scan_cards(&vm->heap, markCards, vm);
+    zam_heap_scan_cards(&vm->heap, markCards, collector);
     retraceCustom(collector);
     for (uint64_t list = 0; list < YOUNG_LIST_COUNT; list++)
         for (void *object = youngLists(vm, list)->head; object != NULL;
@@ -1158,14 +1453,7 @@ void zam_gc_collect_fresh(ZamThread *collector) {
 
     vm->freshOnly = false;
     vm->traceAllocations = false;
-    void **promoted = vm->gray;
-    uint64_t promotedCount = vm->grayCount;
-    vm->gray = gray;
-    vm->grayCount = grayCount;
-    vm->grayCapacity = grayCapacity;
-    for (uint64_t index = 0; index < promotedCount; index++)
-        pushGray(vm, promoted[index]);
-    free(promoted);
+    shareAll(collector);
 }
 
 void zam_gc_sweep_concurrently(ZamThread *marker) {
@@ -1206,7 +1494,6 @@ void zam_gc_mark_only(ZamThread *thread, ZamWord instance) {
     if (!zam_gc_collecting(thread))
         return;
     void *object = allocationOf(thread->vm, instance);
-    if (object != NULL &&
-        zam_mark_word_of(object)->state == ZAMMARK_STATE_WHITE)
-        zam_mark_word_of(object)->state = ZAMMARK_STATE_BLACK;
+    if (object != NULL)
+        zam_mark_swap_state(object, ZAMMARK_STATE_WHITE, ZAMMARK_STATE_BLACK);
 }

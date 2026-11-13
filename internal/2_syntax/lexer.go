@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	base "github.com/zambozoo/zam/internal/0_base"
 )
 
 type (
@@ -35,6 +37,7 @@ var (
 	errInvalidInt                = errors.New("invalid integer")
 	errInvalidSymbol             = errors.New("invalid symbol")
 	errInvalidFloat              = errors.New("invalid float")
+	errInvalidPosit              = errors.New("invalid posit")
 )
 
 // NewLexer opens path via streamer and reads UTF-8 runes through a RuneReader.
@@ -287,6 +290,16 @@ func (l *Lexer) number() (*Token, error) {
 			tokenType = TTUintLiteral
 			l.rr.Advance(1)
 		}
+	}
+
+	// A trailing `p` or `P` makes any number a posit, however it was written.
+	if p, err := l.rr.Peek(0); err == nil && tokenType != TTUintLiteral && (p == 'p' || p == 'P') {
+		l.rr.Advance(1)
+		value, err := base.PositFromDecimal(b.String())
+		if err != nil {
+			return nil, errInvalidPosit
+		}
+		return newToken(TTPositLiteral, offset, value), nil
 	}
 
 	lit := b.String()

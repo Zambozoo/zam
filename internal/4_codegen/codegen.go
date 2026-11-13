@@ -23,14 +23,14 @@ const magic = "ZAM_LANG"
 // and still say which version it was handed rather than only that it was wrong.
 const (
 	versionMajor = 0
-	versionMinor = 0
+	versionMinor = 1
 	versionPatch = 0
 
 	versionWord = versionMajor<<32 | versionMinor<<16 | versionPatch
 )
 
 // configurationWords is how many words of runtime configuration open the body.
-const configurationWords = 5
+const configurationWords = 10
 
 // magicWord is [magic] as the word it is written as. Assembling it little-endian
 // is what makes the bytes spell the name in the file, since that is the order
@@ -113,6 +113,21 @@ type (
 		nurserySize int
 		// maxHeapSize is the most memory the heap may ever hold.
 		maxHeapSize int
+		// gcMarkers is how many threads mark during a major collection, zero
+		// leaving it to the runtime.
+		gcMarkers int
+		// gcConcurrent has a major collection the heap's growth asks for mark
+		// alongside the program.
+		gcConcurrent bool
+		// gcRemarkGrowth is how far the heap may grow while marking alongside
+		// the program, as a fraction of its size, before the remark is forced.
+		gcRemarkGrowth float64
+		// gcPrecleanPasses is how many times the cards dirtied while marking
+		// alongside the program are scanned before the remark.
+		gcPrecleanPasses int
+		// gcReturnAge is how many collections a run of free pages waits before
+		// it is given back to the system.
+		gcReturnAge int
 
 		// functionTypeDefinitions are the readers for the function type definitions.
 		functionTypeDefinitions []typeDefinition
@@ -248,7 +263,7 @@ type (
 // reservedTypeIDCount is the number of type ids reserved for primitive types.
 // Primitives occupy the range [0, reservedTypeIDCount) and each primitive's
 // type id is its TypeKind value directly.
-var reservedTypeIDCount = uint16(syntax.TypeKindUint) + 1
+var reservedTypeIDCount = uint16(syntax.TypeKindPosit) + 1
 
 func readFloat64(p []byte, value float64) (int, error) {
 	if len(p) < wordByteSize {
@@ -610,6 +625,40 @@ func (cr *codegenReader) Read(p []byte) (int, error) {
 	}
 	totalBytes += n
 
+	n, err = readInt(p[totalBytes:], cr.gcMarkers)
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
+	concurrent := 0
+	if cr.gcConcurrent {
+		concurrent = 1
+	}
+	n, err = readInt(p[totalBytes:], concurrent)
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
+	n, err = readFloat64(p[totalBytes:], cr.gcRemarkGrowth)
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
+	n, err = readInt(p[totalBytes:], cr.gcPrecleanPasses)
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
+	n, err = readInt(p[totalBytes:], cr.gcReturnAge)
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
 	n, err = readAllWords(p[totalBytes:], typeDefinitionMap...)
 	if err != nil {
 		return 0, err
@@ -745,6 +794,11 @@ func GenerateCode(cmd *command.Command, ast *syntax.AST) (*Result, error) {
 		initialHeapSize:        cmd.InitialHeapSize,
 		nurserySize:            cmd.NurserySize,
 		maxHeapSize:            cmd.MaxHeapSize,
+		gcMarkers:              cmd.GCMarkers,
+		gcConcurrent:           cmd.GCConcurrent,
+		gcRemarkGrowth:         cmd.GCRemarkGrowth,
+		gcPrecleanPasses:       cmd.GCPrecleanPasses,
+		gcReturnAge:            cmd.GCReturnAge,
 		genericStaticMethodIDs: map[*syntax.FieldMethod]uint16{},
 	}
 

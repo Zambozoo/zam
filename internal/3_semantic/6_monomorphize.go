@@ -491,6 +491,10 @@ func (v *monomorphizer) VisitStmtIf(s *syntax.StmtIf) error {
 	return nil
 }
 
+func (v *monomorphizer) VisitStmtDefer(s *syntax.StmtDefer) error {
+	return s.Stmt.Accept(v)
+}
+
 func (v *monomorphizer) VisitStmtLabel(s *syntax.StmtLabel) error {
 	s.LoopStmt.Accept(v)
 	return nil

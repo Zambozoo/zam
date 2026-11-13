@@ -1,6 +1,6 @@
 import "../lang/System.zam";
 import "../lang/Obj.zam";
-import "Math.zam";
+import "Flts.zam";
 import "Hash.zam";
 import "Vector.zam";
 
@@ -174,7 +174,7 @@ public class Matrix {
     private fun uint(uint) pivot = (col) {
         var uint best = col;
         for(var uint r = col + 1U; r < this.rows; r++) {
-            if(Math::Abs(this.arr[r * this.cols + col]) > Math::Abs(this.arr[best * this.cols + col])) {
+            if(Flts::Abs(this.arr[r * this.cols + col]) > Flts::Abs(this.arr[best * this.cols + col])) {
                 best = r;
             }
         }

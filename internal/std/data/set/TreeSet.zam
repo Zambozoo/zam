@@ -34,18 +34,18 @@ public class TreeSet[A] {
     }
 
     // rotateLeft rotates the subtree in the link slot, writing its new root
-    // back into the slot. The node moved up is pinned until it is linked in.
+    // back into the slot. The node moved up is pinned while it is linked in.
     private fun void(Node[A]**) rotateLeft = (link) {
         var Node[A]* h = *link;
         var Node[A]* x = h.right;
         var Struct[Node[A]*] pin;
         pin.Init(x, TreeSet::[A]markTree, null);
+        defer pin.s = null;
         h.right = x.left;
         x.left = h;
         x.red = h.red;
         h.red = true;
         *link = x;
-        pin.s = null;
     }
 
     private fun void(Node[A]**) rotateRight = (link) {
@@ -53,12 +53,12 @@ public class TreeSet[A] {
         var Node[A]* x = h.left;
         var Struct[Node[A]*] pin;
         pin.Init(x, TreeSet::[A]markTree, null);
+        defer pin.s = null;
         h.left = x.right;
         x.right = h;
         x.red = h.red;
         h.red = true;
         *link = x;
-        pin.s = null;
     }
 
     private fun void(Node[A]*) flip = (h) {

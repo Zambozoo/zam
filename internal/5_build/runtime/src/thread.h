@@ -320,6 +320,14 @@ struct ZamThread {
     uint64_t dirtiedCount;
     uint64_t dirtiedCapacity;
 
+    // gray is what the thread, collecting, has reached and not yet traced
+    // through. collects is set on the threads the collector makes to mark on,
+    // which run nothing but what a collection does.
+    void **gray;
+    uint64_t grayCount;
+    uint64_t grayCapacity;
+    bool collects;
+
     // state is guarded by the VM's collectionLock. gcBlockDepth is how many
     // GC.Block calls this thread has made that no GC.Unblock has matched yet,
     // and is read and written only by the thread itself.

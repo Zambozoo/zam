@@ -31,7 +31,7 @@ var (
 	typeKeywords = map[syntax.TokenKind]bool{
 		syntax.TTAny: true, syntax.TTBool: true, syntax.TTByte: true, syntax.TTChar: true,
 		syntax.TTFloat: true, syntax.TTInt: true, syntax.TTString: true, syntax.TTThread: true,
-		syntax.TTUint: true, syntax.TTVoid: true,
+		syntax.TTPosit: true, syntax.TTUint: true, syntax.TTVoid: true,
 	}
 	// punctuation are the symbols that delimit rather than operate, which are
 	// left uncolored.
@@ -89,7 +89,8 @@ func classify(kind syntax.TokenKind) (protocol.UInteger, bool) {
 		return tokenVariable, true
 	case kind == syntax.TTStringLiteral || kind == syntax.TTCharLiteral:
 		return tokenString, true
-	case kind == syntax.TTIntLiteral || kind == syntax.TTUintLiteral || kind == syntax.TTFloatLiteral:
+	case kind == syntax.TTIntLiteral || kind == syntax.TTUintLiteral || kind == syntax.TTFloatLiteral ||
+		kind == syntax.TTPositLiteral:
 		return tokenNumber, true
 	case typeKeywords[kind]:
 		return tokenType, true

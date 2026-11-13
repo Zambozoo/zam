@@ -86,6 +86,7 @@ void zam_thread_free(ZamThread *thread) {
     free(thread->marks);
     free(thread->dirtied);
     free(thread->held);
+    free(thread->gray);
 
     // Every set the thread ever opened, not only the ones still open: a popped
     // set keeps its slots for the next comparison at that depth, so the

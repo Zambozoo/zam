@@ -180,6 +180,11 @@ public class BSON {
         return f;
     }
 
+    // GetPst reads a double, rounded to a pst.
+    public fun pst(str) GetPst = (key) {
+        return this.GetFlt(key){pst};
+    }
+
     public fun bool(str) GetBool = (key) {
         var bool b;
         native(STD_BSON_GET_BOOL){void(uint, str, bool*)}(this.handle, key, &b);
@@ -226,6 +231,11 @@ public class BSON {
 
     public fun void(str, flt) AppendFlt = (key, f) {
         native(STD_BSON_APPEND_FLT){void(uint, str, flt)}(this.handle, key, f);
+    }
+
+    // AppendPst appends p rounded to a double.
+    public fun void(str, pst) AppendPst = (key, p) {
+        this.AppendFlt(key, p{flt});
     }
 
     public fun void(str, bool) AppendBool = (key, b) {

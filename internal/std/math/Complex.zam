@@ -1,5 +1,4 @@
-import "Math.zam";
-import "Trig.zam";
+import "Flts.zam";
 
 // Complex number
 public struct Complex {
@@ -15,7 +14,7 @@ public struct Complex {
 
     // Polar returns the complex number of magnitude r at angle theta.
     public static fun Complex(flt, flt) Polar = (r, theta) {
-        return Complex::Of(r * Trig::Cos(theta), r * Trig::Sin(theta));
+        return Complex::Of(r * Flts::Cos(theta), r * Flts::Sin(theta));
     }
 
     public fun Complex(Complex) Add = (o) {
@@ -33,7 +32,7 @@ public struct Complex {
     // Div divides by o, scaling by its larger part to avoid needless
     // overflow.
     public fun Complex(Complex) Div = (o) {
-        if(Math::Abs(o.re) >= Math::Abs(o.im)) {
+        if(Flts::Abs(o.re) >= Flts::Abs(o.im)) {
             var flt r = o.im / o.re;
             var flt d = o.re + o.im * r;
             return Complex::Of((this.re + this.im * r) / d, (this.im - this.re * r) / d);
@@ -57,21 +56,21 @@ public struct Complex {
 
     // Abs returns the magnitude.
     public fun flt() Abs = () {
-        return Math::Hypot(this.re, this.im);
+        return Flts::Hypot(this.re, this.im);
     }
 
     // Arg returns the angle from the positive real axis, in [-Pi, Pi].
     public fun flt() Arg = () {
-        return Trig::Atan2(this.im, this.re);
+        return Flts::Atan2(this.im, this.re);
     }
 
     public fun Complex() Exp = () {
-        return Complex::Polar(Math::Exp(this.re), this.im);
+        return Complex::Polar(Flts::Exp(this.re), this.im);
     }
 
     // Log returns the principal natural logarithm.
     public fun Complex() Log = () {
-        return Complex::Of(Math::Log(this.Abs()), this.Arg());
+        return Complex::Of(Flts::Log(this.Abs()), this.Arg());
     }
 
     // Sqrt returns the principal square root.
@@ -80,11 +79,11 @@ public struct Complex {
         if(r == 0.0) {
             return Complex::Of(0.0, 0.0);
         }
-        var flt t = Math::Sqrt((r + Math::Abs(this.re)) / 2.0);
+        var flt t = Flts::Sqrt((r + Flts::Abs(this.re)) / 2.0);
         if(this.re >= 0.0) {
             return Complex::Of(t, this.im / (2.0 * t));
         }
-        return Complex::Of(Math::Abs(this.im) / (2.0 * t), Math::CopySign(t, this.im));
+        return Complex::Of(Flts::Abs(this.im) / (2.0 * t), Flts::CopySign(t, this.im));
     }
 
     // Pow returns the principal value of this to the o.

@@ -72,6 +72,8 @@ typedef enum ZamPrimitive {
     // bit-identical arithmetic op with it. Comparison and ordering read the
     // word as unsigned; everything else treats the two the same.
     ZAMPRIMITIVE_UINT = 9,
+    // A 64-bit posit, held as its bits. See posit.h.
+    ZAMPRIMITIVE_POSIT = 10,
 
     // ZAMPRIMITIVE_COUNT is where the declared types begin. Everything below
     // it is a primitive and points at no definition; everything from it up

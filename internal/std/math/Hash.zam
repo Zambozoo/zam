@@ -1,5 +1,6 @@
 import "../lang/Uints.zam";
 import "../lang/Flts.zam";
+import "../lang/Psts.zam";
 import "../lang/Strs.zam";
 
 // Non-cryptographic hashes over byte runs, and helpers for writing Hash
@@ -156,5 +157,10 @@ public namespace Hash {
             return Hash::Mix(0U);
         }
         return Hash::Mix(Flts::ToBits(x));
+    }
+
+    // Pst hashes x by its bits.
+    public static fun uint(pst) Pst = (x) {
+        return Hash::Mix(Psts::ToBits(x));
     }
 }

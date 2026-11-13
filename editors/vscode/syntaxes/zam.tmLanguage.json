@@ -34,11 +34,11 @@
     },
     "numbers": {
       "name": "constant.numeric.zam",
-      "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:[eE]-?[0-9]+)?[uU]?\\b"
+      "match": "\\b[0-9]+(?:\\.[0-9]+)?(?:[eE]-?[0-9]+)?[uUpP]?\\b"
     },
     "types": {
       "name": "storage.type.zam",
-      "match": "\\b(?:any|bool|byte|char|flt|int|str|thread|uint|void)\\b"
+      "match": "\\b(?:any|bool|byte|char|flt|int|pst|str|thread|uint|void)\\b"
     },
     "constants": {
       "name": "constant.language.zam",
@@ -46,7 +46,7 @@
     },
     "keywords": {
       "name": "keyword.zam",
-      "match": "\\b(?:abstract|alias|async|break|case|class|continue|delete|else|enum|for|free|fun|if|import|interface|label|lambda|mark|namespace|native|new|private|protected|public|return|static|struct|super|switch|this|type|var|virtual|wait)\\b"
+      "match": "\\b(?:abstract|alias|async|break|case|class|continue|defer|delete|else|enum|for|free|fun|if|import|interface|label|lambda|mark|namespace|native|new|private|protected|public|return|static|struct|super|switch|this|type|var|virtual|wait)\\b"
     }
   }
 }

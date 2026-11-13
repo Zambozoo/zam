@@ -4,7 +4,8 @@ import "../lang/System.zam";
 import "../lang/Obj.zam";
 import "../lang/Strs.zam";
 import "Hash.zam";
-import "Math.zam";
+import mu = "Uints.zam";
+import mf = "Flts.zam";
 import "BigInt.zam";
 
 // Immutable arbitrary-precision binary floating-point number. The value is
@@ -220,7 +221,7 @@ public class BigFlt {
     // too small to reach the rounding position contributes only which side
     // of the other it lies on.
     private fun BigFlt*(BigFlt*, bool) addSigned = (o, oneg) {
-        var uint p = Math::MaxUint(this.prec, o.prec);
+        var uint p = mu.Uints::Max(this.prec, o.prec);
         if(o.IsZero()) {
             return this.WithPrec(p);
         }
@@ -276,7 +277,7 @@ public class BigFlt {
     }
 
     public fun BigFlt*(BigFlt*) Mul = (o) {
-        var uint p = Math::MaxUint(this.prec, o.prec);
+        var uint p = mu.Uints::Max(this.prec, o.prec);
         return BigFlt::make(this.neg != o.neg, this.mant.Mul(o.mant), this.exp + o.exp, p, false);
     }
 
@@ -284,7 +285,7 @@ public class BigFlt {
         if(o.IsZero()) {
             System::Panic("BigFlt division by zero");
         }
-        var uint p = Math::MaxUint(this.prec, o.prec);
+        var uint p = mu.Uints::Max(this.prec, o.prec);
         if(this.IsZero()) {
             return BigFlt::Zero(p);
         }
@@ -371,7 +372,7 @@ public class BigFlt {
         }
         var BigFlt* r = this.WithPrec(53U);
         var int half = r.exp / 2;
-        var flt f = r.mant.ToFlt() * Math::Pow(2.0, half{flt}) * Math::Pow(2.0, (r.exp - half){flt});
+        var flt f = r.mant.ToFlt() * mf.Flts::Pow(2.0, half{flt}) * mf.Flts::Pow(2.0, (r.exp - half){flt});
         if(r.neg) {
             return -f;
         }
@@ -577,7 +578,7 @@ public class BigFlt {
     // Pow returns this to y. A whole y is taken by repeated squaring, and any
     // other as exp(y log this), which needs this to be positive.
     public fun BigFlt*(BigFlt*) Pow = (y) {
-        var uint p = Math::MaxUint(this.prec, y.prec);
+        var uint p = mu.Uints::Max(this.prec, y.prec);
         if(y.IsZero()) {
             return BigFlt::FromInt(1, p);
         }

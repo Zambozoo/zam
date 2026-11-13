@@ -72,6 +72,11 @@ public class JSON {
         return JSON::wrap(h);
     }
 
+    // NewPst makes a number of p rounded to a flt.
+    public static fun JSON*(pst) NewPst = (p) {
+        return JSON::NewFlt(p{flt});
+    }
+
     public static fun JSON*(str) NewStr = (s) {
         var uint h;
         native(STD_JSON_NEW_STR){void(str, uint*)}(s, &h);
@@ -140,6 +145,11 @@ public class JSON {
         var flt f;
         native(STD_JSON_FLT){void(uint, flt*)}(this.handle, &f);
         return f;
+    }
+
+    // AsPst reads a number as a flt, rounded to a pst.
+    public fun pst() AsPst = () {
+        return this.AsFlt(){pst};
     }
 
     public fun str() AsStr = () {

@@ -328,6 +328,11 @@ func (v *genericCycleDetectorVisitor) VisitStmtLabel(s *syntax.StmtLabel) error 
 	return nil
 }
 
+// VisitStmtDefer implements [syntax.StmtVisitor].
+func (v *genericCycleDetectorVisitor) VisitStmtDefer(s *syntax.StmtDefer) error {
+	return s.Stmt.Accept(v)
+}
+
 // VisitStmtLoopJump implements [syntax.StmtVisitor].
 func (v *genericCycleDetectorVisitor) VisitStmtLoopJump(s *syntax.StmtLoopJump) error {
 	return nil

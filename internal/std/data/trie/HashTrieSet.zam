@@ -190,7 +190,7 @@ public class HashTrieSet[A] {
     }
 
     // Add adds key, reporting whether it is new. A new node and a node split
-    // off an edge are pinned until they are linked in.
+    // off an edge are pinned while they are linked in.
     public fun bool(uint, A*) Add = (len, key) {
         var Node[A]* n = this.root;
         var uint i = 0U;
@@ -208,9 +208,9 @@ public class HashTrieSet[A] {
                 var Node[A]* leaf = this.newNode(key, i, len - i);
                 var Struct[Node[A]*] pin;
                 pin.Init(leaf, HashTrieSet::[A]markTree, null);
+                defer pin.s = null;
                 leaf.end = true;
                 this.setChild(n, key[i], leaf);
-                pin.s = null;
                 this.len++;
                 return true;
             }
@@ -219,6 +219,7 @@ public class HashTrieSet[A] {
                 var Node[A]* mid = this.newNode(c.edge, 0U, p);
                 var Struct[Node[A]*] pin;
                 pin.Init(mid, HashTrieSet::[A]markTree, null);
+                defer pin.s = null;
                 var A* rest = this.copyRun(c.edge, p, c.edgeLen - p);
                 this.setChild(mid, rest[0], c);
                 var A* old = c.edge;
@@ -228,7 +229,6 @@ public class HashTrieSet[A] {
                 System.GC::Unblock();
                 free(old);
                 this.setChild(n, key[i], mid);
-                pin.s = null;
                 c = mid;
             }
             n = c;

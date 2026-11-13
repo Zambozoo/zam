@@ -250,6 +250,9 @@ var (
 	ExprKindLiteralUint = newExprKind("literal_uint")
 	// Literal float expression for a float literal
 	ExprKindLiteralFloat = newExprKind("literal_float")
+	// Literal posit expression for a number written with a trailing `p` or
+	// `P`, its value the posit's bits.
+	ExprKindLiteralPosit = newExprKind("literal_posit")
 	// Literal boolean expression for a boolean literal
 	ExprKindLiteralBoolean = newExprKind("literal_boolean")
 	// Lambda expression for a lambda function
@@ -359,6 +362,7 @@ var (
 		TTIntLiteral:    ExprKindLiteralInteger,
 		TTUintLiteral:   ExprKindLiteralUint,
 		TTFloatLiteral:  ExprKindLiteralFloat,
+		TTPositLiteral:  ExprKindLiteralPosit,
 		TTTrue:          ExprKindLiteralBoolean,
 		TTFalse:         ExprKindLiteralBoolean,
 		TTCharLiteral:   ExprKindLiteralChar,
@@ -679,7 +683,7 @@ func newExprPrimary(parser SyntaxParser) (Expr, error) {
 	switch tok.Kind {
 	case TTIdentifier:
 		expr, err = newExprIdentifier(parser, tok)
-	case TTThis, TTSuper, TTNull, TTTrue, TTFalse, TTCharLiteral, TTStringLiteral, TTIntLiteral, TTUintLiteral, TTFloatLiteral:
+	case TTThis, TTSuper, TTNull, TTTrue, TTFalse, TTCharLiteral, TTStringLiteral, TTIntLiteral, TTUintLiteral, TTFloatLiteral, TTPositLiteral:
 		expr = &ExprSymbol{
 			start: tok,
 			kind:  primaryKindMap[tok.Kind],
@@ -1193,6 +1197,8 @@ func (e *ExprSymbol) ResolvedType() Type {
 		return TypeUint
 	case ExprKindLiteralFloat:
 		return TypeFloat
+	case ExprKindLiteralPosit:
+		return TypePosit
 	case ExprKindLiteralChar:
 		return TypeChar
 	case ExprKindLiteralString:

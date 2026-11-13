@@ -164,6 +164,11 @@ func TestNew(t *testing.T) {
 				InitialHeapSize:  int(defaultHeapSize),
 				NurserySize:      int(defaultNursery),
 				MaxHeapSize:      int(defaultMaxHeap),
+				GCMarkers:        defaultGCMarkers,
+				GCConcurrent:     defaultGCConcurrent,
+				GCRemarkGrowth:   defaultGCRemarkGrowth,
+				GCPrecleanPasses: defaultGCPrecleanPasses,
+				GCReturnAge:      defaultGCReturnAge,
 			},
 			errFunc: assert.NoError,
 		},
@@ -190,6 +195,11 @@ func TestNew(t *testing.T) {
 				InitialHeapSize:  int(defaultHeapSize),
 				NurserySize:      int(defaultNursery),
 				MaxHeapSize:      int(defaultMaxHeap),
+				GCMarkers:        defaultGCMarkers,
+				GCConcurrent:     defaultGCConcurrent,
+				GCRemarkGrowth:   defaultGCRemarkGrowth,
+				GCPrecleanPasses: defaultGCPrecleanPasses,
+				GCReturnAge:      defaultGCReturnAge,
 			},
 			errFunc: assert.NoError,
 		},
@@ -212,6 +222,11 @@ func TestNew(t *testing.T) {
 				InitialHeapSize:  2 << 30,
 				NurserySize:      1 << 20,
 				MaxHeapSize:      4 << 30,
+				GCMarkers:        defaultGCMarkers,
+				GCConcurrent:     defaultGCConcurrent,
+				GCRemarkGrowth:   defaultGCRemarkGrowth,
+				GCPrecleanPasses: defaultGCPrecleanPasses,
+				GCReturnAge:      defaultGCReturnAge,
 			},
 			errFunc: assert.NoError,
 		},
@@ -232,6 +247,11 @@ func TestNew(t *testing.T) {
 				InitialHeapSize:  int(defaultHeapSize),
 				NurserySize:      int(defaultNursery),
 				MaxHeapSize:      int(defaultMaxHeap),
+				GCMarkers:        defaultGCMarkers,
+				GCConcurrent:     defaultGCConcurrent,
+				GCRemarkGrowth:   defaultGCRemarkGrowth,
+				GCPrecleanPasses: defaultGCPrecleanPasses,
+				GCReturnAge:      defaultGCReturnAge,
 				Run:              true,
 				RunArgs:          []string{"a", "-b"},
 			},
@@ -255,6 +275,11 @@ func TestNew(t *testing.T) {
 				InitialHeapSize:  int(defaultHeapSize),
 				NurserySize:      int(defaultNursery),
 				MaxHeapSize:      int(defaultMaxHeap),
+				GCMarkers:        defaultGCMarkers,
+				GCConcurrent:     defaultGCConcurrent,
+				GCRemarkGrowth:   defaultGCRemarkGrowth,
+				GCPrecleanPasses: defaultGCPrecleanPasses,
+				GCReturnAge:      defaultGCReturnAge,
 				NoProject:        true,
 			},
 			errFunc: assert.NoError,
@@ -276,6 +301,11 @@ func TestNew(t *testing.T) {
 				InitialHeapSize:  int(defaultHeapSize),
 				NurserySize:      int(defaultNursery),
 				MaxHeapSize:      int(defaultMaxHeap),
+				GCMarkers:        defaultGCMarkers,
+				GCConcurrent:     defaultGCConcurrent,
+				GCRemarkGrowth:   defaultGCRemarkGrowth,
+				GCPrecleanPasses: defaultGCPrecleanPasses,
+				GCReturnAge:      defaultGCReturnAge,
 				Run:              true,
 				RunArgs:          []string{},
 				NoProject:        true,
@@ -332,6 +362,82 @@ func TestNew(t *testing.T) {
 			}(),
 			errFunc: errorContains("gc trigger ratio must be within (0, 1]: 0"),
 		},
+		{
+			name: "gc flags",
+			argv: []string{"zam", "--gc-markers", "4", "--gc-concurrent=false", "--gc-remark-growth", "0.5", "--gc-preclean-passes", "0", "--gc-return-age", "1", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(inputPath).Return(true, nil)
+				return m
+			}(),
+			want: &Command{
+				InputPath:        inputPath,
+				OutputPath:       base.NewPath("out", ""),
+				MaxThreads:       1,
+				GCTriggerRatio:   defaultGCRatio,
+				InitialStackSize: int(defaultStackSize),
+				InitialHeapSize:  int(defaultHeapSize),
+				NurserySize:      int(defaultNursery),
+				MaxHeapSize:      int(defaultMaxHeap),
+				GCMarkers:        4,
+				GCConcurrent:     false,
+				GCRemarkGrowth:   0.5,
+				GCPrecleanPasses: 0,
+				GCReturnAge:      1,
+			},
+			errFunc: assert.NoError,
+		},
+		{
+			name: "negative gc markers",
+			argv: []string{"zam", "--gc-markers", "-1", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				return m
+			}(),
+			errFunc: errorContains("gc markers must be within [0, 64]: -1"),
+		},
+		{
+			name: "too many gc markers",
+			argv: []string{"zam", "--gc-markers", "65", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				return m
+			}(),
+			errFunc: errorContains("gc markers must be within [0, 64]: 65"),
+		},
+		{
+			name: "gc remark growth of zero",
+			argv: []string{"zam", "--gc-remark-growth", "0", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				return m
+			}(),
+			errFunc: errorContains("gc remark growth must be positive: 0"),
+		},
+		{
+			name: "too many gc preclean passes",
+			argv: []string{"zam", "--gc-preclean-passes", "17", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				return m
+			}(),
+			errFunc: errorContains("gc preclean passes must be within [0, 16]: 17"),
+		},
+		{
+			name: "gc return age of zero",
+			argv: []string{"zam", "--gc-return-age", "0", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				return m
+			}(),
+			errFunc: errorContains("gc return age must be positive: 0"),
+		},
 	}
 
 	for _, tt := range tests {
@@ -361,7 +467,7 @@ func TestCommand_String(t *testing.T) {
 				InitialStackSize: 1 << 19,
 				InitialHeapSize:  1 << 24,
 			},
-			want: `{"InputPath":{"Outer":"input"},"OutputPath":{"Outer":"out"},"Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"EmitImage":false,"KeepBuild":false,"Run":false,"RunArgs":null,"NoProject":false}`,
+			want: `{"InputPath":{"Outer":"input"},"OutputPath":{"Outer":"out"},"Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"EmitImage":false,"KeepBuild":false,"Run":false,"RunArgs":null,"NoProject":false}`,
 		},
 	}
 

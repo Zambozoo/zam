@@ -79,6 +79,11 @@ public class CBOR {
         return CBOR::wrap(h);
     }
 
+    // NewPst makes a double-precision float of p rounded to a flt.
+    public static fun CBOR*(pst) NewPst = (p) {
+        return CBOR::NewFlt(p{flt});
+    }
+
     public static fun CBOR*(str) NewStr = (s) {
         var uint h;
         native(STD_CBOR_NEW_STR){void(str, uint*)}(s, &h);
@@ -164,6 +169,11 @@ public class CBOR {
         var flt f;
         native(STD_CBOR_FLT){void(uint, flt*)}(this.handle, &f);
         return f;
+    }
+
+    // AsPst reads a number as a flt, rounded to a pst.
+    public fun pst() AsPst = () {
+        return this.AsFlt(){pst};
     }
 
     public fun str() AsStr = () {

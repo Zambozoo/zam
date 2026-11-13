@@ -299,6 +299,8 @@ func (x *aliasExpander) visitStmt(s syntax.Stmt) {
 		x.visitStmt(s.Else)
 	case *syntax.StmtLabel:
 		x.visitStmt(s.LoopStmt)
+	case *syntax.StmtDefer:
+		x.visitStmt(s.Stmt)
 	case *syntax.StmtSwitch:
 		x.visitExpr(s.Expr)
 		for _, c := range s.Cases {

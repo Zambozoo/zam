@@ -22,6 +22,12 @@ import (
 // small enough that the program collects many times over, minor and major.
 func compile(t *testing.T, source string) string {
 	t.Helper()
+	return compileWith(t, nil, source)
+}
+
+// compileWith is compile with flags added to the compiler's command line.
+func compileWith(t *testing.T, flags []string, source string) string {
+	t.Helper()
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yml"), []byte("name: \"gc\"\nversion: \"0.0.0\"\ndependencies:\n"), 0o600))
@@ -30,7 +36,8 @@ func compile(t *testing.T, source string) string {
 	out := filepath.Join(dir, "out")
 
 	files := &base.FileProvider{}
-	cmd, err := command.New([]string{"zam", "-m", "16KB", "-N", "4KB", "-o", out, entry}, files)
+	argv := append([]string{"zam", "-m", "16KB", "-N", "4KB", "-o", out}, flags...)
+	cmd, err := command.New(append(argv, entry), files)
 	require.NoError(t, err)
 	ast, errs := syntax.NewAST(cmd, files, base.NewGitProvider(files))
 	require.Empty(t, errs)
@@ -283,7 +290,7 @@ namespace Main {
 // young, and one Delete of the program's own being run.
 func TestCollectionStats(t *testing.T) {
 	t.Parallel()
-	binary := compile(t, `import std("lang/*");
+	source := `import std("lang/*");
 import std("io/local/*");
 import std("data/list/*");
 
@@ -308,12 +315,13 @@ namespace Main {
         File::StdOut.WriteStr(kept.Len(){str} + " " + (Main::deleted > 0){str} + "\n");
     }
 }
-`)
+`
 	for concurrent, major := range map[string]string{
-		"":  ` concurrent pause=[^\n]* remark=`,
-		"0": ` major pause=`,
+		"true":  ` concurrent pause=[^\n]* remark=`,
+		"false": ` major pause=`,
 	} {
-		stdout, stderr, status := runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY=", "ZAM_GC_CONCURRENT=" + concurrent}, binary)
+		binary := compileWith(t, []string{"--gc-concurrent=" + concurrent}, source)
+		stdout, stderr, status := runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY="}, binary)
 		require.Zero(t, status, stderr)
 		assert.Equal(t, "300 true\n", stdout)
 		assert.Contains(t, stderr, " minor pause=")
@@ -547,13 +555,106 @@ namespace Main {
 	assert.Equal(t, "0\n", stdout)
 }
 
+// TestParallelMarkKeepsEverything holds a wide tree whose nodes each keep a
+// box only through a Mark of the program's own, and churns while four markers
+// trace it alongside the program and with it stopped. The helpers have to take
+// part, and every node and box has to survive. A single marker has none.
+func TestParallelMarkKeepsEverything(t *testing.T) {
+	t.Parallel()
+	source := `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    class Box {
+        var str name;
+    }
+
+    // Coded keeps a box only as a word its Mark decodes.
+    class Coded {
+        var uint word;
+
+        public fun void() Mark = () {
+            if (this.word != 0U) {
+                mark((this.word ^ 4099U){void*}{Box*});
+            }
+        }
+    }
+
+    class Tree {
+        var Tree* left;
+        var Tree* right;
+        var str name;
+        var Coded* coded;
+    }
+
+    static fun Tree*(int, int) grow = (depth, at) {
+        var Tree* t = new(Tree);
+        t.name = at{str};
+        var Box* b = new(Box);
+        b.name = at{str} + "b";
+        t.coded = new(Coded);
+        t.coded.word = b{uint} ^ 4099U;
+        if (depth > 0) {
+            t.left = Main::grow(depth - 1, at * 2);
+            t.right = Main::grow(depth - 1, at * 2 + 1);
+        }
+        return t;
+    }
+
+    static fun int(Tree*, int) bad = (t, at) {
+        if (t == null) {
+            return 0;
+        }
+        var int n = Main::bad(t.left, at * 2) + Main::bad(t.right, at * 2 + 1);
+        if (t.name != at{str}) {
+            n++;
+        }
+        if ((t.coded.word ^ 4099U){void*}{Box*}.name != at{str} + "b") {
+            n++;
+        }
+        return n;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Tree* root = Main::grow(10, 1);
+        var str last = "";
+        for (var int r = 0; r < 4; r++) {
+            for (var int i = 0; i < 5000; i++) {
+                last = i{str} + "-churn";
+            }
+            System.GC::Major();
+        }
+        File::StdOut.WriteStr(Main::bad(root, 1){str} + "\n");
+    }
+}
+`
+	for _, concurrent := range []string{"true", "false"} {
+		binary := compileWith(t, []string{"--gc-markers=4", "--gc-concurrent=" + concurrent}, source)
+		stdout, stderr, status := runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY=1"}, binary)
+		require.Zero(t, status, stderr)
+		assert.Equal(t, "0\n", stdout)
+		assert.Regexp(t, ` (major|concurrent) pause=[^\n]* helped=[1-9]`, stderr)
+
+		stdout, stderr, status = runWith(t, []string{"ZAM_GC_VERIFY="}, binary)
+		require.Zero(t, status, stderr)
+		assert.Equal(t, "0\n", stdout)
+	}
+
+	binary := compileWith(t, []string{"--gc-markers=1"}, source)
+	stdout, stderr, status := runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY=1"}, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "0\n", stdout)
+	assert.Contains(t, stderr, " helped=0 ")
+	assert.NotRegexp(t, `helped=[1-9]`, stderr)
+}
+
 // TestCollectionKeepsVariadicArguments passes freshly built references to
 // variadic calls whose callees allocate before storing them, let go of the
 // parameter, free the run, or run on a thread of their own, all of which the
 // arguments kept beneath the call's frame have to survive.
 func TestCollectionKeepsVariadicArguments(t *testing.T) {
 	t.Parallel()
-	binary := compile(t, `import std("lang/*");
+	source := `import std("lang/*");
 import std("io/local/*");
 import std("data/list/*");
 
@@ -614,13 +715,14 @@ namespace Main {
         File::StdOut.WriteStr(bad{str} + "\n");
     }
 }
-`)
-	for _, concurrent := range []string{"0", "1"} {
-		stdout, stderr, status := runWith(t, []string{"ZAM_GC_VERIFY=", "ZAM_GC_CONCURRENT=" + concurrent}, binary)
+`
+	for _, concurrent := range []string{"false", "true"} {
+		binary := compileWith(t, []string{"--gc-concurrent=" + concurrent}, source)
+		stdout, stderr, status := runWith(t, []string{"ZAM_GC_VERIFY="}, binary)
 		require.Zero(t, status, stderr)
 		assert.Equal(t, "0\n", stdout)
 	}
-	stdout, stderr, status := runVerified(t, binary)
+	stdout, stderr, status := runVerified(t, compile(t, source))
 	require.Zero(t, status, stderr)
 	assert.Equal(t, "0\n", stdout)
 }
@@ -630,7 +732,7 @@ namespace Main {
 // before the expression the owner was called in ends.
 func TestCollectionKeepsATemporaryReceiver(t *testing.T) {
 	t.Parallel()
-	binary := compile(t, `import std("lang/*");
+	source := `import std("lang/*");
 import std("io/local/*");
 
 namespace Main {
@@ -678,13 +780,14 @@ namespace Main {
         File::StdOut.WriteStr(bad{str} + "\n");
     }
 }
-`)
-	for _, concurrent := range []string{"0", "1"} {
-		stdout, stderr, status := runWith(t, []string{"ZAM_GC_VERIFY=", "ZAM_GC_CONCURRENT=" + concurrent}, binary)
+`
+	for _, concurrent := range []string{"false", "true"} {
+		binary := compileWith(t, []string{"--gc-concurrent=" + concurrent}, source)
+		stdout, stderr, status := runWith(t, []string{"ZAM_GC_VERIFY="}, binary)
 		require.Zero(t, status, stderr)
 		assert.Equal(t, "0\n", stdout)
 	}
-	stdout, stderr, status := runVerified(t, binary)
+	stdout, stderr, status := runVerified(t, compile(t, source))
 	require.Zero(t, status, stderr)
 	assert.Equal(t, "0\n", stdout)
 }

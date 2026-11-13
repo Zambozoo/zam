@@ -1,0 +1,48 @@
+public namespace Ints {
+    public static fun int(int) Abs = (x) {
+        if(x < 0) {
+            return -x;
+        }
+        return x;
+    }
+
+    public static fun int(int) Sign = (x) {
+        if(x > 0) {
+            return 1;
+        }
+        if(x < 0) {
+            return -1;
+        }
+        return 0;
+    }
+
+    public static fun int(int, int) Min = (x, y) {
+        if(x < y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fun int(int, int) Max = (x, y) {
+        if(x > y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fun int(int, int, int) Clamp = (x, lo, hi) {
+        return Ints::Min(Ints::Max(x, lo), hi);
+    }
+
+    // PowInt returns x to the n, wrapping on overflow.
+    public static fun int(int, uint) Pow = (x, n) {
+        var int r = 1;
+        for(; n > 0U; n = n >> 1U) {
+            if((n & 1U) == 1U) {
+                r = r * x;
+            }
+            x = x * x;
+        }
+        return r;
+    }
+}

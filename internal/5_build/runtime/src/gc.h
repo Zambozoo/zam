@@ -14,7 +14,8 @@
 //
 // Marking runs every reached instance's Mark: Object's own walks the
 // instance's members, and an override walks whatever it says to instead.
-// Mark bodies are run on collector, between its instructions.
+// Mark bodies are run on collector, between its instructions, and a major
+// collection's also on the helpers marking alongside it.
 bool zam_gc_collect(ZamVM *vm, ZamThread *collector, bool major);
 
 // zam_gc_begin is the first stop of a concurrent major collection: it leaves
@@ -23,16 +24,29 @@ bool zam_gc_collect(ZamVM *vm, ZamThread *collector, bool major);
 // Every thread but collector is stopped.
 void zam_gc_begin(ZamThread *collector);
 
-// zam_gc_mark_concurrently traces on the marker, alongside the program, until
-// there is nothing left to trace or the remark is asked for. An allocation
-// whose marking runs a Mark of the program's own is left for the remark. The
-// cards the program dirtied meanwhile are scanned and cleaned as it runs, so
-// the remark scans only those dirtied since.
+// zam_gc_mark_concurrently traces on the marker and its helpers, alongside the
+// program, until there is nothing left to trace or the remark is asked for. An
+// allocation whose marking runs a Mark of the program's own is left for the
+// remark. The cards the program dirtied meanwhile are scanned and cleaned as
+// it runs, so the remark scans only those dirtied since.
 void zam_gc_mark_concurrently(ZamThread *marker);
 
+// zam_gc_request_finish asks the markers to stop tracing alongside the program
+// and leave what is left to the remark.
+void zam_gc_request_finish(ZamVM *vm);
+
+// zam_gc_pause_markers stops every marker at its next checkpoint, and
+// zam_gc_resume_markers sets them going again.
+void zam_gc_pause_markers(ZamVM *vm);
+void zam_gc_resume_markers(ZamVM *vm);
+
+// zam_gc_stop_helpers ends the helper threads, which no collection may be
+// using.
+void zam_gc_stop_helpers(ZamVM *vm);
+
 // zam_gc_collect_fresh is a minor collection of what was allocated while the
-// marker runs, with every thread stopped and the marker paused. What survives
-// stays grey for the remark.
+// marker runs, with every thread stopped and every marker paused. What
+// survives stays grey for the remark.
 void zam_gc_collect_fresh(ZamThread *collector);
 
 // zam_gc_remark ends the marking of a concurrent major collection with every
@@ -50,7 +64,7 @@ void zam_gc_sweep_concurrently(ZamThread *marker);
 // zam_gc_allocated is told of every allocation the collector makes, which is
 // reached already. One made while marking, by a Mark, is traced as well, since
 // it may hold what nothing else does; one a Delete makes is only kept.
-void zam_gc_allocated(ZamVM *vm, void *object);
+void zam_gc_allocated(ZamThread *thread, void *object);
 
 // zam_gc_deletes_custom reports whether an allocation of the kind and type has
 // a Delete of the program's own, which decides the list it is kept on.

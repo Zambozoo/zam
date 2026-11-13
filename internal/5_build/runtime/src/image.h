@@ -48,7 +48,7 @@ typedef enum ZamHeaderWord {
 // version it was handed. This runtime reads exactly one version: the format is
 // still being decided, so there is nothing yet to be compatible with.
 #define ZAMVERSION_MAJOR 0
-#define ZAMVERSION_MINOR 0
+#define ZAMVERSION_MINOR 1
 #define ZAMVERSION_PATCH 0
 #define ZAMVERSION_WORD                                                       \
     (((ZamWord)ZAMVERSION_MAJOR << 32) | ((ZamWord)ZAMVERSION_MINOR << 16) | \
@@ -95,7 +95,7 @@ typedef struct ZamImage {
     const ZamWord *header;
     const uint8_t *body;
 
-    // The five words of runtime configuration, which are the first thing in
+    // The ten words of runtime configuration, which are the first thing in
     // the body. They are how the program asks to be run rather than anything
     // about the program, which is why they are copied out here and the sections
     // after them are not.
@@ -104,6 +104,11 @@ typedef struct ZamImage {
     uint64_t initialHeapSize;
     uint64_t nurserySize;
     uint64_t maxHeapSize;
+    uint64_t gcMarkers;
+    bool gcConcurrent;
+    double gcRemarkGrowth;
+    uint64_t gcPrecleanPasses;
+    uint64_t gcReturnAge;
 
     // typeDefinitionMap gives the body-relative byte offset of each type's
     // definition, indexed by type id. Definitions are not all the same width,

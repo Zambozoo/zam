@@ -234,6 +234,11 @@ func (r *referenceTypeResolverVisitor) VisitStmtLabel(s *syntax.StmtLabel) error
 	return nil
 }
 
+// VisitStmtDefer implements [syntax.StmtVisitor].
+func (r *referenceTypeResolverVisitor) VisitStmtDefer(s *syntax.StmtDefer) error {
+	return s.Stmt.Accept(r)
+}
+
 // VisitStmtLoopJump implements [syntax.StmtVisitor].
 func (r *referenceTypeResolverVisitor) VisitStmtLoopJump(s *syntax.StmtLoopJump) error {
 	return nil

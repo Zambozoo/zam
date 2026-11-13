@@ -100,8 +100,9 @@ static void *reserve(uint64_t byteCount) {
     return at;
 }
 
-void zam_heap_init(ZamHeap *heap, uint64_t byteCount) {
+void zam_heap_init(ZamHeap *heap, uint64_t byteCount, uint64_t returnAge) {
     *heap = (ZamHeap){0};
+    heap->returnAge = returnAge;
     if (byteCount < ZAMHEAP_PAGE_BYTES)
         byteCount = ZAMHEAP_PAGE_BYTES;
     heap->pageCount = (byteCount + ZAMHEAP_PAGE_BYTES - 1) / ZAMHEAP_PAGE_BYTES;
@@ -511,7 +512,7 @@ uint64_t zam_heap_scavenge(ZamHeap *heap) {
     for (uint64_t entry = heap->freeRuns; entry != 0;
          entry = heap->pages[entry - 1].next) {
         ZamHeapPage *page = &heap->pages[entry - 1];
-        if (page->returned || heap->epoch - page->freedAt < ZAMHEAP_RETURN_AGE)
+        if (page->returned || heap->epoch - page->freedAt < heap->returnAge)
             continue;
         uint64_t bytes = page->runPages * ZAMHEAP_PAGE_BYTES;
         returnPages(pageAddress(heap, entry - 1), bytes);

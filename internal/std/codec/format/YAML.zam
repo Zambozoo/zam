@@ -93,6 +93,11 @@ public class YAML {
         return YAML::wrap(doc, node);
     }
 
+    // NewPst makes a number of p rounded to a flt.
+    public static fun YAML*(pst) NewPst = (p) {
+        return YAML::NewFlt(p{flt});
+    }
+
     // NewStr makes a string, quoted when it would otherwise read back as
     // something else.
     public static fun YAML*(str) NewStr = (s) {
@@ -167,6 +172,11 @@ public class YAML {
         var flt f;
         native(STD_YAML_FLT){void(uint, int, flt*)}(this.doc, this.node, &f);
         return f;
+    }
+
+    // AsPst reads a number as a flt, rounded to a pst.
+    public fun pst() AsPst = () {
+        return this.AsFlt(){pst};
     }
 
     // AsStr returns the text of any scalar.

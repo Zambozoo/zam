@@ -1,0 +1,280 @@
+import bits = "../lang/Psts.zam";
+
+// Mathematical functions and constants of pst, each rounded once from a
+// result carried with 128 bits. Sqrt, Fma, Mod, Remainder and the roundings to
+// whole numbers are exact before that rounding; the rest are wrong only
+// within about 2^-110 of a tie. Each answers NaR for NaR and wherever its
+// real result does not exist.
+public namespace Psts {
+    public var pst$ Pi = 3.141592653589793238462643383279502884197169399P;
+    public var pst$ Tau = 6.283185307179586476925286766559005768394338798P;
+    public var pst$ E = 2.718281828459045235360287471352662497757247093P;
+    public var pst$ Phi = 1.618033988749894848204586834365638117720309179P;
+    public var pst$ Sqrt2 = 1.414213562373095048801688724209698078569671875P;
+    public var pst$ SqrtE = 1.648721270700128146848650787814163571653776100P;
+    public var pst$ SqrtPi = 1.772453850905516027298167483341145182797549456P;
+    public var pst$ Ln2 = 0.693147180559945309417232121458176568075500134P;
+    public var pst$ Ln10 = 2.302585092994045684017991454684364207601101488P;
+    public var pst$ Log2E = 1.442695040888963407359924681001892137426645954P;
+    public var pst$ Log10E = 0.434294481903251827651128918916605082294397005P;
+
+    // Sqrt returns the square root of x, NaR below zero.
+    public static fun pst(pst) Sqrt = (x) {
+        var pst r;
+        native(STD_PST_SQRT){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Cbrt = (x) {
+        var pst r;
+        native(STD_PST_CBRT){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    // Exp returns e to the x.
+    public static fun pst(pst) Exp = (x) {
+        var pst r;
+        native(STD_PST_EXP){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    // Exp2 returns 2 to the x.
+    public static fun pst(pst) Exp2 = (x) {
+        var pst r;
+        native(STD_PST_EXP2){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    // Expm1 returns e to the x less one, accurate near zero.
+    public static fun pst(pst) Expm1 = (x) {
+        var pst r;
+        native(STD_PST_EXPM1){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    // Log returns the natural logarithm of x, NaR at or below zero.
+    public static fun pst(pst) Log = (x) {
+        var pst r;
+        native(STD_PST_LOG){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Log2 = (x) {
+        var pst r;
+        native(STD_PST_LOG2){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Log10 = (x) {
+        var pst r;
+        native(STD_PST_LOG10){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    // Log1p returns the natural logarithm of one plus x, accurate near zero.
+    public static fun pst(pst) Log1p = (x) {
+        var pst r;
+        native(STD_PST_LOG1P){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Floor = (x) {
+        var pst r;
+        native(STD_PST_FLOOR){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Ceil = (x) {
+        var pst r;
+        native(STD_PST_CEIL){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    // Round rounds x to the nearest whole number, halves away from zero.
+    public static fun pst(pst) Round = (x) {
+        var pst r;
+        native(STD_PST_ROUND){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    // Trunc rounds x toward zero.
+    public static fun pst(pst) Trunc = (x) {
+        var pst r;
+        native(STD_PST_TRUNC){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Sin = (x) {
+        var pst r;
+        native(STD_PST_SIN){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Cos = (x) {
+        var pst r;
+        native(STD_PST_COS){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Tan = (x) {
+        var pst r;
+        native(STD_PST_TAN){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Asin = (x) {
+        var pst r;
+        native(STD_PST_ASIN){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Acos = (x) {
+        var pst r;
+        native(STD_PST_ACOS){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Atan = (x) {
+        var pst r;
+        native(STD_PST_ATAN){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Sinh = (x) {
+        var pst r;
+        native(STD_PST_SINH){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Cosh = (x) {
+        var pst r;
+        native(STD_PST_COSH){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Tanh = (x) {
+        var pst r;
+        native(STD_PST_TANH){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Asinh = (x) {
+        var pst r;
+        native(STD_PST_ASINH){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Acosh = (x) {
+        var pst r;
+        native(STD_PST_ACOSH){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    public static fun pst(pst) Atanh = (x) {
+        var pst r;
+        native(STD_PST_ATANH){void(pst, pst*)}(x, &r);
+        return r;
+    }
+
+    // Pow returns x to the y, NaR for a negative x and a y that is not whole.
+    public static fun pst(pst, pst) Pow = (x, y) {
+        var pst r;
+        native(STD_PST_POW){void(pst, pst, pst*)}(x, y, &r);
+        return r;
+    }
+
+    // Mod returns the remainder of x / y truncated, with the sign of x.
+    public static fun pst(pst, pst) Mod = (x, y) {
+        var pst r;
+        native(STD_PST_MOD){void(pst, pst, pst*)}(x, y, &r);
+        return r;
+    }
+
+    // Remainder returns x less y times the nearest whole x / y, ties to even.
+    public static fun pst(pst, pst) Remainder = (x, y) {
+        var pst r;
+        native(STD_PST_REMAINDER){void(pst, pst, pst*)}(x, y, &r);
+        return r;
+    }
+
+    // Hypot returns the square root of x*x + y*y.
+    public static fun pst(pst, pst) Hypot = (x, y) {
+        var pst r;
+        native(STD_PST_HYPOT){void(pst, pst, pst*)}(x, y, &r);
+        return r;
+    }
+
+    // Atan2 returns the angle of the point (x, y) from the positive x axis.
+    public static fun pst(pst, pst) Atan2 = (y, x) {
+        var pst r;
+        native(STD_PST_ATAN2){void(pst, pst, pst*)}(y, x, &r);
+        return r;
+    }
+
+    // Fma returns x * y + z rounded once.
+    public static fun pst(pst, pst, pst) Fma = (x, y, z) {
+        var pst r;
+        native(STD_PST_FMA){void(pst, pst, pst, pst*)}(x, y, z, &r);
+        return r;
+    }
+
+    public static fun bool(pst) IsNaR = (x) {
+        return x == bits.Psts::NaR;
+    }
+
+    public static fun pst(pst) Abs = (x) {
+        if(x < 0P) {
+            return -x;
+        }
+        return x;
+    }
+
+    // Sign returns -1, 0 or 1 by the sign of x, and 0 for NaR.
+    public static fun int(pst) Sign = (x) {
+        if(x > 0P) {
+            return 1;
+        }
+        if(x < 0P && x != bits.Psts::NaR) {
+            return -1;
+        }
+        return 0;
+    }
+
+    // Min returns the lesser of x and y, or NaR if either is, NaR ordering
+    // below every other pst.
+    public static fun pst(pst, pst) Min = (x, y) {
+        if(x < y) {
+            return x;
+        }
+        return y;
+    }
+
+    // Max returns the greater of x and y, or NaR if either is.
+    public static fun pst(pst, pst) Max = (x, y) {
+        if(x == bits.Psts::NaR || y == bits.Psts::NaR) {
+            return bits.Psts::NaR;
+        }
+        if(x > y) {
+            return x;
+        }
+        return y;
+    }
+
+    // Clamp returns x held within [lo, hi].
+    public static fun pst(pst, pst, pst) Clamp = (x, lo, hi) {
+        return Psts::Min(Psts::Max(x, lo), hi);
+    }
+
+    // Lerp returns the point t of the way from a to b.
+    public static fun pst(pst, pst, pst) Lerp = (a, b, t) {
+        return a + (b - a) * t;
+    }
+
+    public static fun pst(pst) ToRadians = (degrees) {
+        return degrees * Psts::Pi / 180P;
+    }
+
+    public static fun pst(pst) ToDegrees = (radians) {
+        return radians * 180P / Psts::Pi;
+    }
+}

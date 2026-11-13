@@ -212,7 +212,7 @@ public class TreeTrieMap[A, B] {
     }
 
     // Put sets the value of key, reporting whether the key is new. A new node
-    // and a node split off an edge are pinned until they are linked in.
+    // and a node split off an edge are pinned while they are linked in.
     public fun bool(uint, A*, B) Put = (len, key, v) {
         var Node[A, B]* n = this.root;
         var uint i = 0U;
@@ -231,10 +231,10 @@ public class TreeTrieMap[A, B] {
                 var Node[A, B]* leaf = this.newNode(key, i, len - i);
                 var Struct[Node[A, B]*] pin;
                 pin.Init(leaf, TreeTrieMap::[A, B]markTree, null);
+                defer pin.s = null;
                 leaf.val = v;
                 leaf.hasValue = true;
                 this.setChild(n, key[i], leaf);
-                pin.s = null;
                 this.len++;
                 return true;
             }
@@ -243,6 +243,7 @@ public class TreeTrieMap[A, B] {
                 var Node[A, B]* mid = this.newNode(c.edge, 0U, p);
                 var Struct[Node[A, B]*] pin;
                 pin.Init(mid, TreeTrieMap::[A, B]markTree, null);
+                defer pin.s = null;
                 var A* rest = this.copyRun(c.edge, p, c.edgeLen - p);
                 this.setChild(mid, rest[0], c);
                 var A* old = c.edge;
@@ -252,7 +253,6 @@ public class TreeTrieMap[A, B] {
                 System.GC::Unblock();
                 free(old);
                 this.setChild(n, key[i], mid);
-                pin.s = null;
                 c = mid;
             }
             n = c;

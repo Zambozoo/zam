@@ -14,7 +14,8 @@ func TestBigFlt(t *testing.T) {
 	t.Parallel()
 	binary := compile(t, `import std("lang/*");
 import std("io/local/*");
-import std("math/*");
+import std("math/BigFlt.zam");
+import m = std("math/Flts.zam");
 
 namespace Main {
     static fun BigFlt*(str) p = (s) {
@@ -55,7 +56,7 @@ namespace Main {
         s = s + " " + BigFlt::FromInt(1, 100U).Add(BigFlt::FromInt(2, 100U).Pow(BigFlt::FromInt(-300, 100U))){str};
         s = s + " " + (Main::p("0.5") == BigFlt::FromFlt(0.5, 10U)){str} + " " + BigFlt::FromInt(1, 200U).Div(BigFlt::FromInt(3, 200U)).Cmp(Main::p("0.3333")){str};
         s = s + " " + BigFlt::Parse("1.2.3", 64U).1{str} + " " + BigFlt::Parse("1e", 64U).1{str} + " " + Main::p("12.9").ToBigInt(){str};
-        s = s + " " + (Main::p("123.25").ToFlt() == 123.25){str} + " " + (BigFlt::FromFlt(0.1, 53U).ToFlt() == 0.1){str} + " " + (BigFlt::Pi(53U).ToFlt() == Constants::Pi){str};
+        s = s + " " + (Main::p("123.25").ToFlt() == 123.25){str} + " " + (BigFlt::FromFlt(0.1, 53U).ToFlt() == 0.1){str} + " " + (BigFlt::Pi(53U).ToFlt() == m.Flts::Pi){str};
         s = s + " " + (Main::p("1e-300").ToFlt() == 1e-300){str} + " " + Main::p("3").Sub(Main::p("3")).IsZero(){str} + "\n";
         File::StdOut.WriteStr(s);
     }

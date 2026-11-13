@@ -13,11 +13,23 @@ func TestMathPackage(t *testing.T) {
 	t.Parallel()
 	binary := compile(t, `import std("lang/*");
 import std("io/local/*");
-import std("math/*");
+import std("math/BigFlt.zam");
+import std("math/BigFraction.zam");
+import std("math/BigInt.zam");
+import std("math/Complex.zam");
+import std("math/Fraction.zam");
+import std("math/Hash.zam");
+import std("math/Matrix.zam");
+import std("math/Quaternion.zam");
+import std("math/Rand.zam");
+import std("math/Vector.zam");
+import m = std("math/Flts.zam");
+import mu = std("math/Uints.zam");
+import mi = std("math/Ints.zam");
 
 namespace Main {
     static fun flt(flt) r = (x) {
-        return Math::Round(x * 1000000.0) / 1000000.0 + 0.0;
+        return m.Flts::Round(x * 1000000.0) / 1000000.0 + 0.0;
     }
 
     static fun BigInt*(str) big = (s) {
@@ -25,12 +37,12 @@ namespace Main {
     }
 
     static fun str() basics = () {
-        var str s = Math::Sqrt(2.0){str} + " " + Math::Pow(2.0, 10.0){str} + " " + Math::Floor(-1.5){str};
-        s = s + " " + Math::Mod(7.5, 2.0){str} + " " + Math::Round(2.5){str} + " " + Math::Log(Constants::E){str};
-        s = s + " " + Flts::NegInf{str} + " " + Math::IsNaN(Flts::NaN){str} + " " + Math::CopySign(3.0, -0.0){str};
-        s = s + " " + Math::Gcd(84U, 36U){str} + " " + Math::Lcm(4U, 6U){str} + " " + Math::PowInt(-3, 5U){str};
-        s = s + " " + Math::Hypot(3.0, 4.0){str} + " " + Math::Fma(2.0, 3.0, 1.0){str} + " " + Math::Clamp(5.0, 0.0, 1.0){str};
-        s = s + " " + Trig::Sin(Constants::Pi / 2.0){str} + " " + (Trig::Atan2(1.0, 1.0) * 4.0){str} + " " + Trig::ToDegrees(Constants::Pi){str};
+        var str s = m.Flts::Sqrt(2.0){str} + " " + m.Flts::Pow(2.0, 10.0){str} + " " + m.Flts::Floor(-1.5){str};
+        s = s + " " + m.Flts::Mod(7.5, 2.0){str} + " " + m.Flts::Round(2.5){str} + " " + m.Flts::Log(m.Flts::E){str};
+        s = s + " " + Flts::NegInf{str} + " " + m.Flts::IsNaN(Flts::NaN){str} + " " + m.Flts::CopySign(3.0, -0.0){str};
+        s = s + " " + mu.Uints::Gcd(84U, 36U){str} + " " + mu.Uints::Lcm(4U, 6U){str} + " " + mi.Ints::Pow(-3, 5U){str};
+        s = s + " " + m.Flts::Hypot(3.0, 4.0){str} + " " + m.Flts::Fma(2.0, 3.0, 1.0){str} + " " + m.Flts::Clamp(5.0, 0.0, 1.0){str};
+        s = s + " " + m.Flts::Sin(m.Flts::Pi / 2.0){str} + " " + (m.Flts::Atan2(1.0, 1.0) * 4.0){str} + " " + m.Flts::ToDegrees(m.Flts::Pi){str};
         return s;
     }
 
@@ -62,10 +74,10 @@ namespace Main {
         var Complex q = p.Div(b);
         var Complex root = Complex::Of(-4.0, 0.0).Sqrt();
         var str s = p.Str() + " " + q.Str() + " " + root.Str() + " " + b.Abs(){str} + " " + (&p){str};
-        var Complex e = Complex::Of(0.0, Constants::Pi).Exp();
+        var Complex e = Complex::Of(0.0, m.Flts::Pi).Exp();
         s = s + " " + Main::r(e.re){str} + "," + Main::r(e.im){str};
 
-        var Quaternion rot = Quaternion::FromAxisAngle(0.0, 0.0, 2.0, Constants::Pi / 2.0);
+        var Quaternion rot = Quaternion::FromAxisAngle(0.0, 0.0, 2.0, m.Flts::Pi / 2.0);
         var Vector* v = rot.Rotate(Vector::New(3U, 1.0, 0.0, 0.0));
         s = s + " " + Main::r(v.Get(0U)){str} + "," + Main::r(v.Get(1U)){str} + "," + Main::r(v.Get(2U)){str};
         var Quaternion half = Quaternion::Identity().Slerp(rot, 0.5);

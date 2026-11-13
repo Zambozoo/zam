@@ -57,6 +57,7 @@ func TestPrimitiveLayoutCConformance(t *testing.T) {
 		syntax.TypeKindType,
 		syntax.TypeKindAny,
 		syntax.TypeKindUint,
+		syntax.TypeKindPosit,
 	}
 
 	// The count is the ordering check stated directly: the runtime's

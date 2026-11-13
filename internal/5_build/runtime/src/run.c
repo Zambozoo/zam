@@ -3,6 +3,7 @@
 #include "definition.h"
 #include "gc.h"
 #include "opcode.h"
+#include "posit.h"
 #include "run.h"
 #include "thread.h"
 #include "vm.h"
@@ -323,6 +324,26 @@ static ZamWord floatBinary(ZamThread *thread, ZamOpcode opcode) {
     }
 }
 
+static ZamWord positBinary(ZamThread *thread, ZamOpcode opcode) {
+   ZamPosit right = zam_thread_pop(thread);
+   ZamPosit left = zam_thread_pop(thread);
+
+    switch (opcode) {
+    case OpAddP64:
+        return zam_posit_add(left, right);
+    case OpSubP64:
+        return zam_posit_sub(left, right);
+    case OpMulP64:
+        return zam_posit_mul(left, right);
+    case OpDivP64:
+        return zam_posit_div(left, right);
+
+    default:
+        zam_die(ZAMEXIT_PANIC, "%s is not a posit instruction\n",
+                zam_opcode_name(opcode));
+    }
+}
+
 // The word a step leaves, which is the one arithmetic whose size the type has
 // to be asked for: an int and a char move by one of themselves, a float by one,
 // and a pointer by a whole element of whatever it points at. Nothing scaled
@@ -350,6 +371,10 @@ static ZamWord steppedWord(const ZamImage *image, ZamTypeID type,
 
     case ZAMPRIMITIVE_FLOAT:
         return wordOfFloat(up ? floatOf(word) + 1 : floatOf(word) - 1);
+
+    case ZAMPRIMITIVE_POSIT:
+        return up ? zam_posit_add(word, ZAMPOSIT_ONE)
+                  : zam_posit_sub(word, ZAMPOSIT_ONE);
 
     default:
         break;
@@ -1085,6 +1110,7 @@ static ZamResult equalValues(ZamThread *thread, ZamTypeID leftType,
         case ZAMPRIMITIVE_BYTE:
         case ZAMPRIMITIVE_INT:
         case ZAMPRIMITIVE_UINT:
+        case ZAMPRIMITIVE_POSIT:
             *equal = wordOfValue(thread, image, leftType, leftLocation) ==
                      wordOfValue(thread, image, rightType, rightLocation);
             return ZAMRESULT_CONTINUE;
@@ -1304,7 +1330,8 @@ static ZamInt valuesOrder(const ZamThread *thread, const ZamImage *image,
         // Each order is asked as both strict comparisons rather than as a
         // subtraction, which is what keeps a pair far apart from wrapping into
         // the wrong answer.
-        case ZAMPRIMITIVE_INT: {
+        case ZAMPRIMITIVE_INT:
+        case ZAMPRIMITIVE_POSIT: {
            ZamInt l = (ZamInt)*left, r = (ZamInt)*right;
             return (l > r) - (l < r);
         }
@@ -2448,6 +2475,14 @@ static ZamResult opCastToString(ZamThread *thread) {
             length = snprintf(text, sizeof text, "%g", value);
             break;
         }
+        case ZAMPRIMITIVE_POSIT: {
+           ZamPosit value = (ZamPosit)zam_thread_pop(thread);
+            length = value == ZAMPOSIT_NAR
+                         ? snprintf(text, sizeof text, "NaR")
+                         : snprintf(text, sizeof text, "%g",
+                                    zam_posit_to_double(value));
+            break;
+        }
         case ZAMPRIMITIVE_STRING: {
             // A string is already a string — the pointer stands and its
             // mark entry with it, and nothing is allocated.
@@ -2722,6 +2757,36 @@ static ZamResult step(ZamThread *thread) {
     case OpDivF64:
     case OpEqualF64:
         zam_thread_push(thread, floatBinary(thread, instruction.opcode));
+        return ZAMRESULT_CONTINUE;
+
+    case OpCastI64ToP64:
+        zam_thread_push(thread,
+                        zam_posit_from_int((ZamInt)zam_thread_pop(thread)));
+        return ZAMRESULT_CONTINUE;
+    case OpCastU64ToP64:
+        zam_thread_push(thread, zam_posit_from_uint(zam_thread_pop(thread)));
+        return ZAMRESULT_CONTINUE;
+    case OpCastF64ToP64:
+        zam_thread_push(thread, zam_posit_from_double(
+                                    floatOf(zam_thread_pop(thread))));
+        return ZAMRESULT_CONTINUE;
+    case OpCastP64ToI64:
+        zam_thread_push(thread,
+                        (ZamWord)zam_posit_to_int(zam_thread_pop(thread)));
+        return ZAMRESULT_CONTINUE;
+    case OpCastP64ToU64:
+        zam_thread_push(thread, zam_posit_to_uint(zam_thread_pop(thread)));
+        return ZAMRESULT_CONTINUE;
+    case OpCastP64ToF64:
+        zam_thread_push(thread, wordOfFloat(zam_posit_to_double(
+                                    zam_thread_pop(thread))));
+        return ZAMRESULT_CONTINUE;
+
+    case OpAddP64:
+    case OpSubP64:
+    case OpMulP64:
+    case OpDivP64:
+        zam_thread_push(thread, positBinary(thread, instruction.opcode));
         return ZAMRESULT_CONTINUE;
 
     // The two values stand with an id over each, the left pair beneath the

@@ -19,10 +19,6 @@
 // A card is the span of heap one byte of the card table speaks for. A store of
 // a reference into the heap dirties its card, and a minor collection scans
 // only the dirty ones for what the old generation holds of the young.
-// ZAMHEAP_RETURN_AGE is how many collections a run of pages has to stay free
-// for before its memory is given back to the system, so that a heap shrinking
-// for a moment does not pay to grow again.
-#define ZAMHEAP_RETURN_AGE 3
 
 #define ZAMHEAP_CARD_SHIFT 9
 #define ZAMHEAP_CARD_BYTES ((uint64_t)1 << ZAMHEAP_CARD_SHIFT)
@@ -47,6 +43,11 @@ typedef struct ZamHeap {
     // owns, set once the allocation is whole and cleared when it is freed.
     uint8_t *objects;
 
+    // returnAge is how many collections a run of pages has to stay free for
+    // before its memory is given back to the system, so that a heap shrinking
+    // for a moment does not pay to grow again.
+    uint64_t returnAge;
+
     // frontier is how many pages from the base have ever been handed out;
     // everything past it is untouched. It moves only under the lock.
     uint64_t frontier;
@@ -66,8 +67,10 @@ typedef struct ZamHeap {
 } ZamHeap;
 
 // zam_heap_init reserves byteCount bytes of address space, rounded up to a
-// page, along with the card table and the page table that describe it.
-void zam_heap_init(ZamHeap *heap, uint64_t byteCount);
+// page, along with the card table and the page table that describe it. A run
+// of free pages is given back to the system once it has stayed free for
+// returnAge scavenges.
+void zam_heap_init(ZamHeap *heap, uint64_t byteCount, uint64_t returnAge);
 
 // zam_heap_destroy gives the whole range back at once.
 void zam_heap_destroy(ZamHeap *heap);
@@ -106,7 +109,7 @@ uint64_t zam_heap_size(const ZamHeap *heap, const void *block);
 void zam_heap_release_cache(ZamHeap *heap, ZamHeapCache *cache);
 
 // zam_heap_scavenge advances the epoch and gives back to the system the memory
-// of every run of pages free for ZAMHEAP_RETURN_AGE epochs, answering how many
+// of every run of pages free for returnAge epochs, answering how many
 // bytes that was. The range stays reserved, and the run is handed out again as
 // any other is.
 uint64_t zam_heap_scavenge(ZamHeap *heap);

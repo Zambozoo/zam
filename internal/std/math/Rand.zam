@@ -96,6 +96,13 @@ public namespace Rand {
         return f;
     }
 
+    // Pst returns a uniformly random pst in [0, 1).
+    public fun pst() Pst = () {
+        var pst p;
+        native(STD_RAND_PST){void(pst*)}(&p);
+        return p;
+    }
+
     // FltRange returns a uniformly random flt between min and max.
     public fun flt(flt, flt) FltRange = (min, max) {
         if(min > max) {

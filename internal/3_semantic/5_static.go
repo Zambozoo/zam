@@ -37,6 +37,9 @@ type (
 		// whether the body being validated has another after it for a continue
 		// to fall through to.
 		fallsThrough map[*syntax.StmtSwitch]bool
+		// deferring says the statement being validated is deferred, and so
+		// runs as its block is left rather than being a way to leave it.
+		deferring bool
 		// lambdas are the lambdas whose bodies are being validated, innermost
 		// last. A name resolved from outside one of them is a name it closes
 		// over.
@@ -512,6 +515,10 @@ func (v *staticSemanticsValidatorVisitor) VisitStmtExpr(s *syntax.StmtExpr) erro
 			v.errf("cannot mark %s, which is not a value", v.lastExprType.String())
 		}
 	case syntax.StmtKindReturn:
+		if v.deferring {
+			v.errf("return cannot leave a deferred statement")
+			return nil
+		}
 		// A bare return leaves with nothing, which only a method owing nothing
 		// may do. There is no expression to have typed, so what the last one
 		// left behind says nothing about this statement.
@@ -637,6 +644,32 @@ func (v *staticSemanticsValidatorVisitor) VisitStmtLabel(s *syntax.StmtLabel) er
 	return nil
 }
 
+// VisitStmtDefer implements [syntax.StmtVisitor]. The deferred statement is
+// validated where it is written, which settles what its names stand for, but it
+// runs as its block is left, so nothing in it may leave by a return or by a jump
+// to a loop outside it. A declaration would go out of scope as it was made, and
+// a defer would have no block left to run in.
+func (v *staticSemanticsValidatorVisitor) VisitStmtDefer(s *syntax.StmtDefer) error {
+	defer v.at(s)()
+	switch s.Stmt.(type) {
+	case *syntax.StmtVariable, *syntax.StmtUnpack:
+		v.errf("a declaration cannot be deferred")
+		return nil
+	case *syntax.StmtDefer:
+		v.errf("a defer cannot be deferred")
+		return nil
+	}
+
+	oldLabelScopes, oldDeferring := v.labelScopes, v.deferring
+	v.labelScopes = base.Stack[map[string]syntax.Stmt]{}
+	v.deferring = true
+	v.variableScopes.Push(map[string]binding{})
+	s.Stmt.Accept(v)
+	v.variableScopes.Pop()
+	v.labelScopes, v.deferring = oldLabelScopes, oldDeferring
+	return nil
+}
+
 // VisitStmtLoopJump implements [syntax.StmtVisitor]. A label is searched for
 // innermost outward: the loop a labelled jump names encloses the loop the jump
 // sits in, so the label is out beyond the enclosing loop's own scope.
@@ -660,6 +693,10 @@ func (v *staticSemanticsValidatorVisitor) VisitStmtLoopJump(s *syntax.StmtLoopJu
 	jump := "break"
 	if s.Kind() == syntax.StmtKindContinue {
 		jump = "continue"
+	}
+	if v.deferring {
+		v.errf("%s cannot leave a deferred statement", jump)
+		return nil
 	}
 	if s.Label == "" {
 		v.errf("%s is not in a loop or switch", jump)
@@ -1081,17 +1118,19 @@ func castableTo(src, target syntax.Type) bool {
 	// other.
 	switch sk {
 	case syntax.TypeKindBool:
-		return tk == syntax.TypeKindChar || tk == syntax.TypeKindByte || tk == syntax.TypeKindInt || tk == syntax.TypeKindUint || tk == syntax.TypeKindFloat
+		return tk == syntax.TypeKindChar || tk == syntax.TypeKindByte || tk == syntax.TypeKindInt || tk == syntax.TypeKindUint || tk == syntax.TypeKindFloat || tk == syntax.TypeKindPosit
 	case syntax.TypeKindChar:
-		return tk == syntax.TypeKindInt || tk == syntax.TypeKindUint || tk == syntax.TypeKindByte || tk == syntax.TypeKindBool || tk == syntax.TypeKindFloat
+		return tk == syntax.TypeKindInt || tk == syntax.TypeKindUint || tk == syntax.TypeKindByte || tk == syntax.TypeKindBool || tk == syntax.TypeKindFloat || tk == syntax.TypeKindPosit
 	case syntax.TypeKindByte:
-		return tk == syntax.TypeKindInt || tk == syntax.TypeKindUint || tk == syntax.TypeKindChar || tk == syntax.TypeKindBool || tk == syntax.TypeKindFloat
+		return tk == syntax.TypeKindInt || tk == syntax.TypeKindUint || tk == syntax.TypeKindChar || tk == syntax.TypeKindBool || tk == syntax.TypeKindFloat || tk == syntax.TypeKindPosit
 	case syntax.TypeKindFloat:
-		return tk == syntax.TypeKindInt || tk == syntax.TypeKindUint || tk == syntax.TypeKindChar || tk == syntax.TypeKindByte || tk == syntax.TypeKindBool
+		return tk == syntax.TypeKindInt || tk == syntax.TypeKindUint || tk == syntax.TypeKindChar || tk == syntax.TypeKindByte || tk == syntax.TypeKindBool || tk == syntax.TypeKindPosit
+	case syntax.TypeKindPosit:
+		return tk == syntax.TypeKindInt || tk == syntax.TypeKindUint || tk == syntax.TypeKindChar || tk == syntax.TypeKindByte || tk == syntax.TypeKindBool || tk == syntax.TypeKindFloat
 	case syntax.TypeKindInt, syntax.TypeKindUint:
 		switch tk {
-		case syntax.TypeKindInt, syntax.TypeKindUint,
-			syntax.TypeKindFloat, syntax.TypeKindChar, syntax.TypeKindByte, syntax.TypeKindBool:
+		case syntax.TypeKindInt, syntax.TypeKindUint, syntax.TypeKindFloat,
+			syntax.TypeKindPosit, syntax.TypeKindChar, syntax.TypeKindByte, syntax.TypeKindBool:
 			return true
 		case syntax.TypeKindPointer:
 			// An int or uint is a whole word, which is what an address is, but
@@ -1319,9 +1358,11 @@ func (v *staticSemanticsValidatorVisitor) VisitExprLambda(e *syntax.ExprLambda) 
 		oldExpectedReturnType := v.expectedReturnType
 		oldLabelScopes := v.labelScopes
 		oldPendingLabel := v.pendingLabel
+		oldDeferring := v.deferring
 		v.expectedReturnType = e.Type.ReturnType
 		v.labelScopes = base.Stack[map[string]syntax.Stmt]{}
 		v.pendingLabel = ""
+		v.deferring = false
 
 		v.lambdas.Push(&lambdaContext{
 			lambda:   e,
@@ -1339,6 +1380,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprLambda(e *syntax.ExprLambda) 
 		v.expectedReturnType = oldExpectedReturnType
 		v.labelScopes = oldLabelScopes
 		v.pendingLabel = oldPendingLabel
+		v.deferring = oldDeferring
 	}
 	v.lastExprType = e.Type
 	return nil
@@ -1513,7 +1555,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprNAry(e *syntax.ExprNAry) erro
 		}
 		v.lastExprType = t
 	case syntax.ExprKindMultiply, syntax.ExprKindDivide:
-		t, err := v.requireAllSame(ts, op, syntax.TypeInt, syntax.TypeUint, syntax.TypeFloat, syntax.TypeChar, syntax.TypeByte)
+		t, err := v.requireAllSame(ts, op, syntax.TypeInt, syntax.TypeUint, syntax.TypeFloat, syntax.TypePosit, syntax.TypeChar, syntax.TypeByte)
 		if err != nil {
 			return err
 		}
@@ -1716,7 +1758,7 @@ func (v *staticSemanticsValidatorVisitor) checkAdditive(e *syntax.ExprNAry, ts [
 		}
 		return syntax.NewWrappedType(syntax.TypeKindPointer, first.(*syntax.TypeArray).Type), nil
 	default:
-		return v.requireAllSame(ts, op, syntax.TypeInt, syntax.TypeUint, syntax.TypeFloat, syntax.TypeChar, syntax.TypeByte)
+		return v.requireAllSame(ts, op, syntax.TypeInt, syntax.TypeUint, syntax.TypeFloat, syntax.TypePosit, syntax.TypeChar, syntax.TypeByte)
 	}
 }
 
@@ -1900,13 +1942,13 @@ func isInteger(t syntax.Type) bool {
 	return t.Equals(syntax.TypeInt) || t.Equals(syntax.TypeUint)
 }
 
-// numeric reports whether t is a number: an int, a uint, a float, a char, or a
-// byte — each a narrow or wide integer except the float. Const is seen through:
+// numeric reports whether t is a number: an int, a uint, a float, a posit, a
+// char, or a byte — each a narrow or wide integer except the float and posit. Const is seen through:
 // an operator reads a copy of the slot's value, which is a number if the slot
 // was a number.
 func numeric(t syntax.Type) bool {
 	t = syntax.StripConst(t)
-	return t.Equals(syntax.TypeInt) || t.Equals(syntax.TypeUint) || t.Equals(syntax.TypeFloat) || t.Equals(syntax.TypeChar) || t.Equals(syntax.TypeByte)
+	return t.Equals(syntax.TypeInt) || t.Equals(syntax.TypeUint) || t.Equals(syntax.TypeFloat) || t.Equals(syntax.TypePosit) || t.Equals(syntax.TypeChar) || t.Equals(syntax.TypeByte)
 }
 
 // comparableTypes reports whether a and b can be compared. The non-any rule
@@ -2049,6 +2091,8 @@ func (v *staticSemanticsValidatorVisitor) VisitExprSymbol(e *syntax.ExprSymbol) 
 		v.lastExprType = syntax.TypeUint
 	case syntax.ExprKindLiteralFloat:
 		v.lastExprType = syntax.TypeFloat
+	case syntax.ExprKindLiteralPosit:
+		v.lastExprType = syntax.TypePosit
 	default:
 		panic("unreachable")
 	}

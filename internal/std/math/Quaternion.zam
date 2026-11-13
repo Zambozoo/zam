@@ -1,6 +1,5 @@
 import "../lang/System.zam";
-import "Math.zam";
-import "Trig.zam";
+import "Flts.zam";
 import "Vector.zam";
 
 // Quaternion w + xi + yj + zk
@@ -26,9 +25,9 @@ public struct Quaternion {
     // FromAxisAngle returns the rotation by angle radians about the axis
     // (x, y, z), which need not be of length one.
     public static fun Quaternion(flt, flt, flt, flt) FromAxisAngle = (x, y, z, angle) {
-        var flt n = Math::Sqrt(x * x + y * y + z * z);
-        var flt s = Trig::Sin(angle / 2.0) / n;
-        return Quaternion::Of(Trig::Cos(angle / 2.0), x * s, y * s, z * s);
+        var flt n = Flts::Sqrt(x * x + y * y + z * z);
+        var flt s = Flts::Sin(angle / 2.0) / n;
+        return Quaternion::Of(Flts::Cos(angle / 2.0), x * s, y * s, z * s);
     }
 
     public fun Quaternion(Quaternion) Add = (o) {
@@ -66,7 +65,7 @@ public struct Quaternion {
     }
 
     public fun flt() Norm = () {
-        return Math::Sqrt(this.Dot(*this));
+        return Flts::Sqrt(this.Dot(*this));
     }
 
     public fun Quaternion() Normalize = () {
@@ -99,10 +98,10 @@ public struct Quaternion {
         if(d > 0.9995) {
             return this.Add(o.Sub(*this).Scale(t)).Normalize();
         }
-        var flt theta = Trig::Acos(d);
-        var flt s = Trig::Sin(theta);
-        var flt a = Trig::Sin((1.0 - t) * theta) / s;
-        var flt b = Trig::Sin(t * theta) / s;
+        var flt theta = Flts::Acos(d);
+        var flt s = Flts::Sin(theta);
+        var flt a = Flts::Sin((1.0 - t) * theta) / s;
+        var flt b = Flts::Sin(t * theta) / s;
         return this.Scale(a).Add(o.Scale(b));
     }
 

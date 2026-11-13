@@ -21,7 +21,6 @@ Zam is far from complete.
 * Implement debugging
 * Export LLVM instead of bytecode
 * Bootstrap the language
-* Mark in parallel during major collections
 * Let containers opt out of rerunning their `Mark` at the remark*
 
 \* May not be feasible.

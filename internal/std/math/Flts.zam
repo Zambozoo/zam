@@ -1,6 +1,19 @@
-import "../lang/Flts.zam";
+import bits = "../lang/Flts.zam";
 
-public namespace Math {
+// Mathematical functions and constants of flt, through the C library.
+public namespace Flts {
+    public var flt$ Pi = 3.141592653589793;
+    public var flt$ Tau = 6.283185307179586;
+    public var flt$ E = 2.718281828459045;
+    public var flt$ Phi = 1.618033988749895;
+    public var flt$ Sqrt2 = 1.4142135623730951;
+    public var flt$ SqrtE = 1.6487212707001282;
+    public var flt$ SqrtPi = 1.7724538509055159;
+    public var flt$ Ln2 = 0.6931471805599453;
+    public var flt$ Ln10 = 2.302585092994046;
+    public var flt$ Log2E = 1.4426950408889634;
+    public var flt$ Log10E = 0.4342944819032518;
+
     // Sqrt returns the square root of x, NaN below zero.
     public static fun flt(flt) Sqrt = (x) {
         var flt r;
@@ -129,33 +142,26 @@ public namespace Math {
     // IsInf reports whether x is an infinity of the given sign, either one
     // for a sign of zero.
     public static fun bool(flt, int) IsInf = (x, sign) {
-        return (sign >= 0 && x == Flts::Inf) || (sign <= 0 && x == Flts::NegInf);
+        return (sign >= 0 && x == bits.Flts::Inf) || (sign <= 0 && x == bits.Flts::NegInf);
     }
 
     public static fun bool(flt) IsFinite = (x) {
-        return !Math::IsNaN(x) && !Math::IsInf(x, 0);
+        return !Flts::IsNaN(x) && !Flts::IsInf(x, 0);
     }
 
     // SignBit reports whether the sign bit of x is set, as it is for -0.
     public static fun bool(flt) SignBit = (x) {
-        return (Flts::ToBits(x) >> 63U) == 1U;
+        return (bits.Flts::ToBits(x) >> 63U) == 1U;
     }
 
     // CopySign returns x with the sign of s.
     public static fun flt(flt, flt) CopySign = (x, s) {
-        var uint m = Flts::ToBits(x) & 9223372036854775807U;
-        return Flts::FromBits(m | (Flts::ToBits(s) & 9223372036854775808U));
+        var uint m = bits.Flts::ToBits(x) & 9223372036854775807U;
+        return bits.Flts::FromBits(m | (bits.Flts::ToBits(s) & 9223372036854775808U));
     }
 
     public static fun flt(flt) Abs = (x) {
-        return Flts::FromBits(Flts::ToBits(x) & 9223372036854775807U);
-    }
-
-    public static fun int(int) AbsInt = (x) {
-        if(x < 0) {
-            return -x;
-        }
-        return x;
+        return bits.Flts::FromBits(bits.Flts::ToBits(x) & 9223372036854775807U);
     }
 
     // Sign returns -1, 0 or 1 by the sign of x, and 0 for NaN.
@@ -164,16 +170,6 @@ public namespace Math {
             return 1;
         }
         if(x < 0.0) {
-            return -1;
-        }
-        return 0;
-    }
-
-    public static fun int(int) SignInt = (x) {
-        if(x > 0) {
-            return 1;
-        }
-        if(x < 0) {
             return -1;
         }
         return 0;
@@ -195,41 +191,9 @@ public namespace Math {
         return y;
     }
 
-    public static fun int(int, int) MinInt = (x, y) {
-        if(x < y) {
-            return x;
-        }
-        return y;
-    }
-
-    public static fun int(int, int) MaxInt = (x, y) {
-        if(x > y) {
-            return x;
-        }
-        return y;
-    }
-
-    public static fun uint(uint, uint) MinUint = (x, y) {
-        if(x < y) {
-            return x;
-        }
-        return y;
-    }
-
-    public static fun uint(uint, uint) MaxUint = (x, y) {
-        if(x > y) {
-            return x;
-        }
-        return y;
-    }
-
     // Clamp returns x held within [lo, hi].
     public static fun flt(flt, flt, flt) Clamp = (x, lo, hi) {
-        return Math::Min(Math::Max(x, lo), hi);
-    }
-
-    public static fun int(int, int, int) ClampInt = (x, lo, hi) {
-        return Math::MinInt(Math::MaxInt(x, lo), hi);
+        return Flts::Min(Flts::Max(x, lo), hi);
     }
 
     // Lerp returns the point t of the way from a to b.
@@ -237,46 +201,91 @@ public namespace Math {
         return a + (b - a) * t;
     }
 
-    // PowInt returns x to the n, wrapping on overflow.
-    public static fun int(int, uint) PowInt = (x, n) {
-        var int r = 1;
-        for(; n > 0U; n = n >> 1U) {
-            if((n & 1U) == 1U) {
-                r = r * x;
-            }
-            x = x * x;
-        }
+    public static fun flt(flt) Sin = (x) {
+        var flt r;
+        native(STD_MATH_SIN){void(flt, flt*)}(x, &r);
         return r;
     }
 
-    // PowUint returns x to the n, wrapping on overflow.
-    public static fun uint(uint, uint) PowUint = (x, n) {
-        var uint r = 1U;
-        for(; n > 0U; n = n >> 1U) {
-            if((n & 1U) == 1U) {
-                r = r * x;
-            }
-            x = x * x;
-        }
+    public static fun flt(flt) Cos = (x) {
+        var flt r;
+        native(STD_MATH_COS){void(flt, flt*)}(x, &r);
         return r;
     }
 
-    // Gcd returns the greatest common divisor of a and b, 0 when both are.
-    public static fun uint(uint, uint) Gcd = (a, b) {
-        for(; b != 0U;) {
-            var uint t = a % b;
-            a = b;
-            b = t;
-        }
-        return a;
+    public static fun flt(flt) Tan = (x) {
+        var flt r;
+        native(STD_MATH_TAN){void(flt, flt*)}(x, &r);
+        return r;
     }
 
-    // Lcm returns the least common multiple of a and b, 0 when either is,
-    // wrapping on overflow.
-    public static fun uint(uint, uint) Lcm = (a, b) {
-        if(a == 0U || b == 0U) {
-            return 0U;
-        }
-        return a / Math::Gcd(a, b) * b;
+    public static fun flt(flt) Asin = (x) {
+        var flt r;
+        native(STD_MATH_ASIN){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Acos = (x) {
+        var flt r;
+        native(STD_MATH_ACOS){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Atan = (x) {
+        var flt r;
+        native(STD_MATH_ATAN){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    // Atan2 returns the angle of the point (x, y) from the positive x axis,
+    // in [-Pi, Pi].
+    public static fun flt(flt, flt) Atan2 = (y, x) {
+        var flt r;
+        native(STD_MATH_ATAN2){void(flt, flt, flt*)}(y, x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Sinh = (x) {
+        var flt r;
+        native(STD_MATH_SINH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Cosh = (x) {
+        var flt r;
+        native(STD_MATH_COSH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Tanh = (x) {
+        var flt r;
+        native(STD_MATH_TANH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Asinh = (x) {
+        var flt r;
+        native(STD_MATH_ASINH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Acosh = (x) {
+        var flt r;
+        native(STD_MATH_ACOSH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) Atanh = (x) {
+        var flt r;
+        native(STD_MATH_ATANH){void(flt, flt*)}(x, &r);
+        return r;
+    }
+
+    public static fun flt(flt) ToRadians = (degrees) {
+        return degrees * Flts::Pi / 180.0;
+    }
+
+    public static fun flt(flt) ToDegrees = (radians) {
+        return radians * 180.0 / Flts::Pi;
     }
 }

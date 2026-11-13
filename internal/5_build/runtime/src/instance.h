@@ -45,6 +45,8 @@
 #define ZAMUINT_ALIGN 8
 #define ZAMFLOAT_BYTES 8
 #define ZAMFLOAT_ALIGN 8
+#define ZAMPOSIT_BYTES 8
+#define ZAMPOSIT_ALIGN 8
 // A string is the one-word pointer, not the bytes it addresses.
 #define ZAMSTRING_BYTES 8
 #define ZAMSTRING_ALIGN 8

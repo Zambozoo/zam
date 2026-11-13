@@ -15,6 +15,7 @@
 
 #include "definition.h"
 #include "gc.h"
+#include "posit.h"
 #include "run.h"
 #include "thread.h"
 #include "vm.h"
@@ -679,6 +680,15 @@ static void stdRandFlt(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
+// stdRandPst writes a uniformly random pst in [0, 1): 64 random bits read as a
+// fraction, rounded to the nearest pst below 1.
+static void stdRandPst(ZamThread *thread) {
+    ZamPosit *out = (ZamPosit *)zam_native_argument_pointer(thread, 0);
+    ZamPosit posit = zam_posit_from_fraction(randNext(thread));
+    *out = posit == ZAMPOSIT_ONE ? ZAMPOSIT_ONE - 1 : posit;
+    zam_native_return_void(thread);
+}
+
 // stdSignalRaise sends the signal to this process. raise() returns 0 on
 // success and non-zero on failure; the native swallows the result since the
 // zam signature returns void. Failure here means the OS rejected the signal
@@ -1097,6 +1107,60 @@ static void stdMathFma(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
+#define POSIT_UNARY(name, fn)                                                 \
+    static void name(ZamThread *thread) {                                     \
+        ZamPosit *out = (ZamPosit *)zam_native_argument_pointer(thread, 1);   \
+        *out = fn(zam_native_argument(thread, 0));                            \
+        zam_native_return_void(thread);                                       \
+    }
+
+#define POSIT_BINARY(name, fn)                                                \
+    static void name(ZamThread *thread) {                                     \
+        ZamPosit *out = (ZamPosit *)zam_native_argument_pointer(thread, 2);   \
+        *out = fn(zam_native_argument(thread, 0),                             \
+                  zam_native_argument(thread, 1));                            \
+        zam_native_return_void(thread);                                       \
+    }
+
+POSIT_UNARY(stdPstSqrt, zam_posit_sqrt)
+POSIT_UNARY(stdPstCbrt, zam_posit_cbrt)
+POSIT_UNARY(stdPstExp, zam_posit_exp)
+POSIT_UNARY(stdPstExp2, zam_posit_exp2)
+POSIT_UNARY(stdPstExpm1, zam_posit_expm1)
+POSIT_UNARY(stdPstLog, zam_posit_log)
+POSIT_UNARY(stdPstLog2, zam_posit_log2)
+POSIT_UNARY(stdPstLog10, zam_posit_log10)
+POSIT_UNARY(stdPstLog1p, zam_posit_log1p)
+POSIT_UNARY(stdPstFloor, zam_posit_floor)
+POSIT_UNARY(stdPstCeil, zam_posit_ceil)
+POSIT_UNARY(stdPstRound, zam_posit_round)
+POSIT_UNARY(stdPstTrunc, zam_posit_trunc)
+POSIT_UNARY(stdPstSin, zam_posit_sin)
+POSIT_UNARY(stdPstCos, zam_posit_cos)
+POSIT_UNARY(stdPstTan, zam_posit_tan)
+POSIT_UNARY(stdPstAsin, zam_posit_asin)
+POSIT_UNARY(stdPstAcos, zam_posit_acos)
+POSIT_UNARY(stdPstAtan, zam_posit_atan)
+POSIT_UNARY(stdPstSinh, zam_posit_sinh)
+POSIT_UNARY(stdPstCosh, zam_posit_cosh)
+POSIT_UNARY(stdPstTanh, zam_posit_tanh)
+POSIT_UNARY(stdPstAsinh, zam_posit_asinh)
+POSIT_UNARY(stdPstAcosh, zam_posit_acosh)
+POSIT_UNARY(stdPstAtanh, zam_posit_atanh)
+POSIT_BINARY(stdPstPow, zam_posit_pow)
+POSIT_BINARY(stdPstMod, zam_posit_mod)
+POSIT_BINARY(stdPstRemainder, zam_posit_remainder)
+POSIT_BINARY(stdPstHypot, zam_posit_hypot)
+POSIT_BINARY(stdPstAtan2, zam_posit_atan2)
+
+static void stdPstFma(ZamThread *thread) {
+    ZamPosit *out = (ZamPosit *)zam_native_argument_pointer(thread, 3);
+    *out = zam_posit_fma(zam_native_argument(thread, 0),
+                         zam_native_argument(thread, 1),
+                         zam_native_argument(thread, 2));
+    zam_native_return_void(thread);
+}
+
 // stdBitsCopy writes its argument word through the out pointer unchanged,
 // which reinterprets a flt as its bits or bits as a flt depending on the
 // signature it was called under.
@@ -1171,6 +1235,7 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},
     {"STD_RAND_UINT", stdRandUint},
     {"STD_RAND_FLT", stdRandFlt},
+    {"STD_RAND_PST", stdRandPst},
     {"STD_SIGNAL_INIT", stdSignalInit},
     {"STD_SIGNAL_RAISE", stdSignalRaise},
     {"STD_SIGNAL_SEND", stdSignalSend},
@@ -1228,8 +1293,41 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_MATH_HYPOT", stdMathHypot},
     {"STD_MATH_ATAN2", stdMathAtan2},
     {"STD_MATH_FMA", stdMathFma},
+    {"STD_PST_SQRT", stdPstSqrt},
+    {"STD_PST_CBRT", stdPstCbrt},
+    {"STD_PST_EXP", stdPstExp},
+    {"STD_PST_EXP2", stdPstExp2},
+    {"STD_PST_EXPM1", stdPstExpm1},
+    {"STD_PST_LOG", stdPstLog},
+    {"STD_PST_LOG2", stdPstLog2},
+    {"STD_PST_LOG10", stdPstLog10},
+    {"STD_PST_LOG1P", stdPstLog1p},
+    {"STD_PST_FLOOR", stdPstFloor},
+    {"STD_PST_CEIL", stdPstCeil},
+    {"STD_PST_ROUND", stdPstRound},
+    {"STD_PST_TRUNC", stdPstTrunc},
+    {"STD_PST_SIN", stdPstSin},
+    {"STD_PST_COS", stdPstCos},
+    {"STD_PST_TAN", stdPstTan},
+    {"STD_PST_ASIN", stdPstAsin},
+    {"STD_PST_ACOS", stdPstAcos},
+    {"STD_PST_ATAN", stdPstAtan},
+    {"STD_PST_SINH", stdPstSinh},
+    {"STD_PST_COSH", stdPstCosh},
+    {"STD_PST_TANH", stdPstTanh},
+    {"STD_PST_ASINH", stdPstAsinh},
+    {"STD_PST_ACOSH", stdPstAcosh},
+    {"STD_PST_ATANH", stdPstAtanh},
+    {"STD_PST_POW", stdPstPow},
+    {"STD_PST_MOD", stdPstMod},
+    {"STD_PST_REMAINDER", stdPstRemainder},
+    {"STD_PST_HYPOT", stdPstHypot},
+    {"STD_PST_ATAN2", stdPstAtan2},
+    {"STD_PST_FMA", stdPstFma},
     {"STD_BITS_FROM_FLT", stdBitsCopy},
     {"STD_BITS_TO_FLT", stdBitsCopy},
+    {"STD_BITS_FROM_PST", stdBitsCopy},
+    {"STD_BITS_TO_PST", stdBitsCopy},
     {"STD_BITS_ONES", stdBitsOnes},
     {"STD_BITS_LEADING_ZEROS", stdBitsLeadingZeros},
     {"STD_BITS_TRAILING_ZEROS", stdBitsTrailingZeros},

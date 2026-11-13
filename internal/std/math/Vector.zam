@@ -1,7 +1,7 @@
 import "../lang/System.zam";
 import "../lang/Obj.zam";
 import "../lang/Arr.zam";
-import "Math.zam";
+import "Flts.zam";
 import "Hash.zam";
 
 // Vector of flts whose length is set when it is made
@@ -76,7 +76,7 @@ public class Vector <: Arr[flt]* {
 
     // Norm returns the Euclidean length.
     public fun flt() Norm = () {
-        return Math::Sqrt(this.Dot(this));
+        return Flts::Sqrt(this.Dot(this));
     }
 
     // Normalize returns the vector of length one in the same direction.

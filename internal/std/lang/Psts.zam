@@ -1,0 +1,24 @@
+// Limits and special values of pst, a 64-bit posit with two exponent bits
+public namespace Psts {
+    // Max is the largest pst, 2^248.
+    public var pst$ Max = Psts::FromBits(9223372036854775807U);
+    // MinPos is the smallest positive pst, 2^-248.
+    public var pst$ MinPos = Psts::FromBits(1U);
+    // NaR is the one pst that is not a real number. It equals itself and
+    // orders below every other pst.
+    public var pst$ NaR = Psts::FromBits(9223372036854775808U);
+
+    // FromBits returns the pst whose bits are u.
+    public static fun pst(uint) FromBits = (u) {
+        var pst p;
+        native(STD_BITS_TO_PST){void(uint, pst*)}(u, &p);
+        return p;
+    }
+
+    // ToBits returns the bits of p.
+    public static fun uint(pst) ToBits = (p) {
+        var uint u;
+        native(STD_BITS_FROM_PST){void(pst, uint*)}(p, &u);
+        return u;
+    }
+}

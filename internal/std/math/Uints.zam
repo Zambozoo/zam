@@ -1,0 +1,51 @@
+public namespace Uints {
+    public static fun uint(uint, uint) Min = (x, y) {
+        if(x < y) {
+            return x;
+        }
+        return y;
+    }
+
+    public static fun uint(uint, uint) Max = (x, y) {
+        if(x > y) {
+            return x;
+        }
+        return y;
+    }
+
+    // PowUint returns x to the n, wrapping on overflow.
+    public static fun uint(uint, uint) Pow = (x, n) {
+        var uint r = 1U;
+        for(; n > 0U; n = n >> 1U) {
+            if((n & 1U) == 1U) {
+                r = r * x;
+            }
+            x = x * x;
+        }
+        return r;
+    }
+
+    // Gcd returns the greatest common divisor of a and b, 0 when both are.
+    public static fun uint(uint, uint) Gcd = (a, b) {
+        for(; b != 0U;) {
+            var uint t = a % b;
+            a = b;
+            b = t;
+        }
+        return a;
+    }
+
+    // Lcm returns the least common multiple of a and b, 0 when either is,
+    // wrapping on overflow.
+    public static fun uint(uint, uint) Lcm = (a, b) {
+        if(a == 0U || b == 0U) {
+            return 0U;
+        }
+        return a / Uints::Gcd(a, b) * b;
+    }
+
+    // Clamp returns x held within [lo, hi].
+    public static fun uint(uint, uint, uint) Clamp = (x, lo, hi) {
+        return Uints::Min(Uints::Max(x, lo), hi);
+    }
+}

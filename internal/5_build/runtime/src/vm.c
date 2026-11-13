@@ -3,6 +3,7 @@
 #include "gc.h"
 
 #include <time.h>
+#include <unistd.h>
 
 // resetThreshold grows the heap until what it holds no longer asks for a
 // collection, and sets the threshold the next one is asked for at.
@@ -22,7 +23,7 @@ static void resetThreshold(ZamVM *vm) {
 // native table and the main thread are all set up from what the image carries,
 // so zam_vm_init and zam_vm_init_from_bytes share them.
 static void postImageLoad(ZamVM *vm) {
-    zam_heap_init(&vm->heap, vm->image.maxHeapSize);
+    zam_heap_init(&vm->heap, vm->image.maxHeapSize, vm->image.gcReturnAge);
     vm->gcTriggerRatio = vm->image.gcTriggerRatio;
     vm->heapByteCount = vm->image.initialHeapSize;
     vm->nurseryByteCount = vm->image.nurserySize;
@@ -35,13 +36,23 @@ static void postImageLoad(ZamVM *vm) {
     vm->verify = verify != NULL && *verify != '\0';
     const char *stats = getenv("ZAM_GC_STATS");
     vm->stats = stats != NULL && *stats != '\0';
-    const char *concurrent = getenv("ZAM_GC_CONCURRENT");
-    vm->concurrent = concurrent == NULL || strcmp(concurrent, "0") != 0;
+    vm->concurrent = vm->image.gcConcurrent;
+    vm->remarkGrowth = vm->image.gcRemarkGrowth;
+    vm->precleanPasses = vm->image.gcPrecleanPasses;
+    long markerCount = (long)vm->image.gcMarkers;
+    if (markerCount == 0) {
+        markerCount = sysconf(_SC_NPROCESSORS_ONLN) / 2;
+        if (markerCount > 8)
+            markerCount = 8;
+    }
+    vm->markerCount = markerCount < 1 ? 1 : (uint32_t)markerCount;
     resetThreshold(vm);
 
     pthread_mutex_init(&vm->collectionLock, NULL);
     pthread_cond_init(&vm->collectionChanged, NULL);
     pthread_mutex_init(&vm->threadLock, NULL);
+    pthread_mutex_init(&vm->markLock, NULL);
+    pthread_cond_init(&vm->markChanged, NULL);
 
     // The static region is allocated at the size the image asked for and zeroed,
     // which is what a static that was never written reads as. What the compiler
@@ -97,9 +108,9 @@ static void stopMarker(ZamVM *vm) {
         return;
     pthread_mutex_lock(&vm->collectionLock);
     vm->markerQuit = true;
-    atomic_store(&vm->finishRequested, true);
     pthread_cond_broadcast(&vm->collectionChanged);
     pthread_mutex_unlock(&vm->collectionLock);
+    zam_gc_request_finish(vm);
     pthread_join(vm->markerThread, NULL);
     zam_thread_free(vm->marker);
     free(vm->marker);
@@ -108,6 +119,7 @@ static void stopMarker(ZamVM *vm) {
 
 void zam_vm_free(ZamVM *vm) {
     stopMarker(vm);
+    zam_gc_stop_helpers(vm);
 
     // A spawned thread's stacks are its own and are freed here; the thread
     // itself is one of the allocations and is freed by the heap sweep below.
@@ -129,7 +141,7 @@ void zam_vm_free(ZamVM *vm) {
     free(vm->markableDecls);
     free(vm->customMarkDecls);
     free(vm->customDeleteDecls);
-    free(vm->gray);
+    free(vm->shared);
     free(vm->youngSpans);
     free(vm->heldCards);
     free(vm->retrace);
@@ -137,6 +149,8 @@ void zam_vm_free(ZamVM *vm) {
     pthread_mutex_destroy(&vm->collectionLock);
     pthread_cond_destroy(&vm->collectionChanged);
     pthread_mutex_destroy(&vm->threadLock);
+    pthread_mutex_destroy(&vm->markLock);
+    pthread_cond_destroy(&vm->markChanged);
 }
 
 // threadsRunning reports whether a thread other than main has yet to finish.
@@ -180,8 +194,9 @@ static void flushPending(ZamVM *vm, ZamThread *thread) {
     uint64_t allocated = atomic_fetch_add(&vm->allocatedByteCount, bytes) + bytes;
     uint64_t young = atomic_fetch_add(&vm->youngByteCount, bytes) + bytes;
     if (atomic_load(&vm->marking)) {
-        if (allocated >= vm->cycleBefore + vm->heapByteCount)
-            atomic_store(&vm->finishRequested, true);
+        if (allocated >= vm->cycleBefore + (uint64_t)((double)vm->heapByteCount *
+                                                     vm->remarkGrowth))
+            zam_gc_request_finish(vm);
         else if (young >= vm->nurseryByteCount)
             atomic_store(&vm->collectionRequested, true);
         return;
@@ -206,7 +221,7 @@ static void gatherThread(ZamVM *vm, ZamThread *thread, bool whiten) {
     }
 }
 
-// gatherYoung gathers every thread's young lists, the marker's among them,
+// gatherYoung gathers every thread's young lists, the markers' among them,
 // onto the VM's, which is what a collection works from, along with what a
 // minor collection left fresh. Every other thread is stopped.
 static void gatherYoung(ZamVM *vm, bool whiten) {
@@ -216,6 +231,8 @@ static void gatherYoung(ZamVM *vm, bool whiten) {
     pthread_mutex_unlock(&vm->threadLock);
     if (vm->marker != NULL)
         gatherThread(vm, vm->marker, whiten);
+    for (uint32_t index = 0; index < vm->helperCount; index++)
+        gatherThread(vm, vm->helpers[index], whiten);
     for (int list = 0; list < ZAMYOUNG_COUNT; list++) {
         zam_list_splice(&vm->fresh[list], &vm->freshSurvivors[list]);
         if (whiten)
@@ -268,7 +285,9 @@ void *zam_vm_alloc(ZamVM *vm, ZamThread *thread, ZamObjectKind kind,
     //
     // An allocation made while collecting is one the collection has not
     // looked for and must not free, so it starts already reached, on the list
-    // the collection is about to sweep. Any other goes on the thread's own.
+    // the collection is about to sweep, or for a helper on its own until the
+    // round of marking it was made in is over. Any other goes on the thread's
+    // own.
     // One made while the marker runs starts grey, which the marker neither
     // traces, the allocation perhaps still being filled in, nor takes for
     // reached; the remark leaves it unreached before marking what the program
@@ -282,8 +301,9 @@ void *zam_vm_alloc(ZamVM *vm, ZamThread *thread, ZamObjectKind kind,
     ZamYoungList which = zam_gc_deletes_custom(vm, kind, shortID)
                              ? ZAMYOUNG_DELETES
                              : ZAMYOUNG_PLAIN;
-    ZamObjectList *list = collecting && !marking ? &vm->young[which]
-                                                 : &thread->young[which];
+    ZamObjectList *list = thread == vm->collector && !marking
+                              ? &vm->young[which]
+                              : &thread->young[which];
     void *head = list->head;
     if ((uintptr_t)head >> ZAMUPVALUE_BITS != 0)
         zam_die(ZAMEXIT_PANIC,
@@ -304,7 +324,7 @@ void *zam_vm_alloc(ZamVM *vm, ZamThread *thread, ZamObjectKind kind,
         };
     zam_heap_set_object(&vm->heap, block);
     if (collecting)
-        zam_gc_allocated(vm, object);
+        zam_gc_allocated(thread, object);
 
     // The counts are of what the allocator set aside rather than what was
     // asked for, which is what a sweep can give back.
@@ -338,7 +358,7 @@ static void report(ZamVM *vm, const char *kind, double pause, uint64_t before,
     fprintf(stderr,
             "gc %llu %s pause=%.3fms heap=%llu->%llu young=%llu "
             "survived=%llu promoted=%llu cards=%llu retraced=%llu "
-            "finalized=%llu returned=%llu%s\n",
+            "helped=%llu finalized=%llu returned=%llu%s\n",
             (unsigned long long)vm->collections, kind, pause,
             (unsigned long long)before,
             (unsigned long long)atomic_load(&vm->allocatedByteCount),
@@ -347,6 +367,7 @@ static void report(ZamVM *vm, const char *kind, double pause, uint64_t before,
             (unsigned long long)vm->current.promoted,
             (unsigned long long)vm->current.cards,
             (unsigned long long)vm->current.retraced,
+            (unsigned long long)vm->current.helped,
             (unsigned long long)vm->current.finalized,
             (unsigned long long)vm->current.returned, more);
 }
@@ -413,18 +434,14 @@ static void *markerMain(void *context) {
     ZamVM *vm = context;
     pthread_mutex_lock(&vm->collectionLock);
     for (;;) {
-        while (!vm->markerQuit &&
-               (!atomic_load(&vm->marking) || atomic_load(&vm->markerPause)))
+        while (!vm->markerQuit && !atomic_load(&vm->marking))
             pthread_cond_wait(&vm->collectionChanged, &vm->collectionLock);
         if (vm->markerQuit)
             break;
 
-        vm->markerBusy = true;
         pthread_mutex_unlock(&vm->collectionLock);
         zam_gc_mark_concurrently(vm->marker);
         pthread_mutex_lock(&vm->collectionLock);
-        vm->markerBusy = false;
-        pthread_cond_broadcast(&vm->collectionChanged);
         if (vm->markerQuit)
             break;
 
@@ -474,6 +491,7 @@ static void startCycle(ZamVM *vm, ZamThread *collector) {
         vm->marker = zam_alloc(sizeof *vm->marker);
         memset(vm->marker, 0, sizeof *vm->marker);
         zam_thread_init(vm->marker, vm, vm->image.initialStackSize);
+        vm->marker->collects = true;
         if (pthread_create(&vm->markerThread, NULL, markerMain, vm) != 0)
             zam_die(ZAMEXIT_PANIC, "could not start the collector's marker\n");
     }
@@ -482,27 +500,11 @@ static void startCycle(ZamVM *vm, ZamThread *collector) {
     atomic_store(&vm->marking, true);
 }
 
-void zam_vm_marker_checkpoint(ZamVM *vm) {
-    if (!atomic_load(&vm->markerPause))
-        return;
-    pthread_mutex_lock(&vm->collectionLock);
-    vm->markerParked = true;
-    pthread_cond_broadcast(&vm->collectionChanged);
-    while (atomic_load(&vm->markerPause))
-        pthread_cond_wait(&vm->collectionChanged, &vm->collectionLock);
-    vm->markerParked = false;
-    pthread_mutex_unlock(&vm->collectionLock);
-}
-
 // collectFresh is a minor collection while the marker runs, of what was
-// allocated since it began. The marker is paused at a checkpoint, or between
-// its tracing and its remark, for its length.
+// allocated since it began. Every marker is paused at a checkpoint, waiting
+// for work, or between its tracing and its remark, for its length.
 static void collectFresh(ZamVM *vm, ZamThread *collector) {
-    pthread_mutex_lock(&vm->collectionLock);
-    atomic_store(&vm->markerPause, true);
-    while (vm->markerBusy && !vm->markerParked)
-        pthread_cond_wait(&vm->collectionChanged, &vm->collectionLock);
-    pthread_mutex_unlock(&vm->collectionLock);
+    zam_gc_pause_markers(vm);
 
     gatherFresh(vm);
     uint64_t before = atomic_load(&vm->allocatedByteCount);
@@ -523,10 +525,7 @@ static void collectFresh(ZamVM *vm, ZamThread *collector) {
                " alongside=1");
     vm->current = cycle;
 
-    pthread_mutex_lock(&vm->collectionLock);
-    atomic_store(&vm->markerPause, false);
-    pthread_cond_broadcast(&vm->collectionChanged);
-    pthread_mutex_unlock(&vm->collectionLock);
+    zam_gc_resume_markers(vm);
 }
 
 // A collection is major once the heap has grown to its threshold, and minor
@@ -627,7 +626,7 @@ void zam_vm_safepoint(ZamVM *vm, ZamThread *thread) {
             break;
         } else if (atomic_load(&vm->marking) || atomic_load(&vm->sweeping)) {
             if (atomic_load(&vm->marking))
-                atomic_store(&vm->finishRequested, true);
+                zam_gc_request_finish(vm);
             awaitCycle(vm, thread);
         } else {
             collect(vm, thread);
@@ -641,7 +640,7 @@ void zam_vm_safepoint(ZamVM *vm, ZamThread *thread) {
 // makes from inside a collection is never a safe region: there is no
 // collection for it to let run.
 void zam_vm_enter_safe(ZamThread *thread) {
-    if (thread->vm->collector == thread || thread->vm->marker == thread)
+    if (zam_gc_collecting(thread))
         return;
     if (thread->gcBlockDepth != 0)
         zam_die(ZAMEXIT_PANIC,
@@ -656,7 +655,7 @@ void zam_vm_enter_safe(ZamThread *thread) {
 
 void zam_vm_leave_safe(ZamThread *thread) {
     ZamVM *vm = thread->vm;
-    if (vm->collector == thread || vm->marker == thread)
+    if (zam_gc_collecting(thread))
         return;
     pthread_mutex_lock(&vm->collectionLock);
     awaitResume(vm, thread, ZAMTHREAD_SAFE);

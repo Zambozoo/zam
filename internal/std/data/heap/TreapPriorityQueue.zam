@@ -32,16 +32,16 @@ public class TreapPriorityQueue[A, B] {
     }
 
     // rotateRight rotates the subtree in the link slot, writing its new root
-    // back into the slot. The node moved up is pinned until it is linked in.
+    // back into the slot. The node moved up is pinned while it is linked in.
     private fun void(Node[A, B]**) rotateRight = (link) {
         var Node[A, B]* n = *link;
         var Node[A, B]* l = n.left;
         var Struct[Node[A, B]*] pin;
         pin.Init(l, TreapPriorityQueue::[A, B]markTree, null);
+        defer pin.s = null;
         n.left = l.right;
         l.right = n;
         *link = l;
-        pin.s = null;
     }
 
     private fun void(Node[A, B]**) rotateLeft = (link) {
@@ -49,10 +49,10 @@ public class TreapPriorityQueue[A, B] {
         var Node[A, B]* r = n.right;
         var Struct[Node[A, B]*] pin;
         pin.Init(r, TreapPriorityQueue::[A, B]markTree, null);
+        defer pin.s = null;
         n.right = r.left;
         r.left = n;
         *link = r;
-        pin.s = null;
     }
 
     // insert places k by value in the link slot, equal ones going right, and

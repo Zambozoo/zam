@@ -53,6 +53,18 @@
     OP(OpNegF64, 0)                                                            \
     OP(OpEqualF64, 0)                                                          \
                                                                                \
+    OP(OpCastI64ToP64, 0)                                                      \
+    OP(OpCastU64ToP64, 0)                                                      \
+    OP(OpCastF64ToP64, 0)                                                      \
+    OP(OpCastP64ToI64, 0)                                                      \
+    OP(OpCastP64ToU64, 0)                                                      \
+    OP(OpCastP64ToF64, 0)                                                      \
+                                                                               \
+    OP(OpAddP64, 0)                                                            \
+    OP(OpSubP64, 0)                                                            \
+    OP(OpMulP64, 0)                                                            \
+    OP(OpDivP64, 0)                                                            \
+                                                                               \
     OP(OpShiftLeftI64, 0)                                                      \
     OP(OpShiftRightI64, 0)                                                     \
     OP(OpShiftArithmeticRightI64, 0)                                           \

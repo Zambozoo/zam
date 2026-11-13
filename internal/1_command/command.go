@@ -47,6 +47,21 @@ const (
 	flagMaxHeapSizeLong = "max-heap-size"
 	usageMaxHeapSize    = "most memory the heap may ever hold"
 
+	flagGCMarkersLong = "gc-markers"
+	usageGCMarkers    = "threads that mark during a major collection, 0 for half the processors up to 8"
+
+	flagGCConcurrentLong = "gc-concurrent"
+	usageGCConcurrent    = "mark major collections the heap's growth asks for alongside the program"
+
+	flagGCRemarkGrowthLong = "gc-remark-growth"
+	usageGCRemarkGrowth    = "fraction of its size the heap may grow by while marking alongside the program before the remark is forced"
+
+	flagGCPrecleanPassesLong = "gc-preclean-passes"
+	usageGCPrecleanPasses    = "passes over the cards dirtied while marking alongside the program, before the remark"
+
+	flagGCReturnAgeLong = "gc-return-age"
+	usageGCReturnAge    = "collections a run of free pages waits before it is given back to the system"
+
 	flagEmitImage     = "E"
 	flagEmitImageLong = "emit-image"
 	usageEmitImage    = "write the raw bytecode image instead of linking a binary"
@@ -71,6 +86,15 @@ const (
 	defaultHeapSize  = byteSize(16 << 20)
 	defaultNursery   = byteSize(8 << 20)
 	defaultMaxHeap   = byteSize(64 << 30)
+
+	defaultGCMarkers        = 0
+	defaultGCConcurrent     = true
+	defaultGCRemarkGrowth   = 1.0
+	defaultGCPrecleanPasses = 2
+	defaultGCReturnAge      = 3
+
+	maxGCMarkers        = 64
+	maxGCPrecleanPasses = 16
 )
 
 // byteSizeUnits are the suffixes a size may be written with, longest first so
@@ -132,6 +156,31 @@ type (
 		// up front as address space.
 		// Uses the -M flag with a default of `64GB`
 		MaxHeapSize int
+
+		// GCMarkers is how many threads mark during a major collection, zero
+		// leaving it to the runtime: half the processors, up to 8.
+		// Uses the --gc-markers flag with a default of `0`, must be within [0, 64].
+		GCMarkers int
+
+		// GCConcurrent has a major collection the heap's growth asks for mark
+		// alongside the program.
+		// Uses the --gc-concurrent flag with a default of `true`.
+		GCConcurrent bool
+
+		// GCRemarkGrowth is how far the heap may grow while marking alongside
+		// the program, as a fraction of its size, before the remark is forced.
+		// Uses the --gc-remark-growth flag with a default of `1`, must be positive.
+		GCRemarkGrowth float64
+
+		// GCPrecleanPasses is how many times the cards dirtied while marking
+		// alongside the program are scanned before the remark.
+		// Uses the --gc-preclean-passes flag with a default of `2`, must be within [0, 16].
+		GCPrecleanPasses int
+
+		// GCReturnAge is how many collections a run of free pages waits before
+		// it is given back to the system.
+		// Uses the --gc-return-age flag with a default of `3`, must be positive.
+		GCReturnAge int
 
 		// EmitImage skips the build driver and writes the raw bytecode image to
 		// OutputPath instead of linking a native binary. Uses the -E flag with a
@@ -243,6 +292,9 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	var keepBuild bool
 	var run bool
 	var noProject bool
+	var gcMarkers, gcPrecleanPasses, gcReturnAge int
+	var gcConcurrent bool
+	var gcRemarkGrowth float64
 	stackSize, heapSize := defaultStackSize, defaultHeapSize
 	nurserySize, maxHeapSize := defaultNursery, defaultMaxHeap
 
@@ -254,6 +306,11 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	fs.VarP(&heapSize, flagHeapSizeLong, flagHeapSize, usageHeapSize)
 	fs.VarP(&nurserySize, flagNurserySizeLong, flagNurserySize, usageNurserySize)
 	fs.VarP(&maxHeapSize, flagMaxHeapSizeLong, flagMaxHeapSize, usageMaxHeapSize)
+	fs.IntVar(&gcMarkers, flagGCMarkersLong, defaultGCMarkers, usageGCMarkers)
+	fs.BoolVar(&gcConcurrent, flagGCConcurrentLong, defaultGCConcurrent, usageGCConcurrent)
+	fs.Float64Var(&gcRemarkGrowth, flagGCRemarkGrowthLong, defaultGCRemarkGrowth, usageGCRemarkGrowth)
+	fs.IntVar(&gcPrecleanPasses, flagGCPrecleanPassesLong, defaultGCPrecleanPasses, usageGCPrecleanPasses)
+	fs.IntVar(&gcReturnAge, flagGCReturnAgeLong, defaultGCReturnAge, usageGCReturnAge)
 	fs.BoolVarP(&emitImage, flagEmitImageLong, flagEmitImage, false, usageEmitImage)
 	fs.BoolVarP(&keepBuild, flagKeepBuildLong, flagKeepBuild, false, usageKeepBuild)
 	fs.BoolVarP(&run, flagRunLong, flagRun, false, usageRun)
@@ -307,6 +364,19 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 		return nil, fmt.Errorf("gc trigger ratio must be within (0, 1]: %g", gcRatio)
 	}
 
+	if gcMarkers < 0 || gcMarkers > maxGCMarkers {
+		return nil, fmt.Errorf("gc markers must be within [0, %d]: %d", maxGCMarkers, gcMarkers)
+	}
+	if gcRemarkGrowth <= 0 {
+		return nil, fmt.Errorf("gc remark growth must be positive: %g", gcRemarkGrowth)
+	}
+	if gcPrecleanPasses < 0 || gcPrecleanPasses > maxGCPrecleanPasses {
+		return nil, fmt.Errorf("gc preclean passes must be within [0, %d]: %d", maxGCPrecleanPasses, gcPrecleanPasses)
+	}
+	if gcReturnAge < 1 {
+		return nil, fmt.Errorf("gc return age must be positive: %d", gcReturnAge)
+	}
+
 	if heapSize > maxHeapSize || nurserySize > maxHeapSize {
 		return nil, fmt.Errorf("heap size %s and nursery size %s must not exceed max heap size %s",
 			heapSize, nurserySize, maxHeapSize)
@@ -328,6 +398,11 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 		InitialHeapSize:  int(heapSize),
 		NurserySize:      int(nurserySize),
 		MaxHeapSize:      int(maxHeapSize),
+		GCMarkers:        gcMarkers,
+		GCConcurrent:     gcConcurrent,
+		GCRemarkGrowth:   gcRemarkGrowth,
+		GCPrecleanPasses: gcPrecleanPasses,
+		GCReturnAge:      gcReturnAge,
 		EmitImage:        emitImage,
 		KeepBuild:        keepBuild,
 		Run:              run,

@@ -20,6 +20,7 @@ typedef struct ZamCollectionStats {
     uint64_t survived;
     uint64_t promoted;
     uint64_t returned;
+    uint64_t helped;
 } ZamCollectionStats;
 
 // The old generation's four lists, by which of Mark and Delete are the
@@ -139,7 +140,7 @@ typedef struct ZamVM {
     ZamCollectionStats current;
 
     // concurrent has a major collection asked for by the heap's growth mark
-    // alongside the program, which ZAM_GC_CONCURRENT=0 turns off.
+    // alongside the program, as the image asks.
     //
     // A concurrent collection stops the program twice. The first stop marks
     // what the threads and statics hold and sets marking; marker then traces
@@ -148,14 +149,17 @@ typedef struct ZamVM {
     // have hidden a reference in meanwhile, and sweeps.
     //
     // finishRequested has the marker stop tracing and remark at once: the
-    // heap has grown too far, a major collection was asked for, or the VM is
-    // going. markerQuit has it end once it has.
+    // heap has grown by remarkGrowth of its size, a major collection was asked
+    // for, or the VM is going. markerQuit has it end once it has.
+    // precleanPasses is how many times the marker cleans the cards the program
+    // dirtied while it traced before the remark.
     //
     // A minor collection asked for meanwhile collects only what was allocated
-    // since marking began, with the marker paused: markerPause asks it to
-    // stop at its next checkpoint, and markerParked says it has. markerBusy is
-    // set while it traces, when only a checkpoint is somewhere it can stop.
+    // since marking began, with every marker paused: markerPause asks them to
+    // stop at their next checkpoint, and markersWorking is how many have not.
     bool concurrent;
+    double remarkGrowth;
+    uint64_t precleanPasses;
     atomic_bool marking;
 
     // sweeping is set from the remark until the marker has swept what it set
@@ -164,13 +168,39 @@ typedef struct ZamVM {
     atomic_bool finishRequested;
     bool markerQuit;
     atomic_bool markerPause;
-    bool markerParked;
-    bool markerBusy;
+    uint32_t markersWorking;
     _Atomic(ZamThread *) marker;
     pthread_t markerThread;
 
-    // retrace is what the marker reached and could not trace alongside the
-    // program, for the remark to trace.
+    // markerCount is how many threads mark at once, as the image asks or else
+    // half the processors up to 8: the marker or the collector, and the
+    // helpers alongside it, made the first time a collection marks in
+    // parallel.
+    //
+    // Each marker traces from its own gray stack and hands work over through
+    // shared when another has run out. A round sets the helpers going on
+    // shared with markRound, and ends once markersActive, the markers not
+    // waiting for work, and shared are both empty; markersIdle is the rest.
+    // markLock guards all of it and markersWorking, and markChanged is
+    // signalled whenever any of it changes.
+    uint32_t markerCount;
+    ZamThread **helpers;
+    pthread_t *helperThreads;
+    uint32_t helperCount;
+    uint32_t helpersDone;
+    bool helpersQuit;
+    uint64_t markRound;
+    bool markRoundAlongside;
+    uint32_t markersActive;
+    _Atomic uint32_t markersIdle;
+    void **shared;
+    uint64_t sharedCount;
+    uint64_t sharedCapacity;
+    pthread_mutex_t markLock;
+    pthread_cond_t markChanged;
+
+    // retrace is what the markers reached and could not trace alongside the
+    // program, for the remark to trace. markLock guards it.
     void **retrace;
     uint64_t retraceCount;
     uint64_t retraceCapacity;
@@ -235,12 +265,6 @@ typedef struct ZamVM {
     // only the fresh allocations youngSpans lays out are reached.
     bool freshOnly;
 
-    // gray is the collector's work: allocations it has reached and not yet
-    // traced through.
-    void **gray;
-    uint64_t grayCount;
-    uint64_t grayCapacity;
-
     // youngSpans is the young generation sorted by address during a minor
     // collection, as a start and an end for each allocation, which is what a
     // word on a dirty card is looked up in.
@@ -253,10 +277,6 @@ typedef struct ZamVM {
     // a thread not reachable from here is a thread whose stack is not scanned.
    ZamThread main;
 } ZamVM;
-
-// zam_vm_marker_checkpoint is where the marker stops for a minor collection
-// that asked it to, between one piece of its work and the next.
-void zam_vm_marker_checkpoint(ZamVM *vm);
 
 void zam_vm_init(ZamVM *vm, const char *imagePath);
 

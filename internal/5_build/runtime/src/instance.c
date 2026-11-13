@@ -32,6 +32,8 @@ uint64_t zam_primitive_bytes(ZamPrimitive primitive) {
         return ZAMANY_BYTES;
     case ZAMPRIMITIVE_UINT:
         return ZAMUINT_BYTES;
+    case ZAMPRIMITIVE_POSIT:
+        return ZAMPOSIT_BYTES;
     case ZAMPRIMITIVE_COUNT:
         break;
     }
@@ -61,6 +63,8 @@ uint64_t zam_primitive_align(ZamPrimitive primitive) {
         return ZAMANY_ALIGN;
     case ZAMPRIMITIVE_UINT:
         return ZAMUINT_ALIGN;
+    case ZAMPRIMITIVE_POSIT:
+        return ZAMPOSIT_ALIGN;
     case ZAMPRIMITIVE_COUNT:
         break;
     }

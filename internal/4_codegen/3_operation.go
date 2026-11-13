@@ -3,6 +3,7 @@ package codegen
 import (
 	"encoding/binary"
 	"io"
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -125,6 +126,41 @@ const (
 	// negative zero is zero under it, and a NaN is not.
 	//   (code) | [left, right] -> [left != NaN && right != NaN && left == right]
 	OpEqualF64
+
+	// OpCastI64ToP64 pops an i64 operand and pushes the nearest posit.
+	//   (code) | [value] -> [p64(value)]
+	OpCastI64ToP64
+	// OpCastU64ToP64 pops a u64 operand and pushes the nearest posit.
+	//   (code) | [value] -> [p64(value)]
+	OpCastU64ToP64
+	// OpCastF64ToP64 pops an f64 operand and pushes the nearest posit, NaR for
+	// a NaN or an infinity.
+	//   (code) | [value] -> [p64(value)]
+	OpCastF64ToP64
+	// OpCastP64ToI64 pops a posit operand and pushes it truncated to an int64.
+	//   (code) | [value] -> [int64(value)]
+	OpCastP64ToI64
+	// OpCastP64ToU64 pops a posit operand and pushes it truncated to a uint64.
+	//   (code) | [value] -> [uint64(value)]
+	OpCastP64ToU64
+	// OpCastP64ToF64 pops a posit operand and pushes the nearest f64, NaN for
+	// NaR.
+	//   (code) | [value] -> [f64(value)]
+	OpCastP64ToF64
+
+	// OpAddP64 pops two posit operands and pushes their sum.
+	//   (code) | [left, right] -> [left + right]
+	OpAddP64
+	// OpSubP64 pops two posit operands and pushes their difference.
+	//   (code) | [left, right] -> [left - right]
+	OpSubP64
+	// OpMulP64 pops two posit operands and pushes their product.
+	//   (code) | [left, right] -> [left * right]
+	OpMulP64
+	// OpDivP64 pops two posit operands and pushes their quotient, NaR when
+	// dividing by zero.
+	//   (code) | [left, right] -> [left / right]
+	OpDivP64
 
 	// OpShiftLeftI64 pops two i64 operands and pushes their bitwise left shift.
 	//   (code) | [left, right] -> [left << right]
@@ -974,6 +1010,16 @@ type (
 		variables  map[string]binding
 		baseOffset uint64
 		baseOpen   int
+		// defers are the statements deferred in the scope so far, run last
+		// first wherever control leaves it.
+		defers []deferredStmt
+	}
+
+	// deferredStmt is a statement a defer left for its scope to run on the way
+	// out, with the names that were in scope where it was written.
+	deferredStmt struct {
+		stmt  syntax.Stmt
+		scope *variableScope
 	}
 
 	// loopContext is one enclosing loop's unpatched jumps, and the number of
@@ -1081,6 +1127,11 @@ const switchVariableName = "~switch"
 // variables of an unpacking declaration are read out of it. It is not a name a
 // program can write.
 const unpackVariableName = "~unpack"
+
+// returnVariableName is bound to the slot a return's value is held in while the
+// statements deferred around the return run. It is not a name a program can
+// write.
+const returnVariableName = "~return"
 
 // A bare Opcode is an operation with no immediate operands.
 func (o Opcode) ByteCount() int { return 1 }
@@ -2481,7 +2532,59 @@ func (v *operationVisitor) VisitStmtBlock(s *syntax.StmtBlock) error {
 			return err
 		}
 	}
+	return v.emitDefers(v.scopes.Peek(), v.nextVariableOffset, v.openSlots)
+}
+
+// VisitStmtDefer leaves a statement for the innermost scope to run on the way
+// out. The scope's names are copied now, so that one declared after the defer
+// cannot stand in for a name the statement was written with.
+func (v *operationVisitor) VisitStmtDefer(s *syntax.StmtDefer) error {
+	scope := v.scopes.Peek()
+	scope.defers = append(scope.defers, deferredStmt{
+		stmt:  s.Stmt,
+		scope: &variableScope{outer: scope.outer, variables: maps.Clone(scope.variables)},
+	})
 	return nil
+}
+
+// emitDefers emits the statements deferred in a scope, last first, each among
+// the names it was written with. offset and open are where the frame stands as
+// the scope is left, which is where anything a statement declares goes.
+func (v *operationVisitor) emitDefers(scope *variableScope, offset uint64, open []syntax.Type) error {
+	if len(scope.defers) == 0 {
+		return nil
+	}
+	savedOffset, savedOpen := v.nextVariableOffset, v.openSlots
+	defer func() {
+		v.nextVariableOffset, v.openSlots = savedOffset, savedOpen
+	}()
+
+	open = open[:len(open):len(open)]
+	for _, deferred := range slices.Backward(scope.defers) {
+		v.nextVariableOffset, v.openSlots = offset, open
+		v.scopes.Push(&variableScope{
+			outer:      deferred.scope,
+			variables:  map[string]binding{},
+			baseOffset: offset,
+			baseOpen:   len(open),
+		})
+		err := deferred.stmt.Accept(v)
+		v.scopes.Pop()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// defersPending reports whether a scope of the frame has statements deferred.
+func (v *operationVisitor) defersPending() bool {
+	for scope := range v.scopes.All() {
+		if len(scope.defers) != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // VisitStmtExpr emits an expression evaluated for its effect rather than its
@@ -2545,6 +2648,9 @@ func (v *operationVisitor) emitExprStmt(s *syntax.StmtExpr) error {
 // the scopes the return lies inside of, since the frame they belong to is
 // unwound whole.
 func (v *operationVisitor) emitReturn(value syntax.Expr) error {
+	if v.defersPending() {
+		return v.emitDeferringReturn(value)
+	}
 	if v.returnType.Kind() == syntax.TypeKindVoid {
 		if value != nil {
 			if err := value.Accept(v); err != nil {
@@ -2560,6 +2666,48 @@ func (v *operationVisitor) emitReturn(value syntax.Expr) error {
 		return err
 	}
 
+	v.emitPushTypeID(v.returnType)
+	v.emit(OpReturn)
+	return nil
+}
+
+// emitDeferringReturn is a return with statements deferred around it. The value
+// is held in a slot of its own while every scope's deferred statements run,
+// innermost scope first, and is read back once they have. Nothing a deferred
+// statement does to a variable reaches a value already held.
+func (v *operationVisitor) emitDeferringReturn(value syntax.Expr) error {
+	v.pushScope()
+	defer v.popScope()
+
+	void := v.returnType.Kind() == syntax.TypeKindVoid
+	switch {
+	case void && value != nil:
+		if err := value.Accept(v); err != nil {
+			return err
+		}
+	case !void:
+		v.declareVariable(returnVariableName, v.returnType)
+		if err := v.fullExpression(func() error {
+			return v.emitValueAs(value, v.returnType)
+		}); err != nil {
+			return err
+		}
+	}
+
+	offset, open := v.nextVariableOffset, v.openSlots
+	for scope := range v.scopes.All() {
+		if err := v.emitDefers(scope, offset, open); err != nil {
+			return err
+		}
+	}
+
+	if void {
+		v.emitReturnVoid()
+		return nil
+	}
+	if err := v.emitValue(syntax.NewExprIdentifier(returnVariableName, v.returnType)); err != nil {
+		return err
+	}
 	v.emitPushTypeID(v.returnType)
 	v.emit(OpReturn)
 	return nil
@@ -2722,7 +2870,10 @@ func (v *operationVisitor) visitScoped(s syntax.Stmt) error {
 	}
 	v.enterScope()
 	defer v.exitScope()
-	return s.Accept(v)
+	if err := s.Accept(v); err != nil {
+		return err
+	}
+	return v.emitDefers(v.scopes.Peek(), v.nextVariableOffset, v.openSlots)
 }
 
 func (v *operationVisitor) VisitStmtIf(s *syntax.StmtIf) error {
@@ -2887,8 +3038,18 @@ func (v *operationVisitor) VisitStmtLabel(s *syntax.StmtLabel) error {
 // holds it until then.
 func (v *operationVisitor) VisitStmtLoopJump(s *syntax.StmtLoopJump) error {
 	loop := v.lookupLoop(s.Label)
-	for depth := v.scopes.Len(); depth > loop.scopeDepth; depth-- {
+	offset, open := v.nextVariableOffset, v.openSlots
+	depth := v.scopes.Len()
+	for scope := range v.scopes.All() {
+		if depth <= loop.scopeDepth {
+			break
+		}
+		if err := v.emitDefers(scope, offset, open); err != nil {
+			return err
+		}
 		v.emit(OpPopScope)
+		offset, open = scope.baseOffset, open[:scope.baseOpen]
+		depth--
 	}
 
 	jump := v.emitJump(OpJump)
@@ -4088,6 +4249,12 @@ var (
 		syntax.ExprKindMultiply: OpMulF64,
 		syntax.ExprKindDivide:   OpDivF64,
 	}
+	positBinaryOpcodes = map[syntax.ExprKind]Opcode{
+		syntax.ExprKindAdd:      OpAddP64,
+		syntax.ExprKindSubtract: OpSubP64,
+		syntax.ExprKindMultiply: OpMulP64,
+		syntax.ExprKindDivide:   OpDivP64,
+	}
 	booleanBinaryOpcodes = map[syntax.ExprKind]Opcode{
 		syntax.ExprKindBinaryOR:  OpOrI64,
 		syntax.ExprKindBinaryAND: OpAndI64,
@@ -4114,6 +4281,8 @@ func binaryOpcode(kind syntax.ExprKind, t syntax.Type) Opcode {
 	switch t.Kind() {
 	case syntax.TypeKindFloat:
 		opcodes = floatBinaryOpcodes
+	case syntax.TypeKindPosit:
+		opcodes = positBinaryOpcodes
 	case syntax.TypeKindBool:
 		opcodes = booleanBinaryOpcodes
 	case syntax.TypeKindString:
@@ -4515,6 +4684,32 @@ func (v *operationVisitor) emitWordCast(from, to syntax.Type) {
 		return
 	}
 
+	// A posit's word is not the number itself either, and it converts to and
+	// from the others as a float does.
+	if tk == syntax.TypeKindPosit {
+		switch fk {
+		case syntax.TypeKindUint:
+			v.emit(OpCastU64ToP64)
+		case syntax.TypeKindFloat:
+			v.emit(OpCastF64ToP64)
+		default:
+			v.emit(OpCastI64ToP64)
+		}
+		return
+	}
+	if fk == syntax.TypeKindPosit {
+		switch tk {
+		case syntax.TypeKindUint:
+			v.emit(OpCastP64ToU64)
+		case syntax.TypeKindFloat:
+			v.emit(OpCastP64ToF64)
+		default:
+			v.emit(OpCastP64ToI64)
+			v.emitNarrow(to)
+		}
+		return
+	}
+
 	// A float is the one of these whose word is not the number itself, so
 	// entering it is a conversion rather than a reinterpretation. A char and a
 	// bool are small whole numbers, which is what an int already is, so all
@@ -4633,11 +4828,11 @@ const locationWords = 1 + typeIDWords
 
 // numeric reports whether a type is one of the primitives that is a single
 // operand word standing for a number — an i64 int, a u64 uint, a u32 char, a u8
-// byte, a bool that is 1 or 0, or an f64 float. Casting among these is
-// arithmetic on that word.
+// byte, a bool that is 1 or 0, an f64 float, or a 64-bit posit. Casting among
+// these is arithmetic on that word.
 func numeric(k syntax.TypeKind) bool {
 	switch k {
-	case syntax.TypeKindInt, syntax.TypeKindUint, syntax.TypeKindChar, syntax.TypeKindByte, syntax.TypeKindBool, syntax.TypeKindFloat:
+	case syntax.TypeKindInt, syntax.TypeKindUint, syntax.TypeKindChar, syntax.TypeKindByte, syntax.TypeKindBool, syntax.TypeKindFloat, syntax.TypeKindPosit:
 		return true
 	}
 	return false
@@ -4913,7 +5108,7 @@ func (v *operationVisitor) VisitExprSymbol(e *syntax.ExprSymbol) error {
 		v.emit(newUnaryOp(OpPushStringLiteral, v.stringLiteralSlot(start.Value.(string))))
 	case syntax.ExprKindLiteralChar:
 		v.emit(newUnaryOp(OpPushI64, uint64(start.Value.(rune))))
-	case syntax.ExprKindLiteralInteger, syntax.ExprKindLiteralUint:
+	case syntax.ExprKindLiteralInteger, syntax.ExprKindLiteralUint, syntax.ExprKindLiteralPosit:
 		v.emit(newUnaryOp(OpPushI64, start.Value.(uint64)))
 	case syntax.ExprKindLiteralFloat:
 		v.emit(newUnaryOp(OpPushI64, math.Float64bits(start.Value.(float64))))
