@@ -18,7 +18,7 @@ type (
 	// File is a file in the project.
 	File struct {
 		// Path is the path to the file.
-		Path *base.Path
+		Path base.Path
 		// Project is the project that the file is in.
 		Project *Project
 		// Start is the token that started the file.
@@ -59,7 +59,7 @@ type (
 		// Alias is the alias of the import.
 		Alias *string
 		// Path is the path to the imported file.
-		Path *base.Path
+		Path base.Path
 
 		// ImportedFile is the file that the import is importing.
 		ImportedFile *File
@@ -67,7 +67,7 @@ type (
 )
 
 // newFile creates a new file in the project.
-func newFile(parser SyntaxParser, path *base.Path) (*File, error) {
+func newFile(parser SyntaxParser, path base.Path) (*File, error) {
 	start, err := parser.Peek()
 	if err != nil {
 		return nil, err
@@ -152,9 +152,9 @@ func (f *File) Accept(visitor FileVisitor) error {
 // is complaining about is. A nil token names the file and nothing finer.
 func (f *File) Location(tok *Token) *base.Location {
 	if tok == nil {
-		return base.NewLocation(*f.Path, nil)
+		return base.NewLocation(f.Path, nil)
 	}
-	return base.NewLocation(*f.Path, tok.Position(f.LineStarts))
+	return base.NewLocation(f.Path, tok.Position(f.LineStarts))
 }
 
 // globSuffix is the one spelling the import grammar reads as a directory glob:
@@ -276,18 +276,30 @@ func resolveImport(parser SyntaxParser, start *Token, pkg, alias *string, pathSt
 // A package name that was not declared is an error rather than a silent fall
 // back to a relative path, because the two answer with different files and
 // only the project file says which of them was meant. A relative import that
-// wants a name of its own writes the alias form instead.
-func resolveImportPath(parser SyntaxParser, pkg *string, pathStr string) (*base.Path, error) {
-	resolved := pathStr
+// wants a name of its own writes the alias form instead. A fetched project's
+// plain imports may not leave the directory it was extracted to.
+func resolveImportPath(parser SyntaxParser, pkg *string, pathStr string) (base.Path, error) {
+	project := parser.Project()
 	if pkg != nil {
-		project := parser.Project()
 		dependency, ok := project.Dependencies[*pkg]
 		if !ok {
-			return nil, fmt.Errorf("no dependency %q declared by project %q", *pkg, project.Name)
+			return "", fmt.Errorf("no dependency %q declared by project %q", *pkg, project.Name)
 		}
-		resolved = dependency.ResolveInto(pathStr)
+		resolved, err := dependency.ResolveInto(pathStr)
+		if err != nil {
+			return "", err
+		}
+		return parser.NewPath(resolved)
 	}
-	return parser.NewPath(resolved)
+
+	path, err := parser.NewPath(pathStr)
+	if err != nil {
+		return "", err
+	}
+	if project.Root != "" && !base.IsStdPath(path) && !project.Root.Contains(path) {
+		return "", fmt.Errorf("import %q leaves %s", pathStr, project.Archive)
+	}
+	return path, nil
 }
 
 // newGlobImport expands a `dir/*` import into one Import per code file sitting

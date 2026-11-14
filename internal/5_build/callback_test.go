@@ -36,9 +36,9 @@ func compileWithNatives(t *testing.T, source string, natives map[string]string) 
 	out := filepath.Join(dir, "out")
 
 	files := &base.FileProvider{}
-	cmd, err := command.New([]string{"zam", "-m", "16KB", "-o", out, entry}, files)
+	cmd, err := command.New([]string{"zam", "build", "-m", "16KB", "-o", out, entry}, files)
 	require.NoError(t, err)
-	ast, errs := syntax.NewAST(cmd, files, base.NewGitProvider(files))
+	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
 	result, err := codegen.GenerateCode(cmd, ast)

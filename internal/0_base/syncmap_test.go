@@ -12,11 +12,11 @@ import (
 // for maps that were filled differently but hold the same entries.
 func TestSyncMapToMapAnswersInComparatorOrder(t *testing.T) {
 	paths := []Path{
-		{Outer: "/b/one.zam"},
-		{Outer: "/a/two.zam"},
-		{Outer: "/a/one.zam"},
-		{Outer: "/a/lib.zip", Inner: "b.zam"},
-		{Outer: "/a/lib.zip", Inner: "a.zam"},
+		"/b/one.zam",
+		"/a/two.zam",
+		"/a/one.zam",
+		"/a/lib/b.zam",
+		"/a/lib/a.zam",
 	}
 
 	orders := func() []string {
@@ -33,8 +33,8 @@ func TestSyncMapToMapAnswersInComparatorOrder(t *testing.T) {
 	}
 
 	expected := []string{
-		"/a/lib.zip#a.zam",
-		"/a/lib.zip#b.zam",
+		"/a/lib/a.zam",
+		"/a/lib/b.zam",
 		"/a/one.zam",
 		"/a/two.zam",
 		"/b/one.zam",

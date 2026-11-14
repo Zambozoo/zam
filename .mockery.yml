@@ -8,14 +8,6 @@ mockname: "{{lower .Mock}}_{{camelcase .InterfaceName}}"
 filename: "{{lower .Mock}}_{{lower .InterfaceName}}_test.go"
 
 packages:
-  github.com/zambozoo/zam/internal/0_base:
-    interfaces:
-      fileProvider:
-        config:
-          dir: "internal/0_base"
-      client:
-        config:
-          dir: "internal/0_base"
   github.com/zambozoo/zam/internal/1_command:
     interfaces:
       fileProvider:
@@ -32,7 +24,7 @@ packages:
       runeReader:
         config:
           dir: "internal/2_syntax"
-      gitProvider:
+      packageProvider:
         config:
           dir: "internal/2_syntax"
       syntaxParser:

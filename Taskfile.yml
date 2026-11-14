@@ -1,14 +1,14 @@
 version: '3'
 
 vars:
-  # Example: task run -- CLI_ARGS="-v -o out path/to/input"
+  # Example: task run -- CLI_ARGS="build -v -o out path/to/input"
   CLI_ARGS: ''
 
 tasks:
   mocks:
     desc: Regenerate mocks from .mockery.yaml (mockery)
     cmds:
-      - go run github.com/vektra/mockery/v2@v2.52.2
+      - go run github.com/vektra/mockery/v2@v2.53.8
 
   run:
     desc: Run the main program (set CLI_ARGS for flags and the input file)

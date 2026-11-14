@@ -46,7 +46,7 @@ func validate(t *testing.T, entry string, others map[string]string) []error {
 	entryPath := writeFile(t, dir, "Main.zam", entry)
 
 	ast, errs := syntax.NewAST(
-		&command.Command{InputPath: base.NewPath(entryPath, ""), MaxThreads: 2},
+		&command.Command{InputPath: base.Path(entryPath), MaxThreads: 2},
 		&base.FileProvider{}, nil)
 	require.Empty(t, errs)
 

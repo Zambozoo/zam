@@ -12,12 +12,12 @@ import (
 )
 
 // project writes a project holding the given files and returns the path of each.
-func project(t *testing.T, files map[string]string) map[string]*base.Path {
+func project(t *testing.T, files map[string]string) map[string]base.Path {
 	t.Helper()
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yml"), []byte("name: \"lsp\"\nversion: \"0.0.0\"\ndependencies:\n"), 0o600))
-	paths := map[string]*base.Path{}
+	paths := map[string]base.Path{}
 	for name, body := range files {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600))
 		path, err := base.ParsePath(filepath.Join(dir, name))
@@ -28,7 +28,7 @@ func project(t *testing.T, files map[string]string) map[string]*base.Path {
 }
 
 // check returns the diagnostics for checking an entry.
-func check(files *overlay, entry *base.Path) []protocol.Diagnostic {
+func check(files *overlay, entry base.Path) []protocol.Diagnostic {
 	diagnostics, _ := analyze(files, nil, entry, 1)
 	return diagnostics
 }

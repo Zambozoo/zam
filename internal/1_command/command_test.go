@@ -77,7 +77,7 @@ func TestNew(t *testing.T) {
 	// the absolute path rather than the argument as it was typed.
 	absInput, err := filepath.Abs("input")
 	require.NoError(t, err)
-	inputPath := base.NewPath(absInput, "")
+	inputPath := base.Path(absInput)
 
 	tests := []struct {
 		name         string
@@ -91,8 +91,67 @@ func TestNew(t *testing.T) {
 			errFunc: errorContains("missing program name"),
 		},
 		{
-			name: "help flag",
+			name:    "missing command",
+			argv:    []string{"zam"},
+			errFunc: errorContains("missing command"),
+		},
+		{
+			name:    "unknown command",
+			argv:    []string{"zam", "input"},
+			errFunc: errorContains(`unknown command "input"`),
+		},
+		{
+			name: "help",
 			argv: []string{"zam", "--help"},
+			errFunc: func(tt assert.TestingT, err error, a ...any) bool {
+				var ue *usageError
+				return assert.ErrorAs(tt, err, &ue) && assert.NoError(tt, ue.err) &&
+					assert.Contains(tt, ue.flags, "clean")
+			},
+		},
+		{
+			name:    "get",
+			argv:    []string{"zam", "get", "example.com/a@v1", "example.com/b@v2"},
+			want:    &Command{Verb: VerbGet, Refs: []string{"example.com/a@v1", "example.com/b@v2"}, WriteProject: true},
+			errFunc: assert.NoError,
+		},
+		{
+			name:    "get everything",
+			argv:    []string{"zam", "get"},
+			want:    &Command{Verb: VerbGet, Refs: []string{}, WriteProject: true},
+			errFunc: assert.NoError,
+		},
+		{
+			name:    "get as",
+			argv:    []string{"zam", "get", "--as", "list", "example.com/zam-list@v1"},
+			want:    &Command{Verb: VerbGet, Refs: []string{"example.com/zam-list@v1"}, As: "list", WriteProject: true},
+			errFunc: assert.NoError,
+		},
+		{
+			name:    "get as names one dependency",
+			argv:    []string{"zam", "get", "--as", "list", "example.com/a@v1", "example.com/b@v1"},
+			errFunc: errorContains("--as names one dependency, but 2 were given"),
+		},
+		{
+			name:    "clean",
+			argv:    []string{"zam", "clean"},
+			want:    &Command{Verb: VerbClean},
+			errFunc: assert.NoError,
+		},
+		{
+			name:    "clean takes no arguments",
+			argv:    []string{"zam", "clean", "input"},
+			errFunc: errorContains("too many arguments"),
+		},
+		{
+			name:    "lsp",
+			argv:    []string{"zam", "lsp"},
+			want:    &Command{Verb: VerbLSP},
+			errFunc: assert.NoError,
+		},
+		{
+			name: "build help flag",
+			argv: []string{"zam", "build", "--help"},
 			errFunc: func(tt assert.TestingT, err error, a ...any) bool {
 				var ue *usageError
 				return assert.ErrorAs(tt, err, &ue) && assert.NoError(tt, ue.err)
@@ -100,35 +159,35 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name:    "invalid flag",
-			argv:    []string{"zam", "--invalid"},
+			argv:    []string{"zam", "build", "--invalid"},
 			errFunc: errorContains("unknown flag: --invalid"),
 		},
 		{
 			name:    "missing input file",
-			argv:    []string{"zam"},
+			argv:    []string{"zam", "build"},
 			errFunc: errorContains("missing input file argument"),
 		},
 		{
 			name:    "too many arguments",
-			argv:    []string{"zam", "input.txt", "output.txt"},
+			argv:    []string{"zam", "build", "input.txt", "output.txt"},
 			errFunc: errorContains("too many arguments"),
 		},
 		{
 			name: "output file exists error",
-			argv: []string{"zam", "input"},
+			argv: []string{"zam", "build", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(false, assert.AnError)
+				m.EXPECT().FileExists(base.Path("out")).Return(false, assert.AnError)
 				return m
 			}(),
 			errFunc: errorContains(assert.AnError.Error()),
 		},
 		{
 			name: "input file exists error",
-			argv: []string{"zam", "input"},
+			argv: []string{"zam", "build", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				m.EXPECT().FileExists(inputPath).Return(false, assert.AnError)
 				return m
 			}(),
@@ -136,10 +195,10 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name: "input file not found",
-			argv: []string{"zam", "input"},
+			argv: []string{"zam", "build", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				m.EXPECT().FileExists(inputPath).Return(false, nil)
 				return m
 			}(),
@@ -147,16 +206,16 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name: "invalid threads",
-			argv: []string{"zam", "--threads", "0", "input"},
+			argv: []string{"zam", "build", "--threads", "0", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				m.EXPECT().FileExists(inputPath).Return(true, nil)
 				return m
 			}(),
 			want: &Command{
 				InputPath:        inputPath,
-				OutputPath:       base.NewPath("out", ""),
+				OutputPath:       base.Path("out"),
 				Verbose:          false,
 				MaxThreads:       1,
 				GCTriggerRatio:   defaultGCRatio,
@@ -169,6 +228,7 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
+				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
 		},
@@ -178,16 +238,16 @@ func TestNew(t *testing.T) {
 			// of one file have to name one file, or the same source compiles to
 			// different bytecode depending on how it was invoked.
 			name: "entry path is the same file however it is spelled",
-			argv: []string{"zam", "./sub/../input"},
+			argv: []string{"zam", "build", "./sub/../input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				m.EXPECT().FileExists(inputPath).Return(true, nil)
 				return m
 			}(),
 			want: &Command{
 				InputPath:        inputPath,
-				OutputPath:       base.NewPath("out", ""),
+				OutputPath:       base.Path("out"),
 				Verbose:          false,
 				MaxThreads:       1,
 				GCTriggerRatio:   defaultGCRatio,
@@ -200,21 +260,22 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
+				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
 		},
 		{
 			name: "sizes take a unit suffix",
-			argv: []string{"zam", "--stack-size", "1MB", "--heap-size", "2GB", "--gc-ratio", "0.5", "-N", "1MB", "-M", "4GB", "input"},
+			argv: []string{"zam", "build", "--stack-size", "1MB", "--heap-size", "2GB", "--gc-ratio", "0.5", "-N", "1MB", "-M", "4GB", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				m.EXPECT().FileExists(inputPath).Return(true, nil)
 				return m
 			}(),
 			want: &Command{
 				InputPath:        inputPath,
-				OutputPath:       base.NewPath("out", ""),
+				OutputPath:       base.Path("out"),
 				Verbose:          false,
 				MaxThreads:       1,
 				GCTriggerRatio:   0.5,
@@ -227,20 +288,21 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
+				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
 		},
 		{
 			name: "run passes trailing arguments and skips the output check",
-			argv: []string{"zam", "-r", "input", "a", "-b"},
+			argv: []string{"zam", "run", "input", "a", "-b"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
 				m.EXPECT().FileExists(inputPath).Return(true, nil)
 				return m
 			}(),
 			want: &Command{
+				Verb:             VerbRun,
 				InputPath:        inputPath,
-				OutputPath:       base.NewPath("out", ""),
 				MaxThreads:       1,
 				GCTriggerRatio:   defaultGCRatio,
 				InitialStackSize: int(defaultStackSize),
@@ -252,23 +314,23 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
-				Run:              true,
 				RunArgs:          []string{"a", "-b"},
+				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
 		},
 		{
 			name: "no project",
-			argv: []string{"zam", "-n", "input"},
+			argv: []string{"zam", "build", "-n", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				m.EXPECT().FileExists(inputPath).Return(true, nil)
 				return m
 			}(),
 			want: &Command{
 				InputPath:        inputPath,
-				OutputPath:       base.NewPath("out", ""),
+				OutputPath:       base.Path("out"),
 				MaxThreads:       1,
 				GCTriggerRatio:   defaultGCRatio,
 				InitialStackSize: int(defaultStackSize),
@@ -281,20 +343,21 @@ func TestNew(t *testing.T) {
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
 				NoProject:        true,
+				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
 		},
 		{
 			name: "short flags combine",
-			argv: []string{"zam", "-rn", "input"},
+			argv: []string{"zam", "run", "-nk", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
 				m.EXPECT().FileExists(inputPath).Return(true, nil)
 				return m
 			}(),
 			want: &Command{
+				Verb:             VerbRun,
 				InputPath:        inputPath,
-				OutputPath:       base.NewPath("out", ""),
 				MaxThreads:       1,
 				GCTriggerRatio:   defaultGCRatio,
 				InitialStackSize: int(defaultStackSize),
@@ -306,74 +369,80 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
-				Run:              true,
+				KeepBuild:        true,
 				RunArgs:          []string{},
 				NoProject:        true,
+				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
 		},
 		{
 			name:    "single dash long flag",
-			argv:    []string{"zam", "-run", "input"},
-			errFunc: errorContains("unknown shorthand flag: 'u'"),
+			argv:    []string{"zam", "build", "-keep-build", "input"},
+			errFunc: errorContains("unknown shorthand flag: 'e'"),
 		},
 		{
-			name:    "run with emit image",
-			argv:    []string{"zam", "-r", "-E", "input"},
-			errFunc: errorContains("-r and -E cannot be combined"),
+			name:    "run does not emit an image",
+			argv:    []string{"zam", "run", "-E", "input"},
+			errFunc: errorContains("unknown shorthand flag: 'E'"),
+		},
+		{
+			name:    "run does not take an output",
+			argv:    []string{"zam", "run", "-o", "out", "input"},
+			errFunc: errorContains("unknown shorthand flag: 'o'"),
 		},
 		{
 			name:    "unparsable size",
-			argv:    []string{"zam", "--heap-size", "16TB", "input"},
+			argv:    []string{"zam", "build", "--heap-size", "16TB", "input"},
 			errFunc: errorContains(`invalid size "16TB"`),
 		},
 		{
 			name:    "non positive size",
-			argv:    []string{"zam", "--stack-size", "0KB", "input"},
+			argv:    []string{"zam", "build", "--stack-size", "0KB", "input"},
 			errFunc: errorContains(`size must be positive: "0KB"`),
 		},
 		{
 			name: "heap larger than its maximum",
-			argv: []string{"zam", "--max-heap-size", "1MB", "input"},
+			argv: []string{"zam", "build", "--max-heap-size", "1MB", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				return m
 			}(),
 			errFunc: errorContains("heap size 16MB and nursery size 8MB must not exceed max heap size 1MB"),
 		},
 		{
 			name: "gc ratio the heap can never reach",
-			argv: []string{"zam", "--gc-ratio", "1.5", "input"},
+			argv: []string{"zam", "build", "--gc-ratio", "1.5", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				return m
 			}(),
 			errFunc: errorContains("gc trigger ratio must be within (0, 1]: 1.5"),
 		},
 		{
 			name: "gc ratio of zero",
-			argv: []string{"zam", "--gc-ratio", "0", "input"},
+			argv: []string{"zam", "build", "--gc-ratio", "0", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				return m
 			}(),
 			errFunc: errorContains("gc trigger ratio must be within (0, 1]: 0"),
 		},
 		{
 			name: "gc flags",
-			argv: []string{"zam", "--gc-markers", "4", "--gc-concurrent=false", "--gc-remark-growth", "0.5", "--gc-preclean-passes", "0", "--gc-return-age", "1", "input"},
+			argv: []string{"zam", "build", "--gc-markers", "4", "--gc-concurrent=false", "--gc-remark-growth", "0.5", "--gc-preclean-passes", "0", "--gc-return-age", "1", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				m.EXPECT().FileExists(inputPath).Return(true, nil)
 				return m
 			}(),
 			want: &Command{
 				InputPath:        inputPath,
-				OutputPath:       base.NewPath("out", ""),
+				OutputPath:       base.Path("out"),
 				MaxThreads:       1,
 				GCTriggerRatio:   defaultGCRatio,
 				InitialStackSize: int(defaultStackSize),
@@ -385,55 +454,56 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   0.5,
 				GCPrecleanPasses: 0,
 				GCReturnAge:      1,
+				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
 		},
 		{
 			name: "negative gc markers",
-			argv: []string{"zam", "--gc-markers", "-1", "input"},
+			argv: []string{"zam", "build", "--gc-markers", "-1", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				return m
 			}(),
 			errFunc: errorContains("gc markers must be within [0, 64]: -1"),
 		},
 		{
 			name: "too many gc markers",
-			argv: []string{"zam", "--gc-markers", "65", "input"},
+			argv: []string{"zam", "build", "--gc-markers", "65", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				return m
 			}(),
 			errFunc: errorContains("gc markers must be within [0, 64]: 65"),
 		},
 		{
 			name: "gc remark growth of zero",
-			argv: []string{"zam", "--gc-remark-growth", "0", "input"},
+			argv: []string{"zam", "build", "--gc-remark-growth", "0", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				return m
 			}(),
 			errFunc: errorContains("gc remark growth must be positive: 0"),
 		},
 		{
 			name: "too many gc preclean passes",
-			argv: []string{"zam", "--gc-preclean-passes", "17", "input"},
+			argv: []string{"zam", "build", "--gc-preclean-passes", "17", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				return m
 			}(),
 			errFunc: errorContains("gc preclean passes must be within [0, 16]: 17"),
 		},
 		{
 			name: "gc return age of zero",
-			argv: []string{"zam", "--gc-return-age", "0", "input"},
+			argv: []string{"zam", "build", "--gc-return-age", "0", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.NewPath("out", "")).Return(true, nil)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
 				return m
 			}(),
 			errFunc: errorContains("gc return age must be positive: 0"),
@@ -459,15 +529,15 @@ func TestCommand_String(t *testing.T) {
 		{
 			name: "basic",
 			cmd: &Command{
-				InputPath:        base.NewPath("input", ""),
-				OutputPath:       base.NewPath("out", ""),
+				InputPath:        base.Path("input"),
+				OutputPath:       base.Path("out"),
 				Verbose:          true,
 				MaxThreads:       10,
 				GCTriggerRatio:   0.75,
 				InitialStackSize: 1 << 19,
 				InitialHeapSize:  1 << 24,
 			},
-			want: `{"InputPath":{"Outer":"input"},"OutputPath":{"Outer":"out"},"Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"EmitImage":false,"KeepBuild":false,"Run":false,"RunArgs":null,"NoProject":false}`,
+			want: `{"Verb":0,"InputPath":"input","OutputPath":"out","Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"EmitImage":false,"KeepBuild":false,"RunArgs":null,"Refs":null,"As":"","NoProject":false,"WriteProject":false}`,
 		},
 	}
 

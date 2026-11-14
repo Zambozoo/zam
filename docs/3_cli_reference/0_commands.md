@@ -1,20 +1,30 @@
-# Compiler Flags
-`zam [flags] <input file> [program arguments]`
+# Commands
+`zam <command> [flags] [arguments]`
 
+| Command | Arguments | Meaning |
+|---|---|---|
+| `build` | `<input file>` | compile a program to a binary |
+| `run` | `<input file> [program arguments]` | compile a program to a temporary binary and run it, passing on the arguments after its file |
+| `get` | `[repo@version...]` | add dependencies to the nearest project file, then fetch every dependency the project reaches |
+| `clean` | | remove every fetched dependency |
+| `lsp` | | serve the language server protocol over stdin and stdout |
+
+`zam help` lists the commands, and `zam <command> -h` lists a command's flags.
+
+## build and run
 Flags come before the input file. Sizes take an optional `B`, `KB`, `MB` or `GB` suffix, and a bare number is a count of bytes.
 
-## Output
+### Output
 | Flag | Default | Meaning |
 |---|---|---|
-| `-o`, `--output` | `out` | file to write |
-| `-E`, `--emit-image` | `false` | write the raw bytecode image instead of linking a binary |
-| `-r`, `--run` | `false` | build to a temporary binary and run it, passing on the arguments after the input file; not with `-E` |
+| `-o`, `--output` | `out` | file to write; `build` only |
+| `-E`, `--emit-image` | `false` | write the raw bytecode image instead of linking a binary; `build` only |
 | `-k`, `--keep-build` | `false` | keep the temporary build directory and print its path |
 | `-n`, `--no-project` | `false` | ignore project files and compile local files as one project depending only on std |
 | `-v`, `--verbose` | `false` | verbose output |
 | `-t`, `--threads` | `1` | threads the compiler uses |
 
-## Memory
+### Memory
 These are baked into the program and take effect every time it runs.
 
 | Flag | Default | Valid | Meaning |
@@ -25,7 +35,7 @@ These are baked into the program and take effect every time it runs.
 | `-M`, `--max-heap-size` | `64GB` | positive | most memory the heap may ever hold, reserved up front as address space |
 | `-g`, `--gc-ratio` | `0.75` | (0, 1] | fraction of the heap in use that triggers a major collection |
 
-## Garbage Collection
+### Garbage Collection
 Also baked into the program. See [Garbage Collection](../4_memory_and_runtime/1_garbage_collection.md) for what each one tunes.
 
 | Flag | Default | Valid | Meaning |
@@ -36,10 +46,23 @@ Also baked into the program. See [Garbage Collection](../4_memory_and_runtime/1_
 | `--gc-preclean-passes` | `2` | 0–16 | passes over the cards dirtied while marking alongside the program, before the remark |
 | `--gc-return-age` | `3` | ≥ 1 | collections a run of free pages waits before its memory is given back to the system |
 
+## get
+`zam get repo@version` adds the dependency to the project file nearest the current directory, under the last element of its repository, with the hash of what was fetched. A dependency already of that name has its version and hash replaced.
+Every dependency the project reaches is then fetched and checked, and any hash the project file lacks is recorded.
+`zam get` alone does only the second part, which is how a project's dependencies are fetched ahead of a build.
+
+| Flag | Meaning |
+|---|---|
+| `--as` | package name to add the one dependency under, for a repository whose last element is not a name an import can use |
+
+## clean
+`zam clean` removes `$ZAMPATH/pkg`. Fetched dependencies are kept read-only, so this is the way to remove them; the next build or `zam get` fetches them again.
+
 ## Environment
-These are read by the program when it runs, for debugging the collector.
+`ZAMPATH` is read by the compiler. The rest are read by the program when it runs, for debugging the collector.
 
 | Variable | Meaning |
 |---|---|
+| `ZAMPATH` | where fetched dependencies are kept, under `pkg/`; `~/zam` by default |
 | `ZAM_GC_VERIFY` | check every collection against a full stop-the-world mark |
 | `ZAM_GC_STATS` | write a line to stderr for every collection |

@@ -49,7 +49,7 @@ func TestTypeReferenceStringNamesTheArchiveItWasDeclaredIn(t *testing.T) {
 
 	newFile := func(archive string) *File {
 		return &File{
-			Path:    base.NewPath("Dep.zam", ""),
+			Path:    base.Path("Dep.zam"),
 			Project: &Project{Archive: archive},
 		}
 	}
@@ -58,14 +58,14 @@ func TestTypeReferenceStringNamesTheArchiveItWasDeclaredIn(t *testing.T) {
 	}
 
 	t.Run("a declaration from an archive is preceded by it", func(t *testing.T) {
-		file := newFile("example.invalid/dep/archive/v1.zip")
-		assert.Equal(t, "example.invalid/dep/archive/v1.zip:Dep.Thing",
+		file := newFile("example.com/dep@v1")
+		assert.Equal(t, "example.com/dep@v1:Dep.Thing",
 			reference(file, "Dep", "Thing").String())
 	})
 
 	t.Run("two copies of one name are told apart", func(t *testing.T) {
-		v1 := reference(newFile("example.invalid/dep/archive/v1.zip"), "Thing")
-		v2 := reference(newFile("example.invalid/dep/archive/v2.zip"), "Thing")
+		v1 := reference(newFile("example.com/dep@v1"), "Thing")
+		v2 := reference(newFile("example.com/dep@v2"), "Thing")
 		assert.NotEqual(t, v1.String(), v2.String())
 	})
 
@@ -90,7 +90,7 @@ func TestTypeReferenceStringNamesTheArchiveItWasDeclaredIn(t *testing.T) {
 func TestGenericArgIsNamedByItsDeclarationToo(t *testing.T) {
 	t.Parallel()
 
-	file := &File{Path: base.NewPath("Dep.zam", ""), Project: &Project{}}
+	file := &File{Path: base.Path("Dep.zam"), Project: &Project{}}
 	outer, inner := newTestClass(file, "Outer", nil), newTestClass(file, "Inner", nil)
 	arg := func(d DeclGeneric) *TypeGenericArg {
 		return &TypeGenericArg{owner: d, Name: "T"}
@@ -126,7 +126,7 @@ func TestGenericArgIsNamedByItsDeclarationToo(t *testing.T) {
 func TestAnyIsSupertypeOfEveryType(t *testing.T) {
 	t.Parallel()
 
-	file := &File{Path: base.NewPath("Dep.zam", ""), Project: &Project{}}
+	file := &File{Path: base.Path("Dep.zam"), Project: &Project{}}
 	class := &TypeReference{Ids: []string{"Box"}, decl: newTestClass(file, "Box", nil)}
 
 	t.Run("primitives are subtypes of any", func(t *testing.T) {
@@ -165,7 +165,7 @@ func TestAnyIsSupertypeOfEveryType(t *testing.T) {
 func TestSizedTailIsAnyLengthOfTheUnsizedOne(t *testing.T) {
 	t.Parallel()
 
-	file := &File{Path: base.NewPath("Dep.zam", ""), Project: &Project{}}
+	file := &File{Path: base.Path("Dep.zam"), Project: &Project{}}
 	buf := &TypeReference{Ids: []string{"Buf"}, decl: newTestClass(file, "Buf", nil)}
 	other := &TypeReference{Ids: []string{"Bin"}, decl: newTestClass(file, "Bin", nil)}
 	tail := func(ref *TypeReference, size *uint64) *TypeWrapped {
@@ -202,7 +202,7 @@ func TestSizedTailIsAnyLengthOfTheUnsizedOne(t *testing.T) {
 func TestSelectionTargetSeesThroughOnePointer(t *testing.T) {
 	t.Parallel()
 
-	file := &File{Path: base.NewPath("Dep.zam", ""), Project: &Project{}}
+	file := &File{Path: base.Path("Dep.zam"), Project: &Project{}}
 	class := newTestClass(file, "Box", nil)
 	value := &TypeReference{Ids: []string{"Box"}, decl: class}
 	pointer := NewWrappedType(TypeKindPointer, value)
@@ -247,7 +247,7 @@ func TestSelectionTargetSeesThroughOnePointer(t *testing.T) {
 func TestReachedThroughAddress(t *testing.T) {
 	t.Parallel()
 
-	file := &File{Path: base.NewPath("Dep.zam", ""), Project: &Project{}}
+	file := &File{Path: base.Path("Dep.zam"), Project: &Project{}}
 	class := newTestClass(file, "Box", nil)
 	value := &TypeReference{Ids: []string{"Box"}, decl: class}
 

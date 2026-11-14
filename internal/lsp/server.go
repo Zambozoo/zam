@@ -7,6 +7,7 @@ package lsp
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"sync"
 	"time"
@@ -24,11 +25,11 @@ const debounce = 200 * time.Millisecond
 
 // server holds the open documents and checks them as they change.
 type server struct {
-	handler protocol.Handler
-	files   *overlay
-	git     gitProvider
-	threads int
-	delay   time.Duration
+	handler  protocol.Handler
+	files    *overlay
+	packages packageProvider
+	threads  int
+	delay    time.Duration
 
 	mu        sync.Mutex
 	documents map[protocol.DocumentUri]*document
@@ -44,14 +45,14 @@ type server struct {
 
 // document is an open document.
 type document struct {
-	path    *base.Path
+	path    base.Path
 	version protocol.Integer
 }
 
-func newServer(git gitProvider, delay time.Duration) *server {
+func newServer(packages packageProvider, delay time.Duration) *server {
 	s := &server{
 		files:     newOverlay(),
-		git:       git,
+		packages:  packages,
 		threads:   runtime.GOMAXPROCS(0),
 		delay:     delay,
 		documents: map[protocol.DocumentUri]*document{},
@@ -77,8 +78,11 @@ func newServer(git gitProvider, delay time.Duration) *server {
 
 // Run serves the protocol over stdin and stdout until the client exits.
 func Run() error {
-	files := &base.FileProvider{}
-	s := newServer(base.NewGitProvider(files), debounce)
+	zamPath, err := base.ZamPath()
+	if err != nil {
+		return err
+	}
+	s := newServer(base.NewPackageProvider(filepath.Join(zamPath, "pkg")), debounce)
 	return glspserver.NewServer(&s.handler, "zam", false).RunStdio()
 }
 
@@ -199,7 +203,7 @@ func (s *server) check() {
 	}
 
 	for uri, doc := range documents {
-		diagnostics, ast := analyze(s.files, s.git, doc.path, s.threads)
+		diagnostics, ast := analyze(s.files, s.packages, doc.path, s.threads)
 
 		s.mu.Lock()
 		if _, open := s.documents[uri]; open {
@@ -217,13 +221,13 @@ func (s *server) check() {
 }
 
 // pathOf returns the path the compiler knows a document's file under.
-func pathOf(uri protocol.DocumentUri) (*base.Path, error) {
+func pathOf(uri protocol.DocumentUri) (base.Path, error) {
 	u, err := url.Parse(uri)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if u.Scheme != "file" {
-		return nil, fmt.Errorf("unsupported document URI %q: only file URIs are checked", uri)
+		return "", fmt.Errorf("unsupported document URI %q: only file URIs are checked", uri)
 	}
 	return base.ParsePath(u.Path)
 }

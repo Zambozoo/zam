@@ -15,16 +15,15 @@ import (
 
 type (
 	fileProvider interface {
-		FileExists(path *base.Path) (bool, error)
-		ProjectFilePath(path *base.Path) (*base.Path, error)
-		Reader(path *base.Path) (io.ReadCloser, error)
-		NewPath(pathStr string) (*base.Path, error)
-		ListCodeFiles(dir *base.Path) ([]*base.Path, error)
+		FileExists(path base.Path) (bool, error)
+		ProjectFilePath(path base.Path) (base.Path, error)
+		Reader(path base.Path) (io.ReadCloser, error)
+		NewPath(pathStr string) (base.Path, error)
+		ListCodeFiles(dir base.Path) ([]base.Path, error)
 	}
 
-	gitProvider interface {
-		Download(archiveURL string) (*base.Path, error)
-		ArchiveName(file string) string
+	packageProvider interface {
+		Fetch(ref string) (base.Path, string, error)
 	}
 
 	lexer interface {
@@ -62,7 +61,7 @@ type (
 		// path is where the file being parsed was read from. It is held here
 		// rather than taken from file because imports are read before there is a
 		// file to take it from.
-		path *base.Path
+		path base.Path
 		file *File
 
 		currentToken  *Token
@@ -90,8 +89,8 @@ type (
 		command *command.Command
 		// fileProvider provides access to the file system
 		fileProvider fileProvider
-		// gitProvider provides access to git repositories
-		gitProvider gitProvider
+		// packageProvider fetches dependencies
+		packageProvider packageProvider
 
 		// pathWG counts the paths that have been discovered but not yet parsed
 		pathWG sync.WaitGroup
@@ -106,14 +105,17 @@ type (
 		codeFileSG base.SingleflightGroup[*File]
 
 		// discoveredPaths carries a path from the parse that found it to the pump
-		discoveredPaths chan *base.Path
+		discoveredPaths chan base.Path
 		// pathsToParse is where the parsing threads take their work from
-		pathsToParse chan *base.Path
+		pathsToParse chan base.Path
 		// errChan is the channel for the errors
 		errChan chan error
 
 		// projects is the map of projects
 		projects *base.SyncMap[base.Path, *Project]
+		// fetched maps the directory each dependency was extracted to onto the
+		// repo@version it was fetched as
+		fetched *base.SyncMap[base.Path, string]
 		// codeFiles is the map of code files
 		codeFiles *base.SyncMap[base.Path, *File]
 		// errs is the resulting list of errors
@@ -124,7 +126,7 @@ type (
 	}
 )
 
-func newSyntaxParser(projectParser *projectParser, lexer lexer, project *Project, path *base.Path) *syntaxParser {
+func newSyntaxParser(projectParser *projectParser, lexer lexer, project *Project, path base.Path) *syntaxParser {
 	return &syntaxParser{
 		projectParser: projectParser,
 		lexer:         lexer,
@@ -379,11 +381,11 @@ func (p *syntaxParser) Method() **FieldMethod {
 // NewPath answers the path an import names, read as it was written: beside the
 // file it appears in. A file's imports mean the same thing wherever the compiler
 // is run from, and moving a directory moves what is inside it intact.
-func (p *syntaxParser) NewPath(pathStr string) (*base.Path, error) {
+func (p *syntaxParser) NewPath(pathStr string) (base.Path, error) {
 	return p.projectParser.fileProvider.NewPath(p.path.Resolve(pathStr))
 }
 
-func (p *syntaxParser) AddPath(path *base.Path) {
+func (p *syntaxParser) AddPath(path base.Path) {
 	p.projectParser.addPath(path)
 }
 
@@ -392,7 +394,7 @@ func (p *syntaxParser) AddPath(path *base.Path) {
 // pass-through to the file provider, kept on the parser so that the glob
 // expansion in [newImport] has the same reach as the single-file resolution
 // through [AddPath].
-func (p *syntaxParser) ListCodeFiles(dir *base.Path) ([]*base.Path, error) {
+func (p *syntaxParser) ListCodeFiles(dir base.Path) ([]base.Path, error) {
 	return p.projectParser.fileProvider.ListCodeFiles(dir)
 }
 
@@ -404,17 +406,18 @@ func (p *syntaxParser) File() **File {
 	return &p.file
 }
 
-func newProjectParser(cmd *command.Command, fileProvider fileProvider, gitProvider gitProvider) *projectParser {
+func newProjectParser(cmd *command.Command, fileProvider fileProvider, packageProvider packageProvider) *projectParser {
 	p := &projectParser{
-		command:      cmd,
-		fileProvider: fileProvider,
-		gitProvider:  gitProvider,
+		command:         cmd,
+		fileProvider:    fileProvider,
+		packageProvider: packageProvider,
 
-		discoveredPaths: make(chan *base.Path),
-		pathsToParse:    make(chan *base.Path),
+		discoveredPaths: make(chan base.Path),
+		pathsToParse:    make(chan base.Path),
 		errChan:         make(chan error, cmd.MaxThreads),
 
 		projects:  &base.SyncMap[base.Path, *Project]{},
+		fetched:   &base.SyncMap[base.Path, string]{},
 		codeFiles: &base.SyncMap[base.Path, *File]{},
 	}
 
@@ -440,7 +443,7 @@ func newProjectParser(cmd *command.Command, fileProvider fileProvider, gitProvid
 // than the queue has room for — which, at the default of one thread and so a
 // queue of one, is any file with two imports. The pump's queue grows instead of
 // filling, so a thread is never made to wait on itself.
-func (p *projectParser) addPath(path *base.Path) {
+func (p *projectParser) addPath(path base.Path) {
 	p.pathWG.Add(1)
 	p.discoveredPaths <- path
 }
@@ -452,12 +455,12 @@ func (p *projectParser) addPath(path *base.Path) {
 // receive from discoveredPaths stays open whether or not any thread is ready to
 // take work, so there is always somewhere for a newly found import to go.
 func (p *projectParser) pump() {
-	var queue []*base.Path
+	var queue []base.Path
 	for {
 		// A nil channel is never chosen, so with nothing queued the select waits
 		// only on the paths coming in.
-		var out chan *base.Path
-		var next *base.Path
+		var out chan base.Path
+		var next base.Path
 		if len(queue) > 0 {
 			out, next = p.pathsToParse, queue[0]
 		}
@@ -483,60 +486,77 @@ func (p *projectParser) AddError(err error) {
 
 // projectFilePath returns the project file governing path. When the command
 // skips project files, a local path belongs to the entry's implicit project and
-// implicit is true.
-func (p *projectParser) projectFilePath(path *base.Path) (projectFilePath *base.Path, implicit bool, err error) {
-	if p.command.NoProject && !path.InZip() && !base.IsStdPath(path) {
+// implicit is true. A fetched dependency's file is governed only by a project
+// file inside the directory it was extracted to.
+func (p *projectParser) projectFilePath(path base.Path) (projectFilePath base.Path, implicit bool, err error) {
+	_, root, fetched := p.fetchedRoot(path)
+	if p.command.NoProject && !base.IsStdPath(path) && !fetched {
 		return base.ImplicitProjectFilePath(p.command.InputPath), true, nil
 	}
 
 	projectFilePath, err = p.fileProvider.ProjectFilePath(path)
+	if err == nil && fetched && !root.Contains(projectFilePath) {
+		return "", false, fmt.Errorf("project file missing for %s", path)
+	}
 	return projectFilePath, false, err
 }
 
-func (p *projectParser) parseFile(path *base.Path) (*File, error) {
+// fetchedRoot returns the repo@version path was fetched as and the directory
+// it was extracted to, if it is a file of a fetched dependency.
+func (p *projectParser) fetchedRoot(path base.Path) (archive string, root base.Path, ok bool) {
+	p.fetched.Range(func(dir base.Path, repo string) bool {
+		if dir.Contains(path) {
+			archive, root, ok = repo, dir, true
+		}
+		return !ok
+	})
+	return archive, root, ok
+}
+
+func (p *projectParser) parseFile(path base.Path) (*File, error) {
 	defer p.pathWG.Done()
 
 	file, err, _ := p.codeFileSG.Do(path.String(), func() (*File, error) {
-		if file, loaded := p.codeFiles.Load(*path); loaded {
+		if file, loaded := p.codeFiles.Load(path); loaded {
 			return file, nil
 		}
 
 		projectFilePath, implicit, err := p.projectFilePath(path)
 		if err != nil {
-			return nil, base.NewError(err, base.NewLocation(*path, nil))
+			return nil, base.NewError(err, base.NewLocation(path, nil))
 		}
 
 		project, err, _ := p.projectFileSG.Do(projectFilePath.String(), func() (*Project, error) {
-			if proj, ok := p.projects.Load(*projectFilePath); ok {
+			if proj, ok := p.projects.Load(projectFilePath); ok {
 				return proj, nil
 			}
 
 			if implicit {
 				project := newImplicitProject(p.command.InputPath)
-				p.projects.Store(*projectFilePath, project)
+				p.projects.Store(projectFilePath, project)
 				return project, nil
 			}
 
-			project, err := newProject(projectFilePath, p.fileProvider, p.gitProvider)
+			project, err := p.newProject(projectFilePath)
 			if err != nil {
 				return nil, err
 			}
 
-			p.projects.Store(*projectFilePath, project)
+			p.projects.Store(projectFilePath, project)
 			return project, nil
 		})
 		if err != nil {
-			return nil, base.NewError(err, base.NewLocation(*projectFilePath, nil))
+			return nil, base.NewError(err, base.NewLocation(projectFilePath, nil))
 		}
 
 		reader, err := p.fileProvider.Reader(path)
 		if err != nil {
-			return nil, base.NewError(err, base.NewLocation(*path, nil))
+			return nil, base.NewError(err, base.NewLocation(path, nil))
 		}
 
 		lexer, err := NewLexer(newRuneReader(reader))
 		if err != nil {
-			return nil, base.NewError(err, base.NewLocation(*path, nil))
+			return nil, base.NewError(err, base.NewLocation(path, nil))
 		}
 
 		// An error the parse recovered from is located at the token it was raised
@@ -552,7 +572,7 @@ func (p *projectParser) parseFile(path *base.Path) (*File, error) {
 			if tok != nil {
 				position = tok.Position(lexer.LineStarts)
 			}
-			return base.NewLocation(*path, position)
+			return base.NewLocation(path, position)
 		}
 		for _, recovered := range syntaxParser.recovered {
 			p.AddError(base.NewError(recovered.err, locate(recovered.tok)))
@@ -566,7 +586,7 @@ func (p *projectParser) parseFile(path *base.Path) (*File, error) {
 		file.LineStarts = lexer.LineStarts
 		file.HasSyntaxErrors = len(syntaxParser.recovered) > 0
 
-		p.codeFiles.Store(*path, file)
+		p.codeFiles.Store(path, file)
 		return file, nil
 	})
 	return file, err
@@ -606,8 +626,8 @@ func (p *projectParser) Wait() {
 // file is in it, but a file with [File.HasSyntaxErrors] is missing what failed
 // to parse, so such an AST is only fit to be checked, never compiled. A file
 // that could not be parsed at all leaves no AST to hand back.
-func NewAST(cmd *command.Command, fileProvider fileProvider, gitProvider gitProvider) (*AST, []error) {
-	parser := newProjectParser(cmd, fileProvider, gitProvider)
+func NewAST(cmd *command.Command, fileProvider fileProvider, packageProvider packageProvider) (*AST, []error) {
+	parser := newProjectParser(cmd, fileProvider, packageProvider)
 	parser.Run()
 	parser.Wait()
 
@@ -618,7 +638,7 @@ func NewAST(cmd *command.Command, fileProvider fileProvider, gitProvider gitProv
 	// The entry file is not a special case of parsing, only of the tree: it is
 	// the one the run begins in. Naming it by path is what keeps which file that
 	// is from depending on which parse happened to go first.
-	mainCodeFile, _ := parser.codeFiles.Load(*cmd.InputPath)
+	mainCodeFile, _ := parser.codeFiles.Load(cmd.InputPath)
 
 	return &AST{
 		MainCodeDecl: mainCodeFile.Decl,

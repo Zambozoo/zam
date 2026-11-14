@@ -41,11 +41,11 @@ func TestValidateASTRecordsWhatNamesReferTo(t *testing.T) {
 `
 	dir := t.TempDir()
 	writeFile(t, dir, "zam.yml", "name: \"references\"\nversion: \"0.0.0\"\ndependencies:\n")
-	entry := base.NewPath(writeFile(t, dir, "Main.zam", source), "")
+	entry := base.Path(writeFile(t, dir, "Main.zam", source))
 	ast, errs := syntax.NewAST(&command.Command{InputPath: entry, MaxThreads: 1}, &base.FileProvider{}, nil)
 	require.Empty(t, errs)
 	require.Empty(t, ValidateAST(ast))
-	file, _ := ast.CodeFiles.Get(*entry)
+	file, _ := ast.CodeFiles.Get(entry)
 
 	for _, test := range []struct {
 		name         string

@@ -66,5 +66,5 @@ namespace Main {
 ## Running
 To run the program, run the following from just outside the project directory:
 ```bash
-zam -rn helloworld/Main.zam
+zam run -n helloworld/Main.zam
 ```

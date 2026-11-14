@@ -70,9 +70,8 @@ const (
 	flagKeepBuildLong = "keep-build"
 	usageKeepBuild    = "keep the temporary build directory and print its path on failure or success"
 
-	flagRun     = "r"
-	flagRunLong = "run"
-	usageRun    = "build to a temporary binary and run it, passing any arguments after the input file"
+	flagAsLong = "as"
+	usageAs    = "package name to add the dependency under, the last element of its repository by default"
 
 	flagNoProject     = "n"
 	flagNoProjectLong = "no-project"
@@ -97,6 +96,34 @@ const (
 	maxGCPrecleanPasses = 16
 )
 
+// Verbs are what the command line can ask the compiler to do.
+const (
+	// VerbBuild compiles a program to a binary or image.
+	VerbBuild Verb = iota
+	// VerbRun compiles a program to a temporary binary and runs it.
+	VerbRun
+	// VerbGet adds dependencies to the nearest project file and fetches every
+	// dependency it has.
+	VerbGet
+	// VerbClean removes every fetched dependency.
+	VerbClean
+	// VerbLSP serves the language server protocol over stdin and stdout.
+	VerbLSP
+)
+
+// verbs are the names of the verbs, in the order usage lists them.
+var verbs = []struct {
+	name  string
+	verb  Verb
+	usage string
+}{
+	{"build", VerbBuild, "compile a program to a binary"},
+	{"run", VerbRun, "compile a program and run it, passing on the arguments after its file"},
+	{"get", VerbGet, "add dependencies to the project file and fetch every dependency"},
+	{"clean", VerbClean, "remove every fetched dependency"},
+	{"lsp", VerbLSP, "serve the language server protocol over stdin and stdout"},
+}
+
 // byteSizeUnits are the suffixes a size may be written with, longest first so
 // that the search below cannot match the "B" inside "KB" and read the rest as a
 // count.
@@ -115,16 +142,23 @@ type (
 	// an optional unit suffix.
 	byteSize int
 
+	// Verb is what the command line asks the compiler to do.
+	Verb int
+
 	Command struct {
+		// Verb is what the command asks for, and decides which other fields
+		// are set.
+		Verb Verb
+
 		// InputPath is the file to read from
 		// This is the last argument to the command
 		// Required, must not be empty, must be a valid non-directory file path.
-		InputPath *base.Path
+		InputPath base.Path
 
 		// OutputFile is the file to write to
 		// Uses the -o flag with a default of `out`
 		// Must be a valid file path.
-		OutputPath *base.Path
+		OutputPath base.Path
 
 		// Verbose is the verbose mode
 		// Uses the -v flag with a default of `false`
@@ -192,22 +226,29 @@ type (
 		// inspected. Uses the -k flag with a default of `false`.
 		KeepBuild bool
 
-		// Run builds the binary to a temporary location and runs it instead of
-		// writing it to OutputPath. Uses the -r flag with a default of `false`.
-		Run bool
-
 		// RunArgs are the arguments after the input file, passed to the program
-		// when Run is set.
+		// it runs.
 		RunArgs []string
+
+		// Refs are the dependencies get adds, each spelled repo@version.
+		Refs []string
+
+		// As is the package name get adds its one dependency under.
+		As string
 
 		// NoProject skips the search for project files, so every local file
 		// belongs to an implicit project that depends only on std. Uses the -n
 		// flag with a default of `false`.
 		NoProject bool
+
+		// WriteProject lets the compiler record the hash of a dependency the
+		// project file lacks one for. It is set for the command line, and not
+		// for tools that only read a project.
+		WriteProject bool
 	}
 
 	fileProvider interface {
-		FileExists(path *base.Path) (bool, error)
+		FileExists(path base.Path) (bool, error)
 	}
 
 	usageError struct {
@@ -273,24 +314,109 @@ func (ue *usageError) Error() string {
 	return fmt.Sprintf("%sUsage of %s:\n%s", errorLine, ue.name, ue.flags)
 }
 
-// New builds a Command from the given argument list and file provider.
+// New builds a Command from the given argument list and file provider. The
+// first argument after the program's name is the verb, and the rest are its
+// flags and arguments.
 func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("missing program name")
 	}
+	if len(argv) == 1 {
+		return nil, &usageError{name: argv[0], flags: verbUsages(), err: errors.New("missing command")}
+	}
 
-	fs := pflag.NewFlagSet(argv[0], pflag.ContinueOnError)
+	name := argv[1]
+	switch name {
+	case "-h", "--help", "help":
+		return nil, &usageError{name: argv[0], flags: verbUsages()}
+	}
+	for _, v := range verbs {
+		if v.name != name {
+			continue
+		}
+		name := argv[0] + " " + name
+		switch v.verb {
+		case VerbBuild, VerbRun:
+			return newCompile(v.verb, name, argv[2:], fileProvider)
+		case VerbGet:
+			return newGet(name, argv[2:])
+		default:
+			return newBare(v.verb, name, argv[2:])
+		}
+	}
+	return nil, &usageError{name: argv[0], flags: verbUsages(), err: fmt.Errorf("unknown command %q", name)}
+}
+
+// verbUsages lists the verbs and what each does.
+func verbUsages() string {
+	var b strings.Builder
+	for _, v := range verbs {
+		fmt.Fprintf(&b, "  %-6s %s\n", v.name, v.usage)
+	}
+	return b.String()
+}
+
+// newFlagSet returns an empty flag set for the verb called name.
+func newFlagSet(name string) *pflag.FlagSet {
+	fs := pflag.NewFlagSet(name, pflag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.SetInterspersed(false)
 	fs.SortFlags = false
+	return fs
+}
 
-	out := new(base.Path)
+// parse parses args into fs, answering a failure or a request for help with
+// the verb's usage.
+func parse(fs *pflag.FlagSet, name string, args []string) error {
+	if err := fs.Parse(args); err != nil {
+		usageErr := &usageError{name: name, flags: fs.FlagUsages()}
+		if !errors.Is(err, pflag.ErrHelp) {
+			usageErr.err = err
+		}
+		return usageErr
+	}
+	return nil
+}
+
+// newGet builds the command for get, whose arguments are the dependencies to
+// add.
+func newGet(name string, args []string) (*Command, error) {
+	fs := newFlagSet(name)
+	var as string
+	fs.StringVar(&as, flagAsLong, "", usageAs)
+	if err := parse(fs, name, args); err != nil {
+		return nil, err
+	}
+
+	refs := fs.Args()
+	if as != "" && len(refs) != 1 {
+		return nil, fmt.Errorf("--%s names one dependency, but %d were given", flagAsLong, len(refs))
+	}
+	return &Command{Verb: VerbGet, Refs: refs, As: as, WriteProject: true}, nil
+}
+
+// newBare builds the command for a verb that takes no flags or arguments.
+func newBare(verb Verb, name string, args []string) (*Command, error) {
+	fs := newFlagSet(name)
+	if err := parse(fs, name, args); err != nil {
+		return nil, err
+	}
+	if len(fs.Args()) > 0 {
+		return nil, fmt.Errorf("too many arguments: %v", fs.Args())
+	}
+	return &Command{Verb: verb}, nil
+}
+
+// newCompile builds the command for build or run.
+func newCompile(verb Verb, name string, args []string, fileProvider fileProvider) (*Command, error) {
+	fs := newFlagSet(name)
+
+	var out string
 	var verbose bool
 	var threads int
 	var gcRatio float64
 	var emitImage bool
 	var keepBuild bool
-	var run bool
 	var noProject bool
 	var gcMarkers, gcPrecleanPasses, gcReturnAge int
 	var gcConcurrent bool
@@ -298,7 +424,10 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	stackSize, heapSize := defaultStackSize, defaultHeapSize
 	nurserySize, maxHeapSize := defaultNursery, defaultMaxHeap
 
-	fs.StringVarP(&out.Outer, flagOutputLong, flagOutput, defaultOutput, usageOutput)
+	if verb == VerbBuild {
+		fs.StringVarP(&out, flagOutputLong, flagOutput, defaultOutput, usageOutput)
+		fs.BoolVarP(&emitImage, flagEmitImageLong, flagEmitImage, false, usageEmitImage)
+	}
 	fs.BoolVarP(&verbose, flagVerboseLong, flagVerbose, defaultVerbose, usageVerbose)
 	fs.IntVarP(&threads, flagThreadsLong, flagThreads, defaultThreads, usageThreads)
 	fs.Float64VarP(&gcRatio, flagGCRatioLong, flagGCRatio, defaultGCRatio, usageGCRatio)
@@ -311,28 +440,18 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	fs.Float64Var(&gcRemarkGrowth, flagGCRemarkGrowthLong, defaultGCRemarkGrowth, usageGCRemarkGrowth)
 	fs.IntVar(&gcPrecleanPasses, flagGCPrecleanPassesLong, defaultGCPrecleanPasses, usageGCPrecleanPasses)
 	fs.IntVar(&gcReturnAge, flagGCReturnAgeLong, defaultGCReturnAge, usageGCReturnAge)
-	fs.BoolVarP(&emitImage, flagEmitImageLong, flagEmitImage, false, usageEmitImage)
 	fs.BoolVarP(&keepBuild, flagKeepBuildLong, flagKeepBuild, false, usageKeepBuild)
-	fs.BoolVarP(&run, flagRunLong, flagRun, false, usageRun)
 	fs.BoolVarP(&noProject, flagNoProjectLong, flagNoProject, false, usageNoProject)
 
-	if err := fs.Parse(argv[1:]); err != nil {
-		usageErr := &usageError{name: argv[0], flags: fs.FlagUsages()}
-		if !errors.Is(err, pflag.ErrHelp) {
-			usageErr.err = err
-		}
-		return nil, usageErr
+	if err := parse(fs, name, args); err != nil {
+		return nil, err
 	}
 
-	if run && emitImage {
-		return nil, fmt.Errorf("-%s and -%s cannot be combined", flagRun, flagEmitImage)
-	}
-
-	args := fs.Args()
+	args = fs.Args()
 	switch {
 	case len(args) == 0:
 		return nil, errors.New("missing input file argument")
-	case len(args) > 1 && !run:
+	case len(args) > 1 && verb == VerbBuild:
 		return nil, fmt.Errorf("too many arguments: %v", args)
 	}
 
@@ -347,9 +466,9 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	}
 
 	var runArgs []string
-	if run {
+	if verb == VerbRun {
 		runArgs = args[1:]
-	} else if _, err := fileProvider.FileExists(out); err != nil {
+	} else if _, err := fileProvider.FileExists(base.Path(out)); err != nil {
 		return nil, err
 	}
 
@@ -389,8 +508,9 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	}
 
 	return &Command{
+		Verb:             verb,
 		InputPath:        inputPath,
-		OutputPath:       out,
+		OutputPath:       base.Path(out),
 		Verbose:          verbose,
 		MaxThreads:       threads,
 		GCTriggerRatio:   gcRatio,
@@ -405,9 +525,9 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 		GCReturnAge:      gcReturnAge,
 		EmitImage:        emitImage,
 		KeepBuild:        keepBuild,
-		Run:              run,
 		RunArgs:          runArgs,
 		NoProject:        noProject,
+		WriteProject:     true,
 	}, nil
 }
 

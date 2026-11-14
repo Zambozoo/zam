@@ -18,12 +18,12 @@ import (
 type objectMethodParser struct {
 	SyntaxParser
 	file  *File
-	paths []*base.Path
+	paths []base.Path
 }
 
 func (p *objectMethodParser) File() **File { return &p.file }
 
-func (p *objectMethodParser) AddPath(path *base.Path) { p.paths = append(p.paths, path) }
+func (p *objectMethodParser) AddPath(path base.Path) { p.paths = append(p.paths, path) }
 
 func newTestInterface(file *File) *DeclInterface {
 	return &DeclInterface{
@@ -89,7 +89,7 @@ func TestPutInterfaceIfImplemented(t *testing.T) {
 	}
 
 	t.Run("a class declaring the method implements it", func(t *testing.T) {
-		file := &File{Path: base.NewPath("main.zam", ""), Imports: map[string][]*Import{}}
+		file := &File{Path: base.Path("main.zam"), Imports: map[string][]*Import{}}
 		iface := newGreeter(file)
 		class := newTestClass(file, "Impl", nil)
 		greet := newTestMethod(class, "greet", ModifierPublic, signature())
@@ -101,7 +101,7 @@ func TestPutInterfaceIfImplemented(t *testing.T) {
 	})
 
 	t.Run("a class without the method does not", func(t *testing.T) {
-		file := &File{Path: base.NewPath("main.zam", ""), Imports: map[string][]*Import{}}
+		file := &File{Path: base.Path("main.zam"), Imports: map[string][]*Import{}}
 		iface := newGreeter(file)
 		class := newTestClass(file, "Bare", nil)
 
@@ -115,7 +115,7 @@ func TestPutInterfaceIfImplemented(t *testing.T) {
 	// dispatches on the table built for the derived class. Nothing would have
 	// put the interface's methods in that table.
 	t.Run("a class inheriting the method implements it", func(t *testing.T) {
-		file := &File{Path: base.NewPath("main.zam", ""), Imports: map[string][]*Import{}}
+		file := &File{Path: base.Path("main.zam"), Imports: map[string][]*Import{}}
 		iface := newGreeter(file)
 		parent := newTestClass(file, "Base", nil)
 		greet := newTestMethod(parent, "greet", ModifierPublic, signature())
@@ -128,7 +128,7 @@ func TestPutInterfaceIfImplemented(t *testing.T) {
 	})
 
 	t.Run("a method under the name with another signature does not", func(t *testing.T) {
-		file := &File{Path: base.NewPath("main.zam", ""), Imports: map[string][]*Import{}}
+		file := &File{Path: base.Path("main.zam"), Imports: map[string][]*Import{}}
 		iface := newGreeter(file)
 		class := newTestClass(file, "Mismatch", nil)
 		greet := newTestMethod(class, "greet", ModifierPublic,
@@ -155,7 +155,7 @@ func TestPutObjectMethods(t *testing.T) {
 	}
 
 	t.Run("an interface asks for Object's methods", func(t *testing.T) {
-		file := &File{Path: base.NewPath("main.zam", ""), Imports: map[string][]*Import{}}
+		file := &File{Path: base.Path("main.zam"), Imports: map[string][]*Import{}}
 		iface := newTestInterface(file)
 		add := newTestMethod(iface, "Add", ModifierVirtual|ModifierPublic,
 			&TypeFunction{ParameterTypes: []Type{TypeInt}, ReturnType: TypeVoid})
@@ -179,11 +179,11 @@ func TestPutObjectMethods(t *testing.T) {
 		// Obj is named by the methods now asked for, so it is parsed, but it
 		// is not imported into the file.
 		assert.NotContains(t, file.Imports, base.StdPackage)
-		assert.Equal(t, []*base.Path{base.StdPath("lang/Obj" + base.CodeFileExtension)}, parser.paths)
+		assert.Equal(t, []base.Path{base.StdPath("lang/Obj" + base.CodeFileExtension)}, parser.paths)
 	})
 
 	t.Run("what the interface declares itself stands", func(t *testing.T) {
-		file := &File{Path: base.NewPath("main.zam", ""), Imports: map[string][]*Import{}}
+		file := &File{Path: base.Path("main.zam"), Imports: map[string][]*Import{}}
 		iface := newTestInterface(file)
 		str := newTestMethod(iface, base.StringMethodName, ModifierVirtual,
 			&TypeFunction{ParameterTypes: []Type{TypeInt}, ReturnType: TypeString})
@@ -197,7 +197,7 @@ func TestPutObjectMethods(t *testing.T) {
 	})
 
 	t.Run("a static field holds the name", func(t *testing.T) {
-		file := &File{Path: base.NewPath("main.zam", ""), Imports: map[string][]*Import{}}
+		file := &File{Path: base.Path("main.zam"), Imports: map[string][]*Import{}}
 		iface := newTestInterface(file)
 		hash := newTestMethod(iface, base.HashMethodName, ModifierStatic,
 			&TypeFunction{ReturnType: TypeInt})
@@ -390,8 +390,8 @@ namespace Main {
 `)
 
 	ast, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+		&base.FileProvider{}, &mock_PackageProvider{})
 	require.Empty(t, errs)
 
 	iface, ok := ast.MainCodeDecl.GetDecl("I")

@@ -36,9 +36,9 @@ namespace Main {
 `), 0o600))
 
 	files := &base.FileProvider{}
-	cmd, err := command.New([]string{"zam", "-r", entry, "a", "b"}, files)
+	cmd, err := command.New([]string{"zam", "run", entry, "a", "b"}, files)
 	require.NoError(t, err)
-	ast, errs := syntax.NewAST(cmd, files, base.NewGitProvider(files))
+	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
 	result, err := codegen.GenerateCode(cmd, ast)

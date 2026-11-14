@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"path/filepath"
 
 	base "github.com/zambozoo/zam/internal/0_base"
 	command "github.com/zambozoo/zam/internal/1_command"
@@ -24,6 +25,8 @@ const (
 	stepBuild    step = "build"
 	stepRun      step = "run"
 	stepLSP      step = "lsp"
+	stepGet      step = "get"
+	stepClean    step = "clean"
 )
 
 func handleErrors(logger *base.Logger, step step, errs ...error) {
@@ -53,18 +56,38 @@ func handleErrors(logger *base.Logger, step step, errs ...error) {
 func main() {
 	logger := base.Logger{}
 
-	if len(os.Args) > 1 && os.Args[1] == "lsp" {
-		handleErrors(&logger, stepLSP, lsp.Run())
-		return
-	}
-
 	fileProvider := base.FileProvider{}
 
 	cmd, err := command.New(os.Args, &fileProvider)
 	handleErrors(&logger, stepCommand, err)
 
-	gitProvider := base.NewGitProvider(&fileProvider)
-	syntaxAST, errs := syntax.NewAST(cmd, &fileProvider, gitProvider)
+	if cmd.Verb == command.VerbLSP {
+		handleErrors(&logger, stepLSP, lsp.Run())
+		return
+	}
+
+	zamPath, err := base.ZamPath()
+	handleErrors(&logger, stepCommand, err)
+	packageProvider := base.NewPackageProvider(filepath.Join(zamPath, "pkg"))
+
+	switch cmd.Verb {
+	case command.VerbClean:
+		handleErrors(&logger, stepClean, packageProvider.Clean())
+		logger.Print(base.LogLevelInfo, "removed %s\n", packageProvider.Root())
+		logger.Flush()
+		base.Exit(base.ExitCodeSuccess)
+	case command.VerbGet:
+		cwd, err := base.ParsePath(".")
+		handleErrors(&logger, stepGet, err)
+		projectFile, err := fileProvider.ProjectFileIn(cwd)
+		handleErrors(&logger, stepGet, err)
+		err = syntax.Get(projectFile, cmd.Refs, cmd.As, &fileProvider, packageProvider)
+		handleErrors(&logger, stepGet, err)
+		logger.Flush()
+		base.Exit(base.ExitCodeSuccess)
+	}
+
+	syntaxAST, errs := syntax.NewAST(cmd, &fileProvider, packageProvider)
 	handleErrors(&logger, stepSyntax, errs...)
 
 	errs = semantic.ValidateAST(syntaxAST)
@@ -73,7 +96,7 @@ func main() {
 	result, err := codegen.GenerateCode(cmd, syntaxAST)
 	handleErrors(&logger, stepCodegen, err)
 
-	if cmd.Run {
+	if cmd.Verb == command.VerbRun {
 		code, err := build.Run(result.Image, result.NativeNames, build.Options{
 			Project:      syntaxAST.MainCodeDecl.File().Project,
 			KeepBuildDir: cmd.KeepBuild,

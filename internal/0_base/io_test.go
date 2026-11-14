@@ -1,8 +1,6 @@
 package base
 
 import (
-	"archive/zip"
-	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,28 +10,23 @@ import (
 )
 
 func TestPathResolve(t *testing.T) {
-	main := Path{Outer: "/a/b/Main.zam"}
-	archived := Path{Outer: "/a/lib.zip", Inner: "src/Main.zam"}
+	main := Path("/a/b/Main.zam")
 
 	for name, test := range map[string]struct {
 		from     Path
 		pathStr  string
 		expected string
 	}{
-		"a file beside it":          {main, "A.zam", "/a/b/A.zam"},
-		"a file below it":           {main, "sub/A.zam", "/a/b/sub/A.zam"},
-		"a file above it":           {main, "../A.zam", "/a/A.zam"},
-		"a file named outright":     {main, "/c/A.zam", "/c/A.zam"},
-		"an archive beside it":      {main, "lib.zip#src/A.zam", "/a/b/lib.zip#src/A.zam"},
-		"a file in its own archive": {archived, "A.zam", "/a/lib.zip#src/A.zam"},
-		"a file below in it":        {archived, "deep/A.zam", "/a/lib.zip#src/deep/A.zam"},
-		// A standard library file reaches its siblings the way a file in a zip
-		// reaches its own: by joining against the directory the current file
-		// sits in, with the std scheme put back on the front.
-		"a standard library file beside":  {*StdPath("Obj.zam"), "A.zam", "std://A.zam"},
-		"a standard library file above":   {*StdPath("io/Writer.zam"), "../Error.zam", "std://Error.zam"},
-		"a standard library file below":   {*StdPath("Obj.zam"), "io/Writer.zam", "std://io/Writer.zam"},
-		"a standard library file already": {*StdPath("io/Writer.zam"), "std://Error.zam", "std://Error.zam"},
+		"a file beside it":      {main, "A.zam", "/a/b/A.zam"},
+		"a file below it":       {main, "sub/A.zam", "/a/b/sub/A.zam"},
+		"a file above it":       {main, "../A.zam", "/a/A.zam"},
+		"a file named outright": {main, "/c/A.zam", "/c/A.zam"},
+		// A standard library file reaches its siblings by joining against the
+		// directory it sits in, with the std scheme put back on the front.
+		"a standard library file beside":  {StdPath("Obj.zam"), "A.zam", "std://A.zam"},
+		"a standard library file above":   {StdPath("io/Writer.zam"), "../Error.zam", "std://Error.zam"},
+		"a standard library file below":   {StdPath("Obj.zam"), "io/Writer.zam", "std://io/Writer.zam"},
+		"a standard library file already": {StdPath("io/Writer.zam"), "std://Error.zam", "std://Error.zam"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, test.expected, test.from.Resolve(test.pathStr))
@@ -55,7 +48,7 @@ func TestListCodeFilesOnDisk(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "Deep.zam"), []byte(""), 0o600))
 
 	var fileProvider FileProvider
-	children, err := fileProvider.ListCodeFiles(NewPath(dir, ""))
+	children, err := fileProvider.ListCodeFiles(Path(dir))
 	require.NoError(t, err)
 
 	var bases []string
@@ -63,35 +56,6 @@ func TestListCodeFilesOnDisk(t *testing.T) {
 		bases = append(bases, child.Base())
 	}
 	assert.Equal(t, []string{"A.zam", "B.zam"}, bases)
-}
-
-// TestListCodeFilesInsideZip covers the archive backend. A dependency on disk
-// is a zip, and a glob import names the files sitting one directory deep in
-// it the same way as on a filesystem. The archive is scanned once and the
-// entries whose directory is the one asked for are kept.
-func TestListCodeFilesInsideZip(t *testing.T) {
-	archivePath := filepath.Join(t.TempDir(), "lib.zip")
-	f, err := os.Create(archivePath)
-	require.NoError(t, err)
-	w := zip.NewWriter(f)
-	for _, name := range []string{"src/B.zam", "src/A.zam", "src/sub/Deep.zam", "src/zm.yml"} {
-		entry, err := w.Create(name)
-		require.NoError(t, err)
-		_, err = io.WriteString(entry, "")
-		require.NoError(t, err)
-	}
-	require.NoError(t, w.Close())
-	require.NoError(t, f.Close())
-
-	var fileProvider FileProvider
-	children, err := fileProvider.ListCodeFiles(NewPath(archivePath, "src"))
-	require.NoError(t, err)
-
-	var inners []string
-	for _, child := range children {
-		inners = append(inners, child.Inner)
-	}
-	assert.Equal(t, []string{"src/A.zam", "src/B.zam"}, inners)
 }
 
 // TestListCodeFilesInStd walks the embedded standard library under a known
@@ -107,7 +71,7 @@ func TestListCodeFilesInStd(t *testing.T) {
 
 	outers := make(map[string]bool, len(children))
 	for _, child := range children {
-		outers[child.Outer] = true
+		outers[string(child)] = true
 	}
 	for _, name := range []string{"std://io/local/File.zam"} {
 		assert.True(t, outers[name], "expected %q in listing, got %v", name, outers)
@@ -122,21 +86,46 @@ func TestListCodeFilesReportsAMissingDirectory(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "does-not-exist")
 
 	var fileProvider FileProvider
-	_, err := fileProvider.ListCodeFiles(NewPath(dir, ""))
+	_, err := fileProvider.ListCodeFiles(Path(dir))
 	assert.Error(t, err)
 }
 
-// Resolving builds the path inside an archive by joining, so what a file
-// imports decides what that path is. It is still refused if it leaves the
-// archive it was written in.
-func TestNewPathRefusesAResolvedPathThatLeavesItsArchive(t *testing.T) {
-	from := Path{Outer: "/a/lib.zip", Inner: "src/Main.zam"}
+// A package import names a file inside the directory its dependency was
+// extracted to, and is refused if it would leave it.
+func TestPathResolveInto(t *testing.T) {
+	dependency := Path("/zam/pkg/example.com/dep@v1")
 
-	var fileProvider FileProvider
-	inside, err := fileProvider.NewPath(from.Resolve("../Sibling.zam"))
-	require.NoError(t, err)
-	assert.Equal(t, "Sibling.zam", inside.Inner)
+	for name, test := range map[string]struct {
+		from     Path
+		pathStr  string
+		expected string
+		err      bool
+	}{
+		"a file at its root":       {dependency, "A.zam", "/zam/pkg/example.com/dep@v1/A.zam", false},
+		"a file below its root":    {dependency, "sub/../src/A.zam", "/zam/pkg/example.com/dep@v1/src/A.zam", false},
+		"a file above its root":    {dependency, "../A.zam", "", true},
+		"a file named outright":    {dependency, "/etc/A.zam", "", true},
+		"a standard library file":  {StdPath(""), "io/Writer.zam", "std://io/Writer.zam", false},
+		"leaving the standard one": {StdPath(""), "../Writer.zam", "", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := test.from.ResolveInto(test.pathStr)
+			if test.err {
+				assert.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, got)
+		})
+	}
+}
 
-	_, err = fileProvider.NewPath(from.Resolve("../../elsewhere/A.zam"))
-	assert.ErrorContains(t, err, "escapes archive root")
+func TestPathContains(t *testing.T) {
+	dir := Path("/zam/pkg/example.com/dep@v1")
+
+	assert.True(t, dir.Contains(dir))
+	assert.True(t, dir.Contains(Path("/zam/pkg/example.com/dep@v1/src/A.zam")))
+	assert.False(t, dir.Contains(Path("/zam/pkg/example.com/dep@v1.tar.zst")))
+	assert.False(t, dir.Contains(Path("/zam/pkg/example.com/dep@v10/A.zam")))
+	assert.False(t, dir.Contains(Path("/zam/pkg/example.com/other@v1/A.zam")))
 }

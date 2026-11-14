@@ -34,7 +34,7 @@ namespace Main {
 		body string
 		want string
 	}{
-		"undefined variable":  {`        var int a = nope;`, "[19:21]"},
+		"undefined variable":   {`        var int a = nope;`, "[19:21]"},
 		"variable initializer": {`        var int a = "s";`, "[19:21]"},
 		"missing field":        {"        var Box* b = null;\n        var Box* c = b.next.zz;", "[20:29]"},
 		"argument":             {`        var int a = Main::one("s");`, "[19:31]"},

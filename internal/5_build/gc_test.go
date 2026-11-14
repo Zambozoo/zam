@@ -36,10 +36,10 @@ func compileWith(t *testing.T, flags []string, source string) string {
 	out := filepath.Join(dir, "out")
 
 	files := &base.FileProvider{}
-	argv := append([]string{"zam", "-m", "16KB", "-N", "4KB", "-o", out}, flags...)
+	argv := append([]string{"zam", "build", "-m", "16KB", "-N", "4KB", "-o", out}, flags...)
 	cmd, err := command.New(append(argv, entry), files)
 	require.NoError(t, err)
-	ast, errs := syntax.NewAST(cmd, files, base.NewGitProvider(files))
+	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
 	result, err := codegen.GenerateCode(cmd, ast)

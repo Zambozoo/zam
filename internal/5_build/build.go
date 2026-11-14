@@ -250,16 +250,13 @@ func resolveProjectSources(project *syntax.Project) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("cannot resolve native source %q: %w", file, err)
 		}
-		if path.InZip() {
-			return nil, fmt.Errorf("native source %q lives inside an archive, which the build driver cannot read from", file)
-		}
-		if _, statErr := os.Stat(path.Outer); statErr != nil {
+		if _, statErr := os.Stat(string(path)); statErr != nil {
 			if errors.Is(statErr, os.ErrNotExist) {
-				return nil, fmt.Errorf("native source %q not found at %s", file, path.Outer)
+				return nil, fmt.Errorf("native source %q not found at %s", file, string(path))
 			}
 			return nil, statErr
 		}
-		sources = append(sources, path.Outer)
+		sources = append(sources, string(path))
 	}
 	return sources, nil
 }

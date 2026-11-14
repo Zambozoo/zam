@@ -55,7 +55,7 @@ func (r *referenceTypeResolverVisitor) VisitFile(f *syntax.File) error {
 
 // VisitImport implements [syntax.FileVisitor].
 func (r *referenceTypeResolverVisitor) VisitImport(i *syntax.Import) error {
-	file, _ := r.ast.CodeFiles.Get(*i.Path) // syntax parsing passed, index is valid.
+	file, _ := r.ast.CodeFiles.Get(i.Path) // syntax parsing passed, index is valid.
 	i.ImportedFile = file
 	return nil
 }
@@ -466,8 +466,8 @@ func (r *referenceTypeResolverVisitor) setDecl(t *syntax.TypeReference, d syntax
 // An import shadowed this way is reached by renaming it where it is imported,
 // there being no other way to write it.
 func (r *referenceTypeResolverVisitor) visitTypeReference(t *syntax.TypeReference) error {
-	if t.Path != nil {
-		file, i := r.ast.CodeFiles.Get(*t.Path)
+	if t.Path != "" {
+		file, i := r.ast.CodeFiles.Get(t.Path)
 		if i < 0 {
 			return fmt.Errorf("declaration %q not found", t.String())
 		}

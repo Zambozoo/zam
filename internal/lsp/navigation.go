@@ -25,7 +25,7 @@ func (s *server) referenceAt(params protocol.TextDocumentPositionParams) (syntax
 		return syntax.Reference{}, false
 	}
 
-	file, _ := ast.CodeFiles.Get(*doc.path)
+	file, _ := ast.CodeFiles.Get(doc.path)
 	if file == nil {
 		return syntax.Reference{}, false
 	}
@@ -121,7 +121,7 @@ func (s *server) references(_ *glsp.Context, params *protocol.ReferenceParams) (
 // locationOf returns where a name is written, for a file an editor can open.
 // The standard library is compiled in, so a name written there has a location
 // only once its source has been opened from disk.
-func (s *server) locationOf(path *base.Path, name *syntax.Token) (protocol.Location, bool) {
+func (s *server) locationOf(path base.Path, name *syntax.Token) (protocol.Location, bool) {
 	filePath, ok := s.files.diskPath(path)
 	if !ok {
 		return protocol.Location{}, false
@@ -135,7 +135,7 @@ func (s *server) locationOf(path *base.Path, name *syntax.Token) (protocol.Locat
 
 // rangeOf returns the range of a name written in a file. A name is an
 // identifier, so its length is that of its value.
-func (s *server) rangeOf(path *base.Path, name *syntax.Token) (protocol.Range, bool) {
+func (s *server) rangeOf(path base.Path, name *syntax.Token) (protocol.Range, bool) {
 	source, err := s.files.read(path)
 	if err != nil {
 		return protocol.Range{}, false

@@ -135,7 +135,7 @@ type (
 		// Path, when set, is the file whose root declaration the reference
 		// names. It binds a reference no source was written for without going
 		// through the imports of the file it sits in.
-		Path *base.Path
+		Path base.Path
 
 		// decl is the declaration of the tailed type.
 		decl DeclTypeable

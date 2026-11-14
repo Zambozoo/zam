@@ -14,17 +14,16 @@ import (
 	semantic "github.com/zambozoo/zam/internal/3_semantic"
 )
 
-// gitProvider downloads a project's dependencies.
-type gitProvider interface {
-	Download(url string) (*base.Path, error)
-	ArchiveName(url string) string
+// packageProvider fetches a project's dependencies.
+type packageProvider interface {
+	Fetch(ref string) (base.Path, string, error)
 }
 
 // analysis checks one document as the entry of a program and reports what is
 // wrong with it.
 type analysis struct {
 	files *overlay
-	entry *base.Path
+	entry base.Path
 	// text and tokens are entry as last read, lexed on first need.
 	text   *text
 	tokens []syntax.LexedToken
@@ -45,7 +44,7 @@ type analysis struct {
 // the head of entry, as are errors located nowhere at all, so that each
 // document reports what checking it found without competing with another
 // document's analysis for the same file.
-func analyze(files *overlay, git gitProvider, entry *base.Path, threads int) (diagnostics []protocol.Diagnostic, ast *syntax.AST) {
+func analyze(files *overlay, packages packageProvider, entry base.Path, threads int) (diagnostics []protocol.Diagnostic, ast *syntax.AST) {
 	a := &analysis{files: files, entry: entry}
 	defer func() {
 		if r := recover(); r != nil {
@@ -54,7 +53,7 @@ func analyze(files *overlay, git gitProvider, entry *base.Path, threads int) (di
 		}
 	}()
 
-	ast, errs := syntax.NewAST(&command.Command{InputPath: entry, MaxThreads: threads}, files, git)
+	ast, errs := syntax.NewAST(&command.Command{InputPath: entry, MaxThreads: threads}, files, packages)
 	if ast != nil {
 		broken := map[string]bool{}
 		for _, file := range ast.CodeFiles.All() {

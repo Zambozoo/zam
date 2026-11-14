@@ -18,7 +18,7 @@ func outlineOf(t *testing.T, files map[string]string, entry string, name func(*s
 	diagnostics, ast := analyze(o, nil, paths[entry], 1)
 	require.Empty(t, diagnostics)
 
-	file, _ := ast.CodeFiles.Get(*paths[entry])
+	file, _ := ast.CodeFiles.Get(paths[entry])
 	d, ok := declAt(file, name(file))
 	require.True(t, ok)
 	return outline(func(f *syntax.File) (*text, bool) {

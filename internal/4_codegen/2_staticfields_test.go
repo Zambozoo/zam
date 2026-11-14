@@ -43,7 +43,7 @@ func compileTypes(t *testing.T, body string) (
 	require.NoError(t, os.WriteFile(entry, []byte(body), 0o600))
 
 	ast, errs := syntax.NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 2},
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 2},
 		&base.FileProvider{}, nil)
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))

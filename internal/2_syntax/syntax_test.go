@@ -1,7 +1,6 @@
 package syntax
 
 import (
-	"archive/zip"
 	"fmt"
 	"io"
 	"os"
@@ -50,7 +49,7 @@ func namespaceSource(name string) string {
 
 // writeProject lays down a project whose entry file imports one file per name,
 // and answers the entry file's path.
-func writeProject(t *testing.T, names ...string) *base.Path {
+func writeProject(t *testing.T, names ...string) base.Path {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -63,8 +62,9 @@ func writeProject(t *testing.T, names ...string) *base.Path {
 			strings.ToLower(name), name+base.CodeFileExtension)
 	}
 
-	return base.NewPath(writeFile(t, dir, "Main"+base.CodeFileExtension,
-		imports.String()+mainSource), "")
+	return base.Path(writeFile(t, dir, "Main"+base.CodeFileExtension,
+		imports.String()+mainSource))
+
 }
 
 // codeFilePaths answers where every file in the tree was read from, relative to
@@ -74,7 +74,7 @@ func codeFilePaths(t *testing.T, ast *AST, dir string) []string {
 
 	var paths []string
 	for _, entry := range ast.CodeFiles.All() {
-		relative, err := filepath.Rel(dir, entry.Key.Outer)
+		relative, err := filepath.Rel(dir, string(entry.Key))
 		require.NoError(t, err)
 		paths = append(paths, filepath.ToSlash(relative))
 	}
@@ -90,7 +90,7 @@ func TestNewASTAutoIncludesStdInEveryProjectsDependencies(t *testing.T) {
 
 	ast, errs := NewAST(
 		&command.Command{InputPath: entry, MaxThreads: 1},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&base.FileProvider{}, &mock_PackageProvider{})
 
 	require.Empty(t, errs)
 	require.NotNil(t, ast)
@@ -104,7 +104,7 @@ func TestNewASTAutoIncludesStdInEveryProjectsDependencies(t *testing.T) {
 	for _, entry := range ast.Projects.All() {
 		stdDep, ok := entry.Value.Dependencies[base.StdPackage]
 		assert.True(t, ok, "project %q is missing the std dependency", entry.Value.Name)
-		assert.True(t, base.IsStdPath(&stdDep),
+		assert.True(t, base.IsStdPath(stdDep),
 			"project %q has std dependency %q, not a std path", entry.Value.Name, stdDep.String())
 	}
 }
@@ -130,15 +130,15 @@ func TestNewASTSkipsProjectFilesWhenAsked(t *testing.T) {
 			entry := writeFile(t, dir, "Main.zam", "import leaf = \"sub/Leaf.zam\";\n"+mainSource)
 
 			ast, errs := NewAST(
-				&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 2, NoProject: true},
-				&base.FileProvider{}, &mock_GitProvider{})
+				&command.Command{InputPath: base.Path(entry), MaxThreads: 2, NoProject: true},
+				&base.FileProvider{}, &mock_PackageProvider{})
 
 			require.Empty(t, errs)
 			assert.Equal(t, []string{"Main.zam", "sub/Leaf.zam"}, codeFilePaths(t, ast, dir))
 			require.Equal(t, 1, ast.Projects.Len())
 			project := ast.MainCodeDecl.File().Project
 			assert.Equal(t, "Main", project.Name)
-			assert.Equal(t, map[string]base.Path{base.StdPackage: *base.StdPath("")}, project.Dependencies)
+			assert.Equal(t, map[string]base.Path{base.StdPackage: base.StdPath("")}, project.Dependencies)
 			assert.Empty(t, project.Native.Files)
 			for _, entry := range ast.CodeFiles.All() {
 				assert.Same(t, project, entry.Value.Project, entry.Key.String())
@@ -152,8 +152,8 @@ func TestNewASTRejectsAnEntryWithoutAProjectFile(t *testing.T) {
 	entry := writeFile(t, t.TempDir(), "Main.zam", mainSource)
 
 	_, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+		&base.FileProvider{}, &mock_PackageProvider{})
 
 	require.Len(t, errs, 1)
 	assert.ErrorContains(t, errs[0], "project file missing")
@@ -172,8 +172,8 @@ func TestNewASTResolvesImportsRelativeToTheImportingFile(t *testing.T) {
 	entry := writeFile(t, dir, "Main.zam", "import branch = \"sub/Branch.zam\";\n"+mainSource)
 
 	ast, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 2},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 2},
+		&base.FileProvider{}, &mock_PackageProvider{})
 
 	require.Empty(t, errs)
 	assert.Equal(t, []string{"Main.zam", "sub/Branch.zam", "sub/Leaf.zam"},
@@ -198,7 +198,7 @@ func TestNewASTParsesMoreImportsThanThreads(t *testing.T) {
 			}
 			done := make(chan result, 1)
 			go func() {
-				ast, errs := NewAST(cmd, &base.FileProvider{}, &mock_GitProvider{})
+				ast, errs := NewAST(cmd, &base.FileProvider{}, &mock_PackageProvider{})
 				done <- result{ast, errs}
 			}()
 
@@ -225,7 +225,7 @@ type countingFileProvider struct {
 	peak     atomic.Int32
 }
 
-func (fp *countingFileProvider) Reader(path *base.Path) (io.ReadCloser, error) {
+func (fp *countingFileProvider) Reader(path base.Path) (io.ReadCloser, error) {
 	inFlight := fp.inFlight.Add(1)
 	defer fp.inFlight.Add(-1)
 	for peak := fp.peak.Load(); inFlight > peak; peak = fp.peak.Load() {
@@ -254,7 +254,7 @@ func TestNewASTBoundsParsingToThreadCount(t *testing.T) {
 
 			_, errs := NewAST(
 				&command.Command{InputPath: entry, MaxThreads: threads},
-				fileProvider, &mock_GitProvider{})
+				fileProvider, &mock_PackageProvider{})
 
 			require.Empty(t, errs)
 			assert.Equal(t, int32(threads), fileProvider.peak.Load(),
@@ -272,7 +272,7 @@ func TestNewASTOrdersCodeFilesByPath(t *testing.T) {
 
 	var orders [][]string
 	for range 8 {
-		ast, errs := NewAST(cmd, &base.FileProvider{}, &mock_GitProvider{})
+		ast, errs := NewAST(cmd, &base.FileProvider{}, &mock_PackageProvider{})
 		require.Empty(t, errs)
 
 		var paths []string
@@ -288,26 +288,16 @@ func TestNewASTOrdersCodeFilesByPath(t *testing.T) {
 	}
 }
 
-// writeArchive lays down a zip holding a project of its own, which is what a
-// downloaded dependency is, and answers the path to it.
-func writeArchive(t *testing.T, dir, name string, files map[string]string) *base.Path {
+// writeDependency lays down a project of its own in a directory, which is what
+// a fetched dependency is extracted to, and answers the path to it.
+func writeDependency(t *testing.T, files map[string]string) base.Path {
 	t.Helper()
 
-	archivePath := filepath.Join(dir, name)
-	f, err := os.Create(archivePath)
-	require.NoError(t, err)
-	defer f.Close()
-
-	w := zip.NewWriter(f)
-	for entryName, body := range files {
-		entry, err := w.Create(entryName)
-		require.NoError(t, err)
-		_, err = io.WriteString(entry, body)
-		require.NoError(t, err)
+	dir := t.TempDir()
+	for name, body := range files {
+		writeFile(t, dir, name, body)
 	}
-	require.NoError(t, w.Close())
-
-	return base.NewPath(archivePath, "")
+	return base.Path(dir)
 }
 
 // TestNewASTExpandsGlobImportOnDisk writes a `dir/*` import and checks every
@@ -325,8 +315,8 @@ func TestNewASTExpandsGlobImportOnDisk(t *testing.T) {
 	entry := writeFile(t, dir, "Main.zam", "import \"sub/*\";\n"+mainSource)
 
 	ast, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 2},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 2},
+		&base.FileProvider{}, &mock_PackageProvider{})
 
 	require.Empty(t, errs)
 	assert.Equal(t,
@@ -345,14 +335,14 @@ func TestNewASTExpandsGlobImportFromStd(t *testing.T) {
 	entry := writeFile(t, dir, "Main.zam", "import std(\"io/local/*\");\n"+mainSource)
 
 	ast, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 2},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 2},
+		&base.FileProvider{}, &mock_PackageProvider{})
 
 	require.Empty(t, errs)
 
 	outers := map[string]bool{}
 	for _, entry := range ast.CodeFiles.All() {
-		outers[entry.Key.Outer] = true
+		outers[string(entry.Key)] = true
 	}
 	for _, name := range []string{"std://io/local/File.zam"} {
 		assert.True(t, outers[name], "expected %q in CodeFiles, got %v", name, outers)
@@ -368,13 +358,13 @@ func TestNewASTGlobsTheImportingDirectoryForABareStar(t *testing.T) {
 	entry := writeFile(t, dir, "Main.zam", "import \"*\";\n"+mainSource)
 
 	ast, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+		&base.FileProvider{}, &mock_PackageProvider{})
 
 	require.Empty(t, errs)
 	outers := map[string]bool{}
 	for _, entry := range ast.CodeFiles.All() {
-		outers[entry.Key.Outer] = true
+		outers[string(entry.Key)] = true
 	}
 	assert.True(t, outers[other], "expected %q in CodeFiles, got %v", other, outers)
 }
@@ -390,8 +380,8 @@ func TestNewASTRejectsAGlobImportThatMatchesNothing(t *testing.T) {
 	entry := writeFile(t, dir, "Main.zam", "import \"empty/*\";\n"+mainSource)
 
 	_, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+		&base.FileProvider{}, &mock_PackageProvider{})
 
 	require.Len(t, errs, 1)
 	assert.Contains(t, errs[0].Error(), "matched no")
@@ -409,8 +399,8 @@ func TestNewASTRejectsAnAliasedGlobImport(t *testing.T) {
 	entry := writeFile(t, dir, "Main.zam", "import sub = \"sub/*\";\n"+mainSource)
 
 	_, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+		&base.FileProvider{}, &mock_PackageProvider{})
 
 	require.Len(t, errs, 1)
 	assert.Contains(t, errs[0].Error(), "glob")
@@ -418,46 +408,148 @@ func TestNewASTRejectsAnAliasedGlobImport(t *testing.T) {
 
 // A package name resolves the path against the dependency the project declared
 // under that name rather than against the importing file's own directory, which
-// is the only way a file inside a downloaded archive can be named at all: the
-// archive sits nowhere near the file importing from it.
+// is the only way a file of a fetched dependency can be named at all: it sits
+// nowhere near the file importing from it.
 func TestNewASTResolvesAPackageImportInsideItsDependency(t *testing.T) {
 	dir := t.TempDir()
-	archive := writeArchive(t, dir, "dep.zip", map[string]string{
+	dependency := writeDependency(t, map[string]string{
 		"zam.yml": "name: \"dep\"\nversion: \"0.0.0\"\ndependencies:\n",
 		"Dep.zam": namespaceSource("Dep"),
 	})
 
 	writeFile(t, dir, "zam.yml", "name: \"imports\"\nversion: \"0.0.0\"\n"+
-		"dependencies:\n  dep: \"https://example.invalid/dep.zip\"\n")
+		"dependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: h1:abc\n")
 	entry := writeFile(t, dir, "Main.zam", "import dep(\"Dep.zam\");\n"+mainSource)
 
-	git := &mock_GitProvider{}
-	git.EXPECT().Download("https://example.invalid/dep.zip").Return(archive, nil)
-	git.EXPECT().ArchiveName(archive.Outer).Return("example.invalid/dep.zip")
+	packages := &mock_PackageProvider{}
+	packages.EXPECT().Fetch("example.com/dep@v1").Return(dependency, "h1:abc", nil)
 
 	ast, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 2},
-		&base.FileProvider{}, git)
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 2, WriteProject: true},
+		&base.FileProvider{}, packages)
 
 	require.Empty(t, errs)
 
-	var inners []string
+	var paths []string
 	for _, codeFile := range ast.CodeFiles.All() {
-		inners = append(inners, codeFile.Key.Inner)
+		paths = append(paths, string(codeFile.Key))
 	}
-	assert.Contains(t, inners, "Dep.zam", "the import was read from inside the archive")
+	assert.Contains(t, paths, filepath.Join(string(dependency), "Dep.zam"), "the import was read from the dependency")
 
-	// The archive is what a declaration is qualified by in a diagnostic, and the
-	// project it was read into is where that name is kept. The project being
-	// compiled was downloaded from nowhere and so is qualified by nothing.
+	// The repo@version is what a declaration is qualified by in a diagnostic,
+	// and the project it was read into is where that name is kept. The project
+	// being compiled was fetched from nowhere and so is qualified by nothing.
 	archives := map[string]string{}
 	for _, project := range ast.Projects.All() {
 		archives[project.Value.Name] = project.Value.Archive
 	}
 	assert.Equal(t, map[string]string{
 		"imports": "",
-		"dep":     "example.invalid/dep.zip",
+		"dep":     "example.com/dep@v1",
 	}, archives)
+}
+
+// A dependency whose files do not hash to what the project file pinned is
+// refused, whether its tag moved or its copy was changed.
+func TestNewASTRejectsADependencyNotMatchingItsHash(t *testing.T) {
+	dir := t.TempDir()
+	dependency := writeDependency(t, map[string]string{
+		"zam.yml": "name: \"dep\"\n",
+		"Dep.zam": namespaceSource("Dep"),
+	})
+	writeFile(t, dir, "zam.yml", "name: \"imports\"\n"+
+		"dependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: h1:pinned\n")
+	entry := writeFile(t, dir, "Main.zam", "import dep(\"Dep.zam\");\n"+mainSource)
+
+	packages := &mock_PackageProvider{}
+	packages.EXPECT().Fetch("example.com/dep@v1").Return(dependency, "h1:fetched", nil)
+
+	_, errs := NewAST(
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1, WriteProject: true},
+		&base.FileProvider{}, packages)
+
+	require.Len(t, errs, 1)
+	assert.ErrorContains(t, errs[0], `dependency "dep" does not match its hash`)
+}
+
+// A dependency written as a bare string, as an archive URL once was, is refused.
+func TestNewASTRejectsADependencyWithoutARepo(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "zam.yml", "name: \"imports\"\ndependencies:\n  dep: \"https://example.com/dep.zip\"\n")
+	entry := writeFile(t, dir, "Main.zam", mainSource)
+
+	_, errs := NewAST(
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+		&base.FileProvider{}, &mock_PackageProvider{})
+
+	require.Len(t, errs, 1)
+	assert.ErrorContains(t, errs[0], "cannot unmarshal")
+}
+
+// A hash the project file lacks is recorded in it by the compiler, beside the
+// repo it was fetched by, and the rest of the file is kept. A tool that only
+// reads the project leaves it as it was.
+func TestNewASTRecordsAMissingHash(t *testing.T) {
+	const project = "# the project\nname: \"imports\"\ndependencies:\n  dep:\n    repo: example.com/dep@v1 # pinned by tag\n"
+
+	for name, test := range map[string]struct {
+		write    bool
+		expected string
+	}{
+		"by the compiler": {true, "# the project\nname: \"imports\"\ndependencies:\n  dep:\n    repo: example.com/dep@v1 # pinned by tag\n    hash: h1:fetched\n"},
+		"by a reader":     {false, project},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			dependency := writeDependency(t, map[string]string{"zam.yml": "name: \"dep\"\n"})
+			projectFile := writeFile(t, dir, "zam.yml", project)
+			entry := writeFile(t, dir, "Main.zam", mainSource)
+
+			packages := &mock_PackageProvider{}
+			packages.EXPECT().Fetch("example.com/dep@v1").Return(dependency, "h1:fetched", nil)
+
+			_, errs := NewAST(
+				&command.Command{InputPath: base.Path(entry), MaxThreads: 1, WriteProject: test.write},
+				&base.FileProvider{}, packages)
+			require.Empty(t, errs)
+
+			got, err := os.ReadFile(projectFile)
+			require.NoError(t, err)
+			assert.Equal(t, test.expected, string(got))
+		})
+	}
+}
+
+// A fetched dependency is only read, so a hash its own project file lacks is
+// trusted rather than recorded, and its files may not import from outside the
+// directory it was extracted to.
+func TestNewASTKeepsAFetchedDependencyToItself(t *testing.T) {
+	dir := t.TempDir()
+	const dependencyProject = "name: \"dep\"\ndependencies:\n  inner:\n    repo: example.com/inner@v1\n"
+	inner := writeDependency(t, map[string]string{"zam.yml": "name: \"inner\"\n"})
+	dependency := writeDependency(t, map[string]string{
+		"zam.yml": dependencyProject,
+		"Dep.zam": "import \"../Outside.zam\";\n" + namespaceSource("Dep"),
+	})
+	writeFile(t, filepath.Dir(string(dependency)), "Outside.zam", namespaceSource("Outside"))
+	writeFile(t, dir, "zam.yml", "name: \"imports\"\n"+
+		"dependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: h1:dep\n")
+	entry := writeFile(t, dir, "Main.zam", "import dep(\"Dep.zam\");\n"+mainSource)
+
+	packages := &mock_PackageProvider{}
+	packages.EXPECT().Fetch("example.com/dep@v1").Return(dependency, "h1:dep", nil)
+	packages.EXPECT().Fetch("example.com/inner@v1").Return(inner, "h1:inner", nil)
+
+	_, errs := NewAST(
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1, WriteProject: true},
+		&base.FileProvider{}, packages)
+
+	require.Len(t, errs, 1)
+	assert.ErrorContains(t, errs[0], `import "../Outside.zam" leaves example.com/dep@v1`)
+
+	got, err := os.ReadFile(filepath.Join(string(dependency), "zam.yml"))
+	require.NoError(t, err)
+	assert.Equal(t, dependencyProject, string(got))
 }
 
 // A package the project file does not declare is an error rather than a path
@@ -471,8 +563,8 @@ func TestNewASTRejectsAPackageImportWithNoSuchDependency(t *testing.T) {
 	entry := writeFile(t, dir, "Main.zam", "import dep(\"Dep.zam\");\n"+mainSource)
 
 	_, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 2},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 2},
+		&base.FileProvider{}, &mock_PackageProvider{})
 
 	require.Len(t, errs, 1)
 	assert.Contains(t, errs[0].Error(), `no dependency "dep"`)
@@ -508,8 +600,8 @@ func TestNewASTLocatesASyntaxError(t *testing.T) {
 			entry := writeFile(t, dir, "Main.zam", test.source)
 
 			_, errs := NewAST(
-				&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
-				&base.FileProvider{}, &mock_GitProvider{})
+				&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+				&base.FileProvider{}, &mock_PackageProvider{})
 
 			require.Len(t, errs, 1)
 			assert.Contains(t, errs[0].Error(), test.expected)
@@ -615,8 +707,8 @@ func parseEntry(t *testing.T, source string) []error {
 	entry := writeFile(t, dir, "Main.zam", source)
 
 	_, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+		&base.FileProvider{}, &mock_PackageProvider{})
 	return errs
 }
 
@@ -750,11 +842,11 @@ func TestNewASTKeepsLineStartsForLaterPasses(t *testing.T) {
 		"    static fun void(int, str...) main = (argc, argv) {\n        return;\n    }\n}\n")
 
 	ast, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+		&base.FileProvider{}, &mock_PackageProvider{})
 	require.Empty(t, errs)
 
-	file, index := ast.CodeFiles.Get(*base.NewPath(entry, ""))
+	file, index := ast.CodeFiles.Get(base.Path(entry))
 	require.NotEqual(t, -1, index)
 	assert.Equal(t, "[3:1]", file.Location(ast.MainCodeDecl.Start()).Position.String(),
 		"the declaration begins on the third line, the first two being blank")
@@ -922,17 +1014,17 @@ func TestNewASTHandsBackARecoveredTree(t *testing.T) {
 	writeManifest(t, dir)
 
 	recovered := writeFile(t, dir, "Main.zam", "namespace Main {\n    static var int = 1;\n    static var int y = 2;\n}\n")
-	ast, errs := NewAST(&command.Command{InputPath: base.NewPath(recovered, ""), MaxThreads: 1}, &base.FileProvider{}, &mock_GitProvider{})
+	ast, errs := NewAST(&command.Command{InputPath: base.Path(recovered), MaxThreads: 1}, &base.FileProvider{}, &mock_PackageProvider{})
 	require.Len(t, errs, 1)
 	require.NotNil(t, ast)
-	file, _ := ast.CodeFiles.Get(*base.NewPath(recovered, ""))
+	file, _ := ast.CodeFiles.Get(base.Path(recovered))
 	require.NotNil(t, file)
 	assert.True(t, file.HasSyntaxErrors)
 	_, ok := ast.MainCodeDecl.GetStaticField("y")
 	assert.True(t, ok, "what parsed after the error is kept")
 
 	abandoned := writeFile(t, dir, "Broken.zam", "namespace Broken {\n")
-	ast, errs = NewAST(&command.Command{InputPath: base.NewPath(abandoned, ""), MaxThreads: 1}, &base.FileProvider{}, &mock_GitProvider{})
+	ast, errs = NewAST(&command.Command{InputPath: base.Path(abandoned), MaxThreads: 1}, &base.FileProvider{}, &mock_PackageProvider{})
 	assert.NotEmpty(t, errs)
 	assert.Nil(t, ast)
 }
@@ -956,11 +1048,11 @@ namespace Main {
     }
 }
 `)
-	ast, errs := NewAST(&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1}, &base.FileProvider{}, &mock_GitProvider{})
+	ast, errs := NewAST(&command.Command{InputPath: base.Path(entry), MaxThreads: 1}, &base.FileProvider{}, &mock_PackageProvider{})
 	require.Len(t, errs, 5, "%v", errs)
 	require.NotNil(t, ast)
 
-	file, _ := ast.CodeFiles.Get(*base.NewPath(entry, ""))
+	file, _ := ast.CodeFiles.Get(base.Path(entry))
 	assert.True(t, file.BrokenImports)
 
 	decl := ast.MainCodeDecl
@@ -1007,7 +1099,7 @@ func TestNewASTPlacesStrFirstInEnumsAndStructs(t *testing.T) {
     static fun void(uint, str...) main = (_, _) { return; }
 }
 `)
-	ast, errs := NewAST(&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1}, &base.FileProvider{}, &mock_GitProvider{})
+	ast, errs := NewAST(&command.Command{InputPath: base.Path(entry), MaxThreads: 1}, &base.FileProvider{}, &mock_PackageProvider{})
 	require.Empty(t, errs)
 
 	for _, name := range []string{"Plain", "Written", "Bare"} {
@@ -1137,8 +1229,8 @@ namespace Main {
 }
 `)
 	ast, errs := NewAST(
-		&command.Command{InputPath: base.NewPath(entry, ""), MaxThreads: 1},
-		&base.FileProvider{}, &mock_GitProvider{})
+		&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+		&base.FileProvider{}, &mock_PackageProvider{})
 	require.Empty(t, errs)
 
 	main, ok := ast.MainCodeDecl.GetStaticMethod("main")
@@ -1181,4 +1273,80 @@ namespace Main {
 			assert.Contains(t, fmt.Sprint(errs), test.expected)
 		})
 	}
+}
+
+// Get adds a dependency under the last element of its repository with the hash
+// of what it fetched, starting the project file's dependencies when it has
+// none, and keeps what the file already said.
+func TestGetAddsADependency(t *testing.T) {
+	dir := t.TempDir()
+	projectFile := writeFile(t, dir, "zam.yml", "# the project\nname: \"imports\"\ndependencies:\n")
+	dependency := writeDependency(t, map[string]string{"zam.yml": "name: \"list\"\n"})
+
+	packages := &mock_PackageProvider{}
+	packages.EXPECT().Fetch("example.com/x/list@v1").Return(dependency, "h1:list", nil)
+
+	require.NoError(t, Get(base.Path(projectFile), []string{"example.com/x/list@v1"}, "", &base.FileProvider{}, packages))
+
+	got, err := os.ReadFile(projectFile)
+	require.NoError(t, err)
+	assert.Equal(t, "# the project\nname: \"imports\"\ndependencies:\n  list:\n    repo: example.com/x/list@v1\n    hash: h1:list\n", string(got))
+}
+
+// Get replaces the version and hash of a dependency already of that name.
+func TestGetUpdatesADependency(t *testing.T) {
+	dir := t.TempDir()
+	projectFile := writeFile(t, dir, "zam.yml", "name: \"imports\"\ndependencies:\n  list:\n    repo: example.com/x/list@v1 # the list\n    hash: h1:v1\n")
+	dependency := writeDependency(t, map[string]string{"zam.yml": "name: \"list\"\n"})
+
+	packages := &mock_PackageProvider{}
+	packages.EXPECT().Fetch("example.com/x/list@v2").Return(dependency, "h1:v2", nil)
+
+	require.NoError(t, Get(base.Path(projectFile), []string{"example.com/x/list@v2"}, "list", &base.FileProvider{}, packages))
+
+	got, err := os.ReadFile(projectFile)
+	require.NoError(t, err)
+	assert.Equal(t, "name: \"imports\"\ndependencies:\n  list:\n    repo: example.com/x/list@v2 # the list\n    hash: h1:v2\n", string(got))
+}
+
+// Get with nothing to add fetches every dependency the project reaches,
+// through those its dependencies have, and records the hashes its own project
+// file lacks.
+func TestGetFetchesEveryDependency(t *testing.T) {
+	dir := t.TempDir()
+	projectFile := writeFile(t, dir, "zam.yml", "name: \"imports\"\ndependencies:\n  a:\n    repo: example.com/a@v1\n")
+	b := writeDependency(t, map[string]string{"zam.yml": "name: \"b\"\n"})
+	a := writeDependency(t, map[string]string{"zam.yml": "name: \"a\"\ndependencies:\n  b:\n    repo: example.com/b@v1\n"})
+
+	packages := &mock_PackageProvider{}
+	packages.EXPECT().Fetch("example.com/a@v1").Return(a, "h1:a", nil).Once()
+	packages.EXPECT().Fetch("example.com/b@v1").Return(b, "h1:b", nil).Once()
+
+	require.NoError(t, Get(base.Path(projectFile), nil, "", &base.FileProvider{}, packages))
+	packages.AssertExpectations(t)
+
+	got, err := os.ReadFile(projectFile)
+	require.NoError(t, err)
+	assert.Equal(t, "name: \"imports\"\ndependencies:\n  a:\n    repo: example.com/a@v1\n    hash: h1:a\n", string(got))
+}
+
+// A repository whose last element no import could be written with has to be
+// named, and the project file is left alone until it is.
+func TestGetRefusesAnUnwritablePackageName(t *testing.T) {
+	const project = "name: \"imports\"\n"
+	dir := t.TempDir()
+	projectFile := writeFile(t, dir, "zam.yml", project)
+
+	for ref, want := range map[string]string{
+		"example.com/x/zam-list@v1": `"zam-list" is not a valid package name: name it with --as`,
+		"example.com/x/std@v1":      `"std" is a reserved package name`,
+		"example.com/x/class@v1":    `"class" is not a valid package name`,
+	} {
+		err := Get(base.Path(projectFile), []string{ref}, "", &base.FileProvider{}, &mock_PackageProvider{})
+		assert.ErrorContains(t, err, want, ref)
+	}
+
+	got, err := os.ReadFile(projectFile)
+	require.NoError(t, err)
+	assert.Equal(t, project, string(got))
 }

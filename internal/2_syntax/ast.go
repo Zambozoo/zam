@@ -14,9 +14,9 @@ const BlankName = "_"
 
 type (
 	SyntaxParser interface {
-		NewPath(pathStr string) (*base.Path, error)
-		AddPath(path *base.Path)
-		ListCodeFiles(dir *base.Path) ([]*base.Path, error)
+		NewPath(pathStr string) (base.Path, error)
+		AddPath(path base.Path)
+		ListCodeFiles(dir base.Path) ([]base.Path, error)
 		Consume(kind TokenKind) (*Token, error)
 		ConsumeAll(kinds ...TokenKind) ([]Token, error)
 		ConsumeAny(kinds ...TokenKind) (*Token, error)

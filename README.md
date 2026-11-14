@@ -16,11 +16,9 @@ The best place to start is the [documentation](docs).
 
 ## TODO
 Zam is far from complete.
-* Validate package inclusion
-* Implement a testing framework
-* Implement debugging
-* Export LLVM instead of bytecode
-* Bootstrap the language
-* Let containers opt out of rerunning their `Mark` at the remark*
-
-\* May not be feasible.
+* Implement a testing framework.
+* Implement debugging.
+* Export LLVM instead of bytecode.
+* Move to rust.
+* Un-AI-ify the compiler, lsp, and debugger.
+* Bootstrap the language.
