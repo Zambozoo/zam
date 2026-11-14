@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -17,6 +18,9 @@ import (
 const (
 	// CodeFileExtension is the extension for code files.
 	CodeFileExtension = ".zam"
+	// TestFileSuffix ends the name of a code file holding tests, which only
+	// zam test compiles.
+	TestFileSuffix = ".test" + CodeFileExtension
 
 	// projectFileNameShort is the short name of the project file.
 	projectFileNameShort = "zam.yml"
@@ -260,7 +264,7 @@ func listStdCodeFiles(dir Path) ([]Path, error) {
 	}
 	var children []Path
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), CodeFileExtension) {
+		if entry.IsDir() || !isCodeFile(entry.Name()) {
 			continue
 		}
 		childKey := entry.Name()
@@ -282,13 +286,46 @@ func listFSCodeFiles(dir Path) ([]Path, error) {
 	}
 	var children []Path
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), CodeFileExtension) {
+		if entry.IsDir() || !isCodeFile(entry.Name()) {
 			continue
 		}
 		children = append(children, Path(filepath.Join(string(dir), entry.Name())))
 	}
 	sortByBase(children)
 	return children, nil
+}
+
+// isCodeFile reports whether name is a code file, test files included.
+func isCodeFile(name string) bool {
+	return strings.HasSuffix(name, CodeFileExtension)
+}
+
+// IsTestFile reports whether p is a test file.
+func (p Path) IsTestFile() bool {
+	return strings.HasSuffix(string(p), TestFileSuffix)
+}
+
+// ListTestFiles answers the test files in dir, sorted, and in every directory
+// beneath it when recursive is set. Directories whose names start with a dot
+// are not entered.
+func (fp *FileProvider) ListTestFiles(dir Path, recursive bool) ([]Path, error) {
+	var files []Path
+	err := filepath.WalkDir(string(dir), func(file string, entry fs.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case entry.IsDir() && file != string(dir) && (!recursive || strings.HasPrefix(entry.Name(), ".")):
+			return filepath.SkipDir
+		case !entry.IsDir() && strings.HasSuffix(entry.Name(), TestFileSuffix):
+			files = append(files, Path(file))
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("cannot list test files in %q: %w", string(dir), err)
+	}
+	slices.Sort(files)
+	return files, nil
 }
 
 // sortByBase sorts the paths by their file name, so that the order the glob

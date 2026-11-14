@@ -10,7 +10,9 @@ public namespace Streams {
     public static fun (str, Err*)(Stream*) ReadAll = (s) {
         var (str, Err*) out;
         var Buffer* b = Buffer::New();
+        defer b.Delete();
         var byte* chunk = new(byte, 16384U);
+        defer free(chunk);
         out.1 = null;
         for(;;) {
             var (int, Err*) p = s.Read(chunk, 16384);
@@ -23,9 +25,7 @@ public namespace Streams {
             }
             b.Write(chunk, p.0);
         }
-        free(chunk);
         out.0 = b.Str();
-        b.Delete();
         return out;
     }
 
@@ -57,6 +57,7 @@ public namespace Streams {
         out.0 = 0;
         out.1 = null;
         var byte* chunk = new(byte, 16384U);
+        defer free(chunk);
         for(;;) {
             var (int, Err*) p = src.Read(chunk, 16384);
             if(p.1 != null) {
@@ -73,7 +74,6 @@ public namespace Streams {
             }
             out.0 = out.0 + p.0;
         }
-        free(chunk);
         return out;
     }
 }

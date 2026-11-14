@@ -3,6 +3,7 @@ package command
 import (
 	"fmt"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -537,13 +538,85 @@ func TestCommand_String(t *testing.T) {
 				InitialStackSize: 1 << 19,
 				InitialHeapSize:  1 << 24,
 			},
-			want: `{"Verb":0,"InputPath":"input","OutputPath":"out","Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"EmitImage":false,"KeepBuild":false,"RunArgs":null,"Refs":null,"As":"","NoProject":false,"WriteProject":false}`,
+			want: `{"Verb":0,"InputPath":"input","OutputPath":"out","Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"EmitImage":false,"KeepBuild":false,"RunArgs":null,"TestTargets":null,"TestPaths":null,"RunPattern":"","Parallel":0,"Refs":null,"As":"","NoProject":false,"WriteProject":false}`,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, tt.cmd.String())
+		})
+	}
+}
+
+func TestNewTest(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		argv     []string
+		targets  []string
+		runArgs  []string
+		pattern  string
+		parallel int
+		errFunc  assert.ErrorAssertionFunc
+	}{
+		{
+			name:     "defaults",
+			argv:     []string{"zam", "test"},
+			targets:  []string{"."},
+			parallel: runtime.NumCPU(),
+			errFunc:  assert.NoError,
+		},
+		{
+			name:     "targets, flags and arguments",
+			argv:     []string{"zam", "test", "--run", "Append$", "--parallel", "2", "list", "map/...", "--", "x", "-y"},
+			targets:  []string{"list", "map/..."},
+			runArgs:  []string{"x", "-y"},
+			pattern:  "Append$",
+			parallel: 2,
+			errFunc:  assert.NoError,
+		},
+		{
+			name:     "arguments without targets",
+			argv:     []string{"zam", "test", "--", "x"},
+			targets:  []string{"."},
+			runArgs:  []string{"x"},
+			parallel: runtime.NumCPU(),
+			errFunc:  assert.NoError,
+		},
+		{
+			name:    "invalid pattern",
+			argv:    []string{"zam", "test", "--run", "(", "."},
+			errFunc: errorContains("invalid --run pattern"),
+		},
+		{
+			name:    "no parallelism",
+			argv:    []string{"zam", "test", "--parallel", "0"},
+			errFunc: errorContains("parallel must be positive: 0"),
+		},
+		{
+			name:    "test does not take an output",
+			argv:    []string{"zam", "test", "-o", "out"},
+			errFunc: errorContains("unknown shorthand flag: 'o'"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got, err := New(tt.argv, nil)
+			if !tt.errFunc(t, err) || err != nil {
+				return
+			}
+			assert.Equal(t, VerbTest, got.Verb)
+			assert.Equal(t, tt.targets, got.TestTargets)
+			assert.Equal(t, tt.runArgs, got.RunArgs)
+			assert.Equal(t, tt.pattern, got.RunPattern)
+			assert.Equal(t, tt.parallel, got.Parallel)
+			assert.Equal(t, defaultGCRatio, got.GCTriggerRatio, "the compile flags apply too")
+			assert.True(t, got.WriteProject)
 		})
 	}
 }

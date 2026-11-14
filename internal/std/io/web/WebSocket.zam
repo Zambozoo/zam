@@ -199,18 +199,16 @@ public class WebSocket {
             this.closeSent = true;
         }
         var byte* frame = new(byte, (n + 14){uint});
+        defer free(frame);
         var int len;
         native(STD_WS_FRAME){void(int, bool, byte*, int, byte*, int*)}(opcode, this.client, b, n, frame, &len);
-        var Err* e = Streams::WriteAll(this.stream, frame, len);
-        free(frame);
-        return e;
+        return Streams::WriteAll(this.stream, frame, len);
     }
 
     private fun Err*(int, byte*, int) send = (opcode, b, n) {
         this.lock.Lock();
-        var Err* e = this.sendLocked(opcode, b, n);
-        this.lock.Unlock();
-        return e;
+        defer this.lock.Unlock();
+        return this.sendLocked(opcode, b, n);
     }
 
     public fun Err*(str) SendText = (s) {
@@ -294,13 +292,14 @@ public class WebSocket {
         out.0.data = "";
         out.0.closed = true;
         out.1 = null;
-        this.lock.Lock();
-        if(this.ended) {
-            this.lock.Unlock();
-            return out;
+        {
+            this.lock.Lock();
+            defer this.lock.Unlock();
+            if(this.ended) {
+                return out;
+            }
+            this.receiving = true;
         }
-        this.receiving = true;
-        this.lock.Unlock();
 
         var Buffer* message = null;
         for(;;) {
@@ -341,10 +340,10 @@ public class WebSocket {
                     echo = 2;
                 }
                 this.lock.Lock();
+                defer this.lock.Unlock();
                 if(!this.closeSent) {
                     this.sendLocked(8, payload, echo);
                 }
-                this.lock.Unlock();
                 break;
             }
             if(opcode == 9) {
@@ -381,13 +380,13 @@ public class WebSocket {
         }
 
         this.lock.Lock();
+        defer this.lock.Unlock();
         this.receiving = false;
         if(out.0.closed || out.1 != null) {
             this.ended = true;
             out.0.closed = true;
             this.release();
         }
-        this.lock.Unlock();
         return out;
     }
 
@@ -395,6 +394,7 @@ public class WebSocket {
     // connection, ending any Receive waiting in another thread.
     public fun void() Close = () {
         this.lock.Lock();
+        defer this.lock.Unlock();
         if(!this.closeSent && !this.released) {
             this.sendLocked(8, null, 0);
         }
@@ -405,7 +405,6 @@ public class WebSocket {
         } else {
             this.release();
         }
-        this.lock.Unlock();
     }
 
     public fun void() Delete = () {

@@ -23,7 +23,7 @@ const magic = "ZAM_LANG"
 // and still say which version it was handed rather than only that it was wrong.
 const (
 	versionMajor = 0
-	versionMinor = 1
+	versionMinor = 2
 	versionPatch = 0
 
 	versionWord = versionMajor<<32 | versionMinor<<16 | versionPatch
@@ -98,6 +98,9 @@ type (
 		staticRootsByteOffset int
 		// operationsByteOffset is the byte offset of the operations.
 		operationsByteOffset int
+		// debugByteOffset is the byte offset of the debug section, which is
+		// where the operations end.
+		debugByteOffset int
 	}
 
 	codegenReader struct {
@@ -209,6 +212,8 @@ type (
 
 		// operations are the readers for the op code instructions.
 		operations []operation
+		// debug says which line and function each operation was emitted for.
+		debug *debugInfo
 
 		// counts holds the per-bucket type-id start indices, computed once all
 		// skeletons are built. Byte offsets are filled in at serialization time.
@@ -345,6 +350,7 @@ func (b *counts) words() []int {
 		b.genericStaticMethodsByteOffset,
 		b.staticRootsByteOffset,
 		b.operationsByteOffset,
+		b.debugByteOffset,
 	}
 }
 
@@ -472,6 +478,11 @@ func (cr *codegenReader) calculateByteCounts() (*counts, []int) {
 	offset += wordByteSize + len(cr.staticRoots)*staticRootByteCount
 
 	bc.operationsByteOffset = offset
+	offset += byteCount(cr.operations)
+
+	// Operations are not all a word wide, so the debug section after them is
+	// put back on a word boundary for its words to be read in place.
+	bc.debugByteOffset = int(alignUp(uint64(offset), wordByteSize))
 
 	return &bc, typeDefinitionMap
 }
@@ -581,7 +592,7 @@ func readAll[T byteCountable](bs []byte, readers ...[]T) (int, error) {
 // size is everything that follows the header.
 func (cr *codegenReader) ByteCount() int {
 	bc, _ := cr.calculateByteCounts()
-	return bc.ByteCount() + bc.operationsByteOffset + byteCount(cr.operations)
+	return bc.ByteCount() + bc.debugByteOffset + cr.debug.ByteCount()
 }
 
 func (cr *codegenReader) Read(p []byte) (int, error) {
@@ -706,6 +717,19 @@ func (cr *codegenReader) Read(p []byte) (int, error) {
 	}
 	totalBytes += n
 
+	debugStart := bc.ByteCount() + bc.debugByteOffset
+	if len(p) < debugStart {
+		return 0, io.ErrShortBuffer
+	}
+	clear(p[totalBytes:debugStart])
+	totalBytes = debugStart
+
+	n, err = cr.debug.Read(p[totalBytes:])
+	if err != nil {
+		return 0, err
+	}
+	totalBytes += n
+
 	return totalBytes, nil
 }
 
@@ -758,18 +782,7 @@ type Result struct {
 // validation because only a program has an entry: a file checked on its own,
 // as an editor checks one, is valid without one.
 func validateMainMethod(ast *syntax.AST) error {
-	// The arguments are the run of strings the program was invoked with, which
-	// is what a variadic says and a pointer only implies. The count still comes
-	// separately: a variadic conveys no length, so nothing else would say where
-	// the arguments stop.
-	mainType := &syntax.TypeFunction{
-		ReturnType: syntax.TypeVoid,
-		ParameterTypes: []syntax.Type{
-			syntax.TypeUint,
-			syntax.NewWrappedType(syntax.TypeKindVariadic, syntax.TypeString),
-		},
-	}
-
+	mainType := syntax.MainMethodType()
 	decl := ast.MainCodeDecl
 	location := decl.File().Location(decl.Start())
 	mainMethod, ok := decl.GetStaticMethod(base.MainMethodName)

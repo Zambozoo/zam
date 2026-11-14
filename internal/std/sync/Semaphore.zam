@@ -22,30 +22,30 @@ public class Semaphore {
     // Wait takes one from the count, waiting while it is zero.
     public fun void() Wait = () {
         this.m.Lock();
+        defer this.m.Unlock();
         for(; this.count == 0U;) {
             this.c.Wait();
         }
         this.count--;
-        this.m.Unlock();
     }
 
     // TryWait takes one from the count if it is not zero, reporting whether
     // it did.
     public fun bool() TryWait = () {
         this.m.Lock();
-        var bool ok = this.count > 0U;
-        if(ok) {
-            this.count--;
+        defer this.m.Unlock();
+        if(this.count == 0U) {
+            return false;
         }
-        this.m.Unlock();
-        return ok;
+        this.count--;
+        return true;
     }
 
     // Unlock adds one to the count, waking a waiter.
     public fun void() Unlock = () {
         this.m.Lock();
+        defer this.m.Unlock();
         this.count++;
         this.c.Signal();
-        this.m.Unlock();
     }
 }

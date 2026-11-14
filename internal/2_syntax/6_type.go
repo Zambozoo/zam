@@ -1706,3 +1706,18 @@ func (t *TypeWrapped) String() string {
 func (t *TypeWrapped) ContainsGenericArg() bool {
 	return t.Type.ContainsGenericArg()
 }
+
+// MainMethodType returns the type of a program's main method, which a test
+// method has too. The arguments are the run of strings the program was invoked
+// with, which is what a variadic says and a pointer only implies. The count
+// still comes separately: a variadic conveys no length, so nothing else would
+// say where the arguments stop.
+func MainMethodType() *TypeFunction {
+	return &TypeFunction{
+		ReturnType: TypeVoid,
+		ParameterTypes: []Type{
+			TypeUint,
+			NewWrappedType(TypeKindVariadic, TypeString),
+		},
+	}
+}

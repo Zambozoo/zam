@@ -46,6 +46,7 @@ public class HTTP {
         public static fun str(str) Fold = (name) {
             var (byte*, int) p = Strs::ToBytes(name);
             var byte* lower = new(byte, p.1{uint} + 1U);
+            defer free(lower);
             for(var int i = 0; i < p.1; i++) {
                 var int c = p.0[i]{int};
                 if(c >= 'A'{int} && c <= 'Z'{int}) {
@@ -53,9 +54,7 @@ public class HTTP {
                 }
                 lower[i] = c{byte};
             }
-            var str s = Strs::FromBytes(lower, p.1);
-            free(lower);
-            return s;
+            return Strs::FromBytes(lower, p.1);
         }
 
         public fun (ArrList[str]*, bool)(str) Get = (name) {
@@ -132,10 +131,9 @@ public class HTTP {
         // them.
         public fun str() Lines = () {
             var byte* zero = new(byte, 1U);
+            defer free(zero);
             zero[0] = 0{byte};
-            var str nul = Strs::FromBytes(zero, 1);
-            free(zero);
-            return this.Join(": ", nul);
+            return this.Join(": ", Strs::FromBytes(zero, 1));
         }
     }
 
@@ -245,6 +243,7 @@ public class HTTP {
         // it, reporting whether it reached the end.
         public fun bool(int) Drain = (limit) {
             var byte* b = new(byte, 16384U);
+            defer free(b);
             var int seen = 0;
             for(; !this.Done() && seen <= limit;) {
                 var (int, Err*) p = this.ReadBody(b, 16384);
@@ -253,7 +252,6 @@ public class HTTP {
                 }
                 seen = seen + p.0;
             }
-            free(b);
             return this.Done();
         }
 
@@ -731,6 +729,7 @@ public class HTTP {
             var str digits = "0123456789abcdef";
             var (byte*, int) d = Strs::ToBytes(digits);
             var byte* b = new(byte, 16U);
+            defer free(b);
             var int i = 16;
             for(;;) {
                 i--;
@@ -740,9 +739,7 @@ public class HTTP {
                     break;
                 }
             }
-            var str s = Strs::FromBytes(b + i{uint}, 16 - i);
-            free(b);
-            return s;
+            return Strs::FromBytes(b + i{uint}, 16 - i);
         }
 
         private static fun bool(Stream*, Buffer*) flush = (s, out) {

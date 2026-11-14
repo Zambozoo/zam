@@ -13,6 +13,7 @@ public namespace Base64 {
         var (byte*, int) a = Strs::ToBytes(alphabet);
         var uint cap = (n + 2U) / 3U * 4U;
         var byte* out = new(byte, cap + 1U);
+        defer free(out);
         var uint o = 0U;
         for(var uint i = 0U; i < n; i = i + 3U) {
             var uint v = b[i]{uint} << 16U;
@@ -40,9 +41,7 @@ public namespace Base64 {
                 o++;
             }
         }
-        var str s = Strs::FromBytes(out, o{int});
-        free(out);
-        return s;
+        return Strs::FromBytes(out, o{int});
     }
 
     // value returns the six bits c stands for in the alphabet, or -1.

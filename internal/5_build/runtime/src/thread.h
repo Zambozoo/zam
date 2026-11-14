@@ -559,6 +559,43 @@ void zam_thread_install_signal_slot(ZamThread *thread, int sig, void *closure);
 // pending. Called by the interpreter's poll between instructions.
 int zam_thread_take_pending_signal(ZamThread *thread);
 
+// ZamFrames walks a thread's frames outward from where it is: first the
+// instruction it is running, then the call each frame it is inside was made by.
+// Each step answers the offset just past the instruction, which is where the
+// thread stood or will come back to.
+typedef struct ZamFrames {
+    const ZamThread *thread;
+    uint64_t entry;
+    uint64_t next;
+    uint64_t last;
+    bool more;
+} ZamFrames;
+
+// zam_frames_begin starts a walk of thread's frames.
+void zam_frames_begin(ZamFrames *frames, const ZamThread *thread);
+
+// zam_frames_next answers the next frame's offset, or false once there are
+// none. A native's own frame is not one, since it stands where its caller does.
+bool zam_frames_next(ZamFrames *frames, uint64_t *offset);
+
+// zam_thread_trace writes where thread is to fd, a line per frame and
+// innermost first, leaving out the innermost skip frames. An image that says
+// nothing of where its instructions came from has nothing written. It is safe
+// to call from a signal handler.
+void zam_thread_trace(const ZamThread *thread, uint64_t skip, int fd);
+
+// zam_thread_current answers the thread the calling OS thread is driving, or
+// NULL if it drives none.
+ZamThread *zam_thread_current(void);
+
+// zam_thread_trace_current traces the thread the calling OS thread is
+// driving, if it drives one. It is what zam_die writes after its message.
+void zam_thread_trace_current(int fd);
+
+// zam_thread_install_fault_handler has an invalid memory access say where it
+// happened before it ends the process.
+void zam_thread_install_fault_handler(void);
+
 // zam_thread_bind_current records this thread as the one the C signal
 // handler delivers to for the current OS thread. Called at the top of a
 // thread's run, before any Signal.Handle registration could fire.

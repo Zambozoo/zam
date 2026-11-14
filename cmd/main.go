@@ -12,6 +12,7 @@ import (
 	codegen "github.com/zambozoo/zam/internal/4_codegen"
 	build "github.com/zambozoo/zam/internal/5_build"
 	"github.com/zambozoo/zam/internal/lsp"
+	"github.com/zambozoo/zam/internal/testrunner"
 )
 
 type step string
@@ -27,6 +28,7 @@ const (
 	stepLSP      step = "lsp"
 	stepGet      step = "get"
 	stepClean    step = "clean"
+	stepTest     step = "test"
 )
 
 func handleErrors(logger *base.Logger, step step, errs ...error) {
@@ -75,6 +77,14 @@ func main() {
 		handleErrors(&logger, stepClean, packageProvider.Clean())
 		logger.Print(base.LogLevelInfo, "removed %s\n", packageProvider.Root())
 		logger.Flush()
+		base.Exit(base.ExitCodeSuccess)
+	case command.VerbTest:
+		passed, err := testrunner.Run(cmd, &fileProvider, packageProvider, os.Stdout)
+		handleErrors(&logger, stepTest, err)
+		logger.Flush()
+		if !passed {
+			base.Exit(base.ExitCodeError)
+		}
 		base.Exit(base.ExitCodeSuccess)
 	case command.VerbGet:
 		cwd, err := base.ParsePath(".")

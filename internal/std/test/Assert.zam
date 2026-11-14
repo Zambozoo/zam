@@ -1,0 +1,58 @@
+import "Test.zam";
+
+// Assert checks a condition of the test running, failing it with a message
+// saying what was found when the condition does not hold. Each check reports
+// whether it held, and the test goes on either way.
+public namespace Assert {
+    public fun bool(bool, str) True = (b, message) {
+        if (!b) {
+            Test::Fail(message);
+        }
+        return b;
+    }
+
+    public fun bool(bool, str) False = (b, message) {
+        if (b) {
+            Test::Fail(message);
+        }
+        return !b;
+    }
+
+    // Equal checks that got is want, as == says.
+    public fun[T] bool(T, T) Equal = (want, got) {
+        if (want != got) {
+            Test::Fail("want " + want{str} + ", got " + got{str});
+            return false;
+        }
+        return true;
+    }
+
+    public fun[T] bool(T, T) NotEqual = (unwanted, got) {
+        if (unwanted == got) {
+            Test::Fail("got " + got{str} + ", which is not wanted");
+            return false;
+        }
+        return true;
+    }
+
+    public fun[T] bool(T*) Null = (p) {
+        if (p != null) {
+            Test::Fail("want null, got " + p{str});
+            return false;
+        }
+        return true;
+    }
+
+    public fun[T] bool(T*) NotNull = (p) {
+        if (p == null) {
+            Test::Fail("want something other than null");
+            return false;
+        }
+        return true;
+    }
+
+    // Fatal fails the test running with message and ends the run.
+    public fun void(str) Fatal = (message) {
+        Test::Fatal(message);
+    }
+}

@@ -52,6 +52,10 @@ typedef enum ZamExit {
 // run a destructor, and everything it holds is the process's anyway.
 _Noreturn void zam_die(ZamExit status, const char *format, ...);
 
+// zam_set_die_trace sets what zam_die writes after its message, which is how
+// it says where the program was without this layer knowing what a program is.
+void zam_set_die_trace(void (*trace)(int fd));
+
 // ZAMTODO marks a path that is declared but not built. Every one of these is a
 // decision still owed rather than an error, and reaching one stops the run
 // loudly so that a half-built runtime never quietly produces a wrong answer.

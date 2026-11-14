@@ -5,14 +5,15 @@
 |---|---|---|
 | `build` | `<input file>` | compile a program to a binary |
 | `run` | `<input file> [program arguments]` | compile a program to a temporary binary and run it, passing on the arguments after its file |
+| `test` | `[path...] [-- test arguments]` | compile the tests in test files and run each file's in a process of its own |
 | `get` | `[repo@version...]` | add dependencies to the nearest project file, then fetch every dependency the project reaches |
 | `clean` | | remove every fetched dependency |
 | `lsp` | | serve the language server protocol over stdin and stdout |
 
 `zam help` lists the commands, and `zam <command> -h` lists a command's flags.
 
-## build and run
-Flags come before the input file. Sizes take an optional `B`, `KB`, `MB` or `GB` suffix, and a bare number is a count of bytes.
+## build, run and test
+Flags come before the input file, or the paths `test` is given. Sizes take an optional `B`, `KB`, `MB` or `GB` suffix, and a bare number is a count of bytes.
 
 ### Output
 | Flag | Default | Meaning |
@@ -20,6 +21,8 @@ Flags come before the input file. Sizes take an optional `B`, `KB`, `MB` or `GB`
 | `-o`, `--output` | `out` | file to write; `build` only |
 | `-E`, `--emit-image` | `false` | write the raw bytecode image instead of linking a binary; `build` only |
 | `-k`, `--keep-build` | `false` | keep the temporary build directory and print its path |
+| `--run` | | regular expression picking the tests to run by name; `test` only |
+| `--parallel` | the number of processors | test files run at once; `test` only |
 | `-n`, `--no-project` | `false` | ignore project files and compile local files as one project depending only on std |
 | `-v`, `--verbose` | `false` | verbose output |
 | `-t`, `--threads` | `1` | threads the compiler uses |
@@ -45,6 +48,10 @@ Also baked into the program. See [Garbage Collection](../4_memory_and_runtime/1_
 | `--gc-remark-growth` | `1` | > 0 | fraction of its size the heap may grow by while marking alongside the program before the remark is forced |
 | `--gc-preclean-passes` | `2` | 0–16 | passes over the cards dirtied while marking alongside the program, before the remark |
 | `--gc-return-age` | `3` | ≥ 1 | collections a run of free pages waits before its memory is given back to the system |
+
+## test
+`zam test` takes test files, directories holding them, and directories written with a trailing `/...` to include every directory beneath them; the current directory by default.
+See [Testing](../1_getting_started/3_testing.md).
 
 ## get
 `zam get repo@version` adds the dependency to the project file nearest the current directory, under the last element of its repository, with the hash of what was fetched. A dependency already of that name has its version and hash replaced.

@@ -380,9 +380,17 @@ func (p *syntaxParser) Method() **FieldMethod {
 
 // NewPath answers the path an import names, read as it was written: beside the
 // file it appears in. A file's imports mean the same thing wherever the compiler
-// is run from, and moving a directory moves what is inside it intact.
+// is run from, and moving a directory moves what is inside it intact. Only a
+// test file may import a test file.
 func (p *syntaxParser) NewPath(pathStr string) (base.Path, error) {
-	return p.projectParser.fileProvider.NewPath(p.path.Resolve(pathStr))
+	path, err := p.projectParser.fileProvider.NewPath(p.path.Resolve(pathStr))
+	if err != nil {
+		return "", err
+	}
+	if path.IsTestFile() && !p.path.IsTestFile() {
+		return "", fmt.Errorf("test file %s can only be imported by a test file", path)
+	}
+	return path, nil
 }
 
 func (p *syntaxParser) AddPath(path base.Path) {
@@ -390,12 +398,14 @@ func (p *syntaxParser) AddPath(path base.Path) {
 }
 
 // ListCodeFiles answers the code files sitting directly in dir, in the shape
-// a glob import expects: one Path per child, non-recursive. The call is a
-// pass-through to the file provider, kept on the parser so that the glob
-// expansion in [newImport] has the same reach as the single-file resolution
-// through [AddPath].
+// a glob import expects: one Path per child, non-recursive. Test files are
+// among them only when the file being parsed is a test file itself.
 func (p *syntaxParser) ListCodeFiles(dir base.Path) ([]base.Path, error) {
-	return p.projectParser.fileProvider.ListCodeFiles(dir)
+	children, err := p.projectParser.fileProvider.ListCodeFiles(dir)
+	if err != nil || p.path.IsTestFile() {
+		return children, err
+	}
+	return slices.DeleteFunc(children, base.Path.IsTestFile), nil
 }
 
 func (p *syntaxParser) Project() *Project {
@@ -431,6 +441,9 @@ func newProjectParser(cmd *command.Command, fileProvider fileProvider, packagePr
 	p.threadWG.Go(p.pump)
 
 	p.addPath(cmd.InputPath)
+	for _, path := range cmd.TestPaths {
+		p.addPath(path)
+	}
 
 	return p
 }

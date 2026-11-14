@@ -138,6 +138,7 @@ public class ACME {
     static fun str(Arr[byte]*) rawSignature = (der) {
         var byte* d = der.Arr();
         var byte* out = new(byte, 64U);
+        defer free(out);
         var uint at = 2U;
         for(var uint part = 0U; part < 2U; part++) {
             var uint len = d[at + 1U]{uint};
@@ -151,9 +152,7 @@ public class ACME {
             }
             at = start + len;
         }
-        var str s = Base64::EncodeURL(out, 64U);
-        free(out);
-        return s;
+        return Base64::EncodeURL(out, 64U);
     }
 
     fun Err*() fetchNonce = () {

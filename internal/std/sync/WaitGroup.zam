@@ -36,10 +36,10 @@ public class WaitGroup {
     private fun void(void()) run = (f) {
         f();
         this.m.Lock();
+        defer this.m.Unlock();
         this.running--;
         this.count--;
         this.c.Broadcast();
-        this.m.Unlock();
     }
 
     // Do runs f on a new thread, first waiting for a free slot when the group
@@ -58,6 +58,7 @@ public class WaitGroup {
     // Add adds i, which may be negative, to the count.
     public fun void(int) Add = (i) {
         this.m.Lock();
+        defer this.m.Unlock();
         this.count = this.count + i;
         if(this.count < 0) {
             System::Panic("WaitGroup count is negative");
@@ -65,7 +66,6 @@ public class WaitGroup {
         if(this.count == 0) {
             this.c.Broadcast();
         }
-        this.m.Unlock();
     }
 
     public fun void() Done = () {
@@ -75,9 +75,9 @@ public class WaitGroup {
     // Wait returns once the count is zero.
     public fun void() Wait = () {
         this.m.Lock();
+        defer this.m.Unlock();
         for(; this.count > 0;) {
             this.c.Wait();
         }
-        this.m.Unlock();
     }
 }

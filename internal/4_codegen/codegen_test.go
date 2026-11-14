@@ -225,9 +225,12 @@ func TestCalculateByteCounts(t *testing.T) {
 
 		// Offsets are measured from the end of the header, so the header is
 		// added back to reach the byte the section actually begins at.
+		// The operations are followed by the debug section, put back on a word
+		// boundary, which says nothing for a reader with no debug info.
 		headerEnd := headerByteSize(t)
-		assert.Equal(t, headerEnd+bc.operationsByteOffset+OpPopWord.ByteCount()+
-			newUnaryOp(OpPushStatic, 1).ByteCount(), n)
+		operationsEnd := bc.operationsByteOffset + OpPopWord.ByteCount() + newUnaryOp(OpPushStatic, 1).ByteCount()
+		assert.Equal(t, int(alignUp(uint64(operationsEnd), wordByteSize)), bc.debugByteOffset)
+		assert.Equal(t, headerEnd+bc.debugByteOffset+3*wordByteSize, n)
 
 		// The literal region opens with its first literal's mark word, and the
 		// length a word past it, which is the offset the slot map records. The

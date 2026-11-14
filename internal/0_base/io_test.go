@@ -36,13 +36,15 @@ func TestPathResolve(t *testing.T) {
 
 // TestListCodeFilesOnDisk pins the one thing a glob import depends on from the
 // filesystem backend: it answers the .zam files sitting directly in the
-// directory and nothing else — not the manifest beside them, not the file in
-// a subdirectory, not anything with a different extension. The order is by
-// base name, since that is what a diagnostic would quote.
+// directory, test files included, and nothing else — not the manifest beside
+// them, not the file in a subdirectory, not anything with a different
+// extension.
+// The order is by base name, since that is what a diagnostic would quote.
 func TestListCodeFilesOnDisk(t *testing.T) {
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "B.zam"), []byte(""), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "A.zam"), []byte(""), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "A.test.zam"), []byte(""), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yml"), []byte(""), 0o600))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "sub"), 0o750))
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "sub", "Deep.zam"), []byte(""), 0o600))
@@ -55,7 +57,7 @@ func TestListCodeFilesOnDisk(t *testing.T) {
 	for _, child := range children {
 		bases = append(bases, child.Base())
 	}
-	assert.Equal(t, []string{"A.zam", "B.zam"}, bases)
+	assert.Equal(t, []string{"A.test.zam", "A.zam", "B.zam"}, bases)
 }
 
 // TestListCodeFilesInStd walks the embedded standard library under a known
@@ -128,4 +130,28 @@ func TestPathContains(t *testing.T) {
 	assert.False(t, dir.Contains(Path("/zam/pkg/example.com/dep@v1.tar.zst")))
 	assert.False(t, dir.Contains(Path("/zam/pkg/example.com/dep@v10/A.zam")))
 	assert.False(t, dir.Contains(Path("/zam/pkg/example.com/other@v1/A.zam")))
+}
+
+// Test files are listed from the directory asked about, and from every
+// directory beneath it when asked to be, except those hidden by a leading dot.
+func TestListTestFiles(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"B.test.zam", "A.test.zam", "A.zam", "sub/C.test.zam", ".hidden/D.test.zam"} {
+		file := filepath.Join(dir, filepath.FromSlash(name))
+		require.NoError(t, os.MkdirAll(filepath.Dir(file), 0o750))
+		require.NoError(t, os.WriteFile(file, []byte(""), 0o600))
+	}
+
+	var fileProvider FileProvider
+	flat, err := fileProvider.ListTestFiles(Path(dir), false)
+	require.NoError(t, err)
+	assert.Equal(t, []Path{Path(filepath.Join(dir, "A.test.zam")), Path(filepath.Join(dir, "B.test.zam"))}, flat)
+
+	deep, err := fileProvider.ListTestFiles(Path(dir), true)
+	require.NoError(t, err)
+	assert.Equal(t, []Path{
+		Path(filepath.Join(dir, "A.test.zam")),
+		Path(filepath.Join(dir, "B.test.zam")),
+		Path(filepath.Join(dir, "sub", "C.test.zam")),
+	}, deep)
 }

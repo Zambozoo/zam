@@ -39,6 +39,7 @@ typedef enum ZamHeaderWord {
     ZAMHEADER_GENERIC_STATIC_METHODS_OFFSET,
     ZAMHEADER_STATIC_ROOTS_OFFSET,
     ZAMHEADER_OPERATIONS_OFFSET,
+    ZAMHEADER_DEBUG_OFFSET,
 
     ZAMHEADER_WORDS,
 } ZamHeaderWord;
@@ -48,7 +49,7 @@ typedef enum ZamHeaderWord {
 // version it was handed. This runtime reads exactly one version: the format is
 // still being decided, so there is nothing yet to be compatible with.
 #define ZAMVERSION_MAJOR 0
-#define ZAMVERSION_MINOR 1
+#define ZAMVERSION_MINOR 2
 #define ZAMVERSION_PATCH 0
 #define ZAMVERSION_WORD                                                       \
     (((ZamWord)ZAMVERSION_MAJOR << 32) | ((ZamWord)ZAMVERSION_MINOR << 16) | \
@@ -162,11 +163,30 @@ typedef struct ZamImage {
     const ZamWord *staticRoots;
     uint64_t staticRootCount;
 
-    // operations is the program, and runs to the end of the file. Execution
+    // operations is the program, and runs up to the debug section. Execution
     // begins at offset zero of it.
     const uint8_t *operations;
     size_t operationsByteCount;
+
+    // debugStrings are the file paths and function names the debug tables name
+    // by index, each pointing at its NUL-terminated bytes in the image.
+    const char **debugStrings;
+    uint64_t debugStringCount;
+    // debugFunctions are the function bodies, ZAMDEBUG_FUNCTION_WORDS each
+    // and sorted by where they start: start, end, the index of the function
+    // enclosing it or ZAMDEBUG_NO_PARENT, the index of its name, and where its
+    // line program begins among debugPrograms.
+    const ZamWord *debugFunctions;
+    uint64_t debugFunctionCount;
+    // debugPrograms are the functions' line programs, each saying which line
+    // of which file the function's own instructions were emitted for, as how
+    // far each change lies from the one before it. See zam_image_locate.
+    const uint8_t *debugPrograms;
+    uint64_t debugProgramsByteCount;
 } ZamImage;
+
+#define ZAMDEBUG_FUNCTION_WORDS 5
+#define ZAMDEBUG_NO_PARENT UINT64_MAX
 
 // zam_image_open reads the file and validates the header. It dies rather than
 // returning a failure: an image that cannot be read is the end of the run, and
@@ -187,6 +207,15 @@ void zam_image_close(ZamImage *image);
 // answers; a primitive has no definition and asking for one is a bug.
 const uint8_t *zam_image_type_definition(const ZamImage *image,
                                          uint16_t declID);
+
+// zam_image_locate says which file and line the instruction at offset was
+// emitted for, answering false if the image does not say.
+bool zam_image_locate(const ZamImage *image, uint64_t offset, const char **file,
+                      uint32_t *line);
+
+// zam_image_function names the innermost function whose body holds the
+// instruction at offset, or answers NULL if the image does not say.
+const char *zam_image_function(const ZamImage *image, uint64_t offset);
 
 // zam_image_bucket_of says which kind of definition a type id names.
 ZamTypeBucket zam_image_bucket_of(const ZamImage *image, uint16_t declID);

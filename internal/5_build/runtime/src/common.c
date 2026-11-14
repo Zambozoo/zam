@@ -6,6 +6,11 @@
 #include <malloc.h>
 #endif
 
+// dieTrace is what zam_die writes after its message, if anything.
+static void (*dieTrace)(int fd);
+
+void zam_set_die_trace(void (*trace)(int fd)) { dieTrace = trace; }
+
 _Noreturn void zam_die(ZamExit status, const char *format, ...) {
     va_list args;
     va_start(args, format);
@@ -13,6 +18,9 @@ _Noreturn void zam_die(ZamExit status, const char *format, ...) {
     vfprintf(stderr, format, args);
     fputs("\033[0m", stderr);
     va_end(args);
+    fflush(stderr);
+    if (dieTrace != NULL)
+        dieTrace(fileno(stderr));
     exit(status);
 }
 

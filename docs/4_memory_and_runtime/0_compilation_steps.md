@@ -31,6 +31,7 @@
     * Computes static field offsets for bytecode mapping and populates type definition type references.
 1. Operation Generation
     * Generates a list of executable bytecode.
+    * Records, for each run of instructions, the line of source it was emitted for and the function body it lies in. These go into the image as a debug section, which the runtime reads stack traces from.
 ### Build
 1. Build Executable
     * Bundles the executable bytecode and any provided native C code into a C program that is shelled out to `cc` to produce a single executable.

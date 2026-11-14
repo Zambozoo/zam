@@ -18,17 +18,16 @@ public class Atomic[A] {
 
     public fun A() Load = () {
         this.m.RLock();
-        var A v = this.v;
-        this.m.RUnlock();
-        return v;
+        defer this.m.RUnlock();
+        return this.v;
     }
 
     // Set stores v and returns the value it replaced.
     public fun A(A) Set = (v) {
         this.m.Lock();
+        defer this.m.Unlock();
         var A old = this.v;
         this.v = v;
-        this.m.Unlock();
         return old;
     }
 
@@ -36,6 +35,7 @@ public class Atomic[A] {
     // value it replaced and whether it did.
     public fun (A, bool)(A, bool(A, A)) Update = (v, f) {
         this.m.Lock();
+        defer this.m.Unlock();
         var (A, bool) p;
         if(f(this.v, v)) {
             p.1 = true;
@@ -44,7 +44,6 @@ public class Atomic[A] {
         } else {
             p.1 = false;
         }
-        this.m.Unlock();
         return p;
     }
 }

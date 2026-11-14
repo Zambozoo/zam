@@ -406,6 +406,75 @@ func TestNewASTRejectsAnAliasedGlobImport(t *testing.T) {
 	assert.Contains(t, errs[0].Error(), "glob")
 }
 
+// A glob takes in the test files it matches only when a test file wrote it.
+func TestNewASTGlobsTestFilesOnlyFromATestFile(t *testing.T) {
+	for name, test := range map[string]struct {
+		entry string
+		want  []string
+	}{
+		"code file": {entry: "Main.zam", want: []string{"Main.zam", "sub/A.zam"}},
+		"test file": {entry: "Main.test.zam", want: []string{"Main.test.zam", "sub/A.test.zam", "sub/A.zam"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeManifest(t, dir)
+			writeFile(t, dir, "sub/A.zam", namespaceSource("A"))
+			writeFile(t, dir, "sub/A.test.zam", namespaceSource("ATest"))
+			entry := writeFile(t, dir, test.entry, "import \"sub/*\";\n"+mainSource)
+
+			ast, errs := NewAST(
+				&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+				&base.FileProvider{}, &mock_PackageProvider{})
+
+			require.Empty(t, errs)
+			assert.Equal(t, test.want, codeFilePaths(t, ast, dir))
+		})
+	}
+}
+
+// Only a test file may import a test file, though it may reach into another
+// project for one.
+func TestNewASTImportsTestFilesOnlyFromATestFile(t *testing.T) {
+	for name, test := range map[string]struct {
+		entry, imports, err string
+	}{
+		"code file imports a test file": {
+			entry: "Main.zam", imports: `import "A.test.zam";`, err: "can only be imported by a test file",
+		},
+		"code file imports a dependency's test file": {
+			entry: "Main.zam", imports: `import dep("Dep.test.zam");`, err: "can only be imported by a test file",
+		},
+		"test file imports a test file":              {entry: "Main.test.zam", imports: `import "A.test.zam";`},
+		"test file imports a dependency's test file": {entry: "Main.test.zam", imports: `import dep("Dep.test.zam");`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			dependency := writeDependency(t, map[string]string{
+				"zam.yml":      "name: \"dep\"\nversion: \"0.0.0\"\ndependencies:\n",
+				"Dep.test.zam": namespaceSource("DepTest"),
+			})
+			writeFile(t, dir, "zam.yml", "name: \"imports\"\nversion: \"0.0.0\"\n"+
+				"dependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: h1:abc\n")
+			writeFile(t, dir, "A.test.zam", namespaceSource("ATest"))
+			entry := writeFile(t, dir, test.entry, test.imports+"\n"+mainSource)
+
+			packages := &mock_PackageProvider{}
+			packages.EXPECT().Fetch("example.com/dep@v1").Return(dependency, "h1:abc", nil).Maybe()
+
+			_, errs := NewAST(
+				&command.Command{InputPath: base.Path(entry), MaxThreads: 1},
+				&base.FileProvider{}, packages)
+
+			if test.err == "" {
+				assert.Empty(t, errs)
+				return
+			}
+			require.Len(t, errs, 1)
+			assert.Contains(t, errs[0].Error(), test.err)
+		})
+	}
+}
+
 // A package name resolves the path against the dependency the project declared
 // under that name rather than against the importing file's own directory, which
 // is the only way a file of a fetched dependency can be named at all: it sits

@@ -19,11 +19,11 @@ public namespace Rand {
     public static fun uint() Uint = () {
         var uint u = 0U;
         var byte* b = new(byte, 8U);
+        defer free(b);
         Rand::Read(b, 8U);
         for(var uint i = 0U; i < 8U; i++) {
             u = (u << 8U) | b[i]{uint};
         }
-        free(b);
         return u;
     }
 

@@ -616,6 +616,42 @@ static void stdSystemExit(ZamThread *thread) {
     exit(code);
 }
 
+// stdSystemTrace writes where the calling thread is to stderr, from the frame
+// that called the method calling this native.
+static void stdSystemTrace(ZamThread *thread) {
+    fflush(stderr);
+    zam_thread_trace(thread, 1, fileno(stderr));
+    zam_native_return_void(thread);
+}
+
+// stdSystemCaller reports the file and line of the frame skip frames out from
+// the one that called the method calling this native, and whether there is
+// one.
+static void stdSystemCaller(ZamThread *thread) {
+    uint64_t skip = zam_native_argument(thread, 0) + 1;
+
+    ZamFrames frames;
+    zam_frames_begin(&frames, thread);
+    uint64_t offset;
+    bool found = false;
+    const char *file = NULL;
+    uint32_t line = 0;
+    while (zam_frames_next(&frames, &offset)) {
+        if (skip-- == 0) {
+            found = zam_image_locate(&thread->vm->image, offset - 1, &file, &line);
+            break;
+        }
+    }
+
+    if (found) {
+        ZamWord string = (ZamWord)zam_native_new_string(thread, file, strlen(file));
+        *(ZamWord *)zam_native_argument_pointer(thread, 1) = string;
+        *(ZamWord *)zam_native_argument_pointer(thread, 2) = line;
+    }
+    *(bool *)zam_native_argument_pointer(thread, 3) = found;
+    zam_native_return_void(thread);
+}
+
 // stdSystemProcessID reports getpid(), the id Signal.Send hands to kill().
 static void stdSystemProcessID(ZamThread *thread) {
     ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
@@ -1231,6 +1267,8 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_GC_MINOR", stdGcMinor},
     {"STD_GC_MAJOR", stdGcMajor},
     {"STD_SYSTEM_EXIT", stdSystemExit},
+    {"STD_SYSTEM_TRACE", stdSystemTrace},
+    {"STD_SYSTEM_CALLER", stdSystemCaller},
     {"STD_SYSTEM_PROCESS_ID", stdSystemProcessID},
     {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},
     {"STD_RAND_UINT", stdRandUint},

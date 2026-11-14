@@ -69,12 +69,12 @@ public class X509 {
     static fun Arr[X509*]*(uint, int) list = (list, count) {
         var uint n = count{uint};
         var uint* handles = new(uint, n + 1U);
+        defer free(handles);
         native(STD_PKI_TAKE){void(uint, uint*, int)}(list, handles, count);
         var Arr[X509*]* out = Arr::[X509*]New(n, new(X509*, n + 1U)...);
         for(var uint i = 0U; i < n; i++) {
             out.Set(i, X509::of(handles[i]));
         }
-        free(handles);
         return out;
     }
 
@@ -302,11 +302,10 @@ public class X509 {
     // Fingerprint is the digest of the certificate's DER.
     public fun Arr[byte]*(Digest.Kind) Fingerprint = (kind) {
         var Digest* d = Digest::New(kind, 0U).0;
+        defer d.Delete();
         var Arr[byte]* der = this.DER();
         d.Write(der.Arr(), der.Len());
-        var Arr[byte]* sum = d.Sum();
-        d.Delete();
-        return sum;
+        return d.Sum();
     }
 
     // Verify checks the certificate chains to one of roots through
@@ -314,11 +313,11 @@ public class X509 {
     // valid at the time at.
     public fun Err*(Arr[X509*]*, Arr[X509*]*, str, Time) Verify = (roots, intermediates, host, at) {
         var uint* r = X509::handles(roots);
+        defer free(r);
         var uint* i = X509::handles(intermediates);
+        defer free(i);
         var str errStr;
         native(STD_X509_VERIFY){void(uint, uint*, int, uint*, int, str, int, str*)}(this.handle, r, X509::count(roots){int}, i, X509::count(intermediates){int}, host, at.Unix(), &errStr);
-        free(r);
-        free(i);
         if(errStr != null) {
             return StrErr::New(errStr);
         }

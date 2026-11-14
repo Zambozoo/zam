@@ -1107,6 +1107,8 @@ type (
 		// this map so the method's T is a ground type at every emit site. A
 		// non-generic body carries no bindings and the map stays nil.
 		methodBindings map[syntax.GenericArgKey]syntax.Type
+		// debug records the line and function each instruction is emitted for.
+		debug *debugInfo
 	}
 )
 
@@ -1237,6 +1239,31 @@ func (j *jumpOperation) Read(buf []byte) (int, error) {
 	buf[0] = byte(j.opcode)
 	binary.LittleEndian.PutUint64(buf[1:], uint64(j.target))
 	return j.ByteCount(), nil
+}
+
+// at says the instructions emitted from here on are for the line tok lies on,
+// in the file of the declaration whose fields are in scope.
+func (v *operationVisitor) at(tok *syntax.Token) {
+	if v.currentDecl == nil {
+		return
+	}
+	if position, ok := v.debug.position(v.currentDecl.File(), tok); ok {
+		v.debug.at(v.byteOffset, position)
+	}
+}
+
+// nested emits a function body inside the one being emitted, and says the
+// instructions after it are for the line they were before it, since they are
+// the rest of what was being emitted then.
+func (v *operationVisitor) nested(emit func() error) error {
+	position, ok := v.debug.current()
+	if err := emit(); err != nil {
+		return err
+	}
+	if ok {
+		v.debug.at(v.byteOffset, position)
+	}
+	return nil
 }
 
 // emit appends an operation to the operations region.
@@ -1823,7 +1850,7 @@ func (v *operationVisitor) emitStaticMethodBody(f *syntax.FieldMethod, methodTyp
 
 	over := v.emitJump(OpJump)
 	closure.first = uint64(v.byteOffset)
-	if err := v.emitMethodBody(f, methodType, instruction); err != nil {
+	if err := v.nested(func() error { return v.emitMethodBody(f, methodType, instruction) }); err != nil {
 		return err
 	}
 	v.patch(over)
@@ -1841,6 +1868,7 @@ func (v *operationVisitor) emitStaticMethodBody(f *syntax.FieldMethod, methodTyp
 func (v *operationVisitor) emitStaticMember(f *syntax.FieldMember) error {
 	memberType := f.FieldType()
 	defer v.popScopes(v.pushDeclScopes(f.OuterDecl(), false))
+	v.at(f.Start())
 
 	v.emitPushStatic(f, memberType)
 	v.emitPushTypeID(memberType)
@@ -1872,6 +1900,7 @@ func (v *operationVisitor) emitEnumValue(f *syntax.FieldEnum) error {
 	enum := f.OuterDecl().(*syntax.DeclEnum)
 	enumType := enum.DeclType()
 	defer v.popScopes(v.pushDeclScopes(enum, false))
+	v.at(f.Start())
 
 	v.emitPushStatic(f, enumType)
 	v.emitPushTypeID(enumType)
@@ -2102,6 +2131,8 @@ func (v *operationVisitor) emitMethodBody(f *syntax.FieldMethod, methodType synt
 		return nil
 	}
 	*instruction = uint64(v.byteOffset)
+	v.debug.enter(v.byteOffset, qualifiedName(f.OuterDecl())+"."+f.Name())
+	defer func() { v.debug.exit(v.byteOffset) }()
 
 	ft := methodType.(*syntax.TypeFunction)
 	v.returnType = ft.ReturnType
@@ -2112,6 +2143,7 @@ func (v *operationVisitor) emitMethodBody(f *syntax.FieldMethod, methodType synt
 
 	instance := !f.Modifiers().Has(syntax.ModifierStatic)
 	defer v.popScopes(v.pushDeclScopes(f.OuterDecl(), instance))
+	v.at(f.Start())
 
 	v.pushScope()
 	defer v.popScope()
@@ -2266,6 +2298,8 @@ func (v *operationVisitor) emitStructConcreteInitializers(d *syntax.DeclStruct) 
 // the element being filled in, whichever turn it is.
 func (v *operationVisitor) emitInstanceInitializer(d syntax.Decl) error {
 	declType := d.(syntax.DeclTypeable).DeclType()
+	v.debug.enter(v.byteOffset, qualifiedName(d)+".<init>")
+	defer func() { v.debug.exit(v.byteOffset) }()
 
 	v.returnType = syntax.TypeVoid
 	v.inMain = false
@@ -2290,6 +2324,7 @@ func (v *operationVisitor) emitInstanceInitializer(d syntax.Decl) error {
 
 	for _, m := range instanceFields[*syntax.FieldMember](d) {
 		memberType := m.FieldType()
+		v.at(m.Start())
 
 		// The member's location, reached the way a field selection off the
 		// receiver reaches it: the instance under its own type id, which is the
@@ -2369,6 +2404,8 @@ func initializedInline(t syntax.Type) bool {
 // so the frame needs no receiver to resolve an open type against, and slot 0 is
 // read as the plain word its cursor is.
 func (v *operationVisitor) emitTupleInitializer(tuple *syntax.TypeTuple) {
+	v.debug.enter(v.byteOffset, tuple.String()+".<init>")
+	defer func() { v.debug.exit(v.byteOffset) }()
 	v.returnType = syntax.TypeVoid
 	v.inMain = false
 	v.receiverInFrame = true
@@ -2559,6 +2596,12 @@ func (v *operationVisitor) emitDefers(scope *variableScope, offset uint64, open 
 		v.nextVariableOffset, v.openSlots = savedOffset, savedOpen
 	}()
 
+	// What follows the deferred statements is the rest of what was being
+	// emitted when they were run, such as a return, so it is that line again.
+	if position, ok := v.debug.current(); ok {
+		defer func() { v.debug.at(v.byteOffset, position) }()
+	}
+
 	open = open[:len(open):len(open)]
 	for _, deferred := range slices.Backward(scope.defers) {
 		v.nextVariableOffset, v.openSlots = offset, open
@@ -2598,6 +2641,7 @@ func (v *operationVisitor) defersPending() bool {
 // emission. Only a return may have no operand at all, being the one statement
 // that means something without one.
 func (v *operationVisitor) VisitStmtExpr(s *syntax.StmtExpr) error {
+	v.at(s.Start())
 	if s.Kind() == syntax.StmtKindReturn {
 		return v.emitReturn(s.Expr)
 	}
@@ -2781,6 +2825,7 @@ func (v *operationVisitor) emitMark(object syntax.Expr) error {
 // nothing was written it is created from its type, the way a static declared
 // with nothing is: a declaration means the same thing wherever it is written.
 func (v *operationVisitor) VisitStmtVariable(s *syntax.StmtVariable) error {
+	v.at(s.Start())
 	v.declareVariable(s.Name(), s.Type)
 	if s.Expr == nil {
 		v.emitDefaultValue(s.Type)
@@ -2798,6 +2843,7 @@ func (v *operationVisitor) VisitStmtVariable(s *syntax.StmtVariable) error {
 // before the declaration. Any other tuple is held in a slot of its own, and each
 // variable is read out of it.
 func (v *operationVisitor) VisitStmtUnpack(s *syntax.StmtUnpack) error {
+	v.at(s.Start())
 	if s.Expr == nil {
 		for _, variable := range s.Variables {
 			if err := variable.Accept(v); err != nil {
@@ -2877,6 +2923,7 @@ func (v *operationVisitor) visitScoped(s syntax.Stmt) error {
 }
 
 func (v *operationVisitor) VisitStmtIf(s *syntax.StmtIf) error {
+	v.at(s.Start())
 	if err := v.fullExpression(func() error {
 		return v.emitValue(s.Condition)
 	}); err != nil {
@@ -2907,6 +2954,7 @@ func (v *operationVisitor) VisitStmtIf(s *syntax.StmtIf) error {
 // jumps written inside it: a continue lands on the step, and a break lands past
 // the else clause, which is what makes a loop that was broken out of skip it.
 func (v *operationVisitor) VisitStmtFor(s *syntax.StmtFor) error {
+	v.at(s.Start())
 	loop := &loopContext{label: v.pendingLabel, scopeDepth: v.scopes.Len()}
 	v.pendingLabel = ""
 
@@ -2970,6 +3018,7 @@ func (v *operationVisitor) emitLoop(s *syntax.StmtFor, loop *loopContext) (*jump
 // lands where the bodies end, both inside the switch's scope so that leaving it
 // closes it once.
 func (v *operationVisitor) VisitStmtSwitch(s *syntax.StmtSwitch) error {
+	v.at(s.Start())
 	v.enterScope()
 	switchType := s.Expr.ResolvedType()
 	v.declareVariable(switchVariableName, switchType)
@@ -3037,6 +3086,7 @@ func (v *operationVisitor) VisitStmtLabel(s *syntax.StmtLabel) error {
 // the branch lands is not known until the loop finishes emitting, so the loop
 // holds it until then.
 func (v *operationVisitor) VisitStmtLoopJump(s *syntax.StmtLoopJump) error {
+	v.at(s.Start())
 	loop := v.lookupLoop(s.Label)
 	offset, open := v.nextVariableOffset, v.openSlots
 	depth := v.scopes.Len()
@@ -4997,7 +5047,7 @@ func (v *operationVisitor) VisitExprLambda(e *syntax.ExprLambda) error {
 	if !hasReceiver {
 		receiver.typ = nil
 	}
-	if err := v.emitLambdaBody(e, captures, receiver.typ); err != nil {
+	if err := v.nested(func() error { return v.emitLambdaBody(e, captures, receiver.typ) }); err != nil {
 		return err
 	}
 
@@ -5031,6 +5081,8 @@ func (v *operationVisitor) lambdaCaptures(e *syntax.ExprLambda) []capturedVariab
 // which is what lets a generic argument in the body be read off the receiver,
 // as it is anywhere else.
 func (v *operationVisitor) emitLambdaBody(e *syntax.ExprLambda, captures []capturedVariable, receiver syntax.Type) error {
+	v.debug.enter(v.byteOffset, v.debug.innermost()+".lambda")
+	defer func() { v.debug.exit(v.byteOffset) }()
 	outerScopes, outerOffset, outerOpen := v.scopes, v.nextVariableOffset, v.openSlots
 	outerLoops, outerLabel := v.loops, v.pendingLabel
 	outerReturnType, outerInMain := v.returnType, v.inMain
@@ -5052,6 +5104,7 @@ func (v *operationVisitor) emitLambdaBody(e *syntax.ExprLambda, captures []captu
 	v.nextVariableOffset = 0
 	v.openSlots = nil
 	defer v.popScopes(v.pushDeclScopes(v.currentDecl, receiver != nil))
+	v.at(e.Start())
 
 	v.pushScope()
 	defer v.popScope()
@@ -5244,11 +5297,15 @@ func populateOperations(ast *syntax.AST, reader *codegenReader, typeIndices *syn
 		ast:          ast,
 		reader:       reader,
 		mainMethod:   mainMethod,
+		debug:        newDebugInfo(),
 	}
+	reader.debug = visitor.debug
 
+	visitor.debug.enter(visitor.byteOffset, "<static init>")
 	if err := visitor.emitStaticInitializers(); err != nil {
 		return err
 	}
+	visitor.debug.exit(visitor.byteOffset)
 	// The main body begins where the statics leave off, which is what its
 	// closure was built waiting to be told.
 	if visitor.mainClosure != nil {

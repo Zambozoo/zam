@@ -10,13 +10,12 @@ public namespace Hex {
     public static fun str(byte*, uint) Encode = (b, n) {
         var (byte*, int) d = Strs::ToBytes(Hex::digits);
         var byte* out = new(byte, 2U * n + 1U);
+        defer free(out);
         for(var uint i = 0U; i < n; i++) {
             out[2U * i] = d.0[b[i]{uint} >> 4U];
             out[2U * i + 1U] = d.0[b[i]{uint} & 15U];
         }
-        var str s = Strs::FromBytes(out, (2U * n){int});
-        free(out);
-        return s;
+        return Strs::FromBytes(out, (2U * n){int});
     }
 
     public static fun str(str) EncodeStr = (s) {

@@ -46,6 +46,140 @@ static const uint8_t *section(const ZamImage *image, ZamHeaderWord word,
     return image->body + offset;
 }
 
+// debugWords reads count words at *cursor, dying if they run past end.
+static const ZamWord *debugWords(const uint8_t **cursor, const uint8_t *end,
+                                 uint64_t count, const char *label) {
+    if (count > (uint64_t)(end - *cursor) / ZAMWORD_BYTES)
+        zam_die(ZAMEXIT_IMAGE, "%s has a debug section past its end\n", label);
+    const ZamWord *words = (const ZamWord *)*cursor;
+    *cursor += count * ZAMWORD_BYTES;
+    return words;
+}
+
+// parseDebug reads the debug section, which runs from debug to the end of
+// the file: the strings and the function table, each opening with how many
+// entries follow, then the line programs, opening with how many bytes they
+// take.
+static void parseDebug(ZamImage *image, const uint8_t *debug,
+                       const char *label) {
+    const uint8_t *end = image->bytes + image->byteCount;
+    const uint8_t *cursor = debug;
+
+    image->debugStringCount = *debugWords(&cursor, end, 1, label);
+    if (image->debugStringCount > (uint64_t)(end - cursor) / ZAMWORD_BYTES)
+        zam_die(ZAMEXIT_IMAGE, "%s has a debug section past its end\n", label);
+    image->debugStrings = zam_alloc((image->debugStringCount + 1) * sizeof(char *));
+    for (uint64_t i = 0; i < image->debugStringCount; i++) {
+        ZamWord length = *debugWords(&cursor, end, 1, label);
+        ZamWord padded = (length + 1 + ZAMWORD_BYTES - 1) / ZAMWORD_BYTES;
+        image->debugStrings[i] = (const char *)debugWords(&cursor, end, padded, label);
+    }
+
+    image->debugFunctionCount = *debugWords(&cursor, end, 1, label);
+    if (image->debugFunctionCount > (uint64_t)(end - cursor) / ZAMWORD_BYTES / ZAMDEBUG_FUNCTION_WORDS)
+        zam_die(ZAMEXIT_IMAGE, "%s has a debug section past its end\n", label);
+    image->debugFunctions = debugWords(
+        &cursor, end, image->debugFunctionCount * ZAMDEBUG_FUNCTION_WORDS, label);
+
+    image->debugProgramsByteCount = *debugWords(&cursor, end, 1, label);
+    if (image->debugProgramsByteCount > (uint64_t)(end - cursor))
+        zam_die(ZAMEXIT_IMAGE, "%s has a debug section past its end\n", label);
+    image->debugPrograms = cursor;
+}
+
+// lastStartingBy answers the index of the last of count entries, each words
+// wide and opening with where it starts, that starts at or before offset, or
+// count if none does.
+static uint64_t lastStartingBy(const ZamWord *entries, uint64_t count,
+                               uint64_t words, uint64_t offset) {
+    uint64_t low = 0, high = count;
+    while (low < high) {
+        uint64_t middle = low + (high - low) / 2;
+        if (entries[middle * words] <= offset)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    return low == 0 ? count : low - 1;
+}
+
+// innermostFunction answers the function table entry of the innermost
+// function whose body holds the instruction at offset, or NULL.
+static const ZamWord *innermostFunction(const ZamImage *image, uint64_t offset) {
+    uint64_t i = lastStartingBy(image->debugFunctions, image->debugFunctionCount,
+                                ZAMDEBUG_FUNCTION_WORDS, offset);
+    // A function starting at or before the offset may have ended before it,
+    // the offset lying past a body nested in the one that holds it, so the
+    // enclosing functions are tried outward until one holds it.
+    while (i < image->debugFunctionCount) {
+        const ZamWord *function = image->debugFunctions + i * ZAMDEBUG_FUNCTION_WORDS;
+        if (offset < function[1])
+            return function;
+        // A parent lies ahead of what it encloses, which is also what keeps a
+        // corrupt table from sending the walk round in a circle.
+        i = function[2] < i ? function[2] : image->debugFunctionCount;
+    }
+    return NULL;
+}
+
+const char *zam_image_function(const ZamImage *image, uint64_t offset) {
+    const ZamWord *function = innermostFunction(image, offset);
+    if (function == NULL || function[3] >= image->debugStringCount)
+        return NULL;
+    return image->debugStrings[function[3]];
+}
+
+// uvarint reads an unsigned varint at *cursor, answering false if it runs past
+// end.
+static bool uvarint(const uint8_t **cursor, const uint8_t *end, uint64_t *value) {
+    *value = 0;
+    for (unsigned shift = 0; *cursor < end && shift < 64; shift += 7) {
+        uint8_t byte = *(*cursor)++;
+        *value |= (uint64_t)(byte & 0x7f) << shift;
+        if ((byte & 0x80) == 0)
+            return true;
+    }
+    return false;
+}
+
+// A function's line program opens with how many lines it says. Each is then
+// how far its start lies past the one before it, shifted up a bit that says
+// the file changes; how far its line lies from the one before it, zigzag
+// encoded; and the new file's index if it changed. The first is measured from
+// where the function starts and from line zero.
+bool zam_image_locate(const ZamImage *image, uint64_t offset, const char **file,
+                      uint32_t *line) {
+    const ZamWord *function = innermostFunction(image, offset);
+    if (function == NULL || function[4] >= image->debugProgramsByteCount)
+        return false;
+    const uint8_t *cursor = image->debugPrograms + function[4];
+    const uint8_t *end = image->debugPrograms + image->debugProgramsByteCount;
+
+    uint64_t count, start = function[0], fileIndex = UINT64_MAX;
+    int64_t at = 0;
+    bool found = false;
+    if (!uvarint(&cursor, end, &count))
+        return false;
+    for (uint64_t i = 0; i < count; i++) {
+        uint64_t step, zigzag;
+        if (!uvarint(&cursor, end, &step) || !uvarint(&cursor, end, &zigzag))
+            return false;
+        uint64_t next = start + (step >> 1);
+        if (next > offset)
+            break;
+        start = next;
+        at += (int64_t)(zigzag >> 1) ^ -(int64_t)(zigzag & 1);
+        if ((step & 1) != 0 && !uvarint(&cursor, end, &fileIndex))
+            return false;
+        found = true;
+    }
+    if (!found || fileIndex >= image->debugStringCount)
+        return false;
+    *file = image->debugStrings[fileIndex];
+    *line = (uint32_t)at;
+    return true;
+}
+
 // parseAndValidate reads the header off image->bytes and fills in everything
 // after it. It is the half of load that is the same whether the bytes came
 // from a file or from a byte array baked into the binary, and is written to
@@ -104,6 +238,8 @@ static void parseAndValidate(ZamImage *image, const char *label) {
         image, ZAMHEADER_STATIC_ROOTS_OFFSET, "the static root table");
     image->operations =
         section(image, ZAMHEADER_OPERATIONS_OFFSET, "the operations");
+    const uint8_t *debug =
+        section(image, ZAMHEADER_DEBUG_OFFSET, "the debug section");
 
     // Three of the sections are told no length of their own and are bounded by
     // whatever begins next, the last of them by the end of the file. The
@@ -113,15 +249,15 @@ static void parseAndValidate(ZamImage *image, const char *label) {
         image->natives < image->staticImage ||
         image->genericStaticMethods < image->natives ||
         (const uint8_t *)image->staticRoots < image->genericStaticMethods ||
-        image->operations < (const uint8_t *)image->staticRoots)
+        image->operations < (const uint8_t *)image->staticRoots ||
+        debug < image->operations)
         zam_die(ZAMEXIT_IMAGE, "%s has sections out of order\n", label);
 
     image->staticSlotCount =
         (size_t)((const ZamWord *)image->staticImage - image->staticSlots);
     image->staticImageByteCount =
         (size_t)(image->natives - image->staticImage);
-    image->operationsByteCount =
-        image->byteCount - (size_t)(image->operations - image->bytes);
+    image->operationsByteCount = (size_t)(debug - image->operations);
 
     // The native table is the one section that says its own length, because it
     // is a run of names that are not all the same width: a reader cannot find
@@ -140,6 +276,8 @@ static void parseAndValidate(ZamImage *image, const char *label) {
         image->operations)
         zam_die(ZAMEXIT_IMAGE, "%s has a static root table past its end\n",
                 label);
+
+    parseDebug(image, debug, label);
 }
 
 uint64_t zam_image_static_root(const ZamImage *image, uint64_t index,
@@ -170,6 +308,7 @@ void zam_image_load(ZamImage *image, const uint8_t *bytes, size_t byteCount) {
 void zam_image_close(ZamImage *image) {
     if (image->ownsBytes)
         free(image->bytes);
+    free(image->debugStrings);
     *image = (ZamImage){0};
 }
 

@@ -6,5 +6,5 @@ import "embed"
 // directories (lang, io, …) are embedded whole so a file added underneath them
 // is picked up without this list growing.
 //
-//go:embed *.yml codec crypto data io lang math sync
+//go:embed *.yml codec crypto data io lang math sync test
 var FS embed.FS

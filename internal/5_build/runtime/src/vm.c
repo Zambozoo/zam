@@ -87,6 +87,8 @@ static void postImageLoad(ZamVM *vm) {
 
     zam_natives_resolve(vm);
     zam_thread_init(&vm->main, vm, vm->image.initialStackSize);
+    zam_set_die_trace(zam_thread_trace_current);
+    zam_thread_install_fault_handler();
 }
 
 void zam_vm_init(ZamVM *vm, const char *imagePath) {

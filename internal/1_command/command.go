@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"regexp"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -70,6 +73,12 @@ const (
 	flagKeepBuildLong = "keep-build"
 	usageKeepBuild    = "keep the temporary build directory and print its path on failure or success"
 
+	flagRunPatternLong = "run"
+	usageRunPattern    = "run only the tests whose names this regular expression matches"
+
+	flagParallelLong = "parallel"
+	usageParallel    = "test files run at once"
+
 	flagAsLong = "as"
 	usageAs    = "package name to add the dependency under, the last element of its repository by default"
 
@@ -105,6 +114,9 @@ const (
 	// VerbGet adds dependencies to the nearest project file and fetches every
 	// dependency it has.
 	VerbGet
+	// VerbTest compiles the tests in test files and runs each file's tests in
+	// a process of its own.
+	VerbTest
 	// VerbClean removes every fetched dependency.
 	VerbClean
 	// VerbLSP serves the language server protocol over stdin and stdout.
@@ -119,6 +131,7 @@ var verbs = []struct {
 }{
 	{"build", VerbBuild, "compile a program to a binary"},
 	{"run", VerbRun, "compile a program and run it, passing on the arguments after its file"},
+	{"test", VerbTest, "compile and run the tests in test files, passing on the arguments after --"},
 	{"get", VerbGet, "add dependencies to the project file and fetch every dependency"},
 	{"clean", VerbClean, "remove every fetched dependency"},
 	{"lsp", VerbLSP, "serve the language server protocol over stdin and stdout"},
@@ -230,6 +243,22 @@ type (
 		// it runs.
 		RunArgs []string
 
+		// TestTargets are what test was asked to test, as written: test files,
+		// directories, or directories followed by /... for every directory
+		// beneath them.
+		TestTargets []string
+
+		// TestPaths are test files parsed as roots beside InputPath.
+		TestPaths []base.Path
+
+		// RunPattern picks the tests test runs by name.
+		// Uses the --run flag, and must be a regular expression.
+		RunPattern string
+
+		// Parallel is how many test files test runs at once.
+		// Uses the --parallel flag with a default of the number of processors.
+		Parallel int
+
 		// Refs are the dependencies get adds, each spelled repo@version.
 		Refs []string
 
@@ -336,7 +365,7 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 		}
 		name := argv[0] + " " + name
 		switch v.verb {
-		case VerbBuild, VerbRun:
+		case VerbBuild, VerbRun, VerbTest:
 			return newCompile(v.verb, name, argv[2:], fileProvider)
 		case VerbGet:
 			return newGet(name, argv[2:])
@@ -421,6 +450,8 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 	var gcMarkers, gcPrecleanPasses, gcReturnAge int
 	var gcConcurrent bool
 	var gcRemarkGrowth float64
+	var runPattern string
+	var parallel int
 	stackSize, heapSize := defaultStackSize, defaultHeapSize
 	nurserySize, maxHeapSize := defaultNursery, defaultMaxHeap
 
@@ -442,34 +473,57 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 	fs.IntVar(&gcReturnAge, flagGCReturnAgeLong, defaultGCReturnAge, usageGCReturnAge)
 	fs.BoolVarP(&keepBuild, flagKeepBuildLong, flagKeepBuild, false, usageKeepBuild)
 	fs.BoolVarP(&noProject, flagNoProjectLong, flagNoProject, false, usageNoProject)
+	if verb == VerbTest {
+		fs.StringVar(&runPattern, flagRunPatternLong, "", usageRunPattern)
+		fs.IntVar(&parallel, flagParallelLong, runtime.NumCPU(), usageParallel)
+	}
 
 	if err := parse(fs, name, args); err != nil {
 		return nil, err
 	}
 
 	args = fs.Args()
-	switch {
-	case len(args) == 0:
-		return nil, errors.New("missing input file argument")
-	case len(args) > 1 && verb == VerbBuild:
-		return nil, fmt.Errorf("too many arguments: %v", args)
-	}
+	var inputPath base.Path
+	var runArgs, testTargets []string
+	if verb == VerbTest {
+		testTargets = args
+		if dash := fs.ArgsLenAtDash(); dash >= 0 {
+			testTargets, runArgs = args[:dash], args[dash:]
+		} else if dash := slices.Index(args, "--"); dash >= 0 {
+			testTargets, runArgs = args[:dash], args[dash+1:]
+		}
+		if len(testTargets) == 0 {
+			testTargets = []string{"."}
+		}
+		if _, err := regexp.Compile(runPattern); err != nil {
+			return nil, fmt.Errorf("invalid --%s pattern: %w", flagRunPatternLong, err)
+		}
+		if parallel < 1 {
+			return nil, fmt.Errorf("parallel must be positive: %d", parallel)
+		}
+	} else {
+		switch {
+		case len(args) == 0:
+			return nil, errors.New("missing input file argument")
+		case len(args) > 1 && verb == VerbBuild:
+			return nil, fmt.Errorf("too many arguments: %v", args)
+		}
 
-	// The entry file is named on the command line but is otherwise an
-	// ordinary file, and every other path reaches the parser normalized.
-	// Taken as typed, the bytecode would depend on how the compiler was
-	// invoked, and a file importing the entry by another spelling would
-	// parse it a second time under a second name.
-	inputPath, err := base.ParsePath(args[0])
-	if err != nil {
-		return nil, err
-	}
+		// The entry file is named on the command line but is otherwise an
+		// ordinary file, and every other path reaches the parser normalized.
+		// Taken as typed, the bytecode would depend on how the compiler was
+		// invoked, and a file importing the entry by another spelling would
+		// parse it a second time under a second name.
+		var err error
+		if inputPath, err = base.ParsePath(args[0]); err != nil {
+			return nil, err
+		}
 
-	var runArgs []string
-	if verb == VerbRun {
-		runArgs = args[1:]
-	} else if _, err := fileProvider.FileExists(base.Path(out)); err != nil {
-		return nil, err
+		if verb == VerbRun {
+			runArgs = args[1:]
+		} else if _, err := fileProvider.FileExists(base.Path(out)); err != nil {
+			return nil, err
+		}
 	}
 
 	if threads < 1 {
@@ -501,10 +555,12 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 			heapSize, nurserySize, maxHeapSize)
 	}
 
-	if exists, err := fileProvider.FileExists(inputPath); err != nil {
-		return nil, err
-	} else if !exists {
-		return nil, fmt.Errorf("input file not found: %s", inputPath)
+	if verb != VerbTest {
+		if exists, err := fileProvider.FileExists(inputPath); err != nil {
+			return nil, err
+		} else if !exists {
+			return nil, fmt.Errorf("input file not found: %s", inputPath)
+		}
 	}
 
 	return &Command{
@@ -526,6 +582,9 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 		EmitImage:        emitImage,
 		KeepBuild:        keepBuild,
 		RunArgs:          runArgs,
+		TestTargets:      testTargets,
+		RunPattern:       runPattern,
+		Parallel:         parallel,
 		NoProject:        noProject,
 		WriteProject:     true,
 	}, nil

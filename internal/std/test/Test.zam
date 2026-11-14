@@ -1,0 +1,117 @@
+import "../io/local/File.zam";
+import "../lang/Strs.zam";
+import "../lang/System.zam";
+import "../sync/Mutex.zam";
+
+// Test is the state of a test run: the test running, whether it has failed,
+// and how many have. The runner zam test generates calls Begin, End and Finish
+// around the tests; the tests themselves call Fail, Fatal and Log, which may
+// be called from any thread.
+public namespace Test {
+    private var Mutex* lock = Mutex::New();
+    private var str name = "";
+    private var bool failed = false;
+    private var uint failures = 0U;
+
+    // Begin starts the test called n.
+    public fun void(str) Begin = (n) {
+        {
+            lock.Lock();
+            defer lock.Unlock();
+            name = n;
+            failed = false;
+        }
+        File::StdOut.WriteStr("=== RUN   " + n + "\n");
+    }
+
+    // End reports whether the test begun last passed.
+    public fun void() End = () {
+        lock.Lock();
+        defer lock.Unlock();
+        if (failed) {
+            failures = failures + 1U;
+            File::StdOut.WriteStr("--- FAIL: " + name + "\n");
+        } else {
+            File::StdOut.WriteStr("--- PASS: " + name + "\n");
+        }
+    }
+
+    // Finish reports the run, exiting with status 1 if any test failed.
+    public fun void() Finish = () {
+        if (failures > 0U) {
+            File::StdOut.WriteStr("FAIL\n");
+            System::Exit(1);
+        }
+        File::StdOut.WriteStr("PASS\n");
+    }
+
+    // Name returns the name of the test running.
+    public fun str() Name = () {
+        return name;
+    }
+
+    // Log writes s under the test running, after the file and line the test
+    // called into this package from.
+    public fun void(str) Log = (s) {
+        File::StdOut.WriteStr("    " + Test::location() + s + "\n");
+    }
+
+    // location answers the base name and line of the first call outside this
+    // package, followed by a colon and a space, or nothing if none is known.
+    private fun str() location = () {
+        for (var uint skip = 0U; true; skip = skip + 1U) {
+            var (str, uint, bool) caller = System::Caller(skip);
+            if (!caller.2) {
+                return "";
+            }
+            if (!Test::internal(caller.0)) {
+                return Test::base(caller.0) + ":" + caller.1{str} + ": ";
+            }
+        }
+        return "";
+    }
+
+    // internal reports whether path is a file of this package.
+    private fun bool(str) internal = (path) {
+        var (byte*, int) p = Strs::ToBytes(path);
+        var (byte*, int) q = Strs::ToBytes("std://test/");
+        if (p.1 < q.1) {
+            return false;
+        }
+        for (var int i = 0; i < q.1; i = i + 1) {
+            if (p.0[i]{int} != q.0[i]{int}) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // base answers the last element of path.
+    private fun str(str) base = (path) {
+        var (byte*, int) p = Strs::ToBytes(path);
+        var int start = 0;
+        for (var int i = 0; i < p.1; i = i + 1) {
+            if (p.0[i]{int} == '/'{int}) {
+                start = i + 1;
+            }
+        }
+        return Strs::FromBytes(p.0 + start, p.1 - start);
+    }
+
+    // Fail marks the test running as failed and logs s. The test goes on.
+    public fun void(str) Fail = (s) {
+        {
+            lock.Lock();
+            defer lock.Unlock();
+            failed = true;
+        }
+        Test::Log(s);
+    }
+
+    // Fatal marks the test running as failed, logs s, and ends the run.
+    public fun void(str) Fatal = (s) {
+        Test::Fail(s);
+        File::StdOut.WriteStr("--- FAIL: " + name + "\nFAIL\n");
+        System::Exit(1);
+    }
+}

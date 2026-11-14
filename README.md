@@ -16,7 +16,6 @@ The best place to start is the [documentation](docs).
 
 ## TODO
 Zam is far from complete.
-* Implement a testing framework.
 * Implement debugging.
 * Export LLVM instead of bytecode.
 * Move to rust.

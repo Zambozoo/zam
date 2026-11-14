@@ -20,10 +20,10 @@ public class Once {
     // first f has.
     public fun void(void()) Do = (f) {
         this.m.Lock();
+        defer this.m.Unlock();
         if(!this.done) {
             f();
             this.done = true;
         }
-        this.m.Unlock();
     }
 }

@@ -1,5 +1,8 @@
 #include "thread.h"
 
+#include <errno.h>
+#include <unistd.h>
+
 #include "vm.h"
 
 // currentZamThread records which ZamThread the OS thread is driving. The C
@@ -23,6 +26,168 @@ static void zamSignalHandler(int sig) {
 }
 
 void zam_thread_bind_current(ZamThread *thread) { currentZamThread = thread; }
+
+ZamThread *zam_thread_current(void) { return currentZamThread; }
+
+// ZAMTRACE_FRAMES is how many frames a trace writes before saying how many
+// more there are, so that runaway recursion still ends in a readable trace.
+#define ZAMTRACE_FRAMES 64
+
+void zam_frames_begin(ZamFrames *frames, const ZamThread *thread) {
+    *frames = (ZamFrames){
+        .thread = thread,
+        .entry = thread->functionEntry,
+        .next = thread->instructionOffset,
+        .last = UINT64_MAX,
+        .more = true,
+    };
+}
+
+bool zam_frames_next(ZamFrames *frames, uint64_t *offset) {
+    const ZamThread *thread = frames->thread;
+    while (frames->more) {
+        uint64_t candidate = frames->next;
+
+        // The walk is asked for on the way out of a failure, so an entry that
+        // cannot be read ends it rather than failing a second time.
+        ZamMarkFunction entry;
+        if (frames->entry == ZAMMARK_NONE ||
+            frames->entry + sizeof entry > thread->markByteCount) {
+            frames->more = false;
+        } else {
+            memcpy(&entry, thread->marks + frames->entry, sizeof entry);
+            // A spawned thread's outermost frame was laid by the spawn rather
+            // than a call, and so names nowhere to come back to.
+            if (entry.previous == ZAMMARK_NONE && thread != &thread->vm->main)
+                frames->more = false;
+            frames->next = entry.returnInstruction;
+            frames->entry = entry.previous;
+        }
+
+        if (candidate == frames->last || candidate == 0)
+            continue;
+        frames->last = candidate;
+        *offset = candidate;
+        return true;
+    }
+    return false;
+}
+
+// TraceWriter gathers a trace a line at a time and writes it to fd, using
+// nothing a signal handler may not.
+typedef struct TraceWriter {
+    int fd;
+    size_t length;
+    char data[256];
+} TraceWriter;
+
+static void traceFlush(TraceWriter *w) {
+    size_t written = 0;
+    while (written < w->length) {
+        ssize_t n = write(w->fd, w->data + written, w->length - written);
+        if (n < 0 && errno == EINTR)
+            continue;
+        if (n <= 0)
+            break;
+        written += (size_t)n;
+    }
+    w->length = 0;
+}
+
+static void traceText(TraceWriter *w, const char *text) {
+    for (; *text != '\0'; text++) {
+        if (w->length == sizeof w->data)
+            traceFlush(w);
+        w->data[w->length++] = *text;
+    }
+}
+
+static void traceNumber(TraceWriter *w, uint64_t value, unsigned base) {
+    char digits[24];
+    size_t i = sizeof digits;
+    digits[--i] = '\0';
+    do {
+        digits[--i] = "0123456789abcdef"[value % base];
+        value /= base;
+    } while (value > 0);
+    traceText(w, digits + i);
+}
+
+void zam_thread_trace(const ZamThread *thread, uint64_t skip, int fd) {
+    const ZamImage *image = &thread->vm->image;
+    if (image->debugFunctionCount == 0)
+        return;
+
+    TraceWriter w = {.fd = fd};
+    ZamFrames frames;
+    zam_frames_begin(&frames, thread);
+    uint64_t offset, written = 0, elided = 0;
+    while (zam_frames_next(&frames, &offset)) {
+        if (skip > 0) {
+            skip--;
+            continue;
+        }
+        if (written == ZAMTRACE_FRAMES) {
+            elided++;
+            continue;
+        }
+        written++;
+
+        // The offset is just past the instruction, so the one before it is in
+        // the instruction itself.
+        const char *function = zam_image_function(image, offset - 1);
+        const char *file;
+        uint32_t line;
+        traceText(&w, "\tat ");
+        traceText(&w, function != NULL ? function : "?");
+        if (zam_image_locate(image, offset - 1, &file, &line)) {
+            traceText(&w, " (");
+            traceText(&w, file);
+            traceText(&w, ":");
+            traceNumber(&w, line, 10);
+            traceText(&w, ")");
+        }
+        traceText(&w, "\n");
+        traceFlush(&w);
+    }
+    if (elided > 0) {
+        traceText(&w, "\t... ");
+        traceNumber(&w, elided, 10);
+        traceText(&w, " more frames\n");
+        traceFlush(&w);
+    }
+}
+
+void zam_thread_trace_current(int fd) {
+    const ZamThread *thread = currentZamThread;
+    if (thread != NULL)
+        zam_thread_trace(thread, 0, fd);
+}
+
+// faultHandler says what was touched and where the thread touching it was,
+// then returns to the instruction that faulted. The handler is reset on entry,
+// so it faults again and ends the process by the signal.
+static void faultHandler(int sig, siginfo_t *info, void *context) {
+    (void)context;
+    TraceWriter w = {.fd = STDERR_FILENO};
+    traceText(&w, "\033[31m");
+    traceText(&w, sig == SIGBUS ? "bus error" : "invalid memory access");
+    traceText(&w, " at 0x");
+    traceNumber(&w, (uint64_t)(uintptr_t)info->si_addr, 16);
+    traceText(&w, "\n\033[0m");
+    traceFlush(&w);
+    zam_thread_trace_current(STDERR_FILENO);
+}
+
+void zam_thread_install_fault_handler(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = faultHandler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = SA_SIGINFO | SA_RESETHAND | SA_NODEFER;
+    (void)sigaction(SIGSEGV, &sa, NULL);
+    (void)sigaction(SIGBUS, &sa, NULL);
+}
 
 void zam_thread_install_signal_slot(ZamThread *thread, int sig, void *closure) {
     if (sig < 0 || sig >= ZAM_SIGNAL_MAX)

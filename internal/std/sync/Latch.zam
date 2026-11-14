@@ -23,28 +23,27 @@ public class Latch {
     // reaches zero. At zero it does nothing.
     public fun void() CountDown = () {
         this.m.Lock();
+        defer this.m.Unlock();
         if(this.count > 0U) {
             this.count--;
             if(this.count == 0U) {
                 this.c.Broadcast();
             }
         }
-        this.m.Unlock();
     }
 
     public fun uint() Count = () {
         this.m.Lock();
-        var uint n = this.count;
-        this.m.Unlock();
-        return n;
+        defer this.m.Unlock();
+        return this.count;
     }
 
     // Wait returns once the count is zero.
     public fun void() Wait = () {
         this.m.Lock();
+        defer this.m.Unlock();
         for(; this.count > 0U;) {
             this.c.Wait();
         }
-        this.m.Unlock();
     }
 }

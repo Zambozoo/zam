@@ -6,15 +6,34 @@ public namespace System {
         native(STD_SYSTEM_EXIT){void(int)}(code);
     }
 
+    // Panic writes s and where the program is to stderr, and ends it.
     public fun void(str) Panic = (s) {
         File::StdErr.WriteStr(s);
+        System::Trace();
         System::Exit(-1);
     }
 
     public fun void(str, any...) Panicf = (fmt, args) {
         var str s = Strs::Sprintf(fmt, args);
         File::StdErr.WriteStr(s);
+        System::Trace();
         System::Exit(-1);
+    }
+
+    // Trace writes where the calling thread is to stderr, a line per call it is
+    // inside of, starting with the method calling Trace.
+    public fun void() Trace = () {
+        native(STD_SYSTEM_TRACE){void()}();
+    }
+
+    // Caller answers the file and line skip calls out from the method calling
+    // Caller: that method's own line at 0, the line that called it at 1, and so
+    // on. The last element says whether there was such a call, and a line the
+    // program does not know the source of.
+    public fun (str, uint, bool)(uint) Caller = (skip) {
+        var (str, uint, bool) caller;
+        native(STD_SYSTEM_CALLER){void(uint, str*, uint*, bool*)}(skip, &(caller.0), &(caller.1), &(caller.2));
+        return caller;
     }
 
     // ProcessID reports the OS-level id of this process, which is what

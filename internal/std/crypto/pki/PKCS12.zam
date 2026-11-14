@@ -64,11 +64,11 @@ public namespace PKCS12 {
             return der;
         }
         var uint* handles = X509::handles(chain);
+        defer free(handles);
         var uint h = 0U;
         var int n = 0;
         var str errStr;
         native(STD_PKCS12_CREATE){void(byte*, int, uint, uint*, int, str, str, uint*, int*, str*)}(der.0.Arr(), der.0.Len(){int}, cert.handle, handles, X509::count(chain){int}, password, name, &h, &n, &errStr);
-        free(handles);
         return X509::take(h, n, errStr);
     }
 }

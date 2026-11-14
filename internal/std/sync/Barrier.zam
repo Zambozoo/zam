@@ -31,19 +31,18 @@ public class Barrier {
     // resets. It reports true to the last to arrive.
     public fun bool() Wait = () {
         this.m.Lock();
+        defer this.m.Unlock();
         var uint gen = this.generation;
         this.waiting++;
         if(this.waiting == this.parties) {
             this.waiting = 0U;
             this.generation++;
             this.c.Broadcast();
-            this.m.Unlock();
             return true;
         }
         for(; gen == this.generation;) {
             this.c.Wait();
         }
-        this.m.Unlock();
         return false;
     }
 }
