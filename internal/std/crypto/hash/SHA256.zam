@@ -1,5 +1,7 @@
-import "../../lang/Arr.zam";
-import "Digest.zam";
+import {
+    "../../lang/Arr.zam";
+    "Digest.zam";
+}
 
 // SHA-256 and SHA-224
 public namespace SHA256 {

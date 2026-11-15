@@ -1,11 +1,13 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "../../lang/time/Duration.zam";
-import "../../lang/time/Time.zam";
-import "../asymmetric/Key.zam";
-import "../hash/Digest.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "../../lang/time/Duration.zam";
+    "../../lang/time/Time.zam";
+    "../asymmetric/Key.zam";
+    "../hash/Digest.zam";
+}
 
 // X509 is an X.509 certificate. Certificates are read from PEM, one or a
 // chain, or DER, and issued from a Template, self-signed or by an issuer.

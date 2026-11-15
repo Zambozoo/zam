@@ -1,7 +1,9 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "Key.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "Key.zam";
+}
 
 // Module-Lattice-Based Key-Encapsulation Mechanism (FIPS 203), with keys of
 // the ML_KEM_512, ML_KEM_768 or ML_KEM_1024 kinds

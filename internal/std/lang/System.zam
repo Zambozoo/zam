@@ -1,5 +1,7 @@
-import "../io/local/File.zam";
-import "Strs.zam";
+import {
+    "../io/local/File.zam";
+    "Strs.zam";
+}
 
 public namespace System {
     public fun void(int) Exit = (code) {

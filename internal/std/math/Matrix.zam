@@ -1,8 +1,10 @@
-import "../lang/System.zam";
-import "../lang/Obj.zam";
-import "Flts.zam";
-import "Hash.zam";
-import "Vector.zam";
+import {
+    "../lang/System.zam";
+    "../lang/Obj.zam";
+    "Flts.zam";
+    "Hash.zam";
+    "Vector.zam";
+}
 
 // Matrix of flts laid out row by row, with dimensions set when it is made
 public class Matrix {

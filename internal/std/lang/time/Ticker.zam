@@ -1,6 +1,8 @@
-import "../System.zam";
-import "Duration.zam";
-import "Timer.zam";
+import {
+    "../System.zam";
+    "Duration.zam";
+    "Timer.zam";
+}
 
 // Ticker ticks every period from when it is made or reset until it is
 // stopped. Each tick lets one Wait through; ticks no one waits for are

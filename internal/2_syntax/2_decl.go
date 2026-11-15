@@ -2558,7 +2558,7 @@ func Instantiate(t Type, types map[GenericArgKey]Type, start *Token, outerDecl D
 	case *TypePrimitive:
 		return &TypePrimitive{start: start, outerDecl: outerDecl, kind: t.kind}
 	case *TypeReference:
-		return &TypeReference{start: start, outerDecl: outerDecl, Ids: t.Ids, Path: t.Path, decl: t.decl}
+		return &TypeReference{start: start, outerDecl: outerDecl, Ids: t.Ids, Path: t.Path, decl: t.decl, imports: t.imports}
 	case *TypeTailed:
 		return &TypeTailed{start: start, outerDecl: outerDecl, Type: Instantiate(t.Type, types, start, outerDecl).(*TypeReference), Size: t.Size}
 	case *TypeTuple:

@@ -1,6 +1,8 @@
-import "../../lang/System.zam";
-import "../../lang/Arr.zam";
-import "../../math/Rand.zam";
+import {
+    "../../lang/System.zam";
+    "../../lang/Arr.zam";
+    "../../math/Rand.zam";
+}
 
 // Sorted skiplist map
 public class SkipMap[A, B] {

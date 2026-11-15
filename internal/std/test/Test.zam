@@ -1,7 +1,9 @@
-import "../io/local/File.zam";
-import "../lang/Strs.zam";
-import "../lang/System.zam";
-import "../sync/Mutex.zam";
+import {
+    "../io/local/File.zam";
+    "../lang/Strs.zam";
+    "../lang/System.zam";
+    "../sync/Mutex.zam";
+}
 
 // Test is the state of a test run: the test running, whether it has failed,
 // and how many have. The runner zam test generates calls Begin, End and Finish

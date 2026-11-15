@@ -1,5 +1,7 @@
-import "../../lang/Arr.zam";
-import "Digest.zam";
+import {
+    "../../lang/Arr.zam";
+    "Digest.zam";
+}
 
 // Message-Digest Algorithm 5, broken and only for interoperating
 public namespace MD5 {

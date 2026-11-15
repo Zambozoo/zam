@@ -1,7 +1,9 @@
-import "../lang/System.zam";
-import "../lang/Obj.zam";
-import "Hash.zam";
-import "BigInt.zam";
+import {
+    "../lang/System.zam";
+    "../lang/Obj.zam";
+    "Hash.zam";
+    "BigInt.zam";
+}
 
 // Immutable arbitrary-precision rational number, kept in lowest terms with a
 // positive denominator

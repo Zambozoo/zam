@@ -1,6 +1,8 @@
-import "../lang/System.zam";
-import "Flts.zam";
-import "Vector.zam";
+import {
+    "../lang/System.zam";
+    "Flts.zam";
+    "Vector.zam";
+}
 
 // Quaternion w + xi + yj + zk
 public struct Quaternion {

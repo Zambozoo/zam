@@ -1,7 +1,9 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+}
 
 // Base 16, written in lower case and read in either case
 public namespace Hex {

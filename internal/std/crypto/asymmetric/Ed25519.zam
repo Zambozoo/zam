@@ -1,6 +1,8 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "Key.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "Key.zam";
+}
 
 // Edwards-curve Digital Signature Algorithm over Curve25519 (RFC 8032)
 public namespace Ed25519 {

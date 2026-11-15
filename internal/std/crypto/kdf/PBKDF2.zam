@@ -1,7 +1,9 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../hash/Digest.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../hash/Digest.zam";
+}
 
 // Password-Based Key Derivation Function 2 (RFC 8018), over an HMAC of a
 // Digest.Kind

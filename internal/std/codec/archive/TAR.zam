@@ -1,6 +1,8 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "Archive.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "Archive.zam";
+}
 
 // Tar archives, written in POSIX pax form and read in any tar form,
 // compressed by gzip, bzip2, xz, zstd or lz4 or not at all

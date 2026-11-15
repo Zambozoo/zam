@@ -1,9 +1,11 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/Obj.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "../../lang/time/Time.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/Obj.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "../../lang/time/Time.zam";
+}
 
 // BSON document over libbson. Members are read by key and appended in order;
 // an array is a document whose keys are "0", "1" and so on. A document read

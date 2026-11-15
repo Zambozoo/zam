@@ -1,7 +1,9 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "AEAD.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "AEAD.zam";
+}
 
 // Salsa20 and XSalsa20 stream ciphers, with 32-byte keys
 public namespace Salsa20 {

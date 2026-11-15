@@ -1,8 +1,10 @@
-import "../lang/Uints.zam";
-import "../lang/System.zam";
-import "../lang/Obj.zam";
-import "../lang/Strs.zam";
-import "Hash.zam";
+import {
+    "../lang/Uints.zam";
+    "../lang/System.zam";
+    "../lang/Obj.zam";
+    "../lang/Strs.zam";
+    "Hash.zam";
+}
 
 // Immutable arbitrary-precision integer. The magnitude is held as base 2^32
 // limbs, least significant first, with no zero limbs at the top.

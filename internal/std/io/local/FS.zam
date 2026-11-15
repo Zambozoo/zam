@@ -1,9 +1,11 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "../../lang/time/Time.zam";
-import "File.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "../../lang/time/Time.zam";
+    "File.zam";
+}
 
 // Operations on the paths of the local file system
 public namespace FS {

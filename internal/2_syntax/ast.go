@@ -28,6 +28,9 @@ type (
 		// shadows the enclosing decl's.
 		Method() **FieldMethod
 		File() **File
+		// Imports returns a pointer to the import scope of the block currently
+		// being parsed, which is nil outside of any block that imports.
+		Imports() **ImportScope
 		Match(kinds ...TokenKind) (*Token, error)
 		Peek() (*Token, error)
 		Project() *Project

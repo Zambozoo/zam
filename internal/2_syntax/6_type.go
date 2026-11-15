@@ -137,6 +137,10 @@ type (
 		// through the imports of the file it sits in.
 		Path base.Path
 
+		// imports is the import scope of the block the reference was written
+		// in, or nil for one written outside of any block that imports.
+		imports *ImportScope
+
 		// decl is the declaration of the tailed type.
 		decl DeclTypeable
 		// alias is the alias the reference resolved to in place of a
@@ -606,6 +610,7 @@ func newTypePath(parser SyntaxParser, ids []string, idTokens []*Token) Type {
 		outerDecl: *parser.Decl(),
 		Ids:       ids,
 		IdTokens:  idTokens,
+		imports:   *parser.Imports(),
 	}
 }
 
@@ -1370,6 +1375,12 @@ func (t *TypeReference) Kind() TypeKind {
 // OuterDecl implements the [Type] interface.
 func (t *TypeReference) OuterDecl() Decl {
 	return t.outerDecl
+}
+
+// Imports answers the import scope of the block the reference was written in,
+// or nil for one written outside of any block that imports.
+func (t *TypeReference) Imports() *ImportScope {
+	return t.imports
 }
 
 // Map implements the [Type] interface.

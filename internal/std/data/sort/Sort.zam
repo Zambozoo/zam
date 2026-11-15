@@ -1,6 +1,8 @@
-import "../../lang/Arr.zam";
-import "../../lang/Arrs.zam";
-import "../list/ArrList.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Arrs.zam";
+    "../list/ArrList.zam";
+}
 
 // TimSort
 public namespace Sort {

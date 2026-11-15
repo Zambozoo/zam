@@ -1,6 +1,8 @@
-import "../../lang/System.zam";
-import "../../lang/Arr.zam";
-import "../../lang/Struct.zam";
+import {
+    "../../lang/System.zam";
+    "../../lang/Arr.zam";
+    "../../lang/Struct.zam";
+}
 
 // Meldable min max heap of twin pairing heaps sharing their nodes
 public class PairHeap[A] {

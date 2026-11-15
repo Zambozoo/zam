@@ -1,5 +1,7 @@
-import "../../lang/System.zam";
-import "../../lang/Arr.zam";
+import {
+    "../../lang/System.zam";
+    "../../lang/Arr.zam";
+}
 
 // Open-addressed hash map with linear probing
 public class HashMap[A, B] {

@@ -1,7 +1,9 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "Key.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "Key.zam";
+}
 
 // Hybrid Public Key Encryption (RFC 9180) in its base mode: a message sealed
 // to a recipient's public key, with a KEM, KDF and AEAD agreed on beforehand

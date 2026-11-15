@@ -1,5 +1,7 @@
-import "../../lang/Arr.zam";
-import "../../lang/Arrs.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Arrs.zam";
+}
 
 public namespace MergeSort {
     // Merges the two sorted halves arr[l..m] and arr[m+1..r] through buf

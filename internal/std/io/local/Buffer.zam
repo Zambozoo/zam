@@ -1,7 +1,9 @@
-import "../../lang/Arrs.zam";
-import "../../lang/Err.zam";
-import "../../lang/Strs.zam";
-import "../../lang/System.zam";
+import {
+    "../../lang/Arrs.zam";
+    "../../lang/Err.zam";
+    "../../lang/Strs.zam";
+    "../../lang/System.zam";
+}
 
 // Growable in-memory run of bytes, written at the back and read from the
 // front. It is a Stream whose end is wherever its unread bytes run out.

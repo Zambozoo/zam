@@ -1,6 +1,8 @@
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "Socket.zam";
+import {
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "Socket.zam";
+}
 
 // Stream connections over Unix domain sockets, named by file system paths
 public namespace UnixSocket {

@@ -1,8 +1,10 @@
-import "../../lang/System.zam";
-import "../../lang/Arr.zam";
-import "../../lang/Struct.zam";
-import "../list/ArrList.zam";
-import "../map/TreeMap.zam";
+import {
+    "../../lang/System.zam";
+    "../../lang/Arr.zam";
+    "../../lang/Struct.zam";
+    "../list/ArrList.zam";
+    "../map/TreeMap.zam";
+}
 
 // Ordered radix trie map from runs of A to B, each node keeping its children in
 // a tree map keyed by the first element of their edges

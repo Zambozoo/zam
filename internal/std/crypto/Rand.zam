@@ -1,5 +1,7 @@
-import "../lang/Arr.zam";
-import "../lang/System.zam";
+import {
+    "../lang/Arr.zam";
+    "../lang/System.zam";
+}
 
 // Rand draws from the system's cryptographically secure generator.
 public namespace Rand {

@@ -1,6 +1,8 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "Key.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "Key.zam";
+}
 
 // X25519 Diffie-Hellman key agreement (RFC 7748)
 public namespace X25519 {

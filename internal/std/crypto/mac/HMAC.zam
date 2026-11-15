@@ -1,9 +1,11 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "../Subtle.zam";
-import "../hash/Digest.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "../Subtle.zam";
+    "../hash/Digest.zam";
+}
 
 // HMAC is a running keyed-hash message authentication code (RFC 2104) over a
 // Digest.Kind.

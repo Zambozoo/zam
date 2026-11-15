@@ -1,8 +1,10 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../hash/Digest.zam";
-import "ECDH.zam";
-import "Key.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../hash/Digest.zam";
+    "ECDH.zam";
+    "Key.zam";
+}
 
 // Elliptic Curve Digital Signature Algorithm over the NIST curves P256, P384
 // and P521, with DER-encoded signatures

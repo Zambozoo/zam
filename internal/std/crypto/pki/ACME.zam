@@ -1,16 +1,18 @@
-import "../../codec/format/JSON.zam";
-import "../../codec/text/Base64.zam";
-import "../../io/web/HTTP.zam";
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "../../lang/time/Duration.zam";
-import "../../lang/time/Timer.zam";
-import "../asymmetric/ECDSA.zam";
-import "../asymmetric/Key.zam";
-import "../hash/Digest.zam";
-import "../hash/SHA256.zam";
+import {
+    "../../codec/format/JSON.zam";
+    "../../codec/text/Base64.zam";
+    "../../io/web/HTTP.zam";
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "../../lang/time/Duration.zam";
+    "../../lang/time/Timer.zam";
+    "../asymmetric/ECDSA.zam";
+    "../asymmetric/Key.zam";
+    "../hash/Digest.zam";
+    "../hash/SHA256.zam";
+}
 
 // ACME is a client of an Automatic Certificate Management Environment (RFC
 // 8555) server, such as Let's Encrypt, under one account. The account key is

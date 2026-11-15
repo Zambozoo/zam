@@ -1,7 +1,9 @@
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../local/File.zam";
-import "IP.zam";
+import {
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../local/File.zam";
+    "IP.zam";
+}
 
 // Connected socket, read and written as the File it is. A Unix socket has
 // paths where an IP socket has addresses.

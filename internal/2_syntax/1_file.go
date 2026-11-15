@@ -64,6 +64,18 @@ type (
 		// ImportedFile is the file that the import is importing.
 		ImportedFile *File
 	}
+
+	// ImportScope is the imports a block has brought into scope by some point
+	// in it. Each import statement in a block starts a new scope, so a type
+	// written before the statement does not see what it imports.
+	ImportScope struct {
+		// Outer is the scope of the enclosing block, or nil for a block whose
+		// only enclosing imports are the file's.
+		Outer *ImportScope
+		// Imports maps each id to the imports written under it in the block
+		// up to and including the statement that started the scope.
+		Imports map[string][]*Import
+	}
 )
 
 // newFile creates a new file in the project.
@@ -83,41 +95,12 @@ func newFile(parser SyntaxParser, path base.Path) (*File, error) {
 			break
 		}
 
-		recoverFrom := parser.Checkpoint()
-		importStmts, err := newImport(parser, tok)
+		importStmts, ok, err := parseImport(parser, tok)
 		if err != nil {
-			brokenImports = true
-			// An import that was read whole but names nothing has no rest of
-			// the statement to skip, and skipping to the next `;` would take
-			// the next import with it.
-			var unresolved *unresolvedImport
-			if errors.As(err, &unresolved) {
-				parser.ReportAt(unresolved.err, tok)
-				continue
-			}
-			if err := recoverFrom(err); err != nil {
-				return nil, err
-			}
-			continue
+			return nil, err
 		}
-
-		for _, importStmt := range importStmts {
-			id := importStmt.ID()
-			// Two imports under one id are allowed only when neither carries
-			// an alias: a package name may hold more than one file, since
-			// every file in the package has a decl of its own to be reached
-			// by name, but an alias is a renaming and renaming the same
-			// thing twice is the error the duplicate check caught in the
-			// first place. A glob expands into unaliased imports under one
-			// id per file it matched, which the same rule covers.
-			if existing := imports[id]; len(existing) > 0 {
-				if importStmt.Alias != nil || slices.ContainsFunc(existing, func(prev *Import) bool { return prev.Alias != nil }) {
-					parser.Report(fmt.Errorf("duplicate import %q", id))
-					continue
-				}
-			}
-			imports[id] = append(imports[id], importStmt)
-		}
+		brokenImports = brokenImports || !ok
+		addImports(parser, imports, importStmts)
 	}
 
 	f := File{
@@ -140,6 +123,83 @@ func newFile(parser SyntaxParser, path base.Path) (*File, error) {
 	}
 
 	return &f, nil
+}
+
+// parseImport reads the import statement tok starts, either one import or a
+// braced group of them, answering false when any of it was broken and has been
+// recovered from. What was read whole is answered either way.
+func parseImport(parser SyntaxParser, tok *Token) ([]*Import, bool, error) {
+	if lb, err := parser.Match(TTLeftBrace); err != nil {
+		return nil, false, err
+	} else if lb == nil {
+		return parseImportSpec(parser, tok)
+	}
+
+	var imports []*Import
+	ok := true
+	for {
+		if rb, err := parser.Match(TTRightBrace); err != nil {
+			return nil, false, err
+		} else if rb != nil {
+			return imports, ok, nil
+		}
+
+		start, err := parser.Peek()
+		if err != nil {
+			return nil, false, err
+		}
+		specs, specOK, err := parseImportSpec(parser, start)
+		if err != nil {
+			return nil, false, err
+		}
+		imports = append(imports, specs...)
+		ok = ok && specOK
+	}
+}
+
+// parseImportSpec reads one import from tok to its `;`, answering false when
+// it was broken and has been recovered from.
+func parseImportSpec(parser SyntaxParser, tok *Token) ([]*Import, bool, error) {
+	recoverFrom := parser.Checkpoint()
+	importStmts, err := newImport(parser, tok)
+	if err == nil {
+		return importStmts, true, nil
+	}
+
+	// An import that was read whole but names nothing has no rest of the
+	// statement to skip, and skipping to the next `;` would take the next
+	// import with it.
+	var unresolved *unresolvedImport
+	if errors.As(err, &unresolved) {
+		parser.ReportAt(unresolved.err, tok)
+		return nil, false, nil
+	}
+	if err := recoverFrom(err); err != nil {
+		return nil, false, err
+	}
+	return nil, false, nil
+}
+
+// addImports adds importStmts to imports, reporting any that duplicate an id
+// already there.
+//
+// Two imports under one id are allowed only when neither carries an alias: a
+// package name may hold more than one file, since every file in the package
+// has a decl of its own to be reached by name, but an alias is a renaming and
+// renaming the same thing twice is the error the duplicate check catches. A
+// glob expands into unaliased imports under one id per file it matched, which
+// the same rule covers.
+func addImports(parser SyntaxParser, imports map[string][]*Import, importStmts []*Import) {
+	for _, importStmt := range importStmts {
+		id := importStmt.ID()
+		if existing := imports[id]; len(existing) > 0 {
+			if importStmt.Alias != nil || slices.ContainsFunc(existing, func(prev *Import) bool { return prev.Alias != nil }) {
+				parser.Report(fmt.Errorf("duplicate import %q", id))
+				continue
+			}
+		}
+		imports[id] = append(imports[id], importStmt)
+	}
 }
 
 // Accept implements the [FileVisitor] interface.

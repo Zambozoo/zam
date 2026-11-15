@@ -1,6 +1,8 @@
-import "../lang/System.zam";
-import "Mutex.zam";
-import "Cond.zam";
+import {
+    "../lang/System.zam";
+    "Mutex.zam";
+    "Cond.zam";
+}
 
 // Reusable barrier that holds threads until a fixed number have arrived
 public class Barrier {

@@ -1,7 +1,9 @@
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "IP.zam";
-import "Socket.zam";
+import {
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "IP.zam";
+    "Socket.zam";
+}
 
 // UDP datagrams, over IPv4 and IPv6
 public namespace UDP {

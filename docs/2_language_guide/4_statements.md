@@ -1,5 +1,9 @@
 # Statements
 
+## Import
+An `import` may be written as a statement in a block, scoping it to the rest of that block.
+See [0_files_and_imports.md](/docs/2_language_guide/0_files_and_imports.md#scoped-imports).
+
 ## Defer
 `defer` runs a statement when control leaves the block it is written in, however it leaves: by reaching the end, by `return`, or by a `break` or `continue` out of it.
 ```

@@ -1,5 +1,7 @@
-import "../../lang/Arr.zam";
-import "../../lang/Uints.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Uints.zam";
+}
 
 public namespace InsertionSort {
     public fun[A] void(uint, A...) Sort = (len, arr) {

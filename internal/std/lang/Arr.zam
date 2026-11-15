@@ -1,5 +1,7 @@
-import "Arrs.zam";
-import "System.zam";
+import {
+    "Arrs.zam";
+    "System.zam";
+}
 
 // Collected array that owns the run it wraps
 public class Arr[A] {

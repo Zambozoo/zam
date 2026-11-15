@@ -14,7 +14,8 @@ Import paths ending in `*` include all code files in specified directory.
 If no valid code file is referenced by a path, a compile error occurs.
 Imports are defined as follows:
 ```
-`import` (ALIAS `=`)? (PATH | PACKAGE_NAME `(` PATH `)`) `;`
+IMPORT      = `import` (IMPORT_SPEC | `{` IMPORT_SPEC* `}`)
+IMPORT_SPEC = (ALIAS `=`)? (PATH | PACKAGE_NAME `(` PATH `)`) `;`
 ```
 
 Imports can then be referenced by either their package and file name.
@@ -49,6 +50,29 @@ Glob imports cannot be aliased.
 ```
 import alias = "some/glob/path/*"; // <-- Error!
 ```
+
+Several imports can be grouped under one `import`.
+```
+import {
+    std("data/list/ArrList.zam");
+    alias = "some/local/File.zam";
+}
+```
+
+## Scoped Imports
+An import may also be written among the statements of a block.
+It is in scope from where it is written to the end of that block, and is not visible to anything written before it.
+```
+fun void() Run = () {
+    import std("data/list/ArrList.zam");
+    var ArrList[str]* list = ArrList::[str]New(0);
+}
+```
+
+A name is resolved innermost outward: the imports of each enclosing block, then each enclosing declaration, then the file's imports.
+A scoped import therefore shadows a declaration or file import of the same name.
+Within one block, scoped imports follow the same duplicate and aliasing rules as a file's imports.
+A grouped import in a block comes into scope at its closing `}`.
 
 ## Root Declarations
 The root declaration name must match the code file name.

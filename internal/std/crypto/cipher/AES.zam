@@ -1,7 +1,9 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "AEAD.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "AEAD.zam";
+}
 
 // Advanced Encryption Standard, with keys of 16, 24 or 32 bytes and IVs of
 // BlockSize bytes

@@ -1,8 +1,10 @@
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "../../lang/Objs.zam";
-import "Streams.zam";
+import {
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "../../lang/Objs.zam";
+    "Streams.zam";
+}
 
 public class File {
     // The POSIX open flags

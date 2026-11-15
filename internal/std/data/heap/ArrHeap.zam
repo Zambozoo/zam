@@ -1,6 +1,8 @@
-import "../../lang/Arrs.zam";
-import "../../lang/System.zam";
-import "../../lang/Arr.zam";
+import {
+    "../../lang/Arrs.zam";
+    "../../lang/System.zam";
+    "../../lang/Arr.zam";
+}
 
 // Array-based min max heap
 public class ArrHeap[A] {

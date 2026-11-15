@@ -55,9 +55,17 @@ func (r *referenceTypeResolverVisitor) VisitFile(f *syntax.File) error {
 
 // VisitImport implements [syntax.FileVisitor].
 func (r *referenceTypeResolverVisitor) VisitImport(i *syntax.Import) error {
-	file, _ := r.ast.CodeFiles.Get(i.Path) // syntax parsing passed, index is valid.
-	i.ImportedFile = file
+	r.bindImport(i)
 	return nil
+}
+
+// bindImport points i at the file it imports. An import written in a block is
+// not among its file's imports, so it is bound by the first reference that
+// resolves through it instead.
+func (r *referenceTypeResolverVisitor) bindImport(i *syntax.Import) {
+	if i.ImportedFile == nil {
+		i.ImportedFile, _ = r.ast.CodeFiles.Get(i.Path) // syntax parsing passed, index is valid.
+	}
 }
 
 func (r *referenceTypeResolverVisitor) visitDecl(d syntax.Decl) {
@@ -455,13 +463,14 @@ func (r *referenceTypeResolverVisitor) setDecl(t *syntax.TypeReference, d syntax
 
 // visitTypeReference resolves a written name to the declaration it stands for.
 //
-// The search runs innermost outward: every enclosing declaration in turn, and
-// then the file's imports. A declaration in scope therefore shadows an import of
-// the same name, a name meaning the nearest thing it could mean — the discipline
-// the variable and label scopes already follow. Nothing here counts the ids to
-// decide what the head is: a head is an import only where nothing nearer
-// answered to it, which is why a nested declaration can be named from inside the
-// file that wrote it as well as from outside.
+// The search runs innermost outward: the imports of every enclosing block, every
+// enclosing declaration in turn, and then the file's imports. A block's import
+// therefore shadows a declaration of the same name, and a declaration in scope
+// shadows a file's import, a name meaning the nearest thing it could mean — the
+// discipline the variable and label scopes already follow. Nothing here counts
+// the ids to decide what the head is: a head is an import only where nothing
+// nearer answered to it, which is why a nested declaration can be named from
+// inside the file that wrote it as well as from outside.
 //
 // An import shadowed this way is reached by renaming it where it is imported,
 // there being no other way to write it.
@@ -472,6 +481,14 @@ func (r *referenceTypeResolverVisitor) visitTypeReference(t *syntax.TypeReferenc
 			return fmt.Errorf("declaration %q not found", t.String())
 		}
 		return r.setDecl(t, file.Decl)
+	}
+
+	for scope := t.Imports(); scope != nil; scope = scope.Outer {
+		if decl, err := r.importsDecl(t, scope.Imports); err != nil {
+			return err
+		} else if decl != nil {
+			return r.setDecl(t, decl)
+		}
 	}
 
 	for outerDecl := t.OuterDecl(); outerDecl != nil; outerDecl = outerDecl.OuterDecl() {
@@ -498,32 +515,7 @@ func (r *referenceTypeResolverVisitor) visitTypeReference(t *syntax.TypeReferenc
 		return r.setDecl(t, decl)
 	}
 
-	// An import names a file and a file names one declaration, so what follows
-	// the import has to be that declaration before anything nested inside it
-	// can be reached through it. One id may hold more than one import — a
-	// package name is the usual case — so the right one is the one whose file
-	// declares a top-level type whose name matches the next id.
-	if imports, ok := t.OuterDecl().File().Imports[t.Ids[0]]; ok && len(t.Ids) > 1 {
-		if decl, err := importedDecl(t, imports, t.Ids[1:], false); err != nil {
-			return err
-		} else if decl != nil {
-			return r.setDecl(t, decl)
-		}
-	}
-
-	// A single-id reference also resolves against the file's imports when one
-	// of them carries a top-level declaration of that name. The dotted form
-	// above is the fully-qualified spelling; this is the shorthand that lets a
-	// `import "../Err.zam"` or `import std("Err.zam")` be reached as just
-	// `Err`. Walking every import rather than keying by id covers both the
-	// relative form (whose id is "Err" already) and the package form (whose
-	// id is the package name, "std"). An aliased import is reached only by its
-	// alias, which is what lets two imports declaring one name be told apart.
-	var all []*syntax.Import
-	for _, imports := range t.OuterDecl().File().Imports {
-		all = append(all, imports...)
-	}
-	if decl, err := importedDecl(t, all, t.Ids, true); err != nil {
+	if decl, err := r.importsDecl(t, t.OuterDecl().File().Imports); err != nil {
 		return err
 	} else if decl != nil {
 		return r.setDecl(t, decl)
@@ -532,14 +524,44 @@ func (r *referenceTypeResolverVisitor) visitTypeReference(t *syntax.TypeReferenc
 	return fmt.Errorf("declaration %q not found", t.String())
 }
 
+// importsDecl finds what t names among imports, answering nil when none of
+// them has a declaration of that name.
+func (r *referenceTypeResolverVisitor) importsDecl(t *syntax.TypeReference, imports map[string][]*syntax.Import) (syntax.Decl, error) {
+	// An import names a file and a file names one declaration, so what follows
+	// the import has to be that declaration before anything nested inside it
+	// can be reached through it. One id may hold more than one import — a
+	// package name is the usual case — so the right one is the one whose file
+	// declares a top-level type whose name matches the next id.
+	if byID, ok := imports[t.Ids[0]]; ok && len(t.Ids) > 1 {
+		if decl, err := r.importedDecl(t, byID, t.Ids[1:], false); err != nil || decl != nil {
+			return decl, err
+		}
+	}
+
+	// A single-id reference also resolves against the imports when one of them
+	// carries a top-level declaration of that name. The dotted form above is
+	// the fully-qualified spelling; this is the shorthand that lets a
+	// `import "../Err.zam"` or `import std("Err.zam")` be reached as just
+	// `Err`. Walking every import rather than keying by id covers both the
+	// relative form (whose id is "Err" already) and the package form (whose
+	// id is the package name, "std"). An aliased import is reached only by its
+	// alias, which is what lets two imports declaring one name be told apart.
+	var all []*syntax.Import
+	for _, byID := range imports {
+		all = append(all, byID...)
+	}
+	return r.importedDecl(t, all, t.Ids, true)
+}
+
 // importedDecl finds what ids name among imports, ids[0] being the name of an
 // imported file's declaration and the rest a path nested inside it, skipping
 // aliased imports when told to. Two imports answering with different
 // declarations make the name ambiguous, since which one was meant is for an
 // alias to say.
-func importedDecl(t *syntax.TypeReference, imports []*syntax.Import, ids []string, skipAliased bool) (syntax.Decl, error) {
+func (r *referenceTypeResolverVisitor) importedDecl(t *syntax.TypeReference, imports []*syntax.Import, ids []string, skipAliased bool) (syntax.Decl, error) {
 	var found syntax.Decl
 	for _, imp := range imports {
+		r.bindImport(imp)
 		if imp.ImportedFile == nil || (skipAliased && imp.Alias != nil) {
 			continue
 		}

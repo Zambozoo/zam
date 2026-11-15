@@ -1,6 +1,8 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "Archive.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "Archive.zam";
+}
 
 // Zip archives, written with deflate and read with any method libarchive
 // supports

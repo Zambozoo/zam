@@ -1,6 +1,7 @@
 package syntax
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -1418,4 +1419,98 @@ func TestGetRefusesAnUnwritablePackageName(t *testing.T) {
 	got, err := os.ReadFile(projectFile)
 	require.NoError(t, err)
 	assert.Equal(t, project, string(got))
+}
+
+// TestNewASTScopesBlockImports pins how an import written in a block is read:
+// a type written after it carries it in scope, one written before it does not,
+// a duplicate within one block is refused while one in a nested block is not,
+// and an import that names nothing marks the file's imports broken.
+func TestNewASTScopesBlockImports(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir)
+	writeFile(t, dir, "Sec.zam", "namespace Sec { }\n")
+	entry := writeFile(t, dir, "Main.zam", `namespace Main {
+    static fun void() f = () {
+        var Sec before;
+        import s = "Sec.zam";
+        var Sec after;
+        {
+            import s = "Sec.zam";
+        }
+        import s = "Sec.zam";
+        import "Missing/*";
+    }
+}
+`)
+	ast, errs := NewAST(&command.Command{InputPath: base.Path(entry), MaxThreads: 1}, &base.FileProvider{}, &mock_PackageProvider{})
+	require.Len(t, errs, 2, "%v", errs)
+	assert.ErrorContains(t, errs[0], `duplicate import "s"`)
+	require.NotNil(t, ast)
+
+	file, _ := ast.CodeFiles.Get(base.Path(entry))
+	assert.True(t, file.BrokenImports)
+	assert.Empty(t, file.Imports)
+
+	method, ok := ast.MainCodeDecl.GetStaticMethod("f")
+	require.True(t, ok)
+	body := method.Body.(*StmtBlock)
+	require.Len(t, body.Stmts, 3)
+
+	before := body.Stmts[0].(*StmtVariable).Type.(*TypeReference)
+	assert.Nil(t, before.Imports())
+
+	after := body.Stmts[1].(*StmtVariable).Type.(*TypeReference)
+	require.NotNil(t, after.Imports())
+	assert.Nil(t, after.Imports().Outer)
+	require.Len(t, after.Imports().Imports["s"], 1)
+	assert.Equal(t, "Sec.zam", after.Imports().Imports["s"][0].Path.Base())
+}
+
+// TestNewASTReadsGroupedImports pins the braced form of an import: each entry
+// is an import of its own at file and block level alike, a broken entry is
+// recovered from without losing the rest, and a duplicate within a group is
+// refused as it would be across two statements.
+func TestNewASTReadsGroupedImports(t *testing.T) {
+	dir := t.TempDir()
+	writeManifest(t, dir)
+	writeFile(t, dir, "A.zam", "namespace A { }\n")
+	writeFile(t, dir, "B.zam", "namespace B { }\n")
+	entry := writeFile(t, dir, "Main.zam", `import {
+    "A.zam";
+    b = "B.zam";
+}
+
+namespace Main {
+    static fun void() f = () {
+        import {
+            "Missing/*";
+            x = "A.zam" "B.zam";
+            s = "A.zam";
+            s = "B.zam";
+        }
+        var A after;
+    }
+}
+`)
+	ast, errs := NewAST(&command.Command{InputPath: base.Path(entry), MaxThreads: 1}, &base.FileProvider{}, &mock_PackageProvider{})
+	require.Len(t, errs, 3, "%v", errs)
+	assert.ErrorContains(t, errors.Join(errs...), `duplicate import "s"`)
+	require.NotNil(t, ast)
+
+	file, _ := ast.CodeFiles.Get(base.Path(entry))
+	assert.True(t, file.BrokenImports)
+	require.Len(t, file.Imports["A"], 1)
+	require.Len(t, file.Imports["b"], 1)
+	assert.Equal(t, "B.zam", file.Imports["b"][0].Path.Base())
+
+	method, ok := ast.MainCodeDecl.GetStaticMethod("f")
+	require.True(t, ok)
+	body := method.Body.(*StmtBlock)
+	require.Len(t, body.Stmts, 1)
+
+	scope := body.Stmts[0].(*StmtVariable).Type.(*TypeReference).Imports()
+	require.NotNil(t, scope)
+	assert.Len(t, scope.Imports, 1)
+	require.Len(t, scope.Imports["s"], 1)
+	assert.Equal(t, "A.zam", scope.Imports["s"][0].Path.Base())
 }

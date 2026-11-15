@@ -1,16 +1,18 @@
-import "../../lang/Arrs.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "../../sync/Mutex.zam";
-import "../local/Buffer.zam";
-import "../local/Stream.zam";
-import "../local/Streams.zam";
-import "../net/Socket.zam";
-import "../net/TCP.zam";
-import "../net/TLS.zam";
-import "HTTP.zam";
-import "URL.zam";
+import {
+    "../../lang/Arrs.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "../../sync/Mutex.zam";
+    "../local/Buffer.zam";
+    "../local/Stream.zam";
+    "../local/Streams.zam";
+    "../net/Socket.zam";
+    "../net/TCP.zam";
+    "../net/TLS.zam";
+    "HTTP.zam";
+    "URL.zam";
+}
 
 // WebSocket over any stream, per RFC 6455: dialed as a client to ws:// and
 // wss:// URLs, or accepted by a server from an HTTP request. One thread may

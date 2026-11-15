@@ -1,5 +1,7 @@
-import "../../lang/Arr.zam";
-import "Digest.zam";
+import {
+    "../../lang/Arr.zam";
+    "Digest.zam";
+}
 
 // Secure Hash Algorithm 1, broken and only for interoperating
 public namespace SHA1 {

@@ -1,6 +1,8 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "Digest.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "Digest.zam";
+}
 
 // BLAKE2b, of any length from 1 to 64 bytes
 public namespace BLAKE2B {

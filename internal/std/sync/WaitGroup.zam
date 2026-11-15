@@ -1,6 +1,8 @@
-import "../lang/System.zam";
-import "Mutex.zam";
-import "Cond.zam";
+import {
+    "../lang/System.zam";
+    "Mutex.zam";
+    "Cond.zam";
+}
 
 // Count of outstanding work that waiters block on until it reaches zero. Do
 // runs work on threads of its own, at most max at once when max is not zero.

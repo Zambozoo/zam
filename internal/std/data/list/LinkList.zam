@@ -1,5 +1,7 @@
-import "../../lang/System.zam";
-import "../../lang/Arr.zam";
+import {
+    "../../lang/System.zam";
+    "../../lang/Arr.zam";
+}
 
 // Doubly-linked XOR List
 public class LinkList[A] {

@@ -1,17 +1,19 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "../../data/list/ArrList.zam";
-import "../../data/map/HashMap.zam";
-import "../local/Buffer.zam";
-import "../local/Stream.zam";
-import "../local/Streams.zam";
-import "../net/IP.zam";
-import "../net/Socket.zam";
-import "../net/TCP.zam";
-import "../net/TLS.zam";
-import "URL.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "../../data/list/ArrList.zam";
+    "../../data/map/HashMap.zam";
+    "../local/Buffer.zam";
+    "../local/Stream.zam";
+    "../local/Streams.zam";
+    "../net/IP.zam";
+    "../net/Socket.zam";
+    "../net/TCP.zam";
+    "../net/TLS.zam";
+    "URL.zam";
+}
 
 // HTTP client over libcurl, and HTTP/1.1 server over llhttp, both streaming
 // bodies in each direction. The client speaks HTTP/1.1 and HTTP/2, over TLS

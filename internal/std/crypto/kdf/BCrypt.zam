@@ -1,5 +1,7 @@
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
+import {
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+}
 
 // bcrypt password-hashing function, for passwords of at most 72 bytes
 public namespace BCrypt {

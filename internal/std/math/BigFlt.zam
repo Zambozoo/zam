@@ -1,12 +1,14 @@
-import "../lang/Uints.zam";
-import "../lang/Flts.zam";
-import "../lang/System.zam";
-import "../lang/Obj.zam";
-import "../lang/Strs.zam";
-import "Hash.zam";
-import mu = "Uints.zam";
-import mf = "Flts.zam";
-import "BigInt.zam";
+import {
+    "../lang/Uints.zam";
+    "../lang/Flts.zam";
+    "../lang/System.zam";
+    "../lang/Obj.zam";
+    "../lang/Strs.zam";
+    "Hash.zam";
+    mu = "Uints.zam";
+    mf = "Flts.zam";
+    "BigInt.zam";
+}
 
 // Immutable arbitrary-precision binary floating-point number. The value is
 // mant * 2^exp under its sign, mant holding at most prec bits and no trailing

@@ -1,8 +1,10 @@
-import "../../lang/Arr.zam";
-import "../../lang/Arrs.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/System.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Arrs.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/System.zam";
+}
 
 // AEAD is a key for authenticated encryption with associated data. Seal and
 // Open take a nonce NonceSize bytes long, which must never repeat under one

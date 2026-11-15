@@ -1,7 +1,9 @@
-import "../lang/Uints.zam";
-import "../lang/Flts.zam";
-import "../lang/Psts.zam";
-import "../lang/Strs.zam";
+import {
+    "../lang/Uints.zam";
+    "../lang/Flts.zam";
+    "../lang/Psts.zam";
+    "../lang/Strs.zam";
+}
 
 // Non-cryptographic hashes over byte runs, and helpers for writing Hash
 public namespace Hash {

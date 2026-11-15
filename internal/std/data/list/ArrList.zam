@@ -1,6 +1,8 @@
-import "../../lang/System.zam";
-import "../../lang/Arrs.zam";
-import "../../lang/Arr.zam";
+import {
+    "../../lang/System.zam";
+    "../../lang/Arrs.zam";
+    "../../lang/Arr.zam";
+}
 
 // Circularly buffered array-based list
 public class ArrList[A] {

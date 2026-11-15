@@ -1,6 +1,9 @@
 package syntax
 
-import "iter"
+import (
+	"iter"
+	"maps"
+)
 
 type (
 	// StmtKind is the kind of statement.
@@ -708,15 +711,42 @@ func (s *StmtLabel) Accept(visitor StmtVisitor) error {
 	return visitor.VisitStmtLabel(s)
 }
 
-// newStmtBlock creates a new statement that is a block of statements.
+// newStmtBlock creates a new statement that is a block of statements. An
+// import among them is in scope from where it is written to the end of the
+// block.
 func newStmtBlock(parser SyntaxParser, start *Token) (*StmtBlock, error) {
+	scope := parser.Imports()
+	outer := *scope
+	defer func() { *scope = outer }()
+
 	var stmts []Stmt
+	var imports map[string][]*Import
 	broken := false
 	for {
 		if tok, err := parser.Match(TTRightBrace); err != nil {
 			return nil, err
 		} else if tok != nil {
 			break
+		}
+
+		if tok, err := parser.Match(TTImport); err != nil {
+			return nil, err
+		} else if tok != nil {
+			importStmts, ok, err := parseImport(parser, tok)
+			if err != nil {
+				return nil, err
+			} else if !ok {
+				(*parser.File()).BrokenImports = true
+			}
+			if len(importStmts) == 0 {
+				continue
+			}
+			if imports == nil {
+				imports = make(map[string][]*Import)
+			}
+			addImports(parser, imports, importStmts)
+			*scope = &ImportScope{Outer: outer, Imports: maps.Clone(imports)}
+			continue
 		}
 
 		recoverFrom := parser.Checkpoint()

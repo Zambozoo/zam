@@ -1,6 +1,8 @@
-import "../../lang/System.zam";
-import "../../lang/Arr.zam";
-import "../../lang/Struct.zam";
+import {
+    "../../lang/System.zam";
+    "../../lang/Arr.zam";
+    "../../lang/Struct.zam";
+}
 
 // Sorted left-leaning red-black tree set
 public class TreeSet[A] {

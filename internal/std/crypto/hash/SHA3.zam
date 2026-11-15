@@ -1,6 +1,8 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "Digest.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "Digest.zam";
+}
 
 // SHA-3, with the SHAKE extendable-output functions
 public namespace SHA3 {

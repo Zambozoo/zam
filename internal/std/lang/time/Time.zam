@@ -1,7 +1,9 @@
-import "../Err.zam";
-import "../StrErr.zam";
-import "../Strs.zam";
-import "Duration.zam";
+import {
+    "../Err.zam";
+    "../StrErr.zam";
+    "../Strs.zam";
+    "Duration.zam";
+}
 
 // Time is an instant, counted in nanoseconds from the Unix epoch, which
 // reaches from 1677 to 2262, and read on the calendar in UTC. A Time from Now

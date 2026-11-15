@@ -404,3 +404,136 @@ namespace Main {
 	require.NotEmpty(t, errs)
 	assert.Contains(t, errs[0].Error(), "static field Main::missing not found")
 }
+
+// secFile is a file declaring Sec.Inner, for a test to import.
+const secFile = `
+namespace Sec {
+    public class Inner { }
+}
+`
+
+// An import written in a block names what it imports for the rest of the block.
+func TestValidateASTResolvesThroughABlockImport(t *testing.T) {
+	errs := validate(t, `
+namespace Main {
+    static fun void() f = () {
+        import "Sec.zam";
+        var Sec.Inner x;
+    }
+`+mainMethod+`
+}
+`, map[string]string{"Sec.zam": secFile})
+
+	assert.Empty(t, errs)
+}
+
+// A block's import is in scope from where it is written, not before.
+func TestValidateASTDoesNotResolveBeforeABlockImport(t *testing.T) {
+	errs := validate(t, `
+namespace Main {
+    static fun void() f = () {
+        var Sec.Inner x;
+        import "Sec.zam";
+    }
+`+mainMethod+`
+}
+`, map[string]string{"Sec.zam": secFile})
+
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), `declaration "Sec.Inner" not found`)
+}
+
+// A block's import is out of scope once the block ends.
+func TestValidateASTDoesNotResolveAfterABlockImportsBlock(t *testing.T) {
+	errs := validate(t, `
+namespace Main {
+    static fun void() f = () {
+        {
+            import "Sec.zam";
+        }
+        var Sec.Inner x;
+    }
+`+mainMethod+`
+}
+`, map[string]string{"Sec.zam": secFile})
+
+	require.Len(t, errs, 1)
+	assert.Contains(t, errs[0].Error(), `declaration "Sec.Inner" not found`)
+}
+
+// A nested block sees the imports of the blocks enclosing it.
+func TestValidateASTResolvesAnEnclosingBlocksImport(t *testing.T) {
+	errs := validate(t, `
+namespace Main {
+    static fun void() f = () {
+        import "Sec.zam";
+        {
+            var Sec.Inner x;
+        }
+    }
+`+mainMethod+`
+}
+`, map[string]string{"Sec.zam": secFile})
+
+	assert.Empty(t, errs)
+}
+
+// A block's import is nearer than any declaration, so it shadows one of the
+// same name.
+func TestValidateASTPrefersABlockImportToASameNamedDecl(t *testing.T) {
+	errs := validate(t, `
+namespace Main {
+    class Sec {
+        public class Unrelated { }
+    }
+    static fun void() f = () {
+        import "Sec.zam";
+        var Sec.Inner x;
+    }
+`+mainMethod+`
+}
+`, map[string]string{"Sec.zam": secFile})
+
+	assert.Empty(t, errs)
+}
+
+// A block's import shadows a file's import of the same name, where the two at
+// one level would be ambiguous.
+func TestValidateASTPrefersABlockImportToASameNamedFileImport(t *testing.T) {
+	errs := validate(t, `
+import "a/Sec.zam";
+
+namespace Main {
+    static fun void() f = () {
+        import "b/Sec.zam";
+        var Sec.Inner x;
+    }
+`+mainMethod+`
+}
+`, map[string]string{"a/Sec.zam": secFile, "b/Sec.zam": secFile})
+
+	assert.Empty(t, errs)
+}
+
+// Each import of a group in a block is in scope for the rest of the block.
+func TestValidateASTResolvesThroughAGroupedBlockImport(t *testing.T) {
+	errs := validate(t, `
+namespace Main {
+    static fun void() f = () {
+        import {
+            "Sec.zam";
+            o = "Other.zam";
+        }
+        var Sec.Inner x;
+        var o.Other.Inner y;
+    }
+`+mainMethod+`
+}
+`, map[string]string{"Sec.zam": secFile, "Other.zam": `
+namespace Other {
+    public class Inner { }
+}
+`})
+
+	assert.Empty(t, errs)
+}

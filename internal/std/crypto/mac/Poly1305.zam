@@ -1,7 +1,9 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../Subtle.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../Subtle.zam";
+}
 
 // Poly1305 one-time authenticator (RFC 8439). A key must never be used twice.
 public namespace Poly1305 {

@@ -1,5 +1,7 @@
-import "Mutex.zam";
-import "Cond.zam";
+import {
+    "Mutex.zam";
+    "Cond.zam";
+}
 
 // Count that waiters block on until it reaches zero, and which then stays open
 public class Latch {

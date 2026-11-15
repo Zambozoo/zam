@@ -1,6 +1,8 @@
-import "../lang/System.zam";
-import "Ints.zam";
-import "Uints.zam";
+import {
+    "../lang/System.zam";
+    "Ints.zam";
+    "Uints.zam";
+}
 
 // Rational number of int parts, kept in lowest terms with a positive
 // denominator. Arithmetic wraps on overflow.

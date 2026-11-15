@@ -1,5 +1,7 @@
-import "../lang/Objs.zam";
-import "Mutex.zam";
+import {
+    "../lang/Objs.zam";
+    "Mutex.zam";
+}
 
 // Condition variable over a Mutex. Wait may return without a signal, so a
 // waiter rechecks what it waits for in a loop.

@@ -1,8 +1,10 @@
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "../local/Streams.zam";
-import "Socket.zam";
+import {
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "../local/Streams.zam";
+    "Socket.zam";
+}
 
 // TLS connection over a socket, over OpenSSL, speaking TLS 1.2 or later
 public class TLS {

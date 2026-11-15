@@ -1,7 +1,9 @@
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/time/Time.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/time/Time.zam";
+}
 
 // Archives held whole in memory, over libarchive. TAR and ZIP are this for
 // one format each. Entry names are kept as written, so one may name a path

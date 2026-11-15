@@ -1,12 +1,14 @@
-import "../../io/web/HTTP.zam";
-import "../../lang/Arr.zam";
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "../../lang/time/Duration.zam";
-import "../../lang/time/Time.zam";
-import "../asymmetric/Key.zam";
-import "X509.zam";
+import {
+    "../../io/web/HTTP.zam";
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "../../lang/time/Duration.zam";
+    "../../lang/time/Time.zam";
+    "../asymmetric/Key.zam";
+    "X509.zam";
+}
 
 // Online Certificate Status Protocol (RFC 6960): asking a certificate's
 // issuer whether it still stands, and answering as one

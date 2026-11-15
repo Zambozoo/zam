@@ -1,8 +1,10 @@
-import "../lang/System.zam";
-import "../lang/Obj.zam";
-import "../lang/Arr.zam";
-import "Flts.zam";
-import "Hash.zam";
+import {
+    "../lang/System.zam";
+    "../lang/Obj.zam";
+    "../lang/Arr.zam";
+    "Flts.zam";
+    "Hash.zam";
+}
 
 // Vector of flts whose length is set when it is made
 public class Vector <: Arr[flt]* {

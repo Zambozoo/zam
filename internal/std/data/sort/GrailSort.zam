@@ -1,5 +1,7 @@
-import "../../lang/Arr.zam";
-import "../../lang/Arrs.zam";
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Arrs.zam";
+}
 
 // GrailSort is a stable, in-place block merge sort
 public namespace GrailSort {

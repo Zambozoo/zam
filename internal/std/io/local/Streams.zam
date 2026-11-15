@@ -1,8 +1,10 @@
-import "../../lang/Err.zam";
-import "../../lang/StrErr.zam";
-import "../../lang/Strs.zam";
-import "Buffer.zam";
-import "Stream.zam";
+import {
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+    "Buffer.zam";
+    "Stream.zam";
+}
 
 // Helpers over any Stream
 public namespace Streams {

@@ -64,9 +64,10 @@ type (
 		path base.Path
 		file *File
 
-		currentToken  *Token
-		currentDecl   Decl
-		currentMethod *FieldMethod
+		currentToken   *Token
+		currentDecl    Decl
+		currentMethod  *FieldMethod
+		currentImports *ImportScope
 
 		// recovered holds the errors the parse recovered from, each with the
 		// token it was raised at.
@@ -414,6 +415,11 @@ func (p *syntaxParser) Project() *Project {
 
 func (p *syntaxParser) File() **File {
 	return &p.file
+}
+
+// Imports returns a pointer to the import scope of the block being parsed.
+func (p *syntaxParser) Imports() **ImportScope {
+	return &p.currentImports
 }
 
 func newProjectParser(cmd *command.Command, fileProvider fileProvider, packageProvider packageProvider) *projectParser {

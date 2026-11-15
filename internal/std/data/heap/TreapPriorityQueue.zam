@@ -1,7 +1,9 @@
-import "../../lang/System.zam";
-import "../../lang/Arr.zam";
-import "../../math/Rand.zam";
-import "../../lang/Struct.zam";
+import {
+    "../../lang/System.zam";
+    "../../lang/Arr.zam";
+    "../../math/Rand.zam";
+    "../../lang/Struct.zam";
+}
 
 // Probabilistic tree-based min max priority queue of values B ordered by
 // priorities A

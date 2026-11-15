@@ -1,5 +1,7 @@
-import "../../lang/Err.zam";
-import "AEAD.zam";
+import {
+    "../../lang/Err.zam";
+    "AEAD.zam";
+}
 
 // ChaCha20-Poly1305 authenticated encryption (RFC 8439), with 32-byte keys
 public namespace ChaCha20Poly1305 {
