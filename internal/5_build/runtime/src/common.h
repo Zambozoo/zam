@@ -56,6 +56,10 @@ _Noreturn void zam_die(ZamExit status, const char *format, ...);
 // it says where the program was without this layer knowing what a program is.
 void zam_set_die_trace(void (*trace)(int fd));
 
+// zam_set_die_hold sets what zam_die runs with its message just before it ends
+// the process, which is how a debugger gets to look at a program as it fails.
+void zam_set_die_hold(void (*hold)(const char *message));
+
 // ZAMTODO marks a path that is declared but not built. Every one of these is a
 // decision still owed rather than an error, and reaching one stops the run
 // loudly so that a half-built runtime never quietly produces a wrong answer.

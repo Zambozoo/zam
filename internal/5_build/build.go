@@ -8,6 +8,7 @@ package build
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -44,6 +45,12 @@ type Options struct {
 	// its path, so the generated wrapper and extracted runtime can be
 	// inspected after a successful or failed compile.
 	KeepBuildDir bool
+	// Debugger builds a binary that a debugger can stop and step, when run
+	// with ZAM_DEBUG_FD naming its connection to one.
+	Debugger bool
+	// Output is where the C compiler's output goes, the standard streams if
+	// nil.
+	Output io.Writer
 }
 
 // Build produces an executable at opts.OutputPath that embeds the given
@@ -102,6 +109,9 @@ func Build(image []byte, nativeNames []string, opts Options) error {
 		"-I" + runtimeSrcDir,
 		"-o", outputPath,
 	}
+	if opts.Debugger {
+		args = append(args, "-DZAM_DEBUGGER")
+	}
 	args = append(args, codecCFlags...)
 	args = append(args, runtimeCSources...)
 	args = append(args, wrapperPath)
@@ -111,8 +121,10 @@ func Build(image []byte, nativeNames []string, opts Options) error {
 	args = append(args, opts.Project.Native.Links...)
 
 	cmd := exec.Command(cc, args...)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	if opts.Output != nil {
+		cmd.Stdout, cmd.Stderr = opts.Output, opts.Output
+	}
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("%s failed: %w", cc, err)
 	}

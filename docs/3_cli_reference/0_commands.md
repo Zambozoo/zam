@@ -9,6 +9,7 @@
 | `get` | `[repo@version...]` | add dependencies to the nearest project file, then fetch every dependency the project reaches |
 | `clean` | | remove every fetched dependency |
 | `lsp` | | serve the language server protocol over stdin and stdout |
+| `debug` | | serve the debug adapter protocol over stdin and stdout; see [Debugging](../4_memory_and_runtime/3_debugging.md) |
 
 `zam help` lists the commands, and `zam <command> -h` lists a command's flags.
 

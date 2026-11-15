@@ -3,6 +3,7 @@ package base
 import (
 	"errors"
 	"math/big"
+	"strings"
 )
 
 const (
@@ -16,9 +17,22 @@ const (
 	positBits     = 64
 	positMaxScale = 4 * (positBits - 2)
 	positFraction = 256
+
+	// float128Precision is the bits a quadruple-precision float's significand
+	// holds, and float128MaxScale and float128MinScale bound the powers of two
+	// it reaches, its subnormals included.
+	float128Precision = 113
+	float128MaxScale  = 16383
+	float128MinScale  = -16494
+
+	// positNaRText is how NaR is written.
+	positNaRText = "NaR"
 )
 
-var errInvalidPosit = errors.New("invalid posit")
+var (
+	errInvalidPosit    = errors.New("invalid posit")
+	errInvalidFloat128 = errors.New("not a finite quadruple-precision number, or NaR")
+)
 
 // PositFromDecimal rounds a decimal literal, digits with an optional fraction
 // and exponent, to the nearest 64-bit posit with two exponent bits, ties to
@@ -100,4 +114,99 @@ func positRound(x *big.Float, scale int) uint64 {
 		return PositMinPos
 	}
 	return bits
+}
+
+// PositToFloat answers the value of a posit exactly, or false for NaR.
+func PositToFloat(bits uint64) (*big.Float, bool) {
+	x := new(big.Float).SetPrec(positBits)
+	switch bits {
+	case 0:
+		return x, true
+	case PositNaR:
+		return nil, false
+	}
+	negative := bits>>(positBits-1) == 1
+	if negative {
+		bits = -bits
+	}
+
+	rest, remaining := bits<<1, positBits-1
+	first := rest >> (positBits - 1)
+	run := 0
+	for run < remaining && rest>>(positBits-1) == first {
+		run++
+		rest <<= 1
+	}
+	remaining -= run
+	if remaining > 0 {
+		rest <<= 1
+		remaining--
+	}
+	k := -run
+	if first == 1 {
+		k = run - 1
+	}
+
+	taken := min(2, remaining)
+	var exponent uint64
+	if taken > 0 {
+		exponent = rest >> (positBits - taken)
+	}
+	exponent <<= 2 - taken
+	rest <<= taken
+	remaining -= taken
+
+	var fraction uint64
+	if remaining > 0 {
+		fraction = rest >> (positBits - remaining)
+	}
+	significand := new(big.Int).Lsh(big.NewInt(1), uint(remaining))
+	significand.Or(significand, new(big.Int).SetUint64(fraction))
+	x.SetInt(significand)
+	x.SetMantExp(x, 4*k+int(exponent)-remaining)
+	if negative {
+		x.Neg(x)
+	}
+	return x, true
+}
+
+// PositString writes a posit as the fewest decimal digits that round back to
+// it, or as NaR.
+func PositString(bits uint64) string {
+	x, ok := PositToFloat(bits)
+	if !ok {
+		return positNaRText
+	}
+	var text string
+	for digits := 1; ; digits++ {
+		text = x.Text('g', digits)
+		if back, err := PositFromDecimal(text); err == nil && back == bits {
+			return text
+		}
+	}
+}
+
+// PositFromFloat128 reads text as a quadruple-precision float, and rounds that
+// to the nearest posit as [PositFromFloat] does. A float out of the range of
+// one is refused, being infinite, as are a NaN and an infinity, there being
+// no posit of either: NaR is written as NaR.
+func PositFromFloat128(text string) (uint64, error) {
+	text = strings.TrimSpace(text)
+	if strings.EqualFold(text, positNaRText) {
+		return PositNaR, nil
+	}
+	x, _, err := big.ParseFloat(text, 10, float128Precision, big.ToNearestEven)
+	if err != nil || x.IsInf() {
+		return 0, errInvalidFloat128
+	}
+	if x.Sign() == 0 {
+		return 0, nil
+	}
+	switch scale := x.MantExp(nil) - 1; {
+	case scale > float128MaxScale:
+		return 0, errInvalidFloat128
+	case scale < float128MinScale:
+		return 0, nil
+	}
+	return PositFromFloat(x), nil
 }

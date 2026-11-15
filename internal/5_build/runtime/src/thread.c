@@ -5,6 +5,10 @@
 
 #include "vm.h"
 
+#ifdef ZAM_DEBUGGER
+#include "debug.h"
+#endif
+
 // currentZamThread records which ZamThread the OS thread is driving. The C
 // signal handler reads this to find the per-thread pending mask it should
 // OR into; the mask lives on the ZamThread so each line of execution
@@ -177,6 +181,17 @@ static void faultHandler(int sig, siginfo_t *info, void *context) {
     traceText(&w, "\n\033[0m");
     traceFlush(&w);
     zam_thread_trace_current(STDERR_FILENO);
+#ifdef ZAM_DEBUGGER
+    char message[64];
+    TraceWriter text = {.fd = -1};
+    traceText(&text, sig == SIGBUS ? "bus error" : "invalid memory access");
+    traceText(&text, " at 0x");
+    traceNumber(&text, (uint64_t)(uintptr_t)info->si_addr, 16);
+    size_t length = text.length < sizeof message - 1 ? text.length : sizeof message - 1;
+    memcpy(message, text.data, length);
+    message[length] = '\0';
+    zam_debug_fail(zam_thread_current(), message);
+#endif
 }
 
 void zam_thread_install_fault_handler(void) {
@@ -235,6 +250,7 @@ const char *zam_result_name(ZamResult result) {
 // allocator zeroes.
 void zam_thread_init(ZamThread *thread, ZamVM *vm, uint64_t initialStackSize) {
     thread->vm = vm;
+    thread->id = atomic_fetch_add(&vm->nextThreadId, 1) + 1;
     thread->result = ZAMRESULT_CONTINUE;
     thread->operandCapacity = initialStackSize;
     thread->markByteCapacity = initialStackSize * ZAMWORD_BYTES;
@@ -551,6 +567,15 @@ void zam_thread_push_direct_function(ZamThread *thread, uint64_t returnInstructi
         .heldBase = heldBase(thread),
     };
     thread->functionEntry = pushEntry(thread, &entry, sizeof entry);
+}
+
+bool zam_thread_function_entry(const ZamThread *thread, uint64_t offset,
+                               ZamMarkFunction *entry) {
+    if (offset == ZAMMARK_NONE || offset > thread->markByteCount ||
+        thread->markByteCount - offset < sizeof *entry)
+        return false;
+    memcpy(entry, thread->marks + offset, sizeof *entry);
+    return true;
 }
 
 bool zam_thread_frame_direct(const ZamThread *thread, ZamTypeID *receiverType) {

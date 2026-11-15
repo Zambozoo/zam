@@ -72,6 +72,7 @@ func newServer(packages packageProvider, delay time.Duration) *server {
 		TextDocumentHover:              s.hover,
 		TextDocumentDefinition:         s.definition,
 		TextDocumentReferences:         s.references,
+		TextDocumentCodeLens:           s.codeLens,
 	}
 	return s
 }

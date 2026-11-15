@@ -42,22 +42,16 @@ type result struct {
 // and how it went to out, a file at a time. It reports whether every test
 // passed.
 func Run(cmd *command.Command, files *base.FileProvider, packages packageProvider, out io.Writer) (bool, error) {
-	paths, err := Resolve(files, cmd.TestTargets)
-	if err != nil {
-		return false, err
-	}
-	if len(paths) == 0 {
+	result, project, tests, err := Compile(cmd, files, packages)
+	switch {
+	case errors.Is(err, ErrNoTestFiles):
 		fmt.Fprintln(out, "no test files")
 		return true, nil
-	}
-
-	tests, err := discover(cmd, files, packages, paths)
-	if err != nil {
-		return false, err
-	}
-	if len(tests) == 0 {
+	case errors.Is(err, ErrNoTests):
 		fmt.Fprintln(out, "no tests to run")
 		return true, nil
+	case err != nil:
+		return false, err
 	}
 
 	dir, err := os.MkdirTemp("", "zam-test-*")
@@ -67,10 +61,49 @@ func Run(cmd *command.Command, files *base.FileProvider, packages packageProvide
 	defer os.RemoveAll(dir)
 
 	binary := filepath.Join(dir, "test")
-	if err := compile(cmd, files, packages, tests, binary); err != nil {
+	if err := build.Build(result.Image, result.NativeNames, build.Options{
+		OutputPath:   binary,
+		Project:      project,
+		KeepBuildDir: cmd.KeepBuild,
+	}); err != nil {
 		return false, err
 	}
 	return runFiles(cmd, tests, binary, out)
+}
+
+var (
+	// ErrNoTestFiles is what Compile answers when cmd targets no test file.
+	ErrNoTestFiles = errors.New("no test files")
+	// ErrNoTests is what Compile answers when no test is picked.
+	ErrNoTests = errors.New("no tests to run")
+)
+
+// Compile compiles the tests in the test files cmd targets into one program,
+// whose first argument is the index among the files answered of the file whose
+// tests it runs, and whose other arguments it passes on to each test. It
+// answers the program, the project it belongs to, and the files.
+func Compile(cmd *command.Command, files *base.FileProvider, packages packageProvider) (*codegen.Result, *syntax.Project, []File, error) {
+	paths, err := Resolve(files, cmd.TestTargets)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if len(paths) == 0 {
+		return nil, nil, nil, ErrNoTestFiles
+	}
+
+	tests, err := discover(cmd, files, packages, paths)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if len(tests) == 0 {
+		return nil, nil, nil, ErrNoTests
+	}
+
+	result, project, err := compile(cmd, files, packages, tests)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return result, project, tests, nil
 }
 
 // discover parses paths, with what they import, and finds their tests.
@@ -89,15 +122,15 @@ func discover(cmd *command.Command, files *base.FileProvider, packages packagePr
 	return Discover(ast, paths, pattern)
 }
 
-// compile writes the runner of tests and builds it to binary.
-func compile(cmd *command.Command, files *base.FileProvider, packages packageProvider, tests []File, binary string) error {
+// compile writes the runner of tests and compiles it.
+func compile(cmd *command.Command, files *base.FileProvider, packages packageProvider, tests []File) (*codegen.Result, *syntax.Project, error) {
 	runner := RunnerPath(tests[0].Path)
 	if _, err := os.Stat(string(runner)); !errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf("%s is the test runner's own path and must not exist", runner)
+		return nil, nil, fmt.Errorf("%s is the test runner's own path and must not exist", runner)
 	}
 	source, err := Source(tests)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 
 	compile := *cmd
@@ -106,20 +139,16 @@ func compile(cmd *command.Command, files *base.FileProvider, packages packagePro
 
 	ast, errs := syntax.NewAST(&compile, overlay, packages)
 	if len(errs) > 0 {
-		return errors.Join(errs...)
+		return nil, nil, errors.Join(errs...)
 	}
 	if errs := semantic.ValidateAST(ast); len(errs) > 0 {
-		return errors.Join(errs...)
+		return nil, nil, errors.Join(errs...)
 	}
 	result, err := codegen.GenerateCode(&compile, ast)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
-	return build.Build(result.Image, result.NativeNames, build.Options{
-		OutputPath:   binary,
-		Project:      ast.MainCodeDecl.File().Project,
-		KeepBuildDir: cmd.KeepBuild,
-	})
+	return result, ast.MainCodeDecl.File().Project, nil
 }
 
 // runFiles runs binary once for each of tests, at most cmd.Parallel at once,

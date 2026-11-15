@@ -2,9 +2,11 @@ package codegen
 
 import (
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -180,4 +182,159 @@ func TestDebugSection(t *testing.T) {
 	}
 	assert.Equal(t, 2, deferred, "a deferred statement is emitted at each way out of its block")
 	assert.Contains(t, d.strings, entry, "a file is named by its path")
+
+	table := result.Debug
+	assert.Equal(t, main.start, table.Main)
+	file, line, ok := table.Locate(lambda.end)
+	assert.True(t, ok)
+	assert.Equal(t, entry, file)
+	assert.Equal(t, 9, line)
+	name, ok := table.Function(lambda.start)
+	assert.True(t, ok)
+	assert.Equal(t, "Main.main.lambda", name)
+
+	offsets, line := table.Breakpoints(entry, 6)
+	assert.Equal(t, 7, line, "a line with no code moves to the next that has some")
+	assert.Equal(t, []uint64{main.start}, offsets)
+	offsets, line = table.Breakpoints(entry, 9)
+	assert.Equal(t, 9, line)
+	assert.Contains(t, offsets, lambda.start, "a lambda's body begins on the line it is written on")
+	assert.NotContains(t, offsets, lambda.end, "the rest of a line after a lambda is not where the line begins")
+	offsets, _ = table.Breakpoints(entry, 13)
+	assert.Len(t, offsets, 2, "a deferred statement begins at each way out of its block")
+	offsets, _ = table.Breakpoints("nowhere.zam", 1)
+	assert.Empty(t, offsets)
+
+	names := func(offset uint64) []string {
+		var names []string
+		for _, l := range table.Locals(offset, 0) {
+			names = append(names, l.Name+" "+l.Type.Name)
+		}
+		return names
+	}
+	var returning uint64
+	for _, l := range twice.lines {
+		if l.line == 4 {
+			returning = l.start
+		}
+	}
+	assert.Equal(t, []string{"x int"}, names(twice.start), "a variable holds nothing until its value is emitted")
+	assert.Equal(t, []string{"x int", "y int"}, names(returning))
+	assert.Contains(t, names(lambda.start), "a int", "a lambda's captures are its own")
+	assert.NotContains(t, names(lambda.start), "f int()", "the body a lambda is written in is not its own")
+	assert.Contains(t, names(lambda.end), "a int")
+}
+
+// genericSource has a generic class whose method's variables lie where and
+// are of what its instantiation decides.
+const genericSource = `namespace Main {
+    class Box[A] {
+        var A v;
+
+        fun A() Get = () {
+            var (A, int) p = this.v, 2;
+            var int after = 3;
+            return p.0;
+        }
+    }
+
+    fun void(uint, str...) main = (argc, argv) {
+        var Box[str]* b = new(Box[str]);
+        b.Get();
+    }
+}
+`
+
+func TestDebugTableGroundsGenericVariables(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yml"), []byte("name: \"debug\"\n"), 0o600))
+	entry := filepath.Join(dir, "Main.zam")
+	require.NoError(t, os.WriteFile(entry, []byte(genericSource), 0o600))
+
+	cmd := &command.Command{InputPath: base.Path(entry), MaxThreads: 1}
+	ast, errs := syntax.NewAST(cmd, &base.FileProvider{}, nil)
+	require.Empty(t, errs)
+	require.Empty(t, semantic.ValidateAST(ast))
+	result, err := GenerateCode(cmd, ast)
+	require.NoError(t, err)
+	table := result.Debug
+
+	offsets, _ := table.Breakpoints(entry, 8)
+	require.NotEmpty(t, offsets)
+	template, ok := table.Template(offsets[0])
+	require.True(t, ok, "a generic class's method is shared by its instantiations")
+
+	var instance uint32
+	for short, concrete := range table.instances {
+		if short>>16 == uint32(template) && strings.Contains(concrete.DeclType().String(), "[str]") {
+			instance = short
+		}
+	}
+	require.NotZero(t, instance)
+
+	describe := func(locals []Local) map[string]string {
+		described := map[string]string{}
+		for _, l := range locals {
+			described[l.Name] = fmt.Sprintf("%d %s %v", l.Slot, l.Type.Name, l.Open)
+		}
+		return described
+	}
+	open := describe(table.Locals(offsets[0], 0))
+	assert.Equal(t, "1 (A, int) true", open["p"])
+	assert.Equal(t, "1 int true", open["after"], "a slot past one an instantiation sizes is placed by it")
+
+	grounded := describe(table.Locals(offsets[0], instance))
+	assert.Equal(t, "1 (str, int) false", grounded["p"])
+	assert.Equal(t, "3 int false", grounded["after"])
+	assert.Contains(t, grounded["this"], "[str]")
+}
+
+// staticSource has static members of a namespace and of a class, beside a
+// static method.
+const staticSource = `namespace Main {
+    static var int counter = 3;
+
+    class Box {
+        static var str title = "b";
+    }
+
+    fun int() Get = () {
+        return Main::counter;
+    }
+
+    fun void(uint, str...) main = (argc, argv) {
+        Main::counter = Main::Get();
+    }
+}
+`
+
+func TestDebugTableListsStatics(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yml"), []byte("name: \"debug\"\n"), 0o600))
+	entry := filepath.Join(dir, "Main.zam")
+	require.NoError(t, os.WriteFile(entry, []byte(staticSource), 0o600))
+
+	cmd := &command.Command{InputPath: base.Path(entry), MaxThreads: 1}
+	ast, errs := syntax.NewAST(cmd, &base.FileProvider{}, nil)
+	require.Empty(t, errs)
+	require.Empty(t, semantic.ValidateAST(ast))
+	result, err := GenerateCode(cmd, ast)
+	require.NoError(t, err)
+
+	statics := map[string]Static{}
+	for _, s := range result.Debug.Statics() {
+		statics[s.Decl+"."+s.Name] = s
+	}
+	require.Contains(t, statics, "Main.counter")
+	require.Contains(t, statics, "Main.Box.title")
+	assert.Equal(t, "int", statics["Main.counter"].Type.Name)
+	assert.Equal(t, "str", statics["Main.Box.title"].Type.Name)
+	assert.NotEqual(t, statics["Main.counter"].Offset, statics["Main.Box.title"].Offset)
+	assert.False(t, statics["Main.counter"].Std)
+	assert.NotContains(t, statics, "Main.Get", "a static method is not a variable")
+	assert.NotContains(t, statics, "Main.main")
 }

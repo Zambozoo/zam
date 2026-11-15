@@ -106,6 +106,7 @@ public namespace Test {
             failed = true;
         }
         Test::Log(s);
+        native(STD_SYSTEM_FAILED){void(str)}(s);
     }
 
     // Fatal marks the test running as failed, logs s, and ends the run.

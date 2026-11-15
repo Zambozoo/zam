@@ -121,6 +121,8 @@ const (
 	VerbClean
 	// VerbLSP serves the language server protocol over stdin and stdout.
 	VerbLSP
+	// VerbDebug serves the debug adapter protocol over stdin and stdout.
+	VerbDebug
 )
 
 // verbs are the names of the verbs, in the order usage lists them.
@@ -135,6 +137,7 @@ var verbs = []struct {
 	{"get", VerbGet, "add dependencies to the project file and fetch every dependency"},
 	{"clean", VerbClean, "remove every fetched dependency"},
 	{"lsp", VerbLSP, "serve the language server protocol over stdin and stdout"},
+	{"debug", VerbDebug, "serve the debug adapter protocol over stdin and stdout"},
 }
 
 // byteSizeUnits are the suffixes a size may be written with, longest first so

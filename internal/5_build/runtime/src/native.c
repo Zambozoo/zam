@@ -20,6 +20,10 @@
 #include "thread.h"
 #include "vm.h"
 
+#ifdef ZAM_DEBUGGER
+#include "debug.h"
+#endif
+
 // STD_MARK is Object's own Mark: while collecting, everything the receiver's
 // members hold is reachable. STD_MARK_OVERRIDE is Objs.Mark: the receiver is
 // reachable, and nothing it holds is traced.
@@ -621,6 +625,26 @@ static void stdSystemExit(ZamThread *thread) {
 static void stdSystemTrace(ZamThread *thread) {
     fflush(stderr);
     zam_thread_trace(thread, 1, fileno(stderr));
+    zam_native_return_void(thread);
+}
+
+// stdSystemFailed tells a debugger, if the program runs under one, that the
+// calling thread has failed with the given message, as a panic or a failed
+// check does, which stops the program there if the debugger asked to stop on
+// failures.
+static void stdSystemFailed(ZamThread *thread) {
+#ifdef ZAM_DEBUGGER
+    const ZamString *message =
+        zam_string_of((void *)(uintptr_t)zam_native_argument(thread, 0));
+    char text[1024] = "";
+    if (message != NULL) {
+        size_t length = message->length < sizeof text - 1 ? message->length
+                                                          : sizeof text - 1;
+        memcpy(text, message->bytes, length);
+        text[length] = '\0';
+    }
+    zam_debug_fail(thread, text);
+#endif
     zam_native_return_void(thread);
 }
 
@@ -1268,6 +1292,7 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_GC_MAJOR", stdGcMajor},
     {"STD_SYSTEM_EXIT", stdSystemExit},
     {"STD_SYSTEM_TRACE", stdSystemTrace},
+    {"STD_SYSTEM_FAILED", stdSystemFailed},
     {"STD_SYSTEM_CALLER", stdSystemCaller},
     {"STD_SYSTEM_PROCESS_ID", stdSystemProcessID},
     {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},

@@ -56,3 +56,8 @@ What a failure writes begins with the file and line in the test that led to it, 
 `Fatal` ends the test file's process, as does a panic or any fault that stops a program.
 The rest of that file's tests do not run, and its line says how the process ended, but every other file still runs.
 A panic or fault also writes a [stack trace](../4_memory_and_runtime/2_stack_traces.md), which names the test it happened in.
+
+## Debugging Tests
+A launch of a test file under [the debugger](../4_memory_and_runtime/3_debugging.md) runs its tests as `zam test` would, `test` picking them by name as `--run` does.
+A failed check stops it there, with the test's frame among those it stopped in, and the test goes on once continued.
+In an editor using the language server, links above each test, and above the test file's namespace, run or debug that test or every test in the file.

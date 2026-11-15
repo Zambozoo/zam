@@ -2,6 +2,10 @@
 
 #include "gc.h"
 
+#ifdef ZAM_DEBUGGER
+#include "debug.h"
+#endif
+
 #include <time.h>
 #include <unistd.h>
 
@@ -89,6 +93,9 @@ static void postImageLoad(ZamVM *vm) {
     zam_thread_init(&vm->main, vm, vm->image.initialStackSize);
     zam_set_die_trace(zam_thread_trace_current);
     zam_thread_install_fault_handler();
+#ifdef ZAM_DEBUGGER
+    zam_debug_connect(vm);
+#endif
 }
 
 void zam_vm_init(ZamVM *vm, const char *imagePath) {
@@ -582,8 +589,10 @@ static void awaitResume(ZamVM *vm, ZamThread *thread, ZamThreadState state) {
 // body that blocks.
 static void collect(ZamVM *vm, ZamThread *self) {
     atomic_store(&vm->stopRequested, true);
+    atomic_store(&self->awaitingStop, true);
     while (!everyOtherThreadStopped(vm, self))
         pthread_cond_wait(&vm->collectionChanged, &vm->collectionLock);
+    atomic_store(&self->awaitingStop, false);
 
     pthread_mutex_unlock(&vm->collectionLock);
     zam_vm_collect(vm, self);
@@ -662,6 +671,10 @@ void zam_vm_leave_safe(ZamThread *thread) {
     pthread_mutex_lock(&vm->collectionLock);
     awaitResume(vm, thread, ZAMTHREAD_SAFE);
     pthread_mutex_unlock(&vm->collectionLock);
+#ifdef ZAM_DEBUGGER
+    if (vm->debugger != NULL)
+        zam_debug_hold(thread);
+#endif
 }
 
 void zam_vm_thread_exited(ZamThread *thread) {

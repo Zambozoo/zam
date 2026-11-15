@@ -7,6 +7,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 
 	base "github.com/zambozoo/zam/internal/0_base"
 	syntax "github.com/zambozoo/zam/internal/2_syntax"
@@ -1010,6 +1011,9 @@ type (
 		variables  map[string]binding
 		baseOffset uint64
 		baseOpen   int
+		// locals are the variables declared in the scope that the debug
+		// tables record, which leaving it ends.
+		locals []localRef
 		// defers are the statements deferred in the scope so far, run last
 		// first wherever control leaves it.
 		defers []deferredStmt
@@ -1115,6 +1119,10 @@ type (
 // thisVariableName is the name bound to an instance method's receiver. It is a
 // keyword, so no declared variable can shadow it.
 const thisVariableName = "this"
+
+// hiddenNamePrefix begins every name the compiler binds that a program cannot
+// write.
+const hiddenNamePrefix = "~"
 
 // remainingVariableName is bound to the second slot of an initializer's frame,
 // which is how many elements are left to fill in. It is not a name a program can
@@ -1329,6 +1337,7 @@ func (v *operationVisitor) pushScopeOf(bindings map[string]binding) {
 // popScope leaves a lexical scope, releasing the slots it declared.
 func (v *operationVisitor) popScope() {
 	scope, _ := v.scopes.Pop()
+	v.debug.end(scope.locals, v.byteOffset)
 	v.nextVariableOffset = scope.baseOffset
 	v.openSlots = v.openSlots[:scope.baseOpen]
 }
@@ -1343,14 +1352,39 @@ func (v *operationVisitor) popScope() {
 // nothing will look it up, and leaving it out is what lets two `_` in one
 // scope share the scope without colliding on the one name.
 func (v *operationVisitor) declareVariable(name string, typ syntax.Type) uint64 {
+	offset, _, _ := v.declareLocal(name, typ)
+	return offset
+}
+
+// declareLocal is [operationVisitor.declareVariable], answering too the
+// variable's entry in the debug tables, if it has one. A variable is recorded
+// as holding its value from where it is declared, which a declaration whose
+// value is emitted after it moves on with [debugInfo.begin].
+func (v *operationVisitor) declareLocal(name string, typ syntax.Type) (uint64, localRef, bool) {
 	typ = v.groundType(typ)
 	offset := v.nextVariableOffset
+	var ref localRef
+	var recorded bool
 	if name != syntax.BlankName {
 		open := v.openSlots[:len(v.openSlots):len(v.openSlots)]
 		v.scopes.Peek().variables[name] = localBinding{offset: offset, typ: typ, open: open}
+		if !strings.HasPrefix(name, hiddenNamePrefix) {
+			ref, recorded = v.debug.declare(v.byteOffset, debugLocal{
+				name:      name,
+				typ:       typ,
+				slot:      offset,
+				openSlots: open,
+				open:      len(open) > 0 || typ.ContainsGenericArg(),
+				receiver:  name == thisVariableName && !v.receiverInFrame,
+			})
+		}
+		if recorded {
+			scope := v.scopes.Peek()
+			scope.locals = append(scope.locals, ref)
+		}
 	}
 	v.reserveSlot(typ)
-	return offset
+	return offset, ref, recorded
 }
 
 // reserveSlot takes room in the frame for a slot of the given type: words of
@@ -2142,6 +2176,9 @@ func (v *operationVisitor) emitMethodBody(f *syntax.FieldMethod, methodType synt
 	v.openSlots = nil
 
 	instance := !f.Modifiers().Has(syntax.ModifierStatic)
+	if template, ok := v.sharedTemplate(f.OuterDecl()); ok && instance {
+		v.debug.template(template)
+	}
 	defer v.popScopes(v.pushDeclScopes(f.OuterDecl(), instance))
 	v.at(f.Start())
 
@@ -2300,6 +2337,9 @@ func (v *operationVisitor) emitInstanceInitializer(d syntax.Decl) error {
 	declType := d.(syntax.DeclTypeable).DeclType()
 	v.debug.enter(v.byteOffset, qualifiedName(d)+".<init>")
 	defer func() { v.debug.exit(v.byteOffset) }()
+	if template, ok := v.sharedTemplate(d); ok {
+		v.debug.template(template)
+	}
 
 	v.returnType = syntax.TypeVoid
 	v.inMain = false
@@ -2826,7 +2866,10 @@ func (v *operationVisitor) emitMark(object syntax.Expr) error {
 // with nothing is: a declaration means the same thing wherever it is written.
 func (v *operationVisitor) VisitStmtVariable(s *syntax.StmtVariable) error {
 	v.at(s.Start())
-	v.declareVariable(s.Name(), s.Type)
+	_, ref, recorded := v.declareLocal(s.Name(), s.Type)
+	if recorded {
+		defer func() { v.debug.begin(ref, v.byteOffset) }()
+	}
 	if s.Expr == nil {
 		v.emitDefaultValue(s.Type)
 		return nil
@@ -2881,7 +2924,7 @@ func (v *operationVisitor) emitUnpack(s *syntax.StmtUnpack) error {
 	source := syntax.NewExprIdentifier(unpackVariableName, tupleType)
 	elements := syntax.StripConst(tupleType).(*syntax.TypeTuple).Types
 	for i, variable := range s.Variables {
-		v.declareVariable(variable.Name(), variable.Type)
+		_, ref, recorded := v.declareLocal(variable.Name(), variable.Type)
 		element := &syntax.ExprField{
 			Expr:         source,
 			Field:        strconv.Itoa(i),
@@ -2889,6 +2932,9 @@ func (v *operationVisitor) emitUnpack(s *syntax.StmtUnpack) error {
 		}
 		if err := v.emitValueAs(element, variable.Type); err != nil {
 			return err
+		}
+		if recorded {
+			v.debug.begin(ref, v.byteOffset)
 		}
 	}
 	return nil
@@ -4987,6 +5033,28 @@ func (v *operationVisitor) emitPushTypeID(t syntax.Type) {
 // receiverTemplate is the type id of the generic class or abstract whose body
 // is being emitted, or [NoReceiverTemplate] when there is none to resolve a
 // receiver up to.
+// sharedTemplate answers the type id of d when it is a generic class or
+// abstract whose instantiations all run the body being emitted, learning their
+// type arguments from the receiver.
+func (v *operationVisitor) sharedTemplate(d syntax.Decl) (uint16, bool) {
+	if v.methodBindings != nil {
+		return 0, false
+	}
+	switch d.Kind() {
+	case syntax.KindClass, syntax.KindAbstract:
+	default:
+		return 0, false
+	}
+	gd, ok := d.(syntax.DeclGeneric)
+	if !ok || gd.Generics() == nil {
+		return 0, false
+	}
+	if _, concrete := d.(syntax.DeclConcrete); concrete {
+		return 0, false
+	}
+	return v.declTypeID(d, *gd.(syntax.DeclTypeable).TypeIndex()), true
+}
+
 func (v *operationVisitor) receiverTemplate() uint64 {
 	switch d := v.currentDecl.(type) {
 	case *syntax.DeclClass:

@@ -3,6 +3,7 @@ module github.com/zambozoo/zam
 go 1.25.1
 
 require (
+	github.com/google/go-dap v0.12.0
 	github.com/klauspost/compress v1.20.0
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.11.1

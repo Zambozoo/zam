@@ -276,6 +276,12 @@ typedef struct ZamVM {
     // live thread. That list is what the collector walks to find every root, so
     // a thread not reachable from here is a thread whose stack is not scanned.
    ZamThread main;
+
+    // nextThreadId is the id the last thread made was given.
+    atomic_uint_fast64_t nextThreadId;
+
+    // debugger is the debugger the program runs under, or NULL.
+    struct ZamDebugger *debugger;
 } ZamVM;
 
 void zam_vm_init(ZamVM *vm, const char *imagePath);

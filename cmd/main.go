@@ -11,6 +11,7 @@ import (
 	semantic "github.com/zambozoo/zam/internal/3_semantic"
 	codegen "github.com/zambozoo/zam/internal/4_codegen"
 	build "github.com/zambozoo/zam/internal/5_build"
+	"github.com/zambozoo/zam/internal/debugger"
 	"github.com/zambozoo/zam/internal/lsp"
 	"github.com/zambozoo/zam/internal/testrunner"
 )
@@ -26,6 +27,7 @@ const (
 	stepBuild    step = "build"
 	stepRun      step = "run"
 	stepLSP      step = "lsp"
+	stepDebug    step = "debug"
 	stepGet      step = "get"
 	stepClean    step = "clean"
 	stepTest     step = "test"
@@ -71,6 +73,11 @@ func main() {
 	zamPath, err := base.ZamPath()
 	handleErrors(&logger, stepCommand, err)
 	packageProvider := base.NewPackageProvider(filepath.Join(zamPath, "pkg"))
+
+	if cmd.Verb == command.VerbDebug {
+		handleErrors(&logger, stepDebug, debugger.Run(&fileProvider, packageProvider))
+		return
+	}
 
 	switch cmd.Verb {
 	case command.VerbClean:

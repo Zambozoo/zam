@@ -231,6 +231,18 @@ typedef enum ZamThreadState {
     ZAMTHREAD_EXITED,
 } ZamThreadState;
 
+// How far a thread a debugger is stepping runs before it stops.
+typedef enum ZamDebugStep {
+    ZAMDEBUG_STEP_NONE,
+    // ZAMDEBUG_STEP_IN stops on the next line, or in the next call made.
+    ZAMDEBUG_STEP_IN,
+    // ZAMDEBUG_STEP_OVER stops on the next line of the call it began in, or
+    // in its caller.
+    ZAMDEBUG_STEP_OVER,
+    // ZAMDEBUG_STEP_OUT stops in the caller of the call it began in.
+    ZAMDEBUG_STEP_OUT,
+} ZamDebugStep;
+
 //ZamThread is one line of execution: its two stacks and where it is in the
 // program. The main thread is one of these like any other, which is what lets
 // the loop be written once.
@@ -333,6 +345,27 @@ struct ZamThread {
     // and is read and written only by the thread itself.
     _Atomic(ZamThreadState) state;
     uint64_t gcBlockDepth;
+
+    // awaitingStop is set while the thread waits in a collection for every
+    // other thread to stop, during which its stacks are still.
+    atomic_bool awaitingStop;
+
+    // id names the thread to a debugger, and is never given to another.
+    uint64_t id;
+
+    // What a debugger keeps of the thread, under the debugger's lock.
+    // debugParked is set while the debugger holds the thread, and
+    // debugBoundary when that is between instructions rather than inside one.
+    // debugSkip lets a thread let go at a breakpoint run the instruction it
+    // stopped at. debugStep is the step the thread is taking, from the depth,
+    // file and line it began at.
+    atomic_bool debugParked;
+    bool debugBoundary;
+    bool debugSkip;
+    ZamDebugStep debugStep;
+    uint64_t debugStepDepth;
+    const char *debugStepFile;
+    uint32_t debugStepLine;
 
     // finalizing is the contained value an arena is running Delete on, which
     // STD_DELETE leaves alone rather than refusing: it has no allocation of
@@ -491,6 +524,11 @@ void zam_thread_push_direct_function(ZamThread *thread, uint64_t returnInstructi
 // zam_thread_frame_direct reports whether the innermost open call was made
 // directly, and if so writes the type its receiver was passed as.
 bool zam_thread_frame_direct(const ZamThread *thread, ZamTypeID *receiverType);
+
+// zam_thread_function_entry reads the function entry at a mark offset,
+// answering false if none could lie there.
+bool zam_thread_function_entry(const ZamThread *thread, uint64_t offset,
+                               ZamMarkFunction *entry);
 
 // zam_thread_push_scope opens a lexical scope at the top of the operand stack,
 // and zam_thread_pop_scope rewinds both stacks to where the innermost open one

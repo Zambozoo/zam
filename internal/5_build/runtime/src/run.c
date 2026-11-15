@@ -8,6 +8,10 @@
 #include "thread.h"
 #include "vm.h"
 
+#ifdef ZAM_DEBUGGER
+#include "debug.h"
+#endif
+
 // How many operand words a value of the type occupies. The stack counts in
 // words and a type is measured in bytes, so anything narrower than a word — a
 // bool, a char — still stands on one, and a void stands on none.
@@ -1713,6 +1717,15 @@ static const ZamPerfectHash *dispatchOf(const ZamImage *image, ZamTypeID type) {
 // every one of them, so the first in the set naming templateDecl is it.
 static ZamTypeShort ancestorOfTemplate(const ZamImage *image, ZamTypeID type,
                                        uint16_t templateDecl) {
+    ZamTypeShort ancestor = zam_type_template_ancestor(image, type, templateDecl);
+    if (ancestor == 0)
+        zam_die(ZAMEXIT_PANIC, "type %u descends from no instantiation of %u\n",
+                type.shortID, templateDecl);
+    return ancestor;
+}
+
+ZamTypeShort zam_type_template_ancestor(const ZamImage *image, ZamTypeID type,
+                                        uint16_t templateDecl) {
     const ZamPerfectHash *supertypes = supertypesOf(image, type);
     if (supertypes != NULL) {
         const ZamWord *slots = zam_perfect_hash_slots(supertypes);
@@ -1722,8 +1735,7 @@ static ZamTypeShort ancestorOfTemplate(const ZamImage *image, ZamTypeID type,
                 return candidate;
         }
     }
-    zam_die(ZAMEXIT_PANIC, "type %u descends from no instantiation of %u\n",
-            type.shortID, templateDecl);
+    return 0;
 }
 
 static bool typeIsSubtypeOf(const ZamImage *image, ZamTypeID child,
@@ -2655,7 +2667,53 @@ static ZamResult opHash(ZamThread *thread) {
     return ZAMRESULT_CONTINUE;
 }
 
+// receiverWord answers the location of the word naming the receiver of the
+// call entry opened, or 0 for a call through no closure. A direct call's frame
+// holds the receiver's address in slot 0. Any other's slot 0 is the closure,
+// whose first entry names the receiver, or whose second does where the closure
+// became the receiver's home.
+static ZamWord receiverWord(const ZamThread *thread, const ZamMarkFunction *entry) {
+    if (entry->direct)
+        return zam_frame_location(entry->operandPop * ZAMWORD_BYTES);
+    void *object = (void *)(uintptr_t)thread->operands[entry->operandPop];
+    if (object == NULL)
+        return 0;
+
+    const ZamClosure *closure = zam_closure_of(object);
+    const ZamWord *first = zam_closure_first(closure);
+    if (zam_mark_kind_of(object) == ZAMOBJECT_VALUE_METHOD_CLOSURE)
+        first = zam_closure_entry_next(
+            first, valueWordsOf(&thread->vm->image, zam_closure_entry_type(first)));
+    return (ZamWord)(uintptr_t)zam_closure_entry_value(first);
+}
+
+ZamWord zam_frame_receiver(const ZamThread *thread, uint64_t entryOffset) {
+    ZamMarkFunction entry = {0};
+    if (entryOffset != ZAMMARK_NONE &&
+        !zam_thread_function_entry(thread, entryOffset, &entry))
+        return 0;
+    if (entry.operandPop >= thread->operandCount)
+        return 0;
+    if (!entry.direct) {
+        // The closure may lie outside the heap, as one the runtime calls a
+        // method through on its own does.
+        void *object = (void *)(uintptr_t)thread->operands[entry.operandPop];
+        if (object == NULL)
+            return 0;
+        ZamObjectKind kind = zam_mark_kind_of(object);
+        if (kind != ZAMOBJECT_FUNCTION_CLOSURE &&
+            kind != ZAMOBJECT_REFERENCE_METHOD_CLOSURE &&
+            kind != ZAMOBJECT_VALUE_METHOD_CLOSURE)
+            return 0;
+    }
+    return receiverWord(thread, &entry);
+}
+
 static ZamResult step(ZamThread *thread) {
+#ifdef ZAM_DEBUGGER
+    if (thread->vm->debugger != NULL && !thread->collects)
+        zam_debug_check(thread);
+#endif
    ZamInstruction instruction = fetch(thread);
     thread->instructionOffset += instruction.byteCount;
 
@@ -4374,28 +4432,13 @@ static ZamResult step(ZamThread *thread) {
     // No mark entry: this addresses the inside of the closure, and slot 0 holds
     // the closure for the whole of the call under an entry of its own.
     case OpPushReceiver: {
-       ZamTypeID passedAs;
-        if (zam_thread_frame_direct(thread, &passedAs)) {
-            zam_thread_push(thread, zam_frame_location(zam_thread_frame_base(thread) *
-                                                       ZAMWORD_BYTES));
-            return ZAMRESULT_CONTINUE;
-        }
-        void *object =
-            (void *)(uintptr_t)thread->operands[zam_thread_frame_base(thread)];
-        if (object == NULL)
+        // Main has no entry, and its slot 0 is a receiver of no closure.
+        ZamMarkFunction entry = {0};
+        zam_thread_function_entry(thread, thread->functionEntry, &entry);
+        ZamWord receiver = receiverWord(thread, &entry);
+        if (receiver == 0)
             zam_die(ZAMEXIT_PANIC, "a receiver of no closure\n");
-
-        const ZamClosure *closure = zam_closure_of(object);
-        const ZamWord *entry = zam_closure_first(closure);
-        if (zam_mark_kind_of(object) ==
-            ZAMOBJECT_VALUE_METHOD_CLOSURE) {
-            const ZamImage *image = &thread->vm->image;
-            entry = zam_closure_entry_next(
-                entry, valueWordsOf(image, zam_closure_entry_type(entry)));
-        }
-
-        zam_thread_push(thread,
-                        (ZamWord)(uintptr_t)zam_closure_entry_value(entry));
+        zam_thread_push(thread, receiver);
         return ZAMRESULT_CONTINUE;
     }
 

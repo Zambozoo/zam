@@ -50,3 +50,15 @@ ZamResult zam_thread_initialize(ZamThread *thread, void *object,
 // stack, a frame location.
 ZamResult zam_thread_call_method(ZamThread *thread, ZamWord receiver,
                                  uint64_t slot);
+
+// zam_frame_receiver answers the location of the word naming the receiver of
+// the call a function entry opened, or of main's when the entry is
+// ZAMMARK_NONE, answering 0 for a call through no closure or a frame that
+// cannot be read. Slot 0 of the frame is trusted to hold a closure, as the
+// frame of any call with a receiver's does.
+ZamWord zam_frame_receiver(const ZamThread *thread, uint64_t entry);
+
+// zam_type_template_ancestor answers the instantiation of the generic
+// declaration templateDecl that type descends from, or 0 if none.
+ZamTypeShort zam_type_template_ancestor(const ZamImage *image, ZamTypeID type,
+                                        uint16_t templateDecl);

@@ -151,6 +151,12 @@ func TestNew(t *testing.T) {
 			errFunc: assert.NoError,
 		},
 		{
+			name:    "debug",
+			argv:    []string{"zam", "debug"},
+			want:    &Command{Verb: VerbDebug},
+			errFunc: assert.NoError,
+		},
+		{
 			name: "build help flag",
 			argv: []string{"zam", "build", "--help"},
 			errFunc: func(tt assert.TestingT, err error, a ...any) bool {

@@ -1,7 +1,7 @@
 {
   "name": "zam",
   "displayName": "Zam",
-  "description": "Zam language support: diagnostics and highlighting from the zam language server.",
+  "description": "Zam language support: diagnostics and highlighting from the zam language server, and debugging through zam debug.",
   "version": "0.0.1",
   "publisher": "zambozoo",
   "license": "MIT",
@@ -15,7 +15,11 @@
     "vscode": "^1.85.0"
   },
   "categories": [
-    "Programming Languages"
+    "Programming Languages",
+    "Debuggers"
+  ],
+  "activationEvents": [
+    "onDebugResolve:zam"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -48,7 +52,7 @@
         "zam.serverPath": {
           "type": "string",
           "default": "zam",
-          "description": "Path to the zam binary the language server is started from with `zam lsp`."
+          "description": "Path to the zam binary the language server and debugger are started from, with `zam lsp` and `zam debug`."
         },
         "zam.trace.server": {
           "type": "string",
@@ -61,9 +65,128 @@
           "description": "Traces the communication between VS Code and the zam language server."
         }
       }
+    },
+    "breakpoints": [
+      {
+        "language": "zam"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "zam",
+        "label": "Zam",
+        "languages": [
+          "zam"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "The program's entry file, or a test file to debug its tests.",
+                "default": "${file}"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "Arguments the program is run with.",
+                "default": []
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Directory the program is run in.",
+                "default": "${workspaceFolder}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Stop where main begins.",
+                "default": false
+              },
+              "test": {
+                "type": "string",
+                "description": "For a test file, a regular expression picking the tests to run by name, as zam test's --run does."
+              },
+              "console": {
+                "type": "string",
+                "enum": [
+                  "internalConsole",
+                  "integratedTerminal"
+                ],
+                "enumDescriptions": [
+                  "Write the program's output to the debug console. It reads no input.",
+                  "Run the program in the integrated terminal, where it reads what is typed."
+                ],
+                "default": "integratedTerminal",
+                "description": "Where the program's input and output go."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "zam",
+            "request": "launch",
+            "name": "Debug Zam program",
+            "program": "${file}",
+            "console": "integratedTerminal"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Zam: Launch",
+            "description": "Debug a Zam program.",
+            "body": {
+              "type": "zam",
+              "request": "launch",
+              "name": "Debug Zam program",
+              "program": "^\"\\${file}\"",
+              "console": "integratedTerminal"
+            }
+          },
+          {
+            "label": "Zam: Debug test file",
+            "description": "Debug the tests of a Zam test file.",
+            "body": {
+              "type": "zam",
+              "request": "launch",
+              "name": "Debug Zam tests",
+              "program": "^\"\\${file}\"",
+              "test": ""
+            }
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "zam.runTest",
+        "title": "Zam: Run Test"
+      },
+      {
+        "command": "zam.debugTest",
+        "title": "Zam: Debug Test"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "zam.runTest",
+          "when": "false"
+        },
+        {
+          "command": "zam.debugTest",
+          "when": "false"
+        }
+      ]
     }
   },
   "scripts": {
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "npm run assets && vsce package --out zam.vsix",

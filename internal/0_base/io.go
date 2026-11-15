@@ -300,6 +300,9 @@ func isCodeFile(name string) bool {
 	return strings.HasSuffix(name, CodeFileExtension)
 }
 
+// IsStd reports whether p names a file of the embedded standard library.
+func (p Path) IsStd() bool { return isStdPathStr(string(p)) }
+
 // IsTestFile reports whether p is a test file.
 func (p Path) IsTestFile() bool {
 	return strings.HasSuffix(string(p), TestFileSuffix)
