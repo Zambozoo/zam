@@ -93,7 +93,7 @@ public namespace Test {
         var (byte*, int) p = Strs::ToBytes(path);
         var int start = 0;
         for (var int i = 0; i < p.1; i = i + 1) {
-            if (p.0[i]{int} == '/'{int}) {
+            if (p.0[i]{int} == '/'{int} || p.0[i]{int} == '\\'{int}) {
                 start = i + 1;
             }
         }

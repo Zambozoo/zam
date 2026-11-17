@@ -87,12 +87,15 @@ public namespace FS {
         return FS::err(errStr);
     }
 
-    // MakeDirs makes path and every directory above it that is missing.
+    // MakeDirs makes path and every directory above it that is missing. A
+    // Windows drive, as C: is, is no directory to make.
     public static fun Err*(str) MakeDirs = (path) {
         var (byte*, int) p = Strs::ToBytes(path);
         var uint n = p.1{uint};
+        var bool windows = FS::Separator == "\\";
         for(var uint i = 1U; i <= n; i++) {
-            if(i == n || p.0[i]{int} == '/'{int}) {
+            var bool drive = windows && p.0[i - 1U]{int} == ':'{int};
+            if(!drive && (i == n || FS::isSeparator(p.0[i]))) {
                 var str prefix = Strs::FromBytes(p.0, i{int});
                 if(!FS::IsDir(prefix)) {
                     var Err* e = FS::MakeDir(prefix);
@@ -203,6 +206,12 @@ public namespace FS {
     // elsewhere.
     public static var str$ Separator = FS::separator();
 
+    // isSeparator reports whether b separates a path's elements: the system's
+    // separator, or a slash, which Windows takes too.
+    private static fun bool(byte) isSeparator = (b) {
+        return b{int} == '/'{int} || b{int} == Strs::ToBytes(FS::Separator).0[0]{int};
+    }
+
     // Join joins two paths with one separator between them. On Windows a
     // slash already ending a counts as one.
     public static fun str(str, str) Join = (a, b) {
@@ -210,8 +219,7 @@ public namespace FS {
         if(p.1 == 0) {
             return b;
         }
-        var int last = p.0[p.1 - 1]{int};
-        if(last == '/'{int} || last == Strs::ToBytes(FS::Separator).0[0]{int}) {
+        if(FS::isSeparator(p.0[p.1 - 1])) {
             return a + b;
         }
         return a + FS::Separator + b;

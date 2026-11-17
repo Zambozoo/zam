@@ -87,7 +87,7 @@ func reasons(output []string) []string {
 		switch {
 		case strings.HasPrefix(line, "Test:") || strings.HasPrefix(line, "Error Trace:"):
 			inError = false
-		case strings.Contains(line, "Error:"):
+		case strings.Contains(line, "Error:") || strings.HasPrefix(line, "Messages:"):
 			inError = true
 			lines = append(lines, line)
 		case inError && line != "":

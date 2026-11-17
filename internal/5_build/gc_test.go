@@ -141,7 +141,7 @@ func run(t *testing.T, binary string, args ...string) (stdout, stderr string, st
 	out, err := targetCommand(binary, args...).Output()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
-		return string(out), string(exit.Stderr), exit.ExitCode()
+		return string(out), string(exit.Stderr), exitStatus(exit.ExitCode())
 	}
 	require.NoError(t, err)
 	return string(out), "", 0
@@ -166,7 +166,7 @@ func runWith(t *testing.T, variables []string, binary string, args ...string) (s
 	err := cmd.Run()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
-		return out.String(), errOut.String(), exit.ExitCode()
+		return out.String(), errOut.String(), exitStatus(exit.ExitCode())
 	}
 	require.NoError(t, err)
 	return out.String(), errOut.String(), 0
