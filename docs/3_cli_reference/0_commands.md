@@ -53,6 +53,7 @@ A native binary carries no debug information; `zam debug` builds its own.
 On Windows, a program behaves as it does elsewhere but where Windows has no equivalent:
 - Of the signals, only `SIGINT`, `SIGILL`, `SIGABRT`, `SIGFPE`, `SIGSEGV` and `SIGTERM` exist. Handling or raising any other does nothing, and sending a signal to another process or thread, or masking one, ends the program saying so.
 - A file has only a read-only flag, so `FS::Chmod` sets or clears that, and a mode reads back as `0444` or `0666`.
+- `FS::Join` joins with a backslash, `FS::Separator`, and `FS::TempDir` is the directory Windows names for temporary files.
 - Unix sockets need Windows 10 version 1803 or later.
 - TLS and HTTPS trust the certificate authorities in the Windows certificate store.
 

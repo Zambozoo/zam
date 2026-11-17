@@ -185,22 +185,35 @@ public namespace FS {
         return FS::err(errStr);
     }
 
-    // TempDir returns the directory for temporary files: $TMPDIR, or /tmp.
+    // TempDir returns the directory for temporary files: on Windows the one
+    // the system names, elsewhere $TMPDIR, or /tmp.
     public static fun str() TempDir = () {
         var str dir;
         native(STD_FS_TEMP_DIR){void(str*)}(&dir);
         return dir;
     }
 
-    // Join joins two paths with one slash between them.
+    private static fun str() separator = () {
+        var str sep;
+        native(STD_FS_SEPARATOR){void(str*)}(&sep);
+        return sep;
+    }
+
+    // Separator separates the system's paths: a backslash on Windows, a slash
+    // elsewhere.
+    public static var str$ Separator = FS::separator();
+
+    // Join joins two paths with one separator between them. On Windows a
+    // slash already ending a counts as one.
     public static fun str(str, str) Join = (a, b) {
         var (byte*, int) p = Strs::ToBytes(a);
         if(p.1 == 0) {
             return b;
         }
-        if(p.0[p.1 - 1]{int} == '/'{int}) {
+        var int last = p.0[p.1 - 1]{int};
+        if(last == '/'{int} || last == Strs::ToBytes(FS::Separator).0[0]{int}) {
             return a + b;
         }
-        return a + "/" + b;
+        return a + FS::Separator + b;
     }
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,6 +35,9 @@ const packsVariable = "ZAM_PACKS"
 // own: a URL holding a directory for each version.
 const releasesVariable = "ZAM_RELEASES_URL"
 
+// ErrNoPack is the error for a target whose pack $ZAM_PACKS lacks.
+var ErrNoPack = errors.New("no target pack")
+
 // releasesURL is where zam's releases are downloaded from.
 const releasesURL = "https://github.com/zambozoo/zam/releases/download"
 
@@ -54,7 +58,7 @@ func Pack(t target.Target) (string, error) {
 	if root := os.Getenv(packsVariable); root != "" {
 		pack := filepath.Join(root, t.Name)
 		if !isPack(pack) {
-			return "", fmt.Errorf("no target pack for %s in $%s (%s)", t.Name, packsVariable, root)
+			return "", fmt.Errorf("%w for %s in $%s (%s)", ErrNoPack, t.Name, packsVariable, root)
 		}
 		return pack, nil
 	}

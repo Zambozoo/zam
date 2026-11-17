@@ -51,26 +51,26 @@ func TestTrace(t *testing.T) {
 	_, stderr, status := run(t, binary, "null")
 	assert.Equal(t, 67, status)
 	assert.Regexp(t, `dereferenced a null pointer
-\x1b\[0m\tat Main.Inner \(\S*/Main.zam:9\)
-\tat Main.Outer \(\S*/Main.zam:13\)
-\tat Main.main \(\S*/Main.zam:20\)
+\x1b\[0m\tat Main.Inner \(\S*[/\\]Main.zam:9\)
+\tat Main.Outer \(\S*[/\\]Main.zam:13\)
+\tat Main.main \(\S*[/\\]Main.zam:20\)
 $`, stderr)
 
 	_, stderr, status = run(t, binary, "panic")
 	assert.Equal(t, 255, status, "a panic keeps the status it exits with")
 	assert.Regexp(t, `^boom
 \tat System.Panic \(std://lang/System.zam:\d+\)
-\tat Main.Inner \(\S*/Main.zam:7\)
-\tat Main.Outer \(\S*/Main.zam:13\)
-\tat Main.main \(\S*/Main.zam:22\)
+\tat Main.Inner \(\S*[/\\]Main.zam:7\)
+\tat Main.Outer \(\S*[/\\]Main.zam:13\)
+\tat Main.main \(\S*[/\\]Main.zam:22\)
 $`, stderr)
 
 	// A spawned thread's trace ends where it began, which is all it was
 	// inside of.
 	_, stderr, status = run(t, binary, "async")
 	assert.Equal(t, 67, status)
-	assert.Regexp(t, `\tat Main.Inner \(\S*/Main.zam:9\)
-\tat Main.Outer \(\S*/Main.zam:13\)
+	assert.Regexp(t, `\tat Main.Inner \(\S*[/\\]Main.zam:9\)
+\tat Main.Outer \(\S*[/\\]Main.zam:13\)
 $`, stderr)
 	assert.NotRegexp(t, regexp.MustCompile(`Main\.main`), stderr)
 
@@ -101,7 +101,7 @@ func TestTraceOnFault(t *testing.T) {
 	_, stderr, status := run(t, binary)
 	assert.Equal(t, faultStatus(), status, "the process ends by the fault")
 	assert.Regexp(t, `^\x1b\[31m(invalid memory access|bus error) at 0x[0-9a-f]+
-\x1b\[0m\tat Main.Read \(\S*/Main.zam:3\)
-\tat Main.main \(\S*/Main.zam:8\)
+\x1b\[0m\tat Main.Read \(\S*[/\\]Main.zam:3\)
+\tat Main.main \(\S*[/\\]Main.zam:8\)
 $`, stderr)
 }

@@ -2019,6 +2019,9 @@ namespace Main {
 			t.Parallel()
 			platform, err := target.Parse(name)
 			require.NoError(t, err)
+			if _, err := build.Pack(platform); errors.Is(err, build.ErrNoPack) {
+				t.Skip(err)
+			}
 			object, err := generateObjectFor(t, source, platform.Triple)
 			require.NoError(t, err)
 			out := platform.Executable(filepath.Join(t.TempDir(), "out"))

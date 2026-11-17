@@ -392,15 +392,35 @@ static void stdFsCwd(ZamThread *thread) {
     finishErr(thread, 1, cwd == NULL ? -1 : 0, err);
 }
 
-// stdFsTempDir answers $TMPDIR, or /tmp when it is unset, without a trailing
-// slash.
+#if defined(_WIN32)
+#define PATH_SEPARATOR "\\"
+#else
+#define PATH_SEPARATOR "/"
+#endif
+
+static void stdFsSeparator(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+    *out = (ZamWord)zam_native_new_string(thread, PATH_SEPARATOR, 1);
+    zam_native_return_void(thread);
+}
+
+// stdFsTempDir answers the directory for temporary files without a trailing
+// separator: on Windows the one GetTempPath names, elsewhere $TMPDIR, or /tmp
+// when it is unset.
 static void stdFsTempDir(ZamThread *thread) {
     ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+#if defined(_WIN32)
+    char path[MAX_PATH + 1];
+    DWORD got = GetTempPathA(sizeof path, path);
+    const char *dir = got > 0 && got < sizeof path ? path : "C:\\Windows\\Temp";
+#else
     const char *dir = getenv("TMPDIR");
     if (dir == NULL || dir[0] == '\0')
         dir = "/tmp";
+#endif
     size_t length = strlen(dir);
-    while (length > 1 && dir[length - 1] == '/')
+    while (length > 1 && (dir[length - 1] == '/' || dir[length - 1] == PATH_SEPARATOR[0]) &&
+           dir[length - 2] != ':')
         length--;
     *out = (ZamWord)zam_native_new_string(thread, dir, length);
     zam_native_return_void(thread);
@@ -1410,6 +1430,7 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_FS_CHDIR", stdFsChdir},
     {"STD_FS_READ_DIR", stdFsReadDir},
     {"STD_FS_CWD", stdFsCwd},
+    {"STD_FS_SEPARATOR", stdFsSeparator},
     {"STD_FS_TEMP_DIR", stdFsTempDir},
     {"STD_PIPE_INIT", stdPipeInit},
     {"STD_STRS_FROM_BYTES", stdStrsFromBytes},

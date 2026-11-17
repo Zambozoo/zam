@@ -57,21 +57,24 @@ namespace Main {
         s = s + p.Reader().ReadAll().0 + " " + (p.Close() == null){str};
 
         s = s + " " + (FS::Chdir(dir) == null){str} + " " + (FS::WriteFile("rel.txt", "r") == null){str} + " " + FS::Exists(FS::Join(dir, "rel.txt")){str};
-        s = s + " " + (FS::Cwd().1 == null){str} + " " + (Strs::ByteLen(FS::TempDir()) > 0){str} + "\n";
+        s = s + " " + (FS::Cwd().1 == null){str} + " " + FS::Exists(FS::TempDir()){str} + "\n";
+        s = s + FS::Join(FS::Join("", "p"), "q") + " " + FS::Join("p/", "q") + " " + FS::Separator + "\n";
         File::StdOut.WriteStr(s);
     }
 }
 `)
 	stdout, stderr, status := run(t, binary, t.TempDir())
 	require.Zero(t, status, stderr)
-	// A Windows file has only a read-only flag, so 0600 reads back as 0666.
-	mode := "384"
+	// A Windows file has only a read-only flag, so 0600 reads back as 0666, and
+	// its paths separate with a backslash.
+	mode, sep := "384", "/"
 	if testTarget().OS == target.Windows {
-		mode = "438"
+		mode, sep = "438", `\`
 	}
 	assert.Equal(t, "true true true true 19 false true true "+mode+"\n"+
 		"7 line2 19 17 true file already closed\n"+
 		"[line1][line2][last!] 10 yzabcdefgh 121 122\n"+
 		"[b, x.txt] true [b, y.txt] true true true false 0\n"+
-		"ping true true true true true true\n", stdout)
+		"ping true true true true true true\n"+
+		"p"+sep+"q p/q "+sep+"\n", stdout)
 }
