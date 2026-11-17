@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
+	base "github.com/zambozoo/zam/internal/0_base"
 	"github.com/zambozoo/zam/internal/lld"
 	"github.com/zambozoo/zam/internal/target"
 )
@@ -15,10 +16,6 @@ import (
 // cacheVariable names a directory zam keeps its caches in, in place of the
 // user's cache directory.
 const cacheVariable = "ZAM_CACHE_DIR"
-
-// packsVariable names a directory holding target packs, each in a directory
-// named for its target, in place of the packs in zam's cache.
-const packsVariable = "ZAM_PACKS"
 
 // cacheDir is where zam keeps its caches: $ZAM_CACHE_DIR, else under the
 // user's cache directory.
@@ -33,6 +30,27 @@ func cacheDir() (string, error) {
 	return filepath.Join(userCache, "zam"), nil
 }
 
+// cachedDirs are the directories of zam's cache that zam fills: target packs,
+// and compiled runtimes with Zig's cache beside them.
+var cachedDirs = []string{"packs", "runtime"}
+
+// CleanCache removes what zam keeps in its cache: the target packs it
+// downloaded and the runtimes it compiled. It answers the directories removed.
+func CleanCache() ([]string, error) {
+	dir, err := cacheDir()
+	if err != nil {
+		return nil, err
+	}
+	removed := make([]string, len(cachedDirs))
+	for i, name := range cachedDirs {
+		removed[i] = filepath.Join(dir, name)
+		if err := base.RemoveReadOnly(removed[i]); err != nil {
+			return nil, err
+		}
+	}
+	return removed, nil
+}
+
 // runtimeCacheDir is where the compiled runtime archive is cached: as opts
 // says, else in zam's cache.
 func runtimeCacheDir(opts Options) (string, error) {
@@ -44,25 +62,6 @@ func runtimeCacheDir(opts Options) (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "runtime"), nil
-}
-
-// Pack answers the directory of t's target pack: under $ZAM_PACKS, else in
-// zam's cache.
-func Pack(t target.Target) (string, error) {
-	root := os.Getenv(packsVariable)
-	if root == "" {
-		dir, err := cacheDir()
-		if err != nil {
-			return "", err
-		}
-		root = filepath.Join(dir, "packs")
-	}
-	pack := filepath.Join(root, t.Name)
-	if _, err := os.Stat(filepath.Join(pack, "sources.txt")); err != nil {
-		return "", fmt.Errorf("no target pack for %s in %s: build one with `task packs`, or set $%s to where one is",
-			t.Name, root, packsVariable)
-	}
-	return pack, nil
 }
 
 // LinkObject links a natively compiled program's object into an executable at

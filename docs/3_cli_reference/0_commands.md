@@ -7,7 +7,7 @@
 | `run` | `<input file> [program arguments]` | compile a program to a temporary binary and run it, passing on the arguments after its file |
 | `test` | `[path...] [-- test arguments]` | compile the tests in test files and run each file's in a process of its own |
 | `get` | `[repo@version...]` | add dependencies to the nearest project file, then fetch every dependency the project reaches |
-| `clean` | | remove every fetched dependency |
+| `clean` | | remove every fetched dependency and cached target pack and runtime |
 | `lsp` | | serve the language server protocol over stdin and stdout |
 | `debug` | | serve the debug adapter protocol over stdin and stdout; see [Debugging](../4_memory_and_runtime/3_debugging.md) |
 
@@ -42,7 +42,7 @@ A native build links the program statically against the runtime and the C librar
 
 Any target is built from any machine zam runs on. `run` and `test` build for the machine they run on.
 
-Packs are found under the directory `$ZAM_PACKS` names, else under `packs` in zam's cache directory, `$ZAM_CACHE_DIR` or the user's cache directory. They are built from source with `task packs` in this repository.
+A target's pack is downloaded from the release of the running version of zam the first time it is needed, checked against the release's checksums, and kept in zam's cache directory, `$ZAM_CACHE_DIR` or the user's cache directory, for every build after. `$ZAM_PACKS` names a directory of packs to use instead, one directory per target, which is how a build works offline and how a development build of zam, which has no release, finds them. `task packs` builds them from source into `bin/packs` in this repository.
 
 With `zig` on the path, the runtime is compiled for the target against its pack the first time it is needed, and kept in zam's cache. Without it, the pack's own prebuilt runtime is used. A project's `native.files` are compiled with `zig cc` for the target, so they need `zig`.
 
@@ -84,7 +84,7 @@ Every dependency the project reaches is then fetched and checked, and any hash t
 | `--as` | package name to add the one dependency under, for a repository whose last element is not a name an import can use |
 
 ## clean
-`zam clean` removes `$ZAMPATH/pkg`. Fetched dependencies are kept read-only, so this is the way to remove them; the next build or `zam get` fetches them again.
+`zam clean` removes `$ZAMPATH/pkg`, and the `packs` and `runtime` directories of zam's cache directory: the target packs it downloaded and the runtimes it compiled. Fetched dependencies and packs are kept read-only, so this is the way to remove them; the next build or `zam get` fetches them again.
 
 ## Environment
 `ZAMPATH` is read by the compiler. The rest are read by the program when it runs, for debugging the collector.

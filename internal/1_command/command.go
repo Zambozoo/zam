@@ -124,7 +124,8 @@ const (
 	// VerbTest compiles the tests in test files and runs each file's tests in
 	// a process of its own.
 	VerbTest
-	// VerbClean removes every fetched dependency.
+	// VerbClean removes every fetched dependency, and the target packs and
+	// runtimes zam keeps in its cache.
 	VerbClean
 	// VerbLSP serves the language server protocol over stdin and stdout.
 	VerbLSP
@@ -142,7 +143,7 @@ var verbs = []struct {
 	{"run", VerbRun, "compile a program and run it, passing on the arguments after its file"},
 	{"test", VerbTest, "compile and run the tests in test files, passing on the arguments after --"},
 	{"get", VerbGet, "add dependencies to the project file and fetch every dependency"},
-	{"clean", VerbClean, "remove every fetched dependency"},
+	{"clean", VerbClean, "remove every fetched dependency and cached target pack and runtime"},
 	{"lsp", VerbLSP, "serve the language server protocol over stdin and stdout"},
 	{"debug", VerbDebug, "serve the debug adapter protocol over stdin and stdout"},
 }

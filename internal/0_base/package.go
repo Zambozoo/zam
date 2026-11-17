@@ -104,7 +104,7 @@ func (pp *PackageProvider) Fetch(ref string) (Path, string, error) {
 		}
 
 		if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
-			if err := extract(archive, dir); err != nil {
+			if err := Extract(archive, dir); err != nil {
 				return fetched{}, fmt.Errorf("cannot extract %s: %w", archive, err)
 			}
 		} else if err != nil {
@@ -123,7 +123,7 @@ func (pp *PackageProvider) Root() string {
 
 // Clean removes every dependency kept under the provider's root.
 func (pp *PackageProvider) Clean() error {
-	return removeReadOnly(pp.root)
+	return RemoveReadOnly(pp.root)
 }
 
 // parseRef splits ref into its repository and version, refusing either when it
@@ -342,14 +342,16 @@ func hashArchive(archive string) (string, error) {
 	return hashPrefix + base64.StdEncoding.EncodeToString(h.Sum(nil)), nil
 }
 
-// extract writes the files of archive to dir, read-only. dir appears only once
-// it is complete; if another process extracted it first, its copy is kept.
-func extract(archive, dir string) error {
+// Extract writes the files of the zstd-compressed tar archive to dir,
+// read-only, refusing any entry that is not a regular file safely inside it.
+// dir appears only once it is complete; if another process extracted it first,
+// its copy is kept.
+func Extract(archive, dir string) error {
 	pending, err := os.MkdirTemp(filepath.Dir(dir), ".extract-")
 	if err != nil {
 		return err
 	}
-	defer removeReadOnly(pending)
+	defer RemoveReadOnly(pending)
 
 	err = entries(archive, func(name string, body io.Reader) error {
 		file := filepath.Join(pending, filepath.FromSlash(name))
@@ -409,9 +411,9 @@ func readOnlyDirs(dir string) error {
 	return nil
 }
 
-// removeReadOnly removes dir, making everything under it writable first, as the
-// read-only extraction of a dependency otherwise cannot be removed.
-func removeReadOnly(dir string) error {
+// RemoveReadOnly removes dir, making everything under it writable first, as
+// what Extract wrote otherwise cannot be removed.
+func RemoveReadOnly(dir string) error {
 	_ = filepath.WalkDir(dir, func(file string, entry fs.DirEntry, err error) error {
 		if err == nil {
 			mode := os.FileMode(0o644)

@@ -45,7 +45,7 @@ func newRepo(t *testing.T, files map[string]string) (string, string) {
 func newProvider(t *testing.T, repos map[string]string) *PackageProvider {
 	t.Helper()
 	root := t.TempDir()
-	t.Cleanup(func() { _ = removeReadOnly(root) })
+	t.Cleanup(func() { _ = RemoveReadOnly(root) })
 	pp := NewPackageProvider(root)
 	pp.remote = func(repo string) string {
 		return "file://" + repos[repo]
@@ -134,7 +134,7 @@ func TestPackageProviderReadsTheArchiveEachTime(t *testing.T) {
 
 	dir, hash, err := pp.Fetch("example.com/dep@v1")
 	require.NoError(t, err)
-	require.NoError(t, removeReadOnly(string(dir)))
+	require.NoError(t, RemoveReadOnly(string(dir)))
 
 	writeArchive(t, string(dir)+archiveExtension, map[string]string{"Dep.zam": "namespace Evil {}\n"})
 	_, tampered, err := NewPackageProvider(pp.root).Fetch("example.com/dep@v1")

@@ -83,6 +83,11 @@ func main() {
 	case command.VerbClean:
 		handleErrors(&logger, stepClean, packageProvider.Clean())
 		logger.Print(base.LogLevelInfo, "removed %s\n", packageProvider.Root())
+		cached, err := build.CleanCache()
+		handleErrors(&logger, stepClean, err)
+		for _, dir := range cached {
+			logger.Print(base.LogLevelInfo, "removed %s\n", dir)
+		}
 		logger.Flush()
 		base.Exit(base.ExitCodeSuccess)
 	case command.VerbTest:

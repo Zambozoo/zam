@@ -13,3 +13,4 @@ node_modules
 editors/vscode/LICENSE
 editors/vscode/images
 native-report.json
+*.tar.gz
