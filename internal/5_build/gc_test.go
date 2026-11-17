@@ -115,9 +115,9 @@ func faultStatus() int {
 }
 
 // targetCommand runs the program at path, built for testTarget, with args:
-// under Wine when it is for Windows.
+// under Wine when it is for Windows and this machine is not.
 func targetCommand(path string, args ...string) *exec.Cmd {
-	if testTarget().OS == target.Windows {
+	if testTarget().OS == target.Windows && runtime.GOOS != "windows" {
 		return exec.Command("wine", append([]string{path}, args...)...)
 	}
 	return exec.Command(path, args...)

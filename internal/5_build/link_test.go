@@ -74,8 +74,8 @@ func wineCommand(path string, args ...string) *exec.Cmd {
 }
 
 // TestLinkCOFF links a console program for each Windows target against its
-// pack's C runtime and import libraries, as Zig would, and runs the one Wine
-// runs here.
+// pack's C runtime and import libraries, as Zig would, and runs the one this
+// machine runs, itself or under Wine.
 func TestLinkCOFF(t *testing.T) {
 	t.Parallel()
 	machines := map[string]uint16{"aarch64": pe.IMAGE_FILE_MACHINE_ARM64, "x86_64": pe.IMAGE_FILE_MACHINE_AMD64}
@@ -103,8 +103,12 @@ func TestLinkCOFF(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, uint16(pe.IMAGE_SUBSYSTEM_WINDOWS_CUI), header.Subsystem, "a console program")
 
-			if runsUnderWine(platform) {
-				output, err := wineCommand(exe).Output()
+			if platform.IsHost() || runsUnderWine(platform) {
+				cmd := exec.Command(exe)
+				if !platform.IsHost() {
+					cmd = wineCommand(exe)
+				}
+				output, err := cmd.Output()
 				require.NoError(t, err)
 				assert.Equal(t, "hello", strings.TrimSpace(string(output)))
 			}
