@@ -73,3 +73,9 @@ jobs:
           export ZAM_PACKS=$(cygpath -m "$PWD/packs") ZAM_TEST_NATIVE=1
           go test -tags zam_static ./internal/5_build -count=1 -timeout 30m -json > report.json || true
           go run ./internal/5_build/nativereport < report.json
+
+      - if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: report-${{ matrix.platform }}
+          path: report.json

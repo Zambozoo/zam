@@ -66,13 +66,24 @@ func main() {
 	}
 }
 
-// reasons picks the lines of a failing test's output that say why it failed.
+// reasons picks the lines of a failing test's output that say why it failed:
+// each assertion's error and what follows it, up to the assertion's next
+// field.
 func reasons(output []string) []string {
 	var lines []string
+	inError := false
 	for _, out := range output {
 		line := strings.TrimSpace(out)
-		if strings.Contains(line, "Error:") || strings.Contains(line, "not supported by native") ||
-			strings.Contains(line, "expected") || strings.Contains(line, "actual") {
+		switch {
+		case strings.HasPrefix(line, "Test:") || strings.HasPrefix(line, "Error Trace:"):
+			inError = false
+		case strings.Contains(line, "Error:"):
+			inError = true
+			lines = append(lines, line)
+		case inError && line != "":
+			lines = append(lines, line)
+		case strings.Contains(line, "not supported by native") ||
+			strings.Contains(line, "expected") || strings.Contains(line, "actual"):
 			lines = append(lines, line)
 		}
 		if len(lines) == 6 {
