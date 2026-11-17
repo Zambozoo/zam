@@ -114,6 +114,16 @@ func faultStatus() int {
 	return accessViolation & 0xff
 }
 
+// exitStatus is the status a program exited with as POSIX reports it, its low
+// byte, where Windows reports all 32 bits; a fault's status, which a POSIX
+// program has no byte for, is kept whole.
+func exitStatus(code int) int {
+	if code == faultStatus() {
+		return code
+	}
+	return code & 0xff
+}
+
 // targetCommand runs the program at path, built for testTarget, with args:
 // under Wine when it is for Windows and this machine is not.
 func targetCommand(path string, args ...string) *exec.Cmd {

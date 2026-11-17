@@ -82,7 +82,7 @@ func runNative(t *testing.T, source string, args ...string) (string, int) {
 	output, err := targetCommand(out, args...).CombinedOutput()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
-		return string(output), exit.ExitCode()
+		return string(output), exitStatus(exit.ExitCode())
 	}
 	require.NoError(t, err, string(output))
 	return string(output), 0

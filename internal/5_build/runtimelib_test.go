@@ -72,7 +72,7 @@ func TestRuntimeArchiveLinksWithLLVMOutput(t *testing.T) {
 
 	dir := t.TempDir()
 	obj := filepath.Join(dir, "posit.o")
-	exe := filepath.Join(dir, "posit")
+	exe := host.Executable(filepath.Join(dir, "posit"))
 	require.NoError(t, os.WriteFile(obj, buf.Bytes(), 0o600))
 
 	require.NoError(t, linkers[host.OS](host, pack, exe, []string{obj, archive}, nil, false))

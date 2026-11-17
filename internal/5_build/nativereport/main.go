@@ -26,7 +26,13 @@ func main() {
 	scanner.Buffer(make([]byte, 1<<20), 1<<24)
 	for scanner.Scan() {
 		var e event
-		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil || e.Test == "" || strings.Contains(e.Test, "/") {
+		if err := json.Unmarshal(scanner.Bytes(), &e); err != nil || e.Test == "" {
+			continue
+		}
+		if top, _, ok := strings.Cut(e.Test, "/"); ok {
+			if e.Action == "output" {
+				outputs[top] = append(outputs[top], e.Output)
+			}
 			continue
 		}
 		switch e.Action {
@@ -39,6 +45,10 @@ func main() {
 		case "pass", "fail", "skip":
 			results[e.Test] = e.Action
 		}
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 
 	// A test that began and never ended was still running when the run was
