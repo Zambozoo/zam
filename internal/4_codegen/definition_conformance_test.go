@@ -128,6 +128,7 @@ func compileHarness(name string, sources []string, runtime string) (string, erro
 		"-o", harness,
 	}, cflags...)
 	args = append(append(args, sources...), libs...)
+	args = append(args, "-lpthread", "-lm")
 	cmd := exec.Command(compiler, args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -253,7 +254,7 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 			definition: &typeDefinitionEnum{
 				instanceMethods: testMethods(), instanceMembers: testMembers(),
 				instanceByteSize: 16, initializerInstruction: 41,
-				valueCount: 3, valueSlot: 12,
+				valueCount: 3, valueSlot: 12, valueType: 7 << 16,
 			},
 			want: concat([]string{
 				"methodCount=2",
@@ -262,6 +263,7 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 				"initializerInstruction=41",
 				"valueCount=3",
 				"valueSlot=12",
+				"valueType=458752",
 			}, wantMethods, wantMembers),
 		},
 		{
@@ -277,6 +279,7 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 				"initializerInstruction=41",
 				"valueCount=0",
 				"valueSlot=0",
+				"valueType=0",
 			}, wantMethods, wantMembers),
 		},
 		{

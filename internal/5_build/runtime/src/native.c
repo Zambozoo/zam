@@ -20,9 +20,6 @@
 #include "thread.h"
 #include "vm.h"
 
-#ifdef ZAM_DEBUGGER
-#include "debug.h"
-#endif
 
 // STD_MARK is Object's own Mark: while collecting, everything the receiver's
 // members hold is reachable. STD_MARK_OVERRIDE is Objs.Mark: the receiver is
@@ -297,7 +294,8 @@ static void stdFsReadDir(ZamThread *thread) {
     free(path);
 
     if (dir != NULL) {
-        qsort(names, count, sizeof *names, compareNames);
+        if (count > 0)
+            qsort(names, count, sizeof *names, compareNames);
         char *joined = zam_alloc(bytes + 1);
         uint64_t at = 0;
         for (uint64_t i = 0; i < count; i++) {
@@ -628,23 +626,10 @@ static void stdSystemTrace(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
-// stdSystemFailed tells a debugger, if the program runs under one, that the
-// calling thread has failed with the given message, as a panic or a failed
-// check does, which stops the program there if the debugger asked to stop on
-// failures.
+// stdSystemFailed is called as the calling thread fails with a message, as a
+// panic or a failed check does. It does nothing; it is where a debugger breaks
+// to stop on failures.
 static void stdSystemFailed(ZamThread *thread) {
-#ifdef ZAM_DEBUGGER
-    const ZamString *message =
-        zam_string_of((void *)(uintptr_t)zam_native_argument(thread, 0));
-    char text[1024] = "";
-    if (message != NULL) {
-        size_t length = message->length < sizeof text - 1 ? message->length
-                                                          : sizeof text - 1;
-        memcpy(text, message->bytes, length);
-        text[length] = '\0';
-    }
-    zam_debug_fail(thread, text);
-#endif
     zam_native_return_void(thread);
 }
 
@@ -653,13 +638,17 @@ static void stdSystemFailed(ZamThread *thread) {
 // one.
 static void stdSystemCaller(ZamThread *thread) {
     uint64_t skip = zam_native_argument(thread, 0) + 1;
+    const char *file = NULL;
+    uint32_t line = 0;
+    bool found = false;
+    if (thread->vm->compiledFunctions != NULL) {
+        found = zam_thread_compiled_caller(thread, skip, &file, &line);
+        goto answer;
+    }
 
     ZamFrames frames;
     zam_frames_begin(&frames, thread);
     uint64_t offset;
-    bool found = false;
-    const char *file = NULL;
-    uint32_t line = 0;
     while (zam_frames_next(&frames, &offset)) {
         if (skip-- == 0) {
             found = zam_image_locate(&thread->vm->image, offset - 1, &file, &line);
@@ -667,6 +656,7 @@ static void stdSystemCaller(ZamThread *thread) {
         }
     }
 
+answer:
     if (found) {
         ZamWord string = (ZamWord)zam_native_new_string(thread, file, strlen(file));
         *(ZamWord *)zam_native_argument_pointer(thread, 1) = string;
@@ -1410,63 +1400,11 @@ extern const ZamNativeEntry zamProjectNativeTable[];
 extern const uint64_t zamProjectNativeTableCount;
 
 // The codec natives live beside the libraries they wrap, each file with a
-// table of its own.
-extern const ZamNativeEntry zamJsonNativeTable[];
-extern const uint64_t zamJsonNativeTableCount;
-extern const ZamNativeEntry zamYamlNativeTable[];
-extern const uint64_t zamYamlNativeTableCount;
-extern const ZamNativeEntry zamXmlNativeTable[];
-extern const uint64_t zamXmlNativeTableCount;
-extern const ZamNativeEntry zamBsonNativeTable[];
-extern const uint64_t zamBsonNativeTableCount;
-extern const ZamNativeEntry zamCompressNativeTable[];
-extern const uint64_t zamCompressNativeTableCount;
-extern const ZamNativeEntry zamCborNativeTable[];
-extern const uint64_t zamCborNativeTableCount;
-extern const ZamNativeEntry zamArchiveNativeTable[];
-extern const uint64_t zamArchiveNativeTableCount;
-extern const ZamNativeEntry zamNetNativeTable[];
-extern const uint64_t zamNetNativeTableCount;
-extern const ZamNativeEntry zamTlsNativeTable[];
-extern const uint64_t zamTlsNativeTableCount;
-extern const ZamNativeEntry zamCurlNativeTable[];
-extern const uint64_t zamCurlNativeTableCount;
-extern const ZamNativeEntry zamHttpNativeTable[];
-extern const uint64_t zamHttpNativeTableCount;
-extern const ZamNativeEntry zamWsNativeTable[];
-extern const uint64_t zamWsNativeTableCount;
-extern const ZamNativeEntry zamCryptoNativeTable[];
-extern const uint64_t zamCryptoNativeTableCount;
-extern const ZamNativeEntry zamPkiNativeTable[];
-extern const uint64_t zamPkiNativeTableCount;
-extern const ZamNativeEntry zamTimeNativeTable[];
-extern const uint64_t zamTimeNativeTableCount;
-extern const ZamNativeEntry zamArenaNativeTable[];
-extern const uint64_t zamArenaNativeTableCount;
-
-// stdTables are the standard library's tables, searched in order.
-static const struct {
-    const ZamNativeEntry *table;
-    const uint64_t *count;
-} stdTables[] = {
-    {zamNativeTable, &zamNativeTableCount},
-    {zamJsonNativeTable, &zamJsonNativeTableCount},
-    {zamYamlNativeTable, &zamYamlNativeTableCount},
-    {zamXmlNativeTable, &zamXmlNativeTableCount},
-    {zamBsonNativeTable, &zamBsonNativeTableCount},
-    {zamCompressNativeTable, &zamCompressNativeTableCount},
-    {zamCborNativeTable, &zamCborNativeTableCount},
-    {zamArchiveNativeTable, &zamArchiveNativeTableCount},
-    {zamNetNativeTable, &zamNetNativeTableCount},
-    {zamTlsNativeTable, &zamTlsNativeTableCount},
-    {zamCurlNativeTable, &zamCurlNativeTableCount},
-    {zamHttpNativeTable, &zamHttpNativeTableCount},
-    {zamWsNativeTable, &zamWsNativeTableCount},
-    {zamCryptoNativeTable, &zamCryptoNativeTableCount},
-    {zamPkiNativeTable, &zamPkiNativeTableCount},
-    {zamTimeNativeTable, &zamTimeNativeTableCount},
-    {zamArenaNativeTable, &zamArenaNativeTableCount},
-};
+// table of its own. Which of those tables a program can call into is the
+// link's to say: a natively compiled program names only those it calls, and
+// stdtables.c names every one for a program run under the interpreter.
+extern const ZamNativeTables zamStdNativeTables[];
+extern const uint64_t zamStdNativeTableCount;
 
 // matchNative searches a table for a name of the given length and returns the
 // bound function, or NULL if the table has no such entry. Names are stored as
@@ -1505,9 +1443,9 @@ void zam_natives_resolve(ZamVM *vm) {
         // appears in both is bound to the runtime's own entry. A project is
         // free to ship a C function whose name begins with STD_ by accident,
         // but it may not shadow one the standard library already answers to.
-       ZamNativeFn fn = NULL;
-        for (uint64_t t = 0; fn == NULL && t < sizeof stdTables / sizeof stdTables[0]; t++)
-            fn = matchNative(stdTables[t].table, *stdTables[t].count, name,
+       ZamNativeFn fn = matchNative(zamNativeTable, zamNativeTableCount, name, nameByteCount);
+        for (uint64_t t = 0; fn == NULL && t < zamStdNativeTableCount; t++)
+            fn = matchNative(zamStdNativeTables[t].table, *zamStdNativeTables[t].count, name,
                              nameByteCount);
         if (fn == NULL)
             fn = matchNative(zamProjectNativeTable,

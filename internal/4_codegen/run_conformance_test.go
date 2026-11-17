@@ -31,8 +31,13 @@ var (
 // brings its own entry point.
 func buildRunHarness(t *testing.T) string {
 	t.Helper()
-	return buildHarness(t, "run_harness.c", "run",
-		"run.c", "thread.c", "vm.c", "gc.c", "heap.c", "native.c", "opcode.c", "json.c", "yaml.c", "xml.c", "bson.c", "compress.c", "cbor.c", "archive.c", "net.c", "tls.c", "curl.c", "http.c", "ws.c", "crypto.c", "pki.c", "time.c", "arena.c", "posit.c")
+	return buildHarness(t, "run_harness.c", "run", wholeRuntime...)
+}
+
+// wholeRuntime is every runtime source a harness that runs a VM links, beside
+// the readers buildHarness always brings.
+var wholeRuntime = []string{
+	"run.c", "thread.c", "vm.c", "gc.c", "heap.c", "native.c", "opcode.c", "json.c", "yaml.c", "xml.c", "bson.c", "compress.c", "cbor.c", "archive.c", "net.c", "tls.c", "curl.c", "http.c", "ws.c", "crypto.c", "bcrypt.c", "blowfish.c", "pki.c", "time.c", "arena.c", "posit.c", "zamrt.c", "stdtables.c",
 }
 
 // valueEntryBytes is how wide the mark entry a markable value standing on the

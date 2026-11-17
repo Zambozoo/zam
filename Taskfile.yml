@@ -30,6 +30,44 @@ tasks:
       - go test ./... -count=1 -cover -coverprofile=coverage.out
       - go tool cover -func=coverage.out
 
+  test:native-report:
+    desc: Run the end-to-end tests against the native backend and summarize what passes (report only)
+    cmds:
+      - cmd: ZAM_TEST_NATIVE=1 go test ./internal/5_build -count=1 -timeout 20m -json > native-report.json
+        ignore_error: true
+      - go run ./internal/5_build/nativereport < native-report.json
+
+  linux:image:
+    desc: Build the Linux image zam is built and tested in (set ZIG_SHA256 to the Zig tarball's checksum on other than arm64)
+    cmds:
+      - docker build --build-arg ZIG_SHA256={{.ZIG_SHA256}} -t zam-linux docker
+
+  test:linux:
+    desc: Run all tests in the Linux image
+    cmds:
+      - docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache zam-linux go test ./... -count=1 --race
+
+  packs:
+    desc: Build target packs into bin/packs in the Linux image (set TARGETS; add --runtime-only to rebuild only the runtime)
+    vars:
+      TARGETS: '{{.TARGETS | default "x86_64-linux-musl aarch64-linux-musl x86_64-macos aarch64-macos"}}'
+    cmds:
+      - docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache zam-linux docker/pack.sh {{.TARGETS}} {{.CLI_ARGS}}
+
+  test:cross:
+    desc: Cross-build a hello world and an HTTPS fetch for Linux on this machine and run them in Debian (arm64) and Alpine (amd64) containers (needs the network; set URL to fetch another)
+    vars:
+      URL: '{{.URL | default "https://example.com"}}'
+    cmds:
+      - mkdir -p bin/cross && go build -o bin/zam ./cmd/
+      - |
+        for target in aarch64-linux-musl x86_64-linux-musl; do
+          ZAM_PACKS="$PWD/bin/packs" bin/zam build --native --target $target -o bin/cross/hello-$target docs/0_example/helloworld/Main.zam
+          ZAM_PACKS="$PWD/bin/packs" bin/zam build --native --target $target -o bin/cross/https-$target docker/cross/https/Main.zam
+        done
+      - docker run --rm --platform linux/arm64 -v "$PWD/bin/cross":/cross zam-linux sh -c '/cross/hello-aarch64-linux-musl && /cross/https-aarch64-linux-musl {{.URL}}'
+      - docker run --rm --platform linux/amd64 -v "$PWD/bin/cross":/cross alpine:3 sh -c '/cross/hello-x86_64-linux-musl && /cross/https-x86_64-linux-musl {{.URL}}'
+
   vscode:
     desc: Build and package the editor extension, and install it into VS Code and Cursor where present
     dir: editors/vscode

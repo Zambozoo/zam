@@ -151,3 +151,51 @@ public namespace ListTest {
 func regexpQuote(path string) string {
 	return regexp.QuoteMeta(filepath.Join(filepath.Base(filepath.Dir(path)), filepath.Base(path)))
 }
+
+// A native run compiles the tests to native code and reports them as the
+// interpreter's run does, a crash's trace included.
+func TestRunNative(t *testing.T) {
+	t.Setenv("ZAM_CACHE_DIR", t.TempDir())
+	dir := writeFiles(t, map[string]string{
+		"list/List.test.zam": `import std("test/Assert.zam");
+
+public namespace ListTest {
+    public fun void(uint, str...) Doubles = (argC, argV) {
+        Assert::[int]Equal(4, 2 * 2);
+    }
+
+    public fun void(uint, str...) Wrong = (argC, argV) {
+        Assert::[int]Equal(5, 2 * 2);
+    }
+}
+`,
+		"crash/Crash.test.zam": `import std("lang/System.zam");
+
+public namespace CrashTest {
+    public fun void(uint, str...) Panics = (argC, argV) {
+        System::Panic("boom\n");
+    }
+}
+`,
+	})
+
+	out, passed := run(t, "--native", dir+"/...")
+	assert.False(t, passed)
+
+	crash := filepath.Join(dir, "crash", "Crash.test.zam")
+	list := filepath.Join(dir, "list", "List.test.zam")
+	assert.Regexp(t, `^=== RUN   CrashTest.Panics
+boom
+\tat System.Panic \(std://lang/System.zam:\d+\)
+\tat CrashTest.Panics \(\S*/Crash.test.zam:5\)
+\tat ZamTestMain.main \(\S*/ZamTestMain\.test\.zam:\d+\)
+FAIL \S*`+regexpQuote(crash)+` \(exit 255\)
+=== RUN   ListTest.Doubles
+--- PASS: ListTest.Doubles
+=== RUN   ListTest.Wrong
+    List.test.zam:9: want 5, got 4
+--- FAIL: ListTest.Wrong
+FAIL
+FAIL \S*`+regexpQuote(list)+` \S+
+$`, out)
+}

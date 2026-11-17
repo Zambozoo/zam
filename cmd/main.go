@@ -110,6 +110,10 @@ func main() {
 	errs = semantic.ValidateAST(syntaxAST)
 	handleErrors(&logger, stepSemantic, errs...)
 
+	if cmd.Native {
+		buildNative(&logger, cmd, syntaxAST)
+	}
+
 	result, err := codegen.GenerateCode(cmd, syntaxAST)
 	handleErrors(&logger, stepCodegen, err)
 
@@ -135,6 +139,30 @@ func main() {
 		handleErrors(&logger, stepBuild, err)
 	}
 
+	logger.Print(base.LogLevelInfo, "successfully generated code \n")
+	logger.Flush()
+	base.Exit(base.ExitCodeSuccess)
+}
+
+// buildNative compiles the program to native code and builds or runs it,
+// saying which methods it could not compile yet.
+func buildNative(logger *base.Logger, cmd *command.Command, syntaxAST *syntax.AST) {
+	object, err := codegen.GenerateObject(cmd, syntaxAST, codegen.ObjectOptions{Triple: cmd.Target.Triple})
+	handleErrors(logger, stepCodegen, err)
+	for _, unsupported := range object.Unsupported {
+		logger.Print(base.LogLevelWarn, "native: compiled as a trap: %s\n", unsupported)
+	}
+
+	opts := build.Options{Project: syntaxAST.MainCodeDecl.File().Project, Target: cmd.Target}
+	if cmd.Verb == command.VerbRun {
+		code, err := build.RunNative(object.Bytes, opts, cmd.RunArgs)
+		handleErrors(logger, stepRun, err)
+		logger.Flush()
+		base.Exit(base.ExitCode(code))
+	}
+
+	opts.OutputPath = cmd.OutputPath.String()
+	handleErrors(logger, stepBuild, build.LinkObject(object.Bytes, opts))
 	logger.Print(base.LogLevelInfo, "successfully generated code \n")
 	logger.Flush()
 	base.Exit(base.ExitCodeSuccess)

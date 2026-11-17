@@ -22,11 +22,31 @@ Flags come before the input file, or the paths `test` is given. Sizes take an op
 | `-o`, `--output` | `out` | file to write; `build` only |
 | `-E`, `--emit-image` | `false` | write the raw bytecode image instead of linking a binary; `build` only |
 | `-k`, `--keep-build` | `false` | keep the temporary build directory and print its path |
+| `--native` | `false` | compile to native code through LLVM instead of embedding the bytecode image; experimental: what it cannot compile yet ends the program when reached. See [Native code](#native-code) |
+| `--target` | the host | platform to compile native code for; `build` with `--native` only |
 | `--run` | | regular expression picking the tests to run by name; `test` only |
 | `--parallel` | the number of processors | test files run at once; `test` only |
 | `-n`, `--no-project` | `false` | ignore project files and compile local files as one project depending only on std |
 | `-v`, `--verbose` | `false` | verbose output |
 | `-t`, `--threads` | `1` | threads the compiler uses |
+
+### Native code
+A native build links the program statically against the runtime and the C libraries the standard library wraps, taken from a target pack: one directory per target holding those libraries, their headers and licenses, and the C library to link against. A binary for Linux runs on any Linux of its architecture; one for macOS runs on macOS 13 or later.
+
+| Target | Platform |
+|---|---|
+| `aarch64-linux-musl` | Linux on arm64, statically linked against musl |
+| `x86_64-linux-musl` | Linux on x86-64, statically linked against musl |
+| `aarch64-macos` | macOS on Apple silicon |
+| `x86_64-macos` | macOS on Intel |
+
+Any target is built from any machine zam runs on. `run` and `test` build for the machine they run on.
+
+Packs are found under the directory `$ZAM_PACKS` names, else under `packs` in zam's cache directory, `$ZAM_CACHE_DIR` or the user's cache directory. They are built from source with `task packs` in this repository.
+
+With `zig` on the path, the runtime is compiled for the target against its pack the first time it is needed, and kept in zam's cache. Without it, the pack's own prebuilt runtime is used. A project's `native.files` are compiled with `zig cc` for the target, so they need `zig`.
+
+A native binary carries no debug information; `zam debug` builds its own.
 
 ### Memory
 These are baked into the program and take effect every time it runs.

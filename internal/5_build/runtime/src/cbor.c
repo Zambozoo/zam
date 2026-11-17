@@ -24,6 +24,93 @@ enum {
     KIND_SIMPLE
 };
 
+#if CBOR_MAJOR_VERSION == 0 && CBOR_MINOR_VERSION < 14
+// joinedChunks answers the bytes of an indefinite string's count chunks laid
+// end to end, in memory the caller frees, or NULL when out of memory.
+static unsigned char *joinedChunks(cbor_item_t **chunks, size_t count, bool text, size_t *length) {
+    *length = 0;
+    for (size_t i = 0; i < count; i++)
+        *length += text ? cbor_string_length(chunks[i]) : cbor_bytestring_length(chunks[i]);
+    unsigned char *joined = malloc(*length + 1);
+    if (joined == NULL)
+        return NULL;
+    size_t at = 0;
+    for (size_t i = 0; i < count; i++) {
+        size_t n = text ? cbor_string_length(chunks[i]) : cbor_bytestring_length(chunks[i]);
+        memcpy(joined + at, text ? cbor_string_handle(chunks[i]) : cbor_bytestring_handle(chunks[i]), n);
+        at += n;
+    }
+    return joined;
+}
+
+// copyDefinite copies item with every string and container in it made
+// definite, as libcbor 0.14's cbor_copy_definite does, or answers NULL when out
+// of memory.
+static cbor_item_t *copyDefinite(cbor_item_t *item) {
+    switch (cbor_typeof(item)) {
+    case CBOR_TYPE_BYTESTRING:
+    case CBOR_TYPE_STRING: {
+        bool text = cbor_isa_string(item);
+        if (text ? cbor_string_is_definite(item) : cbor_bytestring_is_definite(item))
+            return cbor_copy(item);
+        size_t length;
+        unsigned char *joined = text
+            ? joinedChunks(cbor_string_chunks_handle(item), cbor_string_chunk_count(item), true, &length)
+            : joinedChunks(cbor_bytestring_chunks_handle(item), cbor_bytestring_chunk_count(item), false, &length);
+        if (joined == NULL)
+            return NULL;
+        cbor_item_t *copy = text ? cbor_build_stringn((const char *)joined, length)
+                                 : cbor_build_bytestring(joined, length);
+        free(joined);
+        return copy;
+    }
+    case CBOR_TYPE_ARRAY: {
+        cbor_item_t *copy = cbor_new_definite_array(cbor_array_size(item));
+        for (size_t i = 0; copy != NULL && i < cbor_array_size(item); i++) {
+            cbor_item_t *member = cbor_array_get(item, i);
+            cbor_item_t *memberCopy = copyDefinite(member);
+            cbor_decref(&member);
+            bool pushed = memberCopy != NULL && cbor_array_push(copy, memberCopy);
+            if (memberCopy != NULL)
+                cbor_decref(&memberCopy);
+            if (!pushed)
+                cbor_decref(&copy);
+        }
+        return copy;
+    }
+    case CBOR_TYPE_MAP: {
+        cbor_item_t *copy = cbor_new_definite_map(cbor_map_size(item));
+        struct cbor_pair *pairs = cbor_map_handle(item);
+        for (size_t i = 0; copy != NULL && i < cbor_map_size(item); i++) {
+            struct cbor_pair pair = {copyDefinite(pairs[i].key), copyDefinite(pairs[i].value)};
+            bool added = pair.key != NULL && pair.value != NULL && cbor_map_add(copy, pair);
+            if (pair.key != NULL)
+                cbor_decref(&pair.key);
+            if (pair.value != NULL)
+                cbor_decref(&pair.value);
+            if (!added)
+                cbor_decref(&copy);
+        }
+        return copy;
+    }
+    case CBOR_TYPE_TAG: {
+        cbor_item_t *tagged = cbor_tag_item(item);
+        cbor_item_t *taggedCopy = copyDefinite(tagged);
+        cbor_decref(&tagged);
+        if (taggedCopy == NULL)
+            return NULL;
+        cbor_item_t *copy = cbor_build_tag(cbor_tag_value(item), taggedCopy);
+        cbor_decref(&taggedCopy);
+        return copy;
+    }
+    default:
+        return cbor_copy(item);
+    }
+}
+#else
+#define copyDefinite cbor_copy_definite
+#endif
+
 static cbor_item_t *itemArgument(ZamThread *thread, uint64_t wordIndex) {
     cbor_item_t *item = codec_handle(thread, wordIndex);
     if (item == NULL)
@@ -367,7 +454,7 @@ static void stdCborSet(ZamThread *thread) {
 
 // stdCborEncode leaves the definite encoding in a buffer for STD_CODEC_TAKE.
 static void stdCborEncode(ZamThread *thread) {
-    cbor_item_t *copy = cbor_copy_definite(itemArgument(thread, 0));
+    cbor_item_t *copy = copyDefinite(itemArgument(thread, 0));
     if (copy == NULL)
         zam_native_panic(thread, "out of memory encoding CBOR");
     unsigned char *bytes = NULL;
@@ -504,7 +591,7 @@ static void stdCborEqual(ZamThread *thread) {
     unsigned char *encoded[2] = {NULL, NULL};
     size_t length[2];
     for (int i = 0; i < 2; i++) {
-        cbor_item_t *copy = cbor_copy_definite(itemArgument(thread, (uint64_t)i));
+        cbor_item_t *copy = copyDefinite(itemArgument(thread, (uint64_t)i));
         size_t capacity;
         length[i] = cbor_serialize_alloc(copy, &encoded[i], &capacity);
         cbor_decref(&copy);

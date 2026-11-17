@@ -1756,7 +1756,7 @@ func (v *operationVisitor) VisitFieldEnum(f *syntax.FieldEnum) error { return ni
 
 // emitStaticInitializers gives every static in the program the value it starts
 // the run with, file by file in path order and, within a file, in the order the
-// declarations were written. A static exists for the length of the run and is
+// statics were written, whichever declaration holds them. A static exists for the length of the run and is
 // written once, before anything can name it.
 //
 // Which file goes first is not chosen so much as fixed: there is no dependency
@@ -1775,9 +1775,23 @@ func (v *operationVisitor) VisitFieldEnum(f *syntax.FieldEnum) error { return ni
 // an enum's values most of all, which are always written ahead of the enum's
 // own methods.
 func (v *operationVisitor) emitStaticInitializers() error {
-	for _, methods := range []bool{true, false} {
-		for _, entry := range v.ast.CodeFiles.All() {
-			if err := v.emitDeclStaticInitializers(entry.Value.Decl, methods); err != nil {
+	for _, entry := range v.ast.CodeFiles.All() {
+		if err := v.emitDeclStaticMethods(entry.Value.Decl); err != nil {
+			return err
+		}
+	}
+	// Within a file, statics are initialized in the order they are written,
+	// whichever declaration holds them.
+	for _, entry := range v.ast.CodeFiles.All() {
+		for _, f := range staticInitializers(entry.Value.Decl) {
+			var err error
+			switch f := f.(type) {
+			case *syntax.FieldMember:
+				err = v.emitStaticMember(f)
+			case *syntax.FieldEnum:
+				err = v.emitEnumValue(f)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -1785,38 +1799,18 @@ func (v *operationVisitor) emitStaticInitializers() error {
 	return nil
 }
 
-// emitDeclStaticInitializers initializes either the static methods or the other
-// statics a declaration holds and those the declarations nested inside it hold,
-// in the order they were written. A nested declaration is a static field of the
-// one it lies in, which is what makes the walk a single loop.
-func (v *operationVisitor) emitDeclStaticInitializers(d syntax.Decl, methods bool) error {
+// emitDeclStaticMethods builds the closure of every static method a
+// declaration holds and of those the declarations nested inside it hold.
+func (v *operationVisitor) emitDeclStaticMethods(d syntax.Decl) error {
 	for _, f := range d.StaticFields() {
-		switch f := f.(type) {
-		case *syntax.FieldMethod:
-			if !methods {
-				continue
-			}
-			if err := v.emitStaticMethod(f); err != nil {
-				return err
-			}
-		case *syntax.FieldMember:
-			if methods {
-				continue
-			}
-			if err := v.emitStaticMember(f); err != nil {
-				return err
-			}
-		case *syntax.FieldEnum:
-			if methods {
-				continue
-			}
-			if err := v.emitEnumValue(f); err != nil {
+		if method, ok := f.(*syntax.FieldMethod); ok {
+			if err := v.emitStaticMethod(method); err != nil {
 				return err
 			}
 		}
 	}
 	for child := range d.Decls() {
-		if err := v.emitDeclStaticInitializers(child, methods); err != nil {
+		if err := v.emitDeclStaticMethods(child); err != nil {
 			return err
 		}
 	}
@@ -3975,6 +3969,13 @@ func (v *operationVisitor) emitComparison(e *syntax.ExprNAry) error {
 	kind := e.Kind()
 	leftType := e.Exprs[0].ResolvedType()
 	rightType := e.Exprs[1].ResolvedType()
+	// A null is compared as whatever it is compared with, the type of null
+	// itself being one no value is ever laid out as.
+	if leftType == syntax.TypeNull {
+		leftType = rightType
+	} else if rightType == syntax.TypeNull {
+		rightType = leftType
+	}
 	equality := kind == syntax.ExprKindEqual || kind == syntax.ExprKindNotEqual
 	leftAny := leftType.Kind() == syntax.TypeKindAny
 	rightAny := rightType.Kind() == syntax.TypeKindAny

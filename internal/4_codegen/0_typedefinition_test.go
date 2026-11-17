@@ -74,7 +74,7 @@ func TestTypeDefinitionByteCountMatchesWhatIsWritten(t *testing.T) {
 		"enum": &typeDefinitionEnum{
 			instanceMethods: testMethods(), instanceMembers: testMembers(),
 			instanceByteSize: 16, initializerInstruction: 41,
-			valueCount: 3, valueSlot: 5,
+			valueCount: 3, valueSlot: 5, valueType: 7 << 16,
 		},
 		"abstract": &typeDefinitionAbstract{
 			instanceMethods: testMethods(), instanceMembers: testMembers(),

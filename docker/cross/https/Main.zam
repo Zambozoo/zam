@@ -1,0 +1,17 @@
+import std("lang/*");
+import std("io/local/*");
+import std("io/web/*");
+
+namespace Main {
+    // main fetches the URL it is given and writes the status the server
+    // answers, or why it could not, which over HTTPS shows whether the
+    // system's certificates were found.
+    fun void(uint, str...) main = (argC, argV) {
+        var (HTTP.Response*, Err*) got = HTTP::Get(argV[0]);
+        if (got.1 != null) {
+            File::StdOut.WriteStr("failed: " + got.1{str} + "\n");
+            System::Exit(1);
+        }
+        File::StdOut.WriteStr(argV[0] + " " + got.0.status{str} + "\n");
+    }
+}

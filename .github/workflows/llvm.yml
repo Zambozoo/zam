@@ -1,0 +1,58 @@
+name: LLVM
+
+# Builds the static LLVM and lld zam links into itself, once per version and
+# platform, and hands each to the jobs that call it as an artifact.
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - release/llvm.sh
+      - .github/workflows/llvm.yml
+
+env:
+  LLVM_VERSION: 23.1.5
+  ZIG_VERSION: 0.17.1
+
+jobs:
+  llvm:
+    strategy:
+      matrix:
+        include:
+          - { runner: macos-15, platform: darwin-arm64 }
+          - { runner: macos-15-intel, platform: darwin-amd64 }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { runner: ubuntu-24.04, platform: linux-amd64 }
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: cache
+        uses: actions/cache@v4
+        with:
+          path: llvm
+          key: llvm-${{ env.LLVM_VERSION }}-${{ matrix.platform }}-${{ hashFiles('release/llvm.sh') }}
+
+      - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ninja-build
+
+      - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS'
+        run: brew install ninja
+
+      - if: steps.cache.outputs.cache-hit != 'true'
+        run: release/llvm.sh "$LLVM_VERSION" "$PWD/llvm"
+
+      - run: tar -czf llvm.tar.gz llvm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: llvm-${{ matrix.platform }}
+          path: llvm.tar.gz
+          retention-days: 1

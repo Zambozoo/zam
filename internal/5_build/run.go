@@ -40,7 +40,39 @@ func Run(image []byte, nativeNames []string, opts Options, args []string) (int, 
 		return 0, err
 	}
 	defer remove()
+	return runBinary(path, args)
+}
 
+// PrepareNative links a natively compiled program's object into a temporary
+// binary, answering its path and how to remove it.
+func PrepareNative(object []byte, opts Options) (string, func(), error) {
+	dir, err := os.MkdirTemp("", "zam-run-*")
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot create run directory: %w", err)
+	}
+	remove := func() { _ = os.RemoveAll(dir) }
+
+	opts.OutputPath = filepath.Join(dir, "main")
+	if err := LinkObject(object, opts); err != nil {
+		remove()
+		return "", nil, err
+	}
+	return opts.OutputPath, remove, nil
+}
+
+// RunNative is Run for a natively compiled program's object.
+func RunNative(object []byte, opts Options, args []string) (int, error) {
+	path, remove, err := PrepareNative(object, opts)
+	if err != nil {
+		return 0, err
+	}
+	defer remove()
+	return runBinary(path, args)
+}
+
+// runBinary runs the binary at path with args and the current process's
+// standard streams, forwarding interrupts and terminations to it.
+func runBinary(path string, args []string) (int, error) {
 	cmd := exec.Command(path, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

@@ -1,8 +1,10 @@
 package codegen
 
 import (
+	"cmp"
 	"encoding/binary"
 	"iter"
+	"slices"
 
 	syntax "github.com/zambozoo/zam/internal/2_syntax"
 )
@@ -156,6 +158,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) layEnumValues(def *typeD
 	size, align := fieldByteInfo(primitive)
 	p.alignStatic(align)
 	def.valueSlot = uint64(len(r.staticInstanceMaps))
+	def.valueType = uint64(p.typeInstanceShortOf(primitive).packed())
 	for _, value := range enumValues(d) {
 		*value.ValueIndex() = len(r.staticInstanceMaps)
 		r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
@@ -1083,4 +1086,28 @@ func declFieldByteInfo(d syntax.DeclTypeable) (size, align uint64) {
 	default:
 		return wordByteSize, wordByteSize
 	}
+}
+
+// staticInitializers is every static member and enum value of d and of the
+// declarations nested in it, in the order they are written, which is the
+// order a file's statics are initialized in.
+func staticInitializers(d syntax.Decl) []syntax.Field {
+	var fields []syntax.Field
+	var collect func(d syntax.Decl)
+	collect = func(d syntax.Decl) {
+		for _, f := range d.StaticFields() {
+			switch f.(type) {
+			case *syntax.FieldMember, *syntax.FieldEnum:
+				fields = append(fields, f)
+			}
+		}
+		for child := range d.Decls() {
+			collect(child)
+		}
+	}
+	collect(d)
+	slices.SortStableFunc(fields, func(a, b syntax.Field) int {
+		return cmp.Compare(a.Start().Offset, b.Start().Offset)
+	})
+	return fields
 }

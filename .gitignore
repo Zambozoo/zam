@@ -12,3 +12,4 @@ node_modules
 *.vsix
 editors/vscode/LICENSE
 editors/vscode/images
+native-report.json

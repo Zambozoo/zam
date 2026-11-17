@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	base "github.com/zambozoo/zam/internal/0_base"
+	"github.com/zambozoo/zam/internal/target"
 )
 
 func errorContains(want string) assert.ErrorAssertionFunc {
@@ -272,6 +273,60 @@ func TestNew(t *testing.T) {
 			errFunc: assert.NoError,
 		},
 		{
+			name: "native build for a target",
+			argv: []string{"zam", "build", "--native", "--target", "x86_64-macos", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
+				m.EXPECT().FileExists(inputPath).Return(true, nil)
+				return m
+			}(),
+			want: &Command{
+				InputPath:        inputPath,
+				OutputPath:       base.Path("out"),
+				MaxThreads:       1,
+				GCTriggerRatio:   defaultGCRatio,
+				InitialStackSize: int(defaultStackSize),
+				InitialHeapSize:  int(defaultHeapSize),
+				NurserySize:      int(defaultNursery),
+				MaxHeapSize:      int(defaultMaxHeap),
+				GCMarkers:        defaultGCMarkers,
+				GCConcurrent:     defaultGCConcurrent,
+				GCRemarkGrowth:   defaultGCRemarkGrowth,
+				GCPrecleanPasses: defaultGCPrecleanPasses,
+				GCReturnAge:      defaultGCReturnAge,
+				Native:           true,
+				Target:           mustTarget(t, "x86_64-macos"),
+				WriteProject:     true,
+			},
+			errFunc: assert.NoError,
+		},
+		{
+			name: "target needs native",
+			argv: []string{"zam", "build", "--target", "x86_64-macos", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
+				return m
+			}(),
+			errFunc: errorContains("--target needs --native"),
+		},
+		{
+			name: "unknown target",
+			argv: []string{"zam", "build", "--native", "--target", "riscv64-linux-musl", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
+				return m
+			}(),
+			errFunc: errorContains(`unknown target "riscv64-linux-musl"`),
+		},
+		{
+			name:    "run takes no target",
+			argv:    []string{"zam", "run", "--native", "--target", "x86_64-macos", "input"},
+			errFunc: errorContains("unknown flag: --target"),
+		},
+		{
 			name: "sizes take a unit suffix",
 			argv: []string{"zam", "build", "--stack-size", "1MB", "--heap-size", "2GB", "--gc-ratio", "0.5", "-N", "1MB", "-M", "4GB", "input"},
 			fileProvider: func() fileProvider {
@@ -527,6 +582,14 @@ func TestNew(t *testing.T) {
 	}
 }
 
+// mustTarget answers the target called name.
+func mustTarget(t *testing.T, name string) target.Target {
+	t.Helper()
+	parsed, err := target.Parse(name)
+	require.NoError(t, err)
+	return parsed
+}
+
 func TestCommand_String(t *testing.T) {
 	tests := []struct {
 		name string
@@ -544,7 +607,7 @@ func TestCommand_String(t *testing.T) {
 				InitialStackSize: 1 << 19,
 				InitialHeapSize:  1 << 24,
 			},
-			want: `{"Verb":0,"InputPath":"input","OutputPath":"out","Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"EmitImage":false,"KeepBuild":false,"RunArgs":null,"TestTargets":null,"TestPaths":null,"RunPattern":"","Parallel":0,"Refs":null,"As":"","NoProject":false,"WriteProject":false}`,
+			want: `{"Verb":0,"InputPath":"input","OutputPath":"out","Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"EmitImage":false,"Native":false,"Target":{"Name":"","OS":"","Arch":"","Triple":"","Zig":""},"KeepBuild":false,"RunArgs":null,"TestTargets":null,"TestPaths":null,"RunPattern":"","Parallel":0,"Refs":null,"As":"","NoProject":false,"WriteProject":false}`,
 		},
 	}
 

@@ -2,9 +2,6 @@
 
 #include "gc.h"
 
-#ifdef ZAM_DEBUGGER
-#include "debug.h"
-#endif
 
 #include <time.h>
 #include <unistd.h>
@@ -93,9 +90,6 @@ static void postImageLoad(ZamVM *vm) {
     zam_thread_init(&vm->main, vm, vm->image.initialStackSize);
     zam_set_die_trace(zam_thread_trace_current);
     zam_thread_install_fault_handler();
-#ifdef ZAM_DEBUGGER
-    zam_debug_connect(vm);
-#endif
 }
 
 void zam_vm_init(ZamVM *vm, const char *imagePath) {
@@ -191,6 +185,21 @@ _Noreturn void zam_vm_exit(ZamVM *vm, ZamResult result) {
 
 uint8_t *zam_vm_static(ZamVM *vm, uint64_t slot) {
     return vm->statics + zam_image_static_offset(&vm->image, slot);
+}
+
+ZamEntry zam_vm_compiled_method(const ZamVM *vm, ZamTypeShort shortID, uint64_t methodIndex) {
+    const ZamCompiledClass *classes = vm->compiledClasses;
+    uint64_t low = 0, high = vm->compiledClassCount;
+    while (low < high) {
+        uint64_t mid = low + (high - low) / 2;
+        if (classes[mid].shortID == shortID)
+            return methodIndex < classes[mid].methodCount ? classes[mid].methods[methodIndex] : NULL;
+        if (classes[mid].shortID < shortID)
+            low = mid + 1;
+        else
+            high = mid;
+    }
+    return NULL;
 }
 
 // flushPending adds what a thread has allocated to the VM's counts, and asks
@@ -454,6 +463,14 @@ static void *markerMain(void *context) {
         if (vm->markerQuit)
             break;
 
+        vm->traced = true;
+        pthread_cond_broadcast(&vm->collectionChanged);
+        while (vm->remarkHold != 0 && !vm->markerQuit)
+            pthread_cond_wait(&vm->collectionChanged, &vm->collectionLock);
+        vm->traced = false;
+        if (vm->markerQuit)
+            break;
+
         while (atomic_load(&vm->stopRequested))
             pthread_cond_wait(&vm->collectionChanged, &vm->collectionLock);
         atomic_store(&vm->stopRequested, true);
@@ -480,6 +497,26 @@ static void *markerMain(void *context) {
     }
     pthread_mutex_unlock(&vm->collectionLock);
     return NULL;
+}
+
+void zam_vm_hold_remark(ZamVM *vm) {
+    pthread_mutex_lock(&vm->collectionLock);
+    vm->remarkHold++;
+    pthread_mutex_unlock(&vm->collectionLock);
+}
+
+void zam_vm_release_remark(ZamVM *vm) {
+    pthread_mutex_lock(&vm->collectionLock);
+    vm->remarkHold--;
+    pthread_cond_broadcast(&vm->collectionChanged);
+    pthread_mutex_unlock(&vm->collectionLock);
+}
+
+void zam_vm_await_traced(ZamVM *vm) {
+    pthread_mutex_lock(&vm->collectionLock);
+    while (!vm->traced)
+        pthread_cond_wait(&vm->collectionChanged, &vm->collectionLock);
+    pthread_mutex_unlock(&vm->collectionLock);
 }
 
 // startCycle begins a concurrent major collection, with every other thread
@@ -671,10 +708,6 @@ void zam_vm_leave_safe(ZamThread *thread) {
     pthread_mutex_lock(&vm->collectionLock);
     awaitResume(vm, thread, ZAMTHREAD_SAFE);
     pthread_mutex_unlock(&vm->collectionLock);
-#ifdef ZAM_DEBUGGER
-    if (vm->debugger != NULL)
-        zam_debug_hold(thread);
-#endif
 }
 
 void zam_vm_thread_exited(ZamThread *thread) {

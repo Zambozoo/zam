@@ -257,6 +257,10 @@ struct ZamThread {
    ZamVM *vm;
     pthread_t systemThread;
 
+    // frames is the innermost compiled frame the thread is running, the
+    // others reached through each one's caller.
+    struct ZamFrame *frames;
+
     // result is how the last step ended, and so whether there is a next one.
    ZamResult result;
     // exitStatus is what OpExit was given, kept to the low eight bits, since a
@@ -621,6 +625,11 @@ bool zam_frames_next(ZamFrames *frames, uint64_t *offset);
 // nothing of where its instructions came from has nothing written. It is safe
 // to call from a signal handler.
 void zam_thread_trace(const ZamThread *thread, uint64_t skip, int fd);
+
+// zam_thread_compiled_caller reports the file and line of the compiled frame
+// skip frames out from the innermost, and whether there is one.
+bool zam_thread_compiled_caller(const ZamThread *thread, uint64_t skip, const char **file,
+                                uint32_t *line);
 
 // zam_thread_current answers the thread the calling OS thread is driving, or
 // NULL if it drives none.

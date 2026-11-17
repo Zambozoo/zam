@@ -430,3 +430,58 @@ namespace Main {
 	require.Zero(t, status, stderr)
 	assert.Equal(t, "10 16 3 9 3\n", stdout)
 }
+
+// An enum value is written out as its backing value and a pointer to one
+// through its Str, which for an enum that writes none answers the backing
+// value; a tuple and an any write out what they hold the same way, a struct
+// by its Str only through a pointer. An any holds the enum's value itself.
+func TestEnumsWriteOutByBackingAndPointersByStr(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    enum Color : str {
+        Red("red"),
+        Blue("blue");
+    }
+
+    enum Shade : str {
+        Dark("dark"),
+        Light("light");
+
+        public fun str() Str = () {
+            return "shade";
+        }
+    }
+
+    enum Size : byte {
+        Small(1{byte}),
+        Big(2{byte});
+    }
+
+    struct P {
+        var int x;
+
+        public fun str() Str = () {
+            return "P" + this.x{str};
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Color c = Color::Blue;
+        var Shade s = Shade::Light;
+        var Size z = Size::Big;
+        var P p;
+        p.x = 3;
+        var any r = Color::Red;
+        File::StdOut.WriteStr(c{str} + " " + (&c){str} + " " + c.Str() + " " + s{str} + " " + (&s){str} + " " + z{str} + "\n");
+        File::StdOut.WriteStr((c, s, z){str} + " " + (&c, &s){str} + " " + s{any}{str} + " " + (&p, 1){str} + "\n");
+        File::StdOut.WriteStr((r == c{any}){str} + " " + (r == Color::Red{any}){str} + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "blue blue blue light shade 2\n(blue, light, 2) (blue, shade) light (P3, 1)\nfalse true\n", stdout)
+}

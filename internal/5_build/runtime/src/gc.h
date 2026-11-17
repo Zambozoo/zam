@@ -36,7 +36,8 @@ void zam_gc_mark_concurrently(ZamThread *marker);
 void zam_gc_request_finish(ZamVM *vm);
 
 // zam_gc_pause_markers stops every marker at its next checkpoint, and
-// zam_gc_resume_markers sets them going again.
+// zam_gc_resume_markers lifts that pause. Pauses nest: the markers go again
+// once every pause has been lifted.
 void zam_gc_pause_markers(ZamVM *vm);
 void zam_gc_resume_markers(ZamVM *vm);
 

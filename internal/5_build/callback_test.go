@@ -22,6 +22,13 @@ import (
 // named in its native block, under the same small heap compile uses.
 func compileWithNatives(t *testing.T, source string, natives map[string]string) string {
 	t.Helper()
+	return compileWithNativesAndFlags(t, []string{"-m", "16KB"}, source, natives)
+}
+
+// compileWithNativesAndFlags is compileWithNatives with flags in place of the
+// small heap on the compiler's command line.
+func compileWithNativesAndFlags(t *testing.T, flags []string, source string, natives map[string]string) string {
+	t.Helper()
 
 	dir := t.TempDir()
 	var yml strings.Builder
@@ -36,11 +43,24 @@ func compileWithNatives(t *testing.T, source string, natives map[string]string) 
 	out := filepath.Join(dir, "out")
 
 	files := &base.FileProvider{}
-	cmd, err := command.New([]string{"zam", "build", "-m", "16KB", "-o", out, entry}, files)
+	argv := append(append([]string{"zam", "build"}, flags...), "-o", out, entry)
+	cmd, err := command.New(argv, files)
 	require.NoError(t, err)
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
+	if os.Getenv(nativeTestVariable) != "" {
+		object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{})
+		require.NoError(t, err)
+		cache, err := nativeRuntimeCache()
+		require.NoError(t, err)
+		require.NoError(t, build.LinkObject(object.Bytes, build.Options{
+			OutputPath:      out,
+			Project:         ast.MainCodeDecl.File().Project,
+			RuntimeCacheDir: cache,
+		}))
+		return out
+	}
 	result, err := codegen.GenerateCode(cmd, ast)
 	require.NoError(t, err)
 	require.NoError(t, build.Build(result.Image, result.NativeNames, build.Options{

@@ -42,7 +42,7 @@ type result struct {
 // and how it went to out, a file at a time. It reports whether every test
 // passed.
 func Run(cmd *command.Command, files *base.FileProvider, packages packageProvider, out io.Writer) (bool, error) {
-	result, project, tests, err := Compile(cmd, files, packages)
+	runner, tests, err := prepare(cmd, files, packages)
 	switch {
 	case errors.Is(err, ErrNoTestFiles):
 		fmt.Fprintln(out, "no test files")
@@ -61,14 +61,36 @@ func Run(cmd *command.Command, files *base.FileProvider, packages packageProvide
 	defer os.RemoveAll(dir)
 
 	binary := filepath.Join(dir, "test")
-	if err := build.Build(result.Image, result.NativeNames, build.Options{
+	opts := build.Options{
 		OutputPath:   binary,
-		Project:      project,
+		Project:      runner.ast.MainCodeDecl.File().Project,
 		KeepBuildDir: cmd.KeepBuild,
-	}); err != nil {
+	}
+	if cmd.Native {
+		object, err := codegen.GenerateObject(runner.cmd, runner.ast, codegen.ObjectOptions{})
+		if err != nil {
+			return false, err
+		}
+		if err := build.LinkObject(object.Bytes, opts); err != nil {
+			return false, err
+		}
+		return runFiles(cmd, tests, binary, out)
+	}
+	result, err := codegen.GenerateCode(runner.cmd, runner.ast)
+	if err != nil {
+		return false, err
+	}
+	if err := build.Build(result.Image, result.NativeNames, opts); err != nil {
 		return false, err
 	}
 	return runFiles(cmd, tests, binary, out)
+}
+
+// program is the validated runner of a set of tests, and the command it is
+// compiled under.
+type program struct {
+	cmd *command.Command
+	ast *syntax.AST
 }
 
 var (
@@ -83,27 +105,56 @@ var (
 // tests it runs, and whose other arguments it passes on to each test. It
 // answers the program, the project it belongs to, and the files.
 func Compile(cmd *command.Command, files *base.FileProvider, packages packageProvider) (*codegen.Result, *syntax.Project, []File, error) {
-	paths, err := Resolve(files, cmd.TestTargets)
+	runner, tests, err := prepare(cmd, files, packages)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	result, err := codegen.GenerateCode(runner.cmd, runner.ast)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return result, runner.ast.MainCodeDecl.File().Project, tests, nil
+}
+
+// Object compiles the tests in the test files cmd targets natively, as opts
+// says, into one program as Compile does, answering it, its project, the files
+// and the name its main is compiled as.
+func Object(cmd *command.Command, files *base.FileProvider, packages packageProvider, opts codegen.ObjectOptions) (*codegen.Object, *syntax.Project, []File, string, error) {
+	runner, tests, err := prepare(cmd, files, packages)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	object, err := codegen.GenerateObject(runner.cmd, runner.ast, opts)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	return object, runner.ast.MainCodeDecl.File().Project, tests, codegen.MainFunctionName(runner.ast), nil
+}
+
+// prepare writes the runner of the tests in the test files cmd targets and
+// validates it, answering it and the files.
+func prepare(cmd *command.Command, files *base.FileProvider, packages packageProvider) (program, []File, error) {
+	paths, err := Resolve(files, cmd.TestTargets)
+	if err != nil {
+		return program{}, nil, err
+	}
 	if len(paths) == 0 {
-		return nil, nil, nil, ErrNoTestFiles
+		return program{}, nil, ErrNoTestFiles
 	}
 
 	tests, err := discover(cmd, files, packages, paths)
 	if err != nil {
-		return nil, nil, nil, err
+		return program{}, nil, err
 	}
 	if len(tests) == 0 {
-		return nil, nil, nil, ErrNoTests
+		return program{}, nil, ErrNoTests
 	}
 
-	result, project, err := compile(cmd, files, packages, tests)
+	p, err := validate(cmd, files, packages, tests)
 	if err != nil {
-		return nil, nil, nil, err
+		return program{}, nil, err
 	}
-	return result, project, tests, nil
+	return p, tests, nil
 }
 
 // discover parses paths, with what they import, and finds their tests.
@@ -122,15 +173,15 @@ func discover(cmd *command.Command, files *base.FileProvider, packages packagePr
 	return Discover(ast, paths, pattern)
 }
 
-// compile writes the runner of tests and compiles it.
-func compile(cmd *command.Command, files *base.FileProvider, packages packageProvider, tests []File) (*codegen.Result, *syntax.Project, error) {
+// validate writes the runner of tests and validates it.
+func validate(cmd *command.Command, files *base.FileProvider, packages packageProvider, tests []File) (program, error) {
 	runner := RunnerPath(tests[0].Path)
 	if _, err := os.Stat(string(runner)); !errors.Is(err, fs.ErrNotExist) {
-		return nil, nil, fmt.Errorf("%s is the test runner's own path and must not exist", runner)
+		return program{}, fmt.Errorf("%s is the test runner's own path and must not exist", runner)
 	}
 	source, err := Source(tests)
 	if err != nil {
-		return nil, nil, err
+		return program{}, err
 	}
 
 	compile := *cmd
@@ -139,16 +190,12 @@ func compile(cmd *command.Command, files *base.FileProvider, packages packagePro
 
 	ast, errs := syntax.NewAST(&compile, overlay, packages)
 	if len(errs) > 0 {
-		return nil, nil, errors.Join(errs...)
+		return program{}, errors.Join(errs...)
 	}
 	if errs := semantic.ValidateAST(ast); len(errs) > 0 {
-		return nil, nil, errors.Join(errs...)
+		return program{}, errors.Join(errs...)
 	}
-	result, err := codegen.GenerateCode(&compile, ast)
-	if err != nil {
-		return nil, nil, err
-	}
-	return result, ast.MainCodeDecl.File().Project, nil
+	return program{cmd: &compile, ast: ast}, nil
 }
 
 // runFiles runs binary once for each of tests, at most cmd.Parallel at once,

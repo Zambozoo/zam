@@ -170,5 +170,26 @@ Enumerables are declarations that define a fixed set of values.
 They are separate from classes, abstracts, and interfaces.
 They cannot be generic, and are automatically handled by the garbage collector.
 
+An enum can be backed by a primitive, which each value names, and a cast to that primitive reads the value's backing.
+A cast of an enum value to `str` writes out its backing value, or, for an enum backed by nothing, the value's raw form.
+A cast of a pointer to an enum or struct to `str` writes it out through its `Str` method, which by default writes out the value the same way.
+A tuple or an `any` writes out what it holds by the same rules, so a struct inside one goes through its `Str` only when it is held by pointer:
+```zam
+enum Shade : str {
+    Dark("dark");
+
+    public fun str() Str = () {
+        return "shade";
+    }
+}
+
+// ...
+var Shade s = Shade::Dark;
+var str value = s{str};         // "dark"
+var str pointer = (&s){str};    // "shade"
+var str tuple = (s, &s){str};   // "(dark, shade)"
+// ...
+```
+
 ## Structs
 # Aliases

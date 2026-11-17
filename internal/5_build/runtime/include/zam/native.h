@@ -35,6 +35,12 @@ typedef struct ZamNativeEntry {
    ZamNativeFn fn;
 } ZamNativeEntry;
 
+// ZamNativeTables names one table of natives and how many entries it has.
+typedef struct ZamNativeTables {
+    const ZamNativeEntry *table;
+    const uint64_t *count;
+} ZamNativeTables;
+
 // The table the interpreter was built with. A project's natives are appended to
 // this by the file the build generates from the project's `native:` block; what
 // is here is the standard library's own.

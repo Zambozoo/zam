@@ -149,6 +149,7 @@ static void enumDump(const ZamEnumDefinition *d) {
     put("initializerInstruction", d->initializerInstruction);
     put("valueCount", d->valueCount);
     put("valueSlot", d->valueSlot);
+    put("valueType", d->valueType);
     putMethods(zam_enum_methods(d), d->methodCount);
     putMembers(zam_enum_members(d), d->memberCount);
     put("wordCount", wordsBetween(d, zam_enum_members(d) + d->memberCount));

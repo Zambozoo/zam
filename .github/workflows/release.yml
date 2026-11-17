@@ -1,32 +1,89 @@
 name: Release
 
+# Builds zam for each platform with LLVM linked in statically, and the target
+# packs, and publishes them for a version tag. Run by hand, it builds without
+# publishing.
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
+env:
+  ZIG_VERSION: 0.17.1
+
 jobs:
-  goreleaser:
-    runs-on: ubuntu-latest
+  llvm:
+    uses: ./.github/workflows/llvm.yml
+
+  zam:
+    needs: llvm
+    strategy:
+      matrix:
+        include:
+          - { runner: macos-15, platform: darwin-arm64 }
+          - { runner: macos-15-intel, platform: darwin-amd64 }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { runner: ubuntu-24.04, platform: linux-amd64 }
+    runs-on: ${{ matrix.runner }}
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
+      - uses: actions/setup-go@v5
         with:
-          go-version: 'stable'
+          go-version-file: go.mod
 
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
+      - if: runner.os == 'Linux'
+        uses: mlugg/setup-zig@v2
         with:
-          distribution: goreleaser
-          version: '~> v2'
-          args: release --clean
+          version: ${{ env.ZIG_VERSION }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: llvm-${{ matrix.platform }}
+
+      - run: tar -xzf llvm.tar.gz
+
+      - run: release/zam.sh "$PWD/llvm" dist/zam
+
+      - run: tar -czf "zam-${GITHUB_REF_NAME}-${{ matrix.platform }}.tar.gz" -C dist zam
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zam-${{ matrix.platform }}
+          path: zam-*.tar.gz
+
+  packs:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: docker build -t zam-linux docker
+
+      - run: docker run --rm -v "$PWD":/src zam-linux docker/pack.sh x86_64-linux-musl aarch64-linux-musl x86_64-macos aarch64-macos
+
+      - run: release/packs.sh "$GITHUB_REF_NAME" dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packs
+          path: dist/*
+
+  release:
+    needs: [zam, packs]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - run: cd dist && sha256sum zam-* > checksums.txt
+
+      - run: gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes-file dist/notes.md dist/zam-* dist/checksums.txt
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/spf13/pflag"
 	base "github.com/zambozoo/zam/internal/0_base"
+	"github.com/zambozoo/zam/internal/target"
 )
 
 const (
@@ -68,6 +69,12 @@ const (
 	flagEmitImage     = "E"
 	flagEmitImageLong = "emit-image"
 	usageEmitImage    = "write the raw bytecode image instead of linking a binary"
+
+	flagNativeLong = "native"
+	usageNative    = "compile to native code through LLVM (experimental: code it cannot compile yet ends the program when reached)"
+
+	flagTargetLong = "target"
+	usageTarget    = "the platform to compile native code for, the host when unset: one of "
 
 	flagKeepBuild     = "k"
 	flagKeepBuildLong = "keep-build"
@@ -236,6 +243,15 @@ type (
 		// OutputPath instead of linking a native binary. Uses the -E flag with a
 		// default of `false`.
 		EmitImage bool
+
+		// Native compiles the program to native code through LLVM instead of
+		// embedding its bytecode image. Uses the --native flag with a default
+		// of `false`.
+		Native bool
+
+		// Target is the platform native code is compiled for, the host when
+		// unset. Uses the --target flag, which needs --native.
+		Target target.Target
 
 		// KeepBuild leaves the build driver's temporary directory in place and
 		// prints its path, so the generated wrapper and extracted runtime can be
@@ -449,6 +465,8 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 	var gcRatio float64
 	var emitImage bool
 	var keepBuild bool
+	var native bool
+	var targetName string
 	var noProject bool
 	var gcMarkers, gcPrecleanPasses, gcReturnAge int
 	var gcConcurrent bool
@@ -475,6 +493,12 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 	fs.IntVar(&gcPrecleanPasses, flagGCPrecleanPassesLong, defaultGCPrecleanPasses, usageGCPrecleanPasses)
 	fs.IntVar(&gcReturnAge, flagGCReturnAgeLong, defaultGCReturnAge, usageGCReturnAge)
 	fs.BoolVarP(&keepBuild, flagKeepBuildLong, flagKeepBuild, false, usageKeepBuild)
+	if verb == VerbBuild || verb == VerbRun || verb == VerbTest {
+		fs.BoolVar(&native, flagNativeLong, false, usageNative)
+	}
+	if verb == VerbBuild {
+		fs.StringVar(&targetName, flagTargetLong, "", usageTarget+strings.Join(target.Names(), ", "))
+	}
 	fs.BoolVarP(&noProject, flagNoProjectLong, flagNoProject, false, usageNoProject)
 	if verb == VerbTest {
 		fs.StringVar(&runPattern, flagRunPatternLong, "", usageRunPattern)
@@ -525,6 +549,17 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 		if verb == VerbRun {
 			runArgs = args[1:]
 		} else if _, err := fileProvider.FileExists(base.Path(out)); err != nil {
+			return nil, err
+		}
+	}
+
+	var platform target.Target
+	if targetName != "" {
+		if !native {
+			return nil, fmt.Errorf("--%s needs --%s", flagTargetLong, flagNativeLong)
+		}
+		var err error
+		if platform, err = target.Parse(targetName); err != nil {
 			return nil, err
 		}
 	}
@@ -584,6 +619,8 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 		GCReturnAge:      gcReturnAge,
 		EmitImage:        emitImage,
 		KeepBuild:        keepBuild,
+		Native:           native,
+		Target:           platform,
 		RunArgs:          runArgs,
 		TestTargets:      testTargets,
 		RunPattern:       runPattern,

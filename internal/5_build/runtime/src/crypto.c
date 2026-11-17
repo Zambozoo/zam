@@ -1,4 +1,3 @@
-#include <crypt.h>
 #include <openssl/core_names.h>
 #include <openssl/decoder.h>
 #include <openssl/encoder.h>
@@ -13,12 +12,13 @@
 #include <sodium.h>
 #include <stdio.h>
 
+#include "bcrypt.h"
 #include "codec.h"
 #include "crypto.h"
 
 // The crypto natives: randomness, digests, MACs, key derivation and ciphers,
 // over OpenSSL, with libsodium for the Salsa20 family and Argon2 strings and
-// libxcrypt for bcrypt.
+// OpenBSD's bcrypt.
 
 static const unsigned char emptyBytes[1];
 
@@ -406,7 +406,7 @@ static void stdArgon2Verify(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
-// cryptoPassword copies a password into a NUL-terminated string for crypt,
+// cryptoPassword copies a password into a NUL-terminated string for bcrypt,
 // or answers NULL when it holds a NUL of its own.
 static char *cryptoPassword(ZamThread *thread, uint64_t wordIndex, ZamInt n) {
     const unsigned char *b = cryptoBytes(thread, wordIndex, n);
@@ -418,20 +418,6 @@ static char *cryptoPassword(ZamThread *thread, uint64_t wordIndex, ZamInt n) {
     memcpy(c, b, (size_t)n);
     c[n] = '\0';
     return c;
-}
-
-// cryptoCrypt hashes password under setting, answering whether it could.
-static bool cryptoCrypt(ZamThread *thread, const char *password, const char *setting, char *out, size_t outSize) {
-    struct crypt_data *data = calloc(1, sizeof *data);
-    if (data == NULL)
-        zam_native_panic(thread, "out of memory for bcrypt");
-    const char *hash = crypt_rn(password, setting, data, (int)sizeof *data);
-    bool ok = hash != NULL && hash[0] != '*' && strlen(hash) < outSize;
-    if (ok)
-        strcpy(out, hash);
-    OPENSSL_cleanse(data, sizeof *data);
-    free(data);
-    return ok;
 }
 
 // stdBcryptHash hashes a password with bcrypt at cost under a fresh salt.
@@ -450,11 +436,8 @@ static void stdBcryptHash(ZamThread *thread) {
         zam_native_return_void(thread);
         return;
     }
-    char setting[CRYPT_GENSALT_OUTPUT_SIZE];
-    char hash[CRYPT_OUTPUT_SIZE];
-    bool ok = cost >= 4 && cost <= 31 &&
-              crypt_gensalt_rn("$2b$", (unsigned long)cost, NULL, 0, setting, sizeof setting) != NULL &&
-              cryptoCrypt(thread, password, setting, hash, sizeof hash);
+    char hash[BCRYPT_HASH_SIZE];
+    bool ok = cost >= 4 && cost <= 31 && bcrypt_newhash(password, (int)cost, hash, sizeof hash) == 0;
     OPENSSL_cleanse(password, (size_t)passwordLength);
     free(password);
     if (!ok) {
@@ -472,10 +455,7 @@ static void stdBcryptVerify(ZamThread *thread) {
     char *expected = codec_c_string(thread, 0);
     ZamInt passwordLength = cryptoLength(thread, 2);
     char *password = passwordLength > 72 ? NULL : cryptoPassword(thread, 1, passwordLength);
-    char hash[CRYPT_OUTPUT_SIZE];
-    bool ok = password != NULL && strncmp(expected, "$2", 2) == 0 &&
-              cryptoCrypt(thread, password, expected, hash, sizeof hash) &&
-              strlen(hash) == strlen(expected) && CRYPTO_memcmp(hash, expected, strlen(hash)) == 0;
+    bool ok = password != NULL && bcrypt_checkpass(password, expected) == 0;
     if (password != NULL) {
         OPENSSL_cleanse(password, (size_t)passwordLength);
         free(password);

@@ -13,16 +13,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	base "github.com/zambozoo/zam/internal/0_base"
 	syntax "github.com/zambozoo/zam/internal/2_syntax"
+	zamruntime "github.com/zambozoo/zam/internal/5_build/runtime"
+	"github.com/zambozoo/zam/internal/target"
 )
 
-// runtimeEmbedPrefix is where the embedded runtime tree sits inside the
-// embed.FS. The embed pattern names it, so the extractor walks from here
-// rather than from the root of the FS.
-const runtimeEmbedPrefix = "runtime"
+// runtimeEmbedPrefix is where the runtime tree sits inside zamruntime.FS: at
+// its root.
+const runtimeEmbedPrefix = "."
 
 // excludedRuntimeSources are the runtime .c files the build driver must not
 // link against: the stock main.c carries main() and the empty project table,
@@ -45,12 +47,17 @@ type Options struct {
 	// its path, so the generated wrapper and extracted runtime can be
 	// inspected after a successful or failed compile.
 	KeepBuildDir bool
-	// Debugger builds a binary that a debugger can stop and step, when run
-	// with ZAM_DEBUG_FD naming its connection to one.
+	// Debugger has a native link on macOS write the program's DWARF into a
+	// .dSYM bundle beside the binary, for a debugger to read.
 	Debugger bool
 	// Output is where the C compiler's output goes, the standard streams if
 	// nil.
 	Output io.Writer
+	// RuntimeCacheDir is where the compiled runtime archive is cached, under
+	// $ZAM_CACHE_DIR or else the user's cache directory when empty.
+	RuntimeCacheDir string
+	// Target is the platform a native link is for, the host when unset.
+	Target target.Target
 }
 
 // Build produces an executable at opts.OutputPath that embeds the given
@@ -109,9 +116,6 @@ func Build(image []byte, nativeNames []string, opts Options) error {
 		"-I" + runtimeSrcDir,
 		"-o", outputPath,
 	}
-	if opts.Debugger {
-		args = append(args, "-DZAM_DEBUGGER")
-	}
 	args = append(args, codecCFlags...)
 	args = append(args, runtimeCSources...)
 	args = append(args, wrapperPath)
@@ -136,21 +140,22 @@ func Build(image []byte, nativeNames []string, opts Options) error {
 var codecPackages = []string{
 	"json-c", "yaml-0.1", "libxml-2.0", "bson2", "libcbor",
 	"zlib", "liblz4", "libzstd", "libbrotlienc", "libbrotlidec",
-	"openssl", "libcurl", "libllhttp", "libsodium", "libxcrypt",
+	"openssl", "libcurl", "libllhttp", "libsodium",
 }
+
+// codecFallbacks are older pkg-config names a codec library answers to where
+// its newer one is not installed: Debian ships libbson 1.
+var codecFallbacks = map[string]string{"bson2": "libbson-1.0"}
 
 // codecLinks are the codec libraries linked by name, having no pkg-config
 // file where they ship: libarchive comes with macOS without one.
 var codecLinks = []string{"-larchive"}
 
 // codecKegs are where Homebrew keeps libraries it leaves off the default
-// search path, curl and libxcrypt among them, so that the system's copy stays
-// in charge.
+// search path, curl among them, so that the system's copy stays in charge.
 var codecKegs = []string{
 	"/opt/homebrew/opt/curl/lib/pkgconfig",
 	"/usr/local/opt/curl/lib/pkgconfig",
-	"/opt/homebrew/opt/libxcrypt/lib/pkgconfig",
-	"/usr/local/opt/libxcrypt/lib/pkgconfig",
 }
 
 // codecPkgConfigPath is PKG_CONFIG_PATH with every keg that exists ahead of
@@ -171,12 +176,25 @@ func codecPkgConfigPath() string {
 // CodecFlags asks pkg-config for the compile and link flags of the C
 // libraries the codec natives wrap.
 func CodecFlags() (cflags, libs []string, err error) {
+	env := append(os.Environ(), "PKG_CONFIG_PATH="+codecPkgConfigPath())
+	packages := slices.Clone(codecPackages)
+	for i, name := range packages {
+		fallback, ok := codecFallbacks[name]
+		if !ok {
+			continue
+		}
+		exists := exec.Command("pkg-config", "--exists", name)
+		exists.Env = env
+		if exists.Run() != nil {
+			packages[i] = fallback
+		}
+	}
 	query := func(flag string) ([]string, error) {
-		cmd := exec.Command("pkg-config", append([]string{flag}, codecPackages...)...)
-		cmd.Env = append(os.Environ(), "PKG_CONFIG_PATH="+codecPkgConfigPath())
+		cmd := exec.Command("pkg-config", append([]string{flag}, packages...)...)
+		cmd.Env = env
 		out, err := cmd.Output()
 		if err != nil {
-			return nil, fmt.Errorf("pkg-config cannot resolve the codec libraries %s: %w", strings.Join(codecPackages, ", "), err)
+			return nil, fmt.Errorf("pkg-config cannot resolve the codec libraries %s: %w", strings.Join(packages, ", "), err)
 		}
 		return strings.Fields(string(out)), nil
 	}
@@ -212,7 +230,7 @@ func resolveCC() (string, error) {
 // can include "common.h" and <zam/native.h> as it does in the source tree.
 func extractRuntime(dir string) ([]string, error) {
 	var sources []string
-	err := fs.WalkDir(runtimeFS, runtimeEmbedPrefix, func(entryPath string, entry fs.DirEntry, walkErr error) error {
+	err := fs.WalkDir(zamruntime.FS, runtimeEmbedPrefix, func(entryPath string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -225,7 +243,7 @@ func extractRuntime(dir string) ([]string, error) {
 			return os.MkdirAll(target, 0755)
 		}
 
-		bytes, err := runtimeFS.ReadFile(entryPath)
+		bytes, err := zamruntime.FS.ReadFile(entryPath)
 		if err != nil {
 			return err
 		}

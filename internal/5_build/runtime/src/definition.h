@@ -183,6 +183,9 @@ typedef struct ZamEnumDefinition {
     uint64_t initializerInstruction;
     uint64_t valueCount;
     uint64_t valueSlot;
+    // valueType is the short type id of the primitive the values are backed
+    // by, and 0 for an enum backed by none.
+    uint64_t valueType;
    ZamWord body[];
 } ZamEnumDefinition;
 

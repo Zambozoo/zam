@@ -11,6 +11,11 @@
 
 #include "crypto.h"
 
+#if OPENSSL_VERSION_NUMBER < 0x40100000L
+// ASN1_STRING_get_length is OpenSSL 4.1's ASN1_STRING_length.
+#define ASN1_STRING_get_length(x) ((size_t)ASN1_STRING_length(x))
+#endif
+
 // The PKI natives: X.509 certificates and requests, PKCS #12 bundles and OCSP,
 // over OpenSSL. Keys cross from zam as DER, which is what Key writes.
 

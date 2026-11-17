@@ -40,6 +40,26 @@ typedef enum ZamOldList {
 //ZamVM is everything one program has that is not one thread's: the image it
 // was loaded from, the static region every thread shares, the heap the
 // collector owns, and the list of threads it collects over.
+// ZamEntry is a compiled function. self is the closure it was called through,
+// or NULL for a direct call. args are its parameters, laid out as words, then
+// its captures; result is where it writes what it returns.
+typedef void (*ZamEntry)(ZamThread *thread, ZamClosure *self, ZamWord *args, ZamWord *result);
+
+// ZamCompiledClass is a class's compiled methods, in the order of its method
+// table.
+typedef struct ZamCompiledClass {
+    ZamTypeShort shortID;
+    uint32_t methodCount;
+    const ZamEntry *methods;
+} ZamCompiledClass;
+
+// ZamCompiledFunction names a compiled function in a trace: its name and the
+// file it is written in.
+typedef struct ZamCompiledFunction {
+    const char *name;
+    const char *file;
+} ZamCompiledFunction;
+
 typedef struct ZamVM {
    ZamImage image;
 
@@ -155,8 +175,9 @@ typedef struct ZamVM {
     // dirtied while it traced before the remark.
     //
     // A minor collection asked for meanwhile collects only what was allocated
-    // since marking began, with every marker paused: markerPause asks them to
-    // stop at their next checkpoint, and markersWorking is how many have not.
+    // since marking began, with every marker paused: markerPause is how many
+    // pauses are in effect, any one of which asks them to stop at their next
+    // checkpoint, and markersWorking is how many have not.
     bool concurrent;
     double remarkGrowth;
     uint64_t precleanPasses;
@@ -167,8 +188,13 @@ typedef struct ZamVM {
     atomic_bool sweeping;
     atomic_bool finishRequested;
     bool markerQuit;
-    atomic_bool markerPause;
+    atomic_uint markerPause;
     uint32_t markersWorking;
+    // remarkHold keeps the marker, once it has traced and precleaned, from
+    // stopping the program for the remark, while it is nonzero; traced says
+    // the marker is held there. Both are guarded by collectionLock.
+    uint32_t remarkHold;
+    bool traced;
     _Atomic(ZamThread *) marker;
     pthread_t markerThread;
 
@@ -280,8 +306,17 @@ typedef struct ZamVM {
     // nextThreadId is the id the last thread made was given.
     atomic_uint_fast64_t nextThreadId;
 
-    // debugger is the debugger the program runs under, or NULL.
-    struct ZamDebugger *debugger;
+
+    // compiledClasses are the compiled method entries of every class a
+    // natively compiled program has, sorted by short id; NULL under the
+    // interpreter.
+    const ZamCompiledClass *compiledClasses;
+    uint64_t compiledClassCount;
+
+    // compiledFunctions names the functions of a natively compiled program,
+    // the first by function id 1; NULL under the interpreter.
+    const ZamCompiledFunction *compiledFunctions;
+    uint64_t compiledFunctionCount;
 } ZamVM;
 
 void zam_vm_init(ZamVM *vm, const char *imagePath);
@@ -322,6 +357,10 @@ _Noreturn void zam_vm_exit(ZamVM *vm, ZamResult result);
 // leaves and what a load or store then reads through.
 uint8_t *zam_vm_static(ZamVM *vm, uint64_t slot);
 
+// zam_vm_compiled_method is the compiled body of the methodIndex'th method of
+// the class shortID, or NULL where the program has none compiled.
+ZamEntry zam_vm_compiled_method(const ZamVM *vm, ZamTypeShort shortID, uint64_t methodIndex);
+
 // zam_vm_alloc lays down one allocation of objectBytes and fills in the header
 // the kind calls for, and answers the pointer the program holds — which is the
 // allocation itself, so that zam_mark_word_of finds the word it begins with.
@@ -356,6 +395,15 @@ void zam_vm_free_raw(ZamThread *thread, void *block);
 // zam_vm_collect is the collection itself, run by collector. It is run only
 // by zam_vm_safepoint, with every other thread stopped.
 void zam_vm_collect(ZamVM *vm, ZamThread *collector);
+
+// zam_vm_hold_remark keeps the marker of the next concurrent collection from
+// remarking until zam_vm_release_remark, and zam_vm_await_traced waits for it
+// to have traced everything it will before then. Holds nest. They let a test
+// change what the program holds at a point of its choosing between the two,
+// which is where the remark has to find what changed.
+void zam_vm_hold_remark(ZamVM *vm);
+void zam_vm_release_remark(ZamVM *vm);
+void zam_vm_await_traced(ZamVM *vm);
 
 // zam_vm_safepoint is where a thread stops for a collection, and is run
 // between every two instructions. A collection asked for is run by the first

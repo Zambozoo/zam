@@ -3,6 +3,7 @@
 #include "definition.h"
 #include "opcode.h"
 #include "run.h"
+#include "zamrt.h"
 
 #include <sched.h>
 
@@ -203,6 +204,8 @@ static void drain(ZamThread *collector) {
 // and takeWork the top count of the shared one onto a marker's. The caller
 // holds markLock.
 static void giveWork(ZamVM *vm, ZamThread *marker, uint64_t count) {
+    if (count == 0)
+        return;
     if (vm->sharedCount + count > vm->sharedCapacity) {
         uint64_t capacity = vm->sharedCapacity == 0 ? 64 : vm->sharedCapacity;
         while (capacity < vm->sharedCount + count)
@@ -217,6 +220,8 @@ static void giveWork(ZamVM *vm, ZamThread *marker, uint64_t count) {
 }
 
 static void takeWork(ZamVM *vm, ZamThread *marker, uint64_t count) {
+    if (count == 0)
+        return;
     reserveGray(marker, count);
     vm->sharedCount -= count;
     memcpy(marker->gray + marker->grayCount, vm->shared + vm->sharedCount,
@@ -240,7 +245,7 @@ static void checkpoint(ZamVM *vm) {
 
 void zam_gc_pause_markers(ZamVM *vm) {
     pthread_mutex_lock(&vm->markLock);
-    atomic_store(&vm->markerPause, true);
+    atomic_fetch_add(&vm->markerPause, 1);
     while (vm->markersWorking != 0)
         pthread_cond_wait(&vm->markChanged, &vm->markLock);
     pthread_mutex_unlock(&vm->markLock);
@@ -248,8 +253,8 @@ void zam_gc_pause_markers(ZamVM *vm) {
 
 void zam_gc_resume_markers(ZamVM *vm) {
     pthread_mutex_lock(&vm->markLock);
-    atomic_store(&vm->markerPause, false);
-    pthread_cond_broadcast(&vm->markChanged);
+    if (atomic_fetch_sub(&vm->markerPause, 1) == 1)
+        pthread_cond_broadcast(&vm->markChanged);
     pthread_mutex_unlock(&vm->markLock);
 }
 
@@ -606,8 +611,9 @@ static void collectYoungSpans(ZamVM *vm) {
     vm->youngSpanCount = 0;
     for (uint64_t list = 0; list < YOUNG_LIST_COUNT; list++)
         addSpans(vm, youngLists(vm, list));
-    qsort(vm->youngSpans, vm->youngSpanCount, 2 * sizeof *vm->youngSpans,
-          compareSpans);
+    if (vm->youngSpanCount > 0)
+        qsort(vm->youngSpans, vm->youngSpanCount, 2 * sizeof *vm->youngSpans,
+              compareSpans);
 }
 
 // collectFreshSpans is collectYoungSpans over the fresh lists alone.
@@ -617,8 +623,9 @@ static void collectFreshSpans(ZamVM *vm) {
         addSpans(vm, &vm->fresh[list]);
         addSpans(vm, &vm->freshSurvivors[list]);
     }
-    qsort(vm->youngSpans, vm->youngSpanCount, 2 * sizeof *vm->youngSpans,
-          compareSpans);
+    if (vm->youngSpanCount > 0)
+        qsort(vm->youngSpans, vm->youngSpanCount, 2 * sizeof *vm->youngSpans,
+              compareSpans);
 }
 
 // youngAllocationOf is the young allocation a word points into, or NULL.
@@ -853,6 +860,32 @@ static void retraceCustom(ZamThread *collector) {
 // markHeld marks everything a thread or a static holds, without tracing it.
 // The thread list is read before anything is marked, a Mark body being able to
 // start a thread.
+// markFrames marks what the compiled frames thread is running hold.
+static void markFrames(ZamThread *collector, const ZamThread *thread) {
+    const ZamFrame *frame = atomic_load_explicit(
+        (_Atomic(ZamFrame *) *)&thread->frames, memory_order_acquire);
+    for (; frame != NULL; frame = frame->caller) {
+        const ZamFrameInfo *info = frame->info;
+        for (uint64_t index = 0; index < info->rootCount; index++) {
+            const ZamFrameRoot *root = &info->roots[index];
+            if (root->kind == ZAMFRAME_ROOT_INLINE) {
+                // An instance's slot holds nothing until it is first written,
+                // and has no header to be marked through until then.
+                void *at = (void *)&frame->slots[root->slot];
+                if (zam_type_is_class(&collector->vm->image, root->type.shortID) &&
+                    zam_object_header_of(at)->shortID == 0)
+                    continue;
+                markValue(collector, (ZamWord)(uintptr_t)at, root->type);
+                continue;
+            }
+            ZamWord address = frame->slots[root->slot];
+            if (address != 0)
+                markValue(collector, address,
+                          zam_type_id_read(&frame->slots[root->typeSlot]));
+        }
+    }
+}
+
 static void markHeld(ZamThread *collector) {
    ZamVM *vm = collector->vm;
 
@@ -869,6 +902,7 @@ static void markHeld(ZamThread *collector) {
     for (index = 0; index < threadCount; index++) {
        ZamThread *thread = threads[index];
         markStack(collector, thread);
+        markFrames(collector, thread);
         for (int sig = 0; sig < ZAM_SIGNAL_MAX; sig++)
             reach(collector, (ZamWord)(uintptr_t)thread->signalHandlers[sig]);
 

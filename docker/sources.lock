@@ -1,0 +1,17 @@
+# The C sources a target pack is built from: name, version, URL and SHA-256.
+# A SHA-256 of - is recorded by the first build that fetches the source.
+musl        1.2.5   https://musl.libc.org/releases/musl-1.2.5.tar.gz a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4
+zlib        1.3.1   https://zlib.net/fossils/zlib-1.3.1.tar.gz 9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23
+zstd        1.5.7   https://github.com/facebook/zstd/releases/download/v1.5.7/zstd-1.5.7.tar.gz eb33e51f49a15e023950cd7825ca74a4a2b43db8354825ac24fc1b7ee09e6fa3
+lz4         1.10.0  https://github.com/lz4/lz4/releases/download/v1.10.0/lz4-1.10.0.tar.gz 537512904744b35e232912055ccf8ec66d768639ff3abe5788d90d792ec5f48b
+brotli      1.1.0   https://github.com/google/brotli/archive/refs/tags/v1.1.0.tar.gz e720a6ca29428b803f4ad165371771f5398faba397edf6778837a18599ea13ff
+openssl     3.5.0   https://github.com/openssl/openssl/releases/download/openssl-3.5.0/openssl-3.5.0.tar.gz 344d0a79f1a9b08029b0744e2cc401a43f9c90acd1044d09a530b4885a8e9fc0
+json-c      0.18    https://s3.amazonaws.com/json-c_releases/releases/json-c-0.18.tar.gz 876ab046479166b869afc6896d288183bbc0e5843f141200c677b3e8dfb11724
+libyaml     0.2.5   https://github.com/yaml/libyaml/releases/download/0.2.5/yaml-0.2.5.tar.gz c642ae9b75fee120b2d96c712538bd2cf283228d2337df2cf2988e3c02678ef4
+libxml2     2.13.8  https://download.gnome.org/sources/libxml2/2.13/libxml2-2.13.8.tar.xz 277294cb33119ab71b2bc81f2f445e9bc9435b893ad15bb2cd2b0e859a0ee84a
+libbson     2.0.0   https://github.com/mongodb/mongo-c-driver/releases/download/2.0.0/mongo-c-driver-2.0.0.tar.gz e64ffe75f4958bd9d4a25d7f8997e5c90fca2116ac39aa9f5f07f6f90433f16e
+libcbor     0.12.0  https://github.com/PJK/libcbor/archive/refs/tags/v0.12.0.tar.gz 5368add109db559f546d7ed10f440f39a273b073daa8da4abffc83815069fa7f
+curl        8.13.0  https://curl.se/download/curl-8.13.0.tar.xz 4a093979a3c2d02de2fbc00549a32771007f2e78032c6faa5ecd2f7a9e152025
+llhttp      9.2.1   https://github.com/nodejs/llhttp/archive/refs/tags/release/v9.2.1.tar.gz 3c163891446e529604b590f9ad097b2e98b5ef7e4d3ddcf1cf98b62ca668f23e
+libsodium   1.0.20  https://download.libsodium.org/libsodium/releases/libsodium-1.0.20.tar.gz ebb65ef6ca439333c2bb41a0c1990587288da07f6c7fd07cb3a18cc18d30ce19
+libarchive  3.7.9   https://github.com/libarchive/libarchive/releases/download/v3.7.9/libarchive-3.7.9.tar.xz ed8b5732e4cd6e30fae909fb945cad8ff9cb7be5c6cdaa3944ec96e4a200c04c

@@ -775,8 +775,11 @@ func readStaticRoots(p []byte, roots []staticRoot) (int, error) {
 type Result struct {
 	Image       []byte
 	NativeNames []string
-	// Debug says where in the source each instruction of Image came from.
-	Debug *DebugTable
+
+	// types and reader are what native code generation reads type ids and
+	// static slots from, as they were laid out for Image.
+	types  *typeResolver
+	reader *codegenReader
 }
 
 // validateMainMethod requires the main code declaration to have the method a
@@ -845,13 +848,10 @@ func GenerateCode(cmd *command.Command, ast *syntax.AST) (*Result, error) {
 		nativeNames = append(nativeNames, entry.Key)
 	}
 
-	types := newValueTypes()
-	classes, instances := classValueTypes(ast, types, &typeResolver{typeIndices: typeIndices, counts: reader.counts})
-	debug := reader.debug.table(qualifiedName(ast.MainCodeDecl)+"."+base.MainMethodName, types, classes, instances)
-	debug.statics = staticVariables(ast, types, reader.staticInstanceMaps)
 	return &Result{
 		Image:       image,
 		NativeNames: nativeNames,
-		Debug:       debug,
+		types:       &typeResolver{typeIndices: typeIndices, counts: reader.counts},
+		reader:      reader,
 	}, nil
 }

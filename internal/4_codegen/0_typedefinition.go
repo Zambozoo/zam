@@ -124,6 +124,9 @@ type (
 		// rest follow it back to back in declaration order, so a value's
 		// discriminant is the byte offset of its primitive from this slot.
 		valueSlot uint64
+		// valueType is the short type id of the primitive the values are
+		// backed by, and 0 for an enum backed by none.
+		valueType uint64
 	}
 	typeDefinitionStruct struct {
 		// instanceMethodsCount uint64
@@ -331,7 +334,7 @@ func (t *typeDefinitionStruct) Read(p []byte) (int, error) {
 func (t *typeDefinitionEnum) ByteCount() int {
 	return countedByteCount(t.instanceMethods) +
 		countedByteCount(t.instanceMembers) +
-		4*wordByteSize
+		5*wordByteSize
 }
 
 func (t *typeDefinitionEnum) Read(p []byte) (int, error) {
@@ -340,7 +343,7 @@ func (t *typeDefinitionEnum) Read(p []byte) (int, error) {
 	}
 
 	totalBytes, _ := readAllWords(p, len(t.instanceMethods), len(t.instanceMembers))
-	n, _ := readAllWords(p[totalBytes:], t.instanceByteSize, t.initializerInstruction, t.valueCount, t.valueSlot)
+	n, _ := readAllWords(p[totalBytes:], t.instanceByteSize, t.initializerInstruction, t.valueCount, t.valueSlot, t.valueType)
 	totalBytes += n
 	n, _ = readAll(p[totalBytes:], t.instanceMethods)
 	totalBytes += n

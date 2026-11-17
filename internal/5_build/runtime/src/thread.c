@@ -4,10 +4,8 @@
 #include <unistd.h>
 
 #include "vm.h"
+#include "zamrt.h"
 
-#ifdef ZAM_DEBUGGER
-#include "debug.h"
-#endif
 
 // currentZamThread records which ZamThread the OS thread is driving. The C
 // signal handler reads this to find the per-thread pending mask it should
@@ -117,7 +115,75 @@ static void traceNumber(TraceWriter *w, uint64_t value, unsigned base) {
     traceText(w, digits + i);
 }
 
+// compiledFunction is what names the compiled function frame is running, or
+// NULL for a frame that is no function of the program's: the one a thread
+// starts with.
+static const ZamCompiledFunction *compiledFunction(const ZamVM *vm, const ZamFrame *frame) {
+    uint64_t id = frame->info->functionID;
+    if (id == 0 || id > vm->compiledFunctionCount)
+        return NULL;
+    return &vm->compiledFunctions[id - 1];
+}
+
+bool zam_thread_compiled_caller(const ZamThread *thread, uint64_t skip, const char **file,
+                                uint32_t *line) {
+    const ZamFrame *frame = atomic_load_explicit((_Atomic(ZamFrame *) *)&thread->frames,
+                                                 memory_order_acquire);
+    for (; frame != NULL; frame = frame->caller) {
+        const ZamCompiledFunction *function = compiledFunction(thread->vm, frame);
+        if (function == NULL)
+            continue;
+        if (skip-- == 0) {
+            *file = function->file;
+            *line = (uint32_t)frame->line;
+            return true;
+        }
+    }
+    return false;
+}
+
+// traceCompiled is zam_thread_trace for a natively compiled program, whose
+// frames are linked onto the thread rather than laid on its stack.
+static void traceCompiled(const ZamThread *thread, uint64_t skip, int fd) {
+    TraceWriter w = {.fd = fd};
+    uint64_t written = 0, elided = 0;
+    const ZamFrame *frame = atomic_load_explicit((_Atomic(ZamFrame *) *)&thread->frames,
+                                                 memory_order_acquire);
+    for (; frame != NULL; frame = frame->caller) {
+        const ZamCompiledFunction *function = compiledFunction(thread->vm, frame);
+        if (function == NULL)
+            continue;
+        if (skip > 0) {
+            skip--;
+            continue;
+        }
+        if (written == ZAMTRACE_FRAMES) {
+            elided++;
+            continue;
+        }
+        written++;
+        traceText(&w, "\tat ");
+        traceText(&w, function->name);
+        traceText(&w, " (");
+        traceText(&w, function->file);
+        traceText(&w, ":");
+        traceNumber(&w, frame->line, 10);
+        traceText(&w, ")\n");
+        traceFlush(&w);
+    }
+    if (elided > 0) {
+        traceText(&w, "\t... ");
+        traceNumber(&w, elided, 10);
+        traceText(&w, " more frames\n");
+        traceFlush(&w);
+    }
+}
+
 void zam_thread_trace(const ZamThread *thread, uint64_t skip, int fd) {
+    if (thread->vm->compiledFunctions != NULL) {
+        traceCompiled(thread, skip, fd);
+        return;
+    }
     const ZamImage *image = &thread->vm->image;
     if (image->debugFunctionCount == 0)
         return;
@@ -181,17 +247,6 @@ static void faultHandler(int sig, siginfo_t *info, void *context) {
     traceText(&w, "\n\033[0m");
     traceFlush(&w);
     zam_thread_trace_current(STDERR_FILENO);
-#ifdef ZAM_DEBUGGER
-    char message[64];
-    TraceWriter text = {.fd = -1};
-    traceText(&text, sig == SIGBUS ? "bus error" : "invalid memory access");
-    traceText(&text, " at 0x");
-    traceNumber(&text, (uint64_t)(uintptr_t)info->si_addr, 16);
-    size_t length = text.length < sizeof message - 1 ? text.length : sizeof message - 1;
-    memcpy(message, text.data, length);
-    message[length] = '\0';
-    zam_debug_fail(zam_thread_current(), message);
-#endif
 }
 
 void zam_thread_install_fault_handler(void) {
@@ -250,6 +305,7 @@ const char *zam_result_name(ZamResult result) {
 // allocator zeroes.
 void zam_thread_init(ZamThread *thread, ZamVM *vm, uint64_t initialStackSize) {
     thread->vm = vm;
+    thread->frames = NULL;
     thread->id = atomic_fetch_add(&vm->nextThreadId, 1) + 1;
     thread->result = ZAMRESULT_CONTINUE;
     thread->operandCapacity = initialStackSize;

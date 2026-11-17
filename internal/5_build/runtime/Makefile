@@ -2,8 +2,8 @@ BIN := bin/zam
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=build/%.o)
 
-CODEC_PACKAGES := json-c yaml-0.1 libxml-2.0 bson2 libcbor zlib liblz4 libzstd libbrotlienc libbrotlidec openssl libcurl libllhttp libsodium libxcrypt
-CODEC_KEGS := $(subst $(eval) ,:,$(wildcard /opt/homebrew/opt/curl/lib/pkgconfig /usr/local/opt/curl/lib/pkgconfig /opt/homebrew/opt/libxcrypt/lib/pkgconfig /usr/local/opt/libxcrypt/lib/pkgconfig))
+CODEC_PACKAGES := json-c yaml-0.1 libxml-2.0 bson2 libcbor zlib liblz4 libzstd libbrotlienc libbrotlidec openssl libcurl libllhttp libsodium
+CODEC_KEGS := $(subst $(eval) ,:,$(wildcard /opt/homebrew/opt/curl/lib/pkgconfig /usr/local/opt/curl/lib/pkgconfig))
 PKG_CONFIG := PKG_CONFIG_PATH=$(CODEC_KEGS):$$PKG_CONFIG_PATH pkg-config
 
 CFLAGS ?= -std=gnu11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc $(shell $(PKG_CONFIG) --cflags $(CODEC_PACKAGES))
