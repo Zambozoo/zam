@@ -11,6 +11,10 @@
 
 #include "crypto.h"
 
+#if defined(_WIN32)
+#define timegm _mkgmtime
+#endif
+
 #if OPENSSL_VERSION_NUMBER < 0x40100000L
 // ASN1_STRING_get_length is OpenSSL 4.1's ASN1_STRING_length.
 #define ASN1_STRING_get_length(x) ((size_t)ASN1_STRING_length(x))

@@ -50,9 +50,18 @@ tasks:
   packs:
     desc: Build target packs into bin/packs in the Linux image (set TARGETS; add --runtime-only to rebuild only the runtime)
     vars:
-      TARGETS: '{{.TARGETS | default "x86_64-linux-musl aarch64-linux-musl x86_64-macos aarch64-macos"}}'
+      TARGETS: '{{.TARGETS | default "x86_64-linux-musl aarch64-linux-musl x86_64-macos aarch64-macos x86_64-windows-gnu aarch64-windows-gnu"}}'
     cmds:
       - docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache zam-linux docker/pack.sh {{.TARGETS}} {{.CLI_ARGS}}
+
+  test:windows:
+    desc: Run the end-to-end tests natively for Windows under Wine in the Linux image and summarize what passes (report only; set TARGET for another Windows target)
+    vars:
+      TARGET: '{{.TARGET | default "aarch64-windows-gnu"}}'
+    cmds:
+      - cmd: docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache -e ZAM_TEST_TARGET={{.TARGET}} zam-linux go test ./internal/5_build -count=1 -timeout 20m -json > windows-report.json
+        ignore_error: true
+      - go run ./internal/5_build/nativereport < windows-report.json
 
   test:cross:
     desc: Cross-build a hello world and an HTTPS fetch for Linux on this machine and run them in Debian (arm64) and Alpine (amd64) containers (needs the network; set URL to fetch another)

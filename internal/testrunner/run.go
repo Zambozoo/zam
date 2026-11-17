@@ -60,12 +60,15 @@ func Run(cmd *command.Command, files *base.FileProvider, packages packageProvide
 	}
 	defer os.RemoveAll(dir)
 
-	binary := filepath.Join(dir, "test")
 	opts := build.Options{
-		OutputPath:   binary,
 		Project:      runner.ast.MainCodeDecl.File().Project,
 		KeepBuildDir: cmd.KeepBuild,
 	}
+	binary, err := build.ExecutablePath(opts, filepath.Join(dir, "test"))
+	if err != nil {
+		return false, err
+	}
+	opts.OutputPath = binary
 	if cmd.Native {
 		object, err := codegen.GenerateObject(runner.cmd, runner.ast, codegen.ObjectOptions{})
 		if err != nil {

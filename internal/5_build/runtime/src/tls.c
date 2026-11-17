@@ -1,4 +1,4 @@
-#include <arpa/inet.h>
+#include "sockets.h"
 #include <openssl/err.h>
 #include <openssl/ssl.h>
 #include <openssl/x509v3.h>
@@ -26,6 +26,17 @@ static void opensslError(ZamThread *thread, uint64_t wordIndex, const char *fall
 // stdTlsClientContext makes a client context trusting the PEM certificates
 // in caFile, or the system roots for an empty path, and verifying the peer
 // only when told to.
+// systemCertificates trusts the system's certificate authorities: Windows
+// keeps them in its certificate store, which OpenSSL reads as a store of its
+// own, and elsewhere they are files where OpenSSL looks by default.
+static bool systemCertificates(SSL_CTX *ctx) {
+#if defined(_WIN32)
+    return SSL_CTX_load_verify_store(ctx, "org.openssl.winstore:") == 1;
+#else
+    return SSL_CTX_set_default_verify_paths(ctx) == 1;
+#endif
+}
+
 static void stdTlsClientContext(ZamThread *thread) {
     char *caFile = codec_c_string(thread, 0);
     bool verify = zam_native_argument(thread, 1) != 0;
@@ -35,7 +46,7 @@ static void stdTlsClientContext(ZamThread *thread) {
         SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
         SSL_CTX_set_options(ctx, SSL_OP_IGNORE_UNEXPECTED_EOF);
         SSL_CTX_set_verify(ctx, verify ? SSL_VERIFY_PEER : SSL_VERIFY_NONE, NULL);
-        ok = caFile[0] == '\0' ? SSL_CTX_set_default_verify_paths(ctx) == 1
+        ok = caFile[0] == '\0' ? systemCertificates(ctx)
                                : SSL_CTX_load_verify_locations(ctx, caFile, NULL) == 1;
     }
     free(caFile);
@@ -92,7 +103,7 @@ static void stdTlsHandshake(ZamThread *thread) {
     bool server = zam_native_argument(thread, 3) != 0;
 
     SSL *ssl = SSL_new(ctx);
-    if (ssl == NULL || SSL_set_fd(ssl, fd) != 1) {
+    if (ssl == NULL || SSL_set_fd(ssl, (int)zam_fd_socket(fd)) != 1) {
         free(serverName);
         SSL_free(ssl);
         codec_write_word(thread, 4, 0);
@@ -169,7 +180,6 @@ static void stdTlsClose(ZamThread *thread) {
     }
     zam_native_return_void(thread);
 }
-
 const ZamNativeEntry zamTlsNativeTable[] = {
     {"STD_TLS_CLIENT_CONTEXT", stdTlsClientContext},
     {"STD_TLS_SERVER_CONTEXT", stdTlsServerContext},

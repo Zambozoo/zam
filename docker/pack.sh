@@ -6,6 +6,7 @@
 #
 # usage: docker/pack.sh <target>... [--runtime-only]
 # targets: x86_64-linux-musl aarch64-linux-musl x86_64-macos aarch64-macos
+#          x86_64-windows-gnu aarch64-windows-gnu
 set -euo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
@@ -102,19 +103,25 @@ writeTools() {
         cat >"$tools/$tool" <<EOF
 #!/bin/bash
 # Drops -arch, which build systems pass for macOS and the target already says,
-# and LTO, which would leave Zig's LLVM bitcode in the archives in place of
-# machine code.
+# -m64, which OpenSSL's mingw64 passes and an Arm target refuses, and LTO,
+# which would leave Zig's LLVM bitcode in the archives in place of machine
+# code.
 args=()
 while ((\$#)); do
     case \$1 in
     -arch) shift 2; continue ;;
     -flto | -flto=* | -ffat-lto-objects | -fno-fat-lto-objects) shift; continue ;;
+    -m64) [[ $arch == aarch64 ]] && { shift; continue; } ;;
     esac
     args+=("\$1"); shift
 done
 exec zig $tool -target $zigTarget $frameworkFlags "\${args[@]}"
 EOF
     done
+    # Windows resources, which some libraries compile in, go through LLVM's
+    # windres, with Zig to preprocess them.
+    printf '#!/bin/sh\nexec llvm-windres --target=%s-w64-mingw32 --preprocessor=%s --preprocessor-arg=-E --preprocessor-arg=-xc --preprocessor-arg=-DRC_INVOKED "$@"\n' \
+        "$arch" "$tools/cc" >"$tools/windres"
     printf '#!/bin/sh\nexec zig ar "$@"\n' >"$tools/ar"
     printf '#!/bin/sh\nexec zig ranlib "$@"\n' >"$tools/ranlib"
     chmod +x "$tools"/*
@@ -125,6 +132,7 @@ set(CMAKE_C_COMPILER $tools/cc)
 set(CMAKE_CXX_COMPILER $tools/c++)
 set(CMAKE_AR $tools/ar)
 set(CMAKE_RANLIB $tools/ranlib)
+set(CMAKE_RC_COMPILER $tools/windres)
 set(CMAKE_OSX_SYSROOT "")
 set(CMAKE_INSTALL_NAME_TOOL /bin/true)
 set(CMAKE_FRAMEWORK_PATH $pack/frameworks)
@@ -149,7 +157,7 @@ buildLibraries() {
             licenses musl "$src/musl"
             stamp musl
         fi
-    else
+    elif [[ $os == macos ]]; then
         cp "$zigLib/libc/darwin/libSystem.tbd" "$pack/lib/"
         mkdir -p "$pack/frameworks"
         cp -R "$repo/docker/darwin/." "$pack/frameworks/"
@@ -157,9 +165,18 @@ buildLibraries() {
 
     if ! built zlib; then
         fetch zlib "$src/zlib"
-        (cd "$src/zlib" && CC="$tools/cc" AR="$tools/ar" RANLIB="$tools/ranlib" CFLAGS="-O2 -fPIC" \
-            ./configure --static --prefix="$pack" --libdir="$pack/lib" >configure.log 2>&1 &&
-            make -j "$parallel" >build.log 2>&1 && make install >install.log 2>&1)
+        if [[ $os == windows ]]; then
+            # zlib's configure does not cross-compile for mingw; its own
+            # makefile for it builds the static library alone.
+            make -C "$src/zlib" -f win32/Makefile.gcc -j "$parallel" libz.a \
+                CC="$tools/cc" AR="$tools/ar" RANLIB="$tools/ranlib" CFLAGS="-O2" >"$src/zlib/build.log" 2>&1
+            cp "$src/zlib/libz.a" "$pack/lib/"
+            cp "$src/zlib/zlib.h" "$src/zlib/zconf.h" "$pack/include/"
+        else
+            (cd "$src/zlib" && CC="$tools/cc" AR="$tools/ar" RANLIB="$tools/ranlib" CFLAGS="-O2 -fPIC" \
+                ./configure --static --prefix="$pack" --libdir="$pack/lib" >configure.log 2>&1 &&
+                make -j "$parallel" >build.log 2>&1 && make install >install.log 2>&1)
+        fi
         licenses zlib "$src/zlib"
         stamp zlib
     fi
@@ -174,8 +191,13 @@ buildLibraries() {
 
     if ! built lz4; then
         fetch lz4 "$src/lz4"
-        make -C "$src/lz4/lib" -j "$parallel" install BUILD_SHARED=no \
-            CC="$tools/cc" AR="$tools/ar" CFLAGS="-O2 -fPIC" PREFIX="$pack" LIBDIR="$pack/lib" >"$src/lz4/build.log" 2>&1
+        # lz4's makefile compiles its sources in one command, which Zig cannot
+        # do for Windows; the library is these four files.
+        (cd "$src/lz4/lib" && for source in lz4 lz4frame lz4hc xxhash; do
+            "$tools/cc" -O2 -fPIC -c "$source.c" -o "$source.o" || exit 1
+        done >build.log 2>&1 &&
+            "$tools/ar" rcs "$pack/lib/liblz4.a" lz4.o lz4frame.o lz4hc.o xxhash.o &&
+            cp lz4.h lz4frame.h lz4hc.h "$pack/include/")
         licenses lz4 "$src/lz4"
         stamp lz4
     fi
@@ -189,7 +211,7 @@ buildLibraries() {
 
     if ! built openssl; then
         fetch openssl "$src/openssl"
-        (cd "$src/openssl" && ./Configure "$opensslTarget" no-shared no-tests no-docs no-module \
+        (cd "$src/openssl" && ./Configure "$opensslTarget" $opensslOptions no-shared no-tests no-docs no-module \
             --prefix="$pack" --libdir=lib --openssldir=/etc/ssl \
             CC="$tools/cc" AR="$tools/ar" RANLIB="$tools/ranlib" >configure.log 2>&1 &&
             make -j "$parallel" build_libs >build.log 2>&1 && make install_dev >install.log 2>&1)
@@ -275,10 +297,48 @@ buildLibraries() {
         stamp libarchive
     fi
 
-    zig build-lib "$zigLib/compiler_rt.zig" -target "$zigTarget" -O ReleaseFast -fPIC -static \
-        --name compiler_rt -femit-bin="$pack/lib/libcompiler_rt.a" --cache-dir "$work/zig-cache"
+    # A Windows pack takes compiler-rt with the rest of what Zig links.
+    if [[ $os == windows ]]; then
+        windowsLibraries
+    else
+        zig build-lib "$zigLib/compiler_rt.zig" -target "$zigTarget" -O ReleaseFast -fPIC -static \
+            --name compiler_rt -femit-bin="$pack/lib/libcompiler_rt.a" --cache-dir "$work/zig-cache"
+    fi
 
     ls "$pack/.stamps" | sed 's/-\([^-]*\)$/ \1/' >"$pack/sources.txt"
+}
+
+# windowsSystemLibraries are the Windows DLLs the runtime and the pack's
+# libraries call, whose import libraries a Windows pack holds.
+windowsSystemLibraries=(kernel32 ntdll advapi32 user32 shell32 ws2_32 crypt32 bcrypt gdi32 secur32 iphlpapi)
+
+# windowsLibraries puts in the pack what Zig links a Windows program with: the
+# mingw-w64 C runtime and its start-up object, winpthreads, Zig's libc and the
+# import libraries of windowsSystemLibraries, as Zig builds them, and writes the
+# flags it links with to link.txt. A probe program linked with --verbose-link
+# names them.
+windowsLibraries() {
+    local probe=$work/probe
+    rm -rf "$probe"
+    mkdir -p "$probe"
+    printf 'int main(void) { return 0; }\n' >"$probe/probe.c"
+    local libs=()
+    for library in "${windowsSystemLibraries[@]}"; do
+        libs+=(-l"$library")
+    done
+    local link
+    link=$(cd "$probe" && zig build-exe -target "$zigTarget" -O ReleaseFast -lc "${libs[@]}" probe.c \
+        --name probe --cache-dir "$work/zig-cache" --verbose-link 2>&1 | grep -E '^([^ ]*/)?lld-link ' | tail -1)
+    [[ -n $link ]] || { echo "zig did not show how it links for $zigTarget" >&2; exit 1; }
+
+    : >"$pack/link.txt"
+    for argument in $link; do
+        case $argument in
+        lld-link | */probe.obj | -OUT:* | -IMPLIB:* | -PDB* | -DEBUG* | -ERRORLIMIT:* | -NOLOGO) ;;
+        -*) echo "$argument" >>"$pack/link.txt" ;;
+        *.lib | *.obj) cp "$argument" "$pack/lib/" ;;
+        esac
+    done
 }
 
 # buildRuntime compiles the zam runtime against the pack's headers into
@@ -332,14 +392,21 @@ for target in "${targets[@]}"; do
     arch=${target%%-*}
     case $target in
     x86_64-linux-musl | aarch64-linux-musl)
-        os=linux zigTarget=$target host=$target cmakeSystem=Linux opensslTarget=linux-$arch frameworkFlags=
+        os=linux zigTarget=$target host=$target cmakeSystem=Linux opensslTarget=linux-$arch opensslOptions= frameworkFlags=
         objectFormat=$([[ $arch == aarch64 ]] && echo elf64-littleaarch64 || echo elf64-x86-64)
         ;;
     x86_64-macos | aarch64-macos)
         os=macos zigTarget=$target.13.0 host=$arch-apple-darwin cmakeSystem=Darwin
         frameworkFlags="-F$repo/bin/packs/$target/frameworks"
         objectFormat=$([[ $arch == aarch64 ]] && echo "Mach-O arm64" || echo "Mach-O 64-bit x86-64")
-        opensslTarget=darwin64-${arch/aarch64/arm64}
+        opensslTarget=darwin64-${arch/aarch64/arm64} opensslOptions=
+        ;;
+    x86_64-windows-gnu | aarch64-windows-gnu)
+        os=windows zigTarget=$target host=$arch-w64-mingw32 cmakeSystem=Windows frameworkFlags=
+        objectFormat=$([[ $arch == aarch64 ]] && echo COFF-ARM64 || echo COFF-x86-64)
+        # OpenSSL has no Arm mingw configuration; mingw64's fits it but for its
+        # x86 assembly.
+        opensslTarget=mingw64 opensslOptions=$([[ $arch == aarch64 ]] && echo no-asm || true)
         ;;
     *)
         echo "unknown target $target" >&2

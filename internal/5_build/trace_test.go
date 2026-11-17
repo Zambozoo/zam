@@ -99,7 +99,7 @@ func TestTraceOnFault(t *testing.T) {
 	binary := compile(t, faultSource)
 
 	_, stderr, status := run(t, binary)
-	assert.Equal(t, -1, status, "the process ends by the signal")
+	assert.Equal(t, faultStatus(), status, "the process ends by the fault")
 	assert.Regexp(t, `^\x1b\[31m(invalid memory access|bus error) at 0x[0-9a-f]+
 \x1b\[0m\tat Main.Read \(\S*/Main.zam:3\)
 \tat Main.main \(\S*/Main.zam:8\)

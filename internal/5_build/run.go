@@ -19,7 +19,10 @@ func Prepare(image []byte, nativeNames []string, opts Options) (string, func(), 
 	}
 	remove := func() { _ = os.RemoveAll(dir) }
 
-	opts.OutputPath = filepath.Join(dir, "main")
+	if opts.OutputPath, err = ExecutablePath(opts, filepath.Join(dir, "main")); err != nil {
+		remove()
+		return "", nil, err
+	}
 	if err := Build(image, nativeNames, opts); err != nil {
 		remove()
 		return "", nil, err
@@ -52,7 +55,10 @@ func PrepareNative(object []byte, opts Options) (string, func(), error) {
 	}
 	remove := func() { _ = os.RemoveAll(dir) }
 
-	opts.OutputPath = filepath.Join(dir, "main")
+	if opts.OutputPath, err = ExecutablePath(opts, filepath.Join(dir, "main")); err != nil {
+		remove()
+		return "", nil, err
+	}
 	if err := LinkObject(object, opts); err != nil {
 		remove()
 		return "", nil, err

@@ -39,14 +39,22 @@ A native build links the program statically against the runtime and the C librar
 | `x86_64-linux-musl` | Linux on x86-64, statically linked against musl |
 | `aarch64-macos` | macOS on Apple silicon |
 | `x86_64-macos` | macOS on Intel |
+| `aarch64-windows-gnu` | Windows 10 and later on arm64 |
+| `x86_64-windows-gnu` | Windows 10 and later on x86-64 |
 
-Any target is built from any machine zam runs on. `run` and `test` build for the machine they run on.
+Any target is built from any machine zam runs on. `run` and `test` build for the machine they run on. An executable for Windows is named with `.exe`, which is added to `-o` when it is missing.
 
 A target's pack is downloaded from the release of the running version of zam the first time it is needed, checked against the release's checksums, and kept in zam's cache directory, `$ZAM_CACHE_DIR` or the user's cache directory, for every build after. `$ZAM_PACKS` names a directory of packs to use instead, one directory per target, which is how a build works offline and how a development build of zam, which has no release, finds them. `task packs` builds them from source into `bin/packs` in this repository.
 
 With `zig` on the path, the runtime is compiled for the target against its pack the first time it is needed, and kept in zam's cache. Without it, the pack's own prebuilt runtime is used. A project's `native.files` are compiled with `zig cc` for the target, so they need `zig`.
 
 A native binary carries no debug information; `zam debug` builds its own.
+
+On Windows, a program behaves as it does elsewhere but where Windows has no equivalent:
+- Of the signals, only `SIGINT`, `SIGILL`, `SIGABRT`, `SIGFPE`, `SIGSEGV` and `SIGTERM` exist. Handling or raising any other does nothing, and sending a signal to another process or thread, or masking one, ends the program saying so.
+- A file has only a read-only flag, so `FS::Chmod` sets or clears that, and a mode reads back as `0444` or `0666`.
+- Unix sockets need Windows 10 version 1803 or later.
+- TLS and HTTPS trust the certificate authorities in the Windows certificate store.
 
 ### Memory
 These are baked into the program and take effect every time it runs.

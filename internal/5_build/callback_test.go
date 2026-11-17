@@ -40,7 +40,7 @@ func compileWithNativesAndFlags(t *testing.T, flags []string, source string, nat
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yml"), []byte(yml.String()), 0o600))
 	entry := filepath.Join(dir, "Main.zam")
 	require.NoError(t, os.WriteFile(entry, []byte(source), 0o600))
-	out := filepath.Join(dir, "out")
+	out := testTarget().Executable(filepath.Join(dir, "out"))
 
 	files := &base.FileProvider{}
 	argv := append(append([]string{"zam", "build"}, flags...), "-o", out, entry)
@@ -49,8 +49,8 @@ func compileWithNativesAndFlags(t *testing.T, flags []string, source string, nat
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
-	if os.Getenv(nativeTestVariable) != "" {
-		object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{})
+	if compilesNatively() {
+		object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
 		require.NoError(t, err)
 		cache, err := nativeRuntimeCache()
 		require.NoError(t, err)
@@ -58,6 +58,7 @@ func compileWithNativesAndFlags(t *testing.T, flags []string, source string, nat
 			OutputPath:      out,
 			Project:         ast.MainCodeDecl.File().Project,
 			RuntimeCacheDir: cache,
+			Target:          testTarget(),
 		}))
 		return out
 	}

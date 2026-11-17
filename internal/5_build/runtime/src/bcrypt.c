@@ -45,7 +45,7 @@
 #include <openssl/crypto.h>
 #include <openssl/rand.h>
 
-#include "bcrypt.h"
+#include "openbsd_bcrypt.h"
 #include "blf.h"
 
 /* This implementation is adaptable to current computing power.

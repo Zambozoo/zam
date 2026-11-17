@@ -260,9 +260,9 @@ ZamTypeID zamrt_generic_arg(const ZamImage *image, ZamTypeShort shortID, uint64_
 ZamEntry zamrt_virtual_entry(ZamThread *thread, const void *receiver, uint64_t methodIndex);
 
 // zamrt_interface_entry is the method receiver's class implements for the
-// methodIndex'th method of interface, panicking on a null receiver or when it
-// implements none.
-ZamEntry zamrt_interface_entry(ZamThread *thread, const void *receiver, ZamTypeShort interface,
+// methodIndex'th method of interfaceType, panicking on a null receiver or when
+// it implements none.
+ZamEntry zamrt_interface_entry(ZamThread *thread, const void *receiver, ZamTypeShort interfaceType,
                                uint32_t methodIndex);
 
 // zamrt_method allocates a closure over the methodIndex'th method of the value

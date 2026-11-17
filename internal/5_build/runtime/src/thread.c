@@ -1,7 +1,12 @@
 #include "thread.h"
 
 #include <errno.h>
+#include <signal.h>
 #include <unistd.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 #include "vm.h"
 #include "zamrt.h"
@@ -19,6 +24,10 @@
 static __thread ZamThread *currentZamThread;
 
 static void zamSignalHandler(int sig) {
+#if defined(_WIN32)
+    // Windows resets a handler to the default once it has run.
+    (void)signal(sig, zamSignalHandler);
+#endif
    ZamThread *thread = currentZamThread;
     if (thread == NULL)
         return;
@@ -234,6 +243,37 @@ void zam_thread_trace_current(int fd) {
         zam_thread_trace(thread, 0, fd);
 }
 
+#if defined(_WIN32)
+// faultFilter says what was touched and where the thread touching it was, for
+// a fault nothing handled, and ends the process with the fault's code, before
+// Windows' own crash handling reports it again or waits on a dialog.
+static LONG CALLBACK faultFilter(EXCEPTION_POINTERS *exception) {
+    const EXCEPTION_RECORD *record = exception->ExceptionRecord;
+    bool access = record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION ||
+                  record->ExceptionCode == EXCEPTION_IN_PAGE_ERROR;
+    if (!access || record->NumberParameters < 2)
+        return EXCEPTION_CONTINUE_SEARCH;
+    TraceWriter w = {.fd = STDERR_FILENO};
+    traceText(&w, "\033[31m");
+    traceText(&w, record->ExceptionCode == EXCEPTION_IN_PAGE_ERROR ? "bus error" : "invalid memory access");
+    traceText(&w, " at 0x");
+    traceNumber(&w, (uint64_t)record->ExceptionInformation[1], 16);
+    traceText(&w, "\n\033[0m");
+    traceFlush(&w);
+    zam_thread_trace_current(STDERR_FILENO);
+    TerminateProcess(GetCurrentProcess(), record->ExceptionCode);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void zam_thread_install_fault_handler(void) { SetUnhandledExceptionFilter(faultFilter); }
+
+void zam_thread_install_signal_slot(ZamThread *thread, int sig, void *closure) {
+    if (sig < 0 || sig >= ZAM_SIGNAL_MAX)
+        return;
+    thread->signalHandlers[sig] = closure;
+    (void)signal(sig, zamSignalHandler);
+}
+#else
 // faultHandler says what was touched and where the thread touching it was,
 // then returns to the instruction that faulted. The handler is reset on entry,
 // so it faults again and ends the process by the signal.
@@ -271,6 +311,7 @@ void zam_thread_install_signal_slot(ZamThread *thread, int sig, void *closure) {
     sa.sa_flags = SA_RESTART;
     (void)sigaction(sig, &sa, NULL);
 }
+#endif
 
 int zam_thread_take_pending_signal(ZamThread *thread) {
     sig_atomic_t mask = thread->pendingSignalMask;

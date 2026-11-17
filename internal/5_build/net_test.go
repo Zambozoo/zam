@@ -11,11 +11,14 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/zambozoo/zam/internal/target"
 )
 
 // writeSelfSigned writes a self-signed certificate for localhost and
@@ -187,9 +190,12 @@ namespace Main {
 
 // TestUnixSocket echoes over a Unix socket, and checks the listener removes
 // its path on closing. It is skipped where the environment forbids binding
-// Unix sockets, as some sandboxes do.
+// Unix sockets, as some sandboxes do, and under Wine, which has none.
 func TestUnixSocket(t *testing.T) {
 	t.Parallel()
+	if testTarget().OS == target.Windows && runtime.GOOS != "windows" {
+		t.Skip("Wine has no Unix sockets")
+	}
 	dir, err := os.MkdirTemp("", "zamunix")
 	require.NoError(t, err)
 	t.Cleanup(func() { os.RemoveAll(dir) })

@@ -5,6 +5,7 @@ import (
 	"debug/dwarf"
 	"debug/elf"
 	"debug/macho"
+	"debug/pe"
 	"errors"
 	"os"
 	"os/exec"
@@ -34,22 +35,18 @@ var nativeRuntimeCache = sync.OnceValues(func() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	host, err := target.Host()
+	pack, err := build.Pack(testTarget())
 	if err != nil {
 		return "", err
 	}
-	pack, err := build.Pack(host)
-	if err != nil {
-		return "", err
-	}
-	_, err = build.RuntimeArchive(dir, host, pack)
+	_, err = build.RuntimeArchive(dir, testTarget(), pack)
 	return dir, err
 })
 
-// generateObject compiles a one-file program to native code for the host.
+// generateObject compiles a one-file program to native code for testTarget.
 func generateObject(t *testing.T, source string) (*codegen.Object, error) {
 	t.Helper()
-	return generateObjectFor(t, source, "")
+	return generateObjectFor(t, source, testTarget().Triple)
 }
 
 // generateObjectFor compiles a one-file program to native code for triple.
@@ -79,10 +76,10 @@ func runNative(t *testing.T, source string, args ...string) (string, int) {
 	require.NoError(t, err)
 	cache, err := nativeRuntimeCache()
 	require.NoError(t, err)
-	out := filepath.Join(t.TempDir(), "out")
-	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache}))
+	out := testTarget().Executable(filepath.Join(t.TempDir(), "out"))
+	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache, Target: testTarget()}))
 
-	output, err := exec.Command(out, args...).CombinedOutput()
+	output, err := targetCommand(out, args...).CombinedOutput()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		return string(output), exit.ExitCode()
@@ -310,10 +307,10 @@ func TestNativeFrameRootsKeepStrings(t *testing.T) {
 	require.NoError(t, err)
 	cache, err := nativeRuntimeCache()
 	require.NoError(t, err)
-	out := filepath.Join(t.TempDir(), "out")
-	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache}))
+	out := testTarget().Executable(filepath.Join(t.TempDir(), "out"))
+	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache, Target: testTarget()}))
 
-	cmd := exec.Command(out)
+	cmd := targetCommand(out)
 	cmd.Env = append(os.Environ(), "ZAM_GC_STATS=1")
 	output, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
@@ -396,10 +393,10 @@ func TestNativeCallResultsSurviveCollections(t *testing.T) {
 	require.NoError(t, err)
 	cache, err := nativeRuntimeCache()
 	require.NoError(t, err)
-	out := filepath.Join(t.TempDir(), "out")
-	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache}))
+	out := testTarget().Executable(filepath.Join(t.TempDir(), "out"))
+	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache, Target: testTarget()}))
 
-	cmd := exec.Command(out)
+	cmd := targetCommand(out)
 	cmd.Env = append(os.Environ(), "ZAM_GC_STATS=1")
 	output, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
@@ -462,10 +459,10 @@ func TestNativeClosureCapturesSurviveCollections(t *testing.T) {
 	require.NoError(t, err)
 	cache, err := nativeRuntimeCache()
 	require.NoError(t, err)
-	out := filepath.Join(t.TempDir(), "out")
-	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache}))
+	out := testTarget().Executable(filepath.Join(t.TempDir(), "out"))
+	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache, Target: testTarget()}))
 
-	cmd := exec.Command(out)
+	cmd := targetCommand(out)
 	cmd.Env = append(os.Environ(), "ZAM_GC_STATS=1")
 	output, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
@@ -586,10 +583,10 @@ func TestNativeObjectGraphsSurviveCollections(t *testing.T) {
 	require.NoError(t, err)
 	cache, err := nativeRuntimeCache()
 	require.NoError(t, err)
-	out := filepath.Join(t.TempDir(), "out")
-	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache}))
+	out := testTarget().Executable(filepath.Join(t.TempDir(), "out"))
+	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache, Target: testTarget()}))
 
-	cmd := exec.Command(out)
+	cmd := targetCommand(out)
 	cmd.Env = append(os.Environ(), "ZAM_GC_STATS=1", "ZAM_GC_VERIFY=1")
 	output, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
@@ -707,10 +704,10 @@ func TestNativeTupleRootsKeepStrings(t *testing.T) {
 	require.NoError(t, err)
 	cache, err := nativeRuntimeCache()
 	require.NoError(t, err)
-	out := filepath.Join(t.TempDir(), "out")
-	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache}))
+	out := testTarget().Executable(filepath.Join(t.TempDir(), "out"))
+	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache, Target: testTarget()}))
 
-	cmd := exec.Command(out)
+	cmd := targetCommand(out)
 	cmd.Env = append(os.Environ(), "ZAM_GC_STATS=1")
 	output, err := cmd.CombinedOutput()
 	var exit *exec.ExitError
@@ -1355,7 +1352,7 @@ $`, output)
 	assert.Equal(t, "27\n", output)
 
 	output, status = runNative(t, faultSource)
-	assert.Equal(t, -1, status)
+	assert.Equal(t, faultStatus(), status)
 	assert.Regexp(t, `invalid memory access at 0x[0-9a-f]+
 \x1b\[0m\tat Main.Read \(\S*:3\)
 \tat Main.main \(\S*:8\)
@@ -1395,18 +1392,19 @@ void ADD(ZamThread *thread) {
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
-	object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{})
+	object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
 	require.NoError(t, err)
 	cache, err := nativeRuntimeCache()
 	require.NoError(t, err)
-	out := filepath.Join(dir, "out")
+	out := testTarget().Executable(filepath.Join(dir, "out"))
 	require.NoError(t, build.LinkObject(object.Bytes, build.Options{
 		OutputPath:      out,
 		Project:         ast.MainCodeDecl.File().Project,
 		RuntimeCacheDir: cache,
+		Target:          testTarget(),
 	}))
 
-	err = exec.Command(out).Run()
+	err = targetCommand(out).Run()
 	var exit *exec.ExitError
 	require.ErrorAs(t, err, &exit)
 	assert.Equal(t, 42, exit.ExitCode())
@@ -1462,7 +1460,8 @@ namespace Main {
 }
 
 // TestNativeSignals raises a signal the program handles, through an enum value
-// with no address of its own, and expects the handler to run by the next call.
+// with no address of its own, and expects the handler to run by the next call,
+// each time. SIGTERM is one every target has.
 func TestNativeSignals(t *testing.T) {
 	t.Parallel()
 	output, status := runNative(t, `import std("lang/*");
@@ -1476,10 +1475,10 @@ namespace Main {
 
     fun void(uint, str...) main = (argC, argV) {
         var int bump = 2;
-        System.Signal::SIGUSR1.Handle(lambda void(): () { Main::seen = Main::seen + bump; });
-        System.Signal::SIGUSR1.Raise();
+        System.Signal::SIGTERM.Handle(lambda void(): () { Main::seen = Main::seen + bump; });
+        System.Signal::SIGTERM.Raise();
         Main::tick();
-        System.Signal::SIGUSR1.Raise();
+        System.Signal::SIGTERM.Raise();
         Main::tick();
         File::StdOut.WriteStr(Main::seen{str} + "\n");
     }
@@ -1489,9 +1488,12 @@ namespace Main {
 	assert.Equal(t, "4\n", output)
 }
 
-// objectDWARF is the DWARF of an object file for the host, Mach-O or ELF.
+// objectDWARF is the DWARF of an object file, Mach-O, COFF or ELF.
 func objectDWARF(object []byte) (*dwarf.Data, error) {
 	if file, err := macho.NewFile(bytes.NewReader(object)); err == nil {
+		return file.DWARF()
+	}
+	if file, err := pe.NewFile(bytes.NewReader(object)); err == nil {
 		return file.DWARF()
 	}
 	file, err := elf.NewFile(bytes.NewReader(object))
@@ -1754,13 +1756,19 @@ func TestNativeDWARFEnumsAndTypeNames(t *testing.T) {
 	assert.Contains(t, symbols, "zam_debug_type_names_count")
 }
 
-// objectSymbols names the symbols of an object file for the host, Mach-O or
-// ELF, as C names them.
+// objectSymbols names the symbols of an object file or executable, Mach-O,
+// COFF or ELF, as C names them.
 func objectSymbols(object []byte) ([]string, error) {
 	var symbols []string
 	if file, err := macho.NewFile(bytes.NewReader(object)); err == nil {
 		for _, symbol := range file.Symtab.Syms {
 			symbols = append(symbols, strings.TrimPrefix(symbol.Name, "_"))
+		}
+		return symbols, nil
+	}
+	if file, err := pe.NewFile(bytes.NewReader(object)); err == nil {
+		for _, symbol := range file.Symbols {
+			symbols = append(symbols, symbol.Name)
 		}
 		return symbols, nil
 	}
@@ -1778,10 +1786,14 @@ func objectSymbols(object []byte) ([]string, error) {
 	return symbols, nil
 }
 
-// importedLibraries names the shared libraries an executable for the host,
-// Mach-O or ELF, loads.
+// importedLibraries names the shared libraries an executable, Mach-O, PE or
+// ELF, loads.
 func importedLibraries(path string) ([]string, error) {
 	if file, err := macho.Open(path); err == nil {
+		defer file.Close()
+		return file.ImportedLibraries()
+	}
+	if file, err := pe.Open(path); err == nil {
 		defer file.Close()
 		return file.ImportedLibraries()
 	}
@@ -1806,7 +1818,7 @@ func TestNativeDebugBundle(t *testing.T) {
 	cache, err := nativeRuntimeCache()
 	require.NoError(t, err)
 	out := filepath.Join(t.TempDir(), "my-program")
-	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache, Debugger: true}))
+	require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache, Target: testTarget(), Debugger: true}))
 
 	_, err = os.Stat(filepath.Join(out+".dSYM", "Contents", "Resources", "DWARF", "my-program"))
 	assert.NoError(t, err)
@@ -1922,8 +1934,8 @@ func TestNativeLinksOnlyWhatItCalls(t *testing.T) {
 		require.NoError(t, err)
 		cache, err := nativeRuntimeCache()
 		require.NoError(t, err)
-		out := filepath.Join(t.TempDir(), "out")
-		require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache}))
+		out := testTarget().Executable(filepath.Join(t.TempDir(), "out"))
+		require.NoError(t, build.LinkObject(object.Bytes, build.Options{OutputPath: out, RuntimeCacheDir: cache, Target: testTarget()}))
 		executable, err := os.ReadFile(out)
 		require.NoError(t, err)
 		symbols, err = objectSymbols(executable)
@@ -1961,10 +1973,27 @@ namespace Main {
 	assert.True(t, systemOnly(jsonLibraries), "%v", jsonLibraries)
 }
 
+// runsHere answers how to run a program built for t on this machine: itself
+// for the host, under Wine for Windows on Linux of t's architecture, and nil
+// where it cannot run.
+func runsHere(t target.Target) func(path string) *exec.Cmd {
+	if t.IsHost() {
+		return func(path string) *exec.Cmd { return exec.Command(path) }
+	}
+	host, err := target.Host()
+	if err != nil || t.OS != target.Windows || host.OS != target.Linux || host.Arch != t.Arch {
+		return nil
+	}
+	if _, err := exec.LookPath("wine"); err != nil {
+		return nil
+	}
+	return func(path string) *exec.Cmd { return exec.Command("wine", path) }
+}
+
 // TestNativeLinksForEveryTarget compiles and links one program for every
 // target from its pack: a static ELF executable for Linux without debug
-// information, a Mach-O one for macOS, each for its architecture, and runs the
-// one for the host.
+// information, a Mach-O one for macOS and a PE one for Windows, each for its
+// architecture, and runs the ones this machine can.
 func TestNativeLinksForEveryTarget(t *testing.T) {
 	t.Parallel()
 	source := `import std("lang/*");
@@ -1980,9 +2009,10 @@ namespace Main {
 	machines := map[string]struct {
 		elf   elf.Machine
 		macho macho.Cpu
+		pe    uint16
 	}{
-		"aarch64": {elf.EM_AARCH64, macho.CpuArm64},
-		"x86_64":  {elf.EM_X86_64, macho.CpuAmd64},
+		"aarch64": {elf.EM_AARCH64, macho.CpuArm64, pe.IMAGE_FILE_MACHINE_ARM64},
+		"x86_64":  {elf.EM_X86_64, macho.CpuAmd64, pe.IMAGE_FILE_MACHINE_AMD64},
 	}
 	for _, name := range target.Names() {
 		t.Run(name, func(t *testing.T) {
@@ -1991,7 +2021,7 @@ namespace Main {
 			require.NoError(t, err)
 			object, err := generateObjectFor(t, source, platform.Triple)
 			require.NoError(t, err)
-			out := filepath.Join(t.TempDir(), "out")
+			out := platform.Executable(filepath.Join(t.TempDir(), "out"))
 			require.NoError(t, build.LinkObject(object.Bytes, build.Options{
 				OutputPath: out, RuntimeCacheDir: t.TempDir(), Target: platform,
 			}))
@@ -2005,6 +2035,14 @@ namespace Main {
 				assert.False(t, slices.ContainsFunc(file.Progs, func(p *elf.Prog) bool { return p.Type == elf.PT_INTERP }),
 					"a static executable names no loader")
 				assert.Nil(t, file.Section(".debug_info"), "only a debuggable executable carries DWARF")
+			case target.Windows:
+				file, err := pe.Open(out)
+				require.NoError(t, err)
+				defer file.Close()
+				assert.Equal(t, machines[platform.Arch].pe, file.Machine)
+				libraries, err := file.ImportedLibraries()
+				require.NoError(t, err)
+				assert.True(t, systemOnly(libraries), "%v", libraries)
 			case target.MacOS:
 				file, err := macho.Open(out)
 				require.NoError(t, err)
@@ -2015,20 +2053,34 @@ namespace Main {
 				assert.True(t, systemOnly(libraries), "%v", libraries)
 			}
 
-			if platform.IsHost() {
-				output, err := exec.Command(out).CombinedOutput()
-				require.NoError(t, err, string(output))
+			if run := runsHere(platform); run != nil {
+				output, err := run(out).Output()
+				var exit *exec.ExitError
+				if errors.As(err, &exit) {
+					require.NoError(t, err, string(exit.Stderr))
+				}
+				require.NoError(t, err)
 				assert.Equal(t, "2\n", string(output))
 			}
 		})
 	}
 }
 
+// windowsSystemLibraries are the Windows DLLs a pack links against, besides
+// the Universal C Runtime's.
+var windowsSystemLibraries = []string{
+	"kernel32.dll", "ntdll.dll", "advapi32.dll", "user32.dll", "shell32.dll", "ws2_32.dll",
+	"crypt32.dll", "bcrypt.dll", "gdi32.dll", "secur32.dll", "iphlpapi.dll",
+}
+
 // systemOnly reports whether every shared library named is the system's: a
-// static Linux executable loads none, and a macOS one only what /usr/lib and
-// /System hold.
+// static Linux executable loads none, a macOS one only what /usr/lib and
+// /System hold, and a Windows one only the system's DLLs and the Universal C
+// Runtime.
 func systemOnly(libraries []string) bool {
 	return !slices.ContainsFunc(libraries, func(l string) bool {
-		return !strings.HasPrefix(l, "/usr/lib/") && !strings.HasPrefix(l, "/System/")
+		name := strings.ToLower(l)
+		return !strings.HasPrefix(l, "/usr/lib/") && !strings.HasPrefix(l, "/System/") &&
+			!strings.HasPrefix(name, "api-ms-win-crt-") && !slices.Contains(windowsSystemLibraries, name)
 	})
 }

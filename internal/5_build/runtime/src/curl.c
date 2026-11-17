@@ -22,6 +22,10 @@ static CURL *newEasy(ZamThread *thread) {
     if (curl == NULL)
         zam_native_panic(thread, "out of memory starting a transfer");
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+#if defined(_WIN32)
+    // Windows keeps its certificate authorities in its certificate store.
+    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS, (long)CURLSSLOPT_NATIVE_CA);
+#endif
     return curl;
 }
 

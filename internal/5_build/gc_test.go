@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -16,6 +18,7 @@ import (
 	semantic "github.com/zambozoo/zam/internal/3_semantic"
 	codegen "github.com/zambozoo/zam/internal/4_codegen"
 	build "github.com/zambozoo/zam/internal/5_build"
+	"github.com/zambozoo/zam/internal/target"
 )
 
 // compile builds a one-file project into a binary whose heap and nursery are
@@ -33,7 +36,7 @@ func compileWith(t *testing.T, flags []string, source string) string {
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yml"), []byte("name: \"gc\"\nversion: \"0.0.0\"\ndependencies:\n"), 0o600))
 	entry := filepath.Join(dir, "Main.zam")
 	require.NoError(t, os.WriteFile(entry, []byte(source), 0o600))
-	out := filepath.Join(dir, "out")
+	out := testTarget().Executable(filepath.Join(dir, "out"))
 
 	files := &base.FileProvider{}
 	argv := append([]string{"zam", "build", "-m", "16KB", "-N", "4KB", "-o", out}, flags...)
@@ -42,8 +45,8 @@ func compileWith(t *testing.T, flags []string, source string) string {
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
-	if os.Getenv(nativeTestVariable) != "" {
-		object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{})
+	if compilesNatively() {
+		object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
 		require.NoError(t, err)
 		cache, err := nativeRuntimeCache()
 		require.NoError(t, err)
@@ -51,6 +54,7 @@ func compileWith(t *testing.T, flags []string, source string) string {
 			OutputPath:      out,
 			Project:         ast.MainCodeDecl.File().Project,
 			RuntimeCacheDir: cache,
+			Target:          testTarget(),
 		}))
 		return out
 	}
@@ -69,12 +73,62 @@ func compileWith(t *testing.T, flags []string, source string) string {
 // rather than gating anything.
 const nativeTestVariable = "ZAM_TEST_NATIVE"
 
+// targetTestVariable names, when set, the target the end-to-end tests compile
+// their programs for natively, and run them for: under Wine for Windows. Like
+// a native run, a run for another target reports what is left to port.
+const targetTestVariable = "ZAM_TEST_TARGET"
+
+// compilesNatively reports whether the end-to-end tests compile to native code.
+func compilesNatively() bool {
+	return os.Getenv(nativeTestVariable) != "" || os.Getenv(targetTestVariable) != ""
+}
+
+// testTarget is the target the end-to-end tests compile for: as
+// $ZAM_TEST_TARGET says, else the host.
+var testTarget = sync.OnceValue(func() target.Target {
+	if name := os.Getenv(targetTestVariable); name != "" {
+		platform, err := target.Parse(name)
+		if err != nil {
+			panic(err)
+		}
+		return platform
+	}
+	host, err := target.Host()
+	if err != nil {
+		panic(err)
+	}
+	return host
+})
+
+// faultStatus is the status a program ends with when it touches memory it may
+// not: killed by the signal on POSIX, or ended with the access violation's
+// code on Windows, of which Wine passes on only the low byte.
+func faultStatus() int {
+	if testTarget().OS != target.Windows {
+		return -1
+	}
+	const accessViolation = 0xC0000005
+	if runtime.GOOS == "windows" {
+		return accessViolation
+	}
+	return accessViolation & 0xff
+}
+
+// targetCommand runs the program at path, built for testTarget, with args:
+// under Wine when it is for Windows.
+func targetCommand(path string, args ...string) *exec.Cmd {
+	if testTarget().OS == target.Windows {
+		return exec.Command("wine", append([]string{path}, args...)...)
+	}
+	return exec.Command(path, args...)
+}
+
 // run runs a binary with args to its end and returns what it wrote and how it
 // exited.
 func run(t *testing.T, binary string, args ...string) (stdout, stderr string, status int) {
 	t.Helper()
 
-	out, err := exec.Command(binary, args...).Output()
+	out, err := targetCommand(binary, args...).Output()
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		return string(out), string(exit.Stderr), exit.ExitCode()
@@ -95,7 +149,7 @@ func runWith(t *testing.T, variables []string, binary string, args ...string) (s
 	t.Helper()
 
 	var out, errOut strings.Builder
-	cmd := exec.Command(binary, args...)
+	cmd := targetCommand(binary, args...)
 	cmd.Env = append(os.Environ(), variables...)
 	cmd.Stdout = &out
 	cmd.Stderr = &errOut

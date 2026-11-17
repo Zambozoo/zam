@@ -2,8 +2,13 @@
 
 #if defined(__APPLE__)
 #include <malloc/malloc.h>
+#include <unistd.h>
+#elif defined(_WIN32)
+#include <malloc.h>
+#include <windows.h>
 #else
 #include <malloc.h>
+#include <unistd.h>
 #endif
 
 // ZAMDIE_HELD_BYTES is the most of a message zam_die hands its hold.
@@ -48,8 +53,21 @@ void *zam_alloc(size_t byteCount) {
 size_t zam_alloc_size(void *pointer) {
 #if defined(__APPLE__)
     return malloc_size(pointer);
+#elif defined(_WIN32)
+    return _msize(pointer);
 #else
     return malloc_usable_size(pointer);
+#endif
+}
+
+unsigned zam_processor_count(void) {
+#if defined(_WIN32)
+    SYSTEM_INFO info;
+    GetSystemInfo(&info);
+    return info.dwNumberOfProcessors;
+#else
+    long count = sysconf(_SC_NPROCESSORS_ONLN);
+    return count < 1 ? 1 : (unsigned)count;
 #endif
 }
 

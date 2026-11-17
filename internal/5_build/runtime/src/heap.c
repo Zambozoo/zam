@@ -1,9 +1,13 @@
 #include "heap.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <sys/mman.h>
 
 #ifndef MAP_NORESERVE
 #define MAP_NORESERVE 0
+#endif
 #endif
 
 #if defined(__has_feature)
@@ -90,6 +94,67 @@ static uint64_t slotsOf(unsigned sizeClass) {
 // the smallest class, a large block taking the first.
 #define OBJECT_MAP_BYTES (ZAMHEAP_PAGE_BYTES / 16 / 8)
 
+#if defined(_WIN32)
+// RESERVATIONS_MAX is how many reservations the process may hold at once:
+// four for each heap.
+#define RESERVATIONS_MAX 64
+
+// reservations are the address ranges reserve has handed out, which
+// commitOnTouch backs with memory as they are first touched. A slot is
+// claimed by its start and then filled; one emptied by release is not reused.
+static struct {
+    _Atomic(uintptr_t) start;
+    _Atomic(uintptr_t) end;
+} reservations[RESERVATIONS_MAX];
+static _Atomic(unsigned) reservationCount;
+
+// commitOnTouch commits the page an access faulted on when it lies in a
+// reservation, and resumes the access, so that reserved memory is backed on
+// first touch as POSIX's MAP_NORESERVE backs it. Any other fault is left to
+// the handlers after it.
+static LONG CALLBACK commitOnTouch(EXCEPTION_POINTERS *exception) {
+    const EXCEPTION_RECORD *record = exception->ExceptionRecord;
+    if (record->ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record->NumberParameters < 2)
+        return EXCEPTION_CONTINUE_SEARCH;
+    uintptr_t at = (uintptr_t)record->ExceptionInformation[1];
+    unsigned count = atomic_load(&reservationCount);
+    for (unsigned i = 0; i < count && i < RESERVATIONS_MAX; i++) {
+        if (at >= atomic_load(&reservations[i].start) && at < atomic_load(&reservations[i].end)) {
+            if (VirtualAlloc((void *)at, 1, MEM_COMMIT, PAGE_READWRITE) != NULL)
+                return EXCEPTION_CONTINUE_EXECUTION;
+            return EXCEPTION_CONTINUE_SEARCH;
+        }
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+static void *reserve(uint64_t byteCount) {
+    static _Atomic(bool) handling;
+    if (!atomic_exchange(&handling, true))
+        AddVectoredExceptionHandler(1, commitOnTouch);
+    void *at = VirtualAlloc(NULL, byteCount, MEM_RESERVE, PAGE_READWRITE);
+    unsigned slot = atomic_fetch_add(&reservationCount, 1);
+    if (at == NULL || slot >= RESERVATIONS_MAX)
+        zam_die(ZAMEXIT_OOM,
+                "could not reserve %llu bytes of address space for the heap\n",
+                (unsigned long long)byteCount);
+    atomic_store(&reservations[slot].end, (uintptr_t)at + byteCount);
+    atomic_store(&reservations[slot].start, (uintptr_t)at);
+    return at;
+}
+
+static void release(void *at, uint64_t byteCount) {
+    (void)byteCount;
+    unsigned count = atomic_load(&reservationCount);
+    for (unsigned i = 0; i < count && i < RESERVATIONS_MAX; i++) {
+        if (atomic_load(&reservations[i].start) == (uintptr_t)at) {
+            atomic_store(&reservations[i].start, 0);
+            atomic_store(&reservations[i].end, 0);
+        }
+    }
+    VirtualFree(at, 0, MEM_RELEASE);
+}
+#else
 static void *reserve(uint64_t byteCount) {
     void *at = mmap(NULL, byteCount, PROT_READ | PROT_WRITE,
                     MAP_PRIVATE | MAP_ANON | MAP_NORESERVE, -1, 0);
@@ -99,6 +164,9 @@ static void *reserve(uint64_t byteCount) {
                 (unsigned long long)byteCount);
     return at;
 }
+
+static void release(void *at, uint64_t byteCount) { munmap(at, byteCount); }
+#endif
 
 void zam_heap_init(ZamHeap *heap, uint64_t byteCount, uint64_t returnAge) {
     *heap = (ZamHeap){0};
@@ -124,10 +192,10 @@ void zam_heap_init(ZamHeap *heap, uint64_t byteCount, uint64_t returnAge) {
 void zam_heap_destroy(ZamHeap *heap) {
     if (heap->reservation == NULL)
         return;
-    munmap(heap->reservation, heap->byteCount + ZAMHEAP_PAGE_BYTES);
-    munmap(heap->cards, heap->byteCount >> ZAMHEAP_CARD_SHIFT);
-    munmap(heap->pages, heap->pageCount * sizeof *heap->pages);
-    munmap(heap->objects, heap->pageCount * OBJECT_MAP_BYTES);
+    release(heap->reservation, heap->byteCount + ZAMHEAP_PAGE_BYTES);
+    release(heap->cards, heap->byteCount >> ZAMHEAP_CARD_SHIFT);
+    release(heap->pages, heap->pageCount * sizeof *heap->pages);
+    release(heap->objects, heap->pageCount * OBJECT_MAP_BYTES);
     pthread_mutex_destroy(&heap->lock);
     *heap = (ZamHeap){0};
 }
@@ -182,7 +250,10 @@ static void listRemove(ZamHeap *heap, uint64_t *head, uint64_t index) {
 // range. What it held may read as anything afterwards, which is no more than
 // the allocator ever promises of a fresh block.
 static void returnPages(uint8_t *at, uint64_t byteCount) {
-#if defined(MADV_FREE_REUSABLE)
+#if defined(_WIN32)
+    // Decommitted, the range is backed again on its next touch.
+    VirtualFree(at, byteCount, MEM_DECOMMIT);
+#elif defined(MADV_FREE_REUSABLE)
     madvise(at, byteCount, MADV_FREE_REUSABLE);
 #elif defined(MADV_FREE)
     madvise(at, byteCount, MADV_FREE);
@@ -233,6 +304,21 @@ static void releaseRun(ZamHeap *heap, uint64_t first, uint64_t count) {
     runInsert(heap, first, count, heap->epoch, false);
 }
 
+// commitPages backs a run with memory before it is handed out. Windows leaves
+// reserved memory unbacked until it is committed, and the system itself, a
+// read into a block, faults rather than commits; elsewhere a reservation is
+// backed as it is touched.
+static void commitPages(uint8_t *at, uint64_t byteCount) {
+#if defined(_WIN32)
+    if (VirtualAlloc(at, byteCount, MEM_COMMIT, PAGE_READWRITE) == NULL)
+        zam_die(ZAMEXIT_OOM, "could not commit %llu bytes of the heap\n",
+                (unsigned long long)byteCount);
+#else
+    (void)at;
+    (void)byteCount;
+#endif
+}
+
 // takeRun hands out count contiguous pages, from the first free run long
 // enough or else from past the frontier. The caller holds the lock.
 static uint64_t takeRun(ZamHeap *heap, uint64_t count) {
@@ -249,6 +335,7 @@ static uint64_t takeRun(ZamHeap *heap, uint64_t count) {
             runInsert(heap, first + count, length - count, freedAt, returned);
         if (returned)
             reusePages(pageAddress(heap, first), count * ZAMHEAP_PAGE_BYTES);
+        commitPages(pageAddress(heap, first), count * ZAMHEAP_PAGE_BYTES);
         return first;
     }
 
@@ -259,6 +346,7 @@ static uint64_t takeRun(ZamHeap *heap, uint64_t count) {
                 (unsigned long long)heap->byteCount);
     uint64_t first = heap->frontier;
     heap->frontier += count;
+    commitPages(pageAddress(heap, first), count * ZAMHEAP_PAGE_BYTES);
     return first;
 }
 

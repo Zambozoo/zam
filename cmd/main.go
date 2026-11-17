@@ -166,7 +166,8 @@ func buildNative(logger *base.Logger, cmd *command.Command, syntaxAST *syntax.AS
 		base.Exit(base.ExitCode(code))
 	}
 
-	opts.OutputPath = cmd.OutputPath.String()
+	opts.OutputPath, err = build.ExecutablePath(opts, cmd.OutputPath.String())
+	handleErrors(logger, stepBuild, err)
 	handleErrors(logger, stepBuild, build.LinkObject(object.Bytes, opts))
 	logger.Print(base.LogLevelInfo, "successfully generated code \n")
 	logger.Flush()

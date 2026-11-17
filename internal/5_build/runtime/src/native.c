@@ -1,3 +1,4 @@
+#include "sockets.h"
 #include "zam/native.h"
 
 #include <dirent.h>
@@ -8,10 +9,18 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/random.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+
+#if defined(_WIN32)
+#include <direct.h>
+#include <io.h>
+#include <windows.h>
+#include <bcrypt.h>
+#else
+#include <sys/random.h>
+#endif
 
 #include "definition.h"
 #include "gc.h"
@@ -93,6 +102,13 @@ static ZamWord errorMessage(ZamThread *thread, int err) {
     return (ZamWord)zam_native_new_string(thread, msg, strlen(msg));
 }
 
+// socketErrorMessage is errorMessage for a socket error as zam_socket_error
+// answers it.
+static ZamWord socketErrorMessage(ZamThread *thread, int err) {
+    const char *msg = zam_socket_strerror(err);
+    return (ZamWord)zam_native_new_string(thread, msg, strlen(msg));
+}
+
 static void stdFileInit(ZamThread *thread) {
     const ZamString *path =
         zam_string_of((void *)(uintptr_t)zam_native_argument(thread, 0));
@@ -116,6 +132,10 @@ static void stdFileInit(ZamThread *thread) {
     // passing it unconditionally is safe. The caller does not control it yet;
     // a permissions parameter would be a straightforward follow-up.
     zam_native_block_begin(thread);
+#if defined(_WIN32)
+    // Windows opens a file to translate line endings unless told otherwise.
+    mode |= O_BINARY;
+#endif
     int fd = open(cpath, mode, 0644);
     int openErrno = errno;
     zam_native_block_end(thread);
@@ -177,7 +197,11 @@ static void stdFileSize(ZamThread *thread) {
 static void stdFileSync(ZamThread *thread) {
     int fd = (int)*(ZamInt *)zam_native_argument_pointer(thread, 0);
     zam_native_block_begin(thread);
+#if defined(_WIN32)
+    int result = _commit(fd);
+#else
     int result = fsync(fd);
+#endif
     int err = errno;
     zam_native_block_end(thread);
     finishErr(thread, 1, result, err);
@@ -206,10 +230,39 @@ static void stdFsStat(ZamThread *thread) {
     finishErr(thread, 5, result, err);
 }
 
+#if defined(_WIN32)
+// windowsErrno is the errno that says what a Windows error code does.
+static int windowsErrno(DWORD error) {
+    switch (error) {
+    case ERROR_FILE_NOT_FOUND:
+    case ERROR_PATH_NOT_FOUND:
+        return ENOENT;
+    case ERROR_ACCESS_DENIED:
+    case ERROR_SHARING_VIOLATION:
+        return EACCES;
+    case ERROR_ALREADY_EXISTS:
+    case ERROR_FILE_EXISTS:
+        return EEXIST;
+    case ERROR_NOT_SAME_DEVICE:
+        return EXDEV;
+    case ERROR_DIR_NOT_EMPTY:
+        return ENOTEMPTY;
+    default:
+        return EIO;
+    }
+}
+#endif
+
 static void stdFsRemove(ZamThread *thread) {
     char *path = cString(thread, 0);
     zam_native_block_begin(thread);
+#if defined(_WIN32)
+    // Windows' remove takes only files; POSIX's takes empty directories too.
+    struct _stat st;
+    int result = _stat(path, &st) == 0 && (st.st_mode & _S_IFDIR) ? _rmdir(path) : remove(path);
+#else
     int result = remove(path);
+#endif
     int err = errno;
     zam_native_block_end(thread);
     free(path);
@@ -220,7 +273,16 @@ static void stdFsRename(ZamThread *thread) {
     char *from = cString(thread, 0);
     char *to = cString(thread, 1);
     zam_native_block_begin(thread);
+#if defined(_WIN32)
+    // Windows' rename refuses an existing destination, which POSIX's replaces.
+    int result = 0;
+    if (!MoveFileExA(from, to, MOVEFILE_REPLACE_EXISTING)) {
+        result = -1;
+        errno = windowsErrno(GetLastError());
+    }
+#else
     int result = rename(from, to);
+#endif
     int err = errno;
     zam_native_block_end(thread);
     free(from);
@@ -232,7 +294,13 @@ static void stdFsMakeDir(ZamThread *thread) {
     char *path = cString(thread, 0);
     mode_t mode = (mode_t)zam_native_argument(thread, 1);
     zam_native_block_begin(thread);
+#if defined(_WIN32)
+    // A Windows directory has no permission bits to set.
+    (void)mode;
+    int result = _mkdir(path);
+#else
     int result = mkdir(path, mode);
+#endif
     int err = errno;
     zam_native_block_end(thread);
     free(path);
@@ -342,7 +410,11 @@ static void stdPipeInit(ZamThread *thread) {
     ZamInt *readOut = (ZamInt *)zam_native_argument_pointer(thread, 0);
     ZamInt *writeOut = (ZamInt *)zam_native_argument_pointer(thread, 1);
     int fds[2];
+#if defined(_WIN32)
+    int result = _pipe(fds, 64 * 1024, O_BINARY);
+#else
     int result = pipe(fds);
+#endif
     int err = errno;
     if (result == 0) {
         *readOut = fds[0];
@@ -385,12 +457,19 @@ static void stdFileWrite(ZamThread *thread) {
 
     int fd = (int)*fdPtr;
     zam_native_block_begin(thread);
-    ssize_t written = write(fd, buffer, count);
-    int writeErrno = errno;
+    ssize_t written;
+    int writeErrno;
+    if (zam_fd_is_socket(fd)) {
+        written = send(zam_fd_socket(fd), buffer, (int)count, 0);
+        writeErrno = zam_socket_error();
+    } else {
+        written = write(fd, buffer, count);
+        writeErrno = errno;
+    }
     zam_native_block_end(thread);
     if (written < 0) {
         *nOut = 0;
-        *errOut = errorMessage(thread, writeErrno);
+        *errOut = zam_fd_is_socket(fd) ? socketErrorMessage(thread, writeErrno) : errorMessage(thread, writeErrno);
     } else {
         *nOut = (ZamInt)written;
         *errOut = 0;
@@ -411,11 +490,12 @@ static void stdFileClose(ZamThread *thread) {
    ZamWord *errOut = (ZamWord *)zam_native_argument_pointer(thread, 1);
     int fd = (int)*fdPtr;
     zam_native_block_begin(thread);
-    int closed = close(fd);
-    int closeErrno = errno;
+    bool socket = zam_fd_is_socket(fd);
+    int closed = socket ? zam_socket_close(fd) : close(fd);
+    int closeErrno = socket ? zam_socket_error() : errno;
     zam_native_block_end(thread);
     if (closed < 0)
-        *errOut = errorMessage(thread, closeErrno);
+        *errOut = socket ? socketErrorMessage(thread, closeErrno) : errorMessage(thread, closeErrno);
     else
         *errOut = 0;
     zam_native_return_void(thread);
@@ -430,12 +510,19 @@ static void stdFileRead(ZamThread *thread) {
 
     int fd = (int)*fdPtr;
     zam_native_block_begin(thread);
-    ssize_t bytesRead = read(fd, buffer, count);
-    int readErrno = errno;
+    ssize_t bytesRead;
+    int readErrno;
+    if (zam_fd_is_socket(fd)) {
+        bytesRead = recv(zam_fd_socket(fd), buffer, (int)count, 0);
+        readErrno = zam_socket_error();
+    } else {
+        bytesRead = read(fd, buffer, count);
+        readErrno = errno;
+    }
     zam_native_block_end(thread);
     if (bytesRead < 0) {
         *nOut = 0;
-        *errOut = errorMessage(thread, readErrno);
+        *errOut = zam_fd_is_socket(fd) ? socketErrorMessage(thread, readErrno) : errorMessage(thread, readErrno);
     } else {
         *nOut = (ZamInt)bytesRead;
         *errOut = 0;
@@ -695,10 +782,20 @@ static uint64_t randRotl(uint64_t x, int k) {
     return (x << k) | (x >> (64 - k));
 }
 
+// entropy fills buffer with byteCount random bytes from the system, answering
+// whether it could.
+static bool entropy(void *buffer, size_t byteCount) {
+#if defined(_WIN32)
+    return BCryptGenRandom(NULL, buffer, (ULONG)byteCount, BCRYPT_USE_SYSTEM_PREFERRED_RNG) == 0;
+#else
+    return getentropy(buffer, byteCount) == 0;
+#endif
+}
+
 static uint64_t randNext(ZamThread *thread) {
     uint64_t *s = randState;
     if (!randSeeded) {
-        if (getentropy(s, sizeof randState) != 0)
+        if (!entropy(s, sizeof randState))
             zam_native_panic(thread, "STD_RAND: no entropy available");
         if ((s[0] | s[1] | s[2] | s[3]) == 0)
             s[0] = 1;
@@ -753,12 +850,18 @@ static void stdSignalRaise(ZamThread *thread) {
 // stdSignalSend sends a signal to another process. The zam signature takes
 // (sig, pid) in that order to match Signal.Send; kill() takes (pid, sig).
 // Any OS error is swallowed, as with Raise.
+#if defined(_WIN32)
+static void stdSignalSend(ZamThread *thread) {
+    zam_native_panic(thread, "sending a signal to another process is not supported on Windows");
+}
+#else
 static void stdSignalSend(ZamThread *thread) {
     int sig = (int)zam_native_argument(thread, 0);
     pid_t pid = (pid_t)zam_native_argument(thread, 1);
     (void)kill(pid, sig);
     zam_native_return_void(thread);
 }
+#endif
 
 // stdSignalInit maps a Signal enum ordinal to the OS-level signal number for
 // the running platform. The index set is this native's contract with
@@ -769,6 +872,22 @@ static void stdSignalInit(ZamThread *thread) {
     int idx = (int)zam_native_argument(thread, 0);
     ZamInt *out = (ZamInt *)zam_native_argument_pointer(thread, 1);
     int sig;
+#if defined(_WIN32)
+    // Windows has six of the signals; the rest are -1, which is never raised
+    // or handled.
+    switch (idx) {
+    case 1:  sig = SIGINT;  break;
+    case 3:  sig = SIGILL;  break;
+    case 4:  sig = SIGABRT; break;
+    case 5:  sig = SIGFPE;  break;
+    case 7:  sig = SIGSEGV; break;
+    case 10: sig = SIGTERM; break;
+    default:
+        if (idx < 0 || idx > 15)
+            zam_native_panic(thread, "STD_SIGNAL_INIT: unknown signal index");
+        sig = -1;
+    }
+#else
     switch (idx) {
     case 0:  sig = SIGHUP;  break;
     case 1:  sig = SIGINT;  break;
@@ -789,10 +908,25 @@ static void stdSignalInit(ZamThread *thread) {
     default:
         zam_native_panic(thread, "STD_SIGNAL_INIT: unknown signal index");
     }
+#endif
     *out = (ZamInt)sig;
     zam_native_return_void(thread);
 }
 
+#if defined(_WIN32)
+// Windows has no signal masks and no signals between threads: each of these
+// natives says so.
+static void stdSignalUnsupported(ZamThread *thread) {
+    zam_native_panic(thread, "signal masks and signals between threads are not supported on Windows");
+}
+#define stdSignalThreadSend stdSignalUnsupported
+#define stdSignalBlock stdSignalUnsupported
+#define stdSignalUnblock stdSignalUnsupported
+#define stdSignalThreadBlock stdSignalUnsupported
+#define stdSignalThreadUnblock stdSignalUnsupported
+#define stdSignalIsBlocked stdSignalUnsupported
+#define stdSignalIsThreadBlocked stdSignalUnsupported
+#else
 // stdSignalThreadSend sends a signal to another thread of this process. The
 // zam signature takes (sig, threadID) in that order to match Signal.ThreadSend;
 // pthread_kill takes (pthread_t, int). The thread id crosses the ABI as the
@@ -899,6 +1033,7 @@ static void stdSignalIsThreadBlocked(ZamThread *thread) {
     *out = member != 0;
     zam_native_return_void(thread);
 }
+#endif
 
 // Install the zam closure as the handler for sig on the calling thread. The
 // native stores the closure in the thread's own handler table and asks the
@@ -910,6 +1045,14 @@ static void stdSignalIsThreadBlocked(ZamThread *thread) {
 static void stdSignalHandle(ZamThread *thread) {
     uint64_t sig = zam_native_argument(thread, 0);
     ZamWord closure = zam_native_argument(thread, 1);
+#if defined(_WIN32)
+    // A signal Windows does not have never arrives, so there is nothing to
+    // handle.
+    if ((ZamInt)sig == -1) {
+        zam_native_return_void(thread);
+        return;
+    }
+#endif
     if (sig >= ZAM_SIGNAL_MAX)
         zam_native_panic(thread,
                          "STD_SIGNAL_HANDLE: signal number out of range");

@@ -1,36 +1,35 @@
-#include <arpa/inet.h>
 #include <errno.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdio.h>
-#include <sys/socket.h>
-#include <sys/time.h>
-#include <sys/un.h>
 #include <unistd.h>
 
-#include "codec.h"
+#if !defined(_WIN32)
+#include <sys/time.h>
+#endif
 
-// The socket natives. A connected socket is a plain file descriptor the zam
-// side holds in a File; a listener is a small C struct, so that closing it
-// from one thread stops an Accept waiting in another. Everything that may
+#include "codec.h"
+#include "sockets.h"
+
+// The socket natives. A connected socket is a descriptor the zam side holds in
+// a File, as sockets.h says; a listener is a small C struct, so that closing
+// it from one thread stops an Accept waiting in another. Everything that may
 // wait runs in a safe region.
 
-#ifndef SO_NOSIGPIPE
+#if !defined(SO_NOSIGPIPE) && !defined(_WIN32)
 static void ignoreSigpipe(void) {
     signal(SIGPIPE, SIG_IGN);
 }
 #endif
 
 // noSigpipe keeps writing to a closed peer from raising SIGPIPE: per socket
-// where the platform allows it, and process-wide otherwise.
+// where the platform allows it, and process-wide otherwise. Windows has no
+// SIGPIPE.
 static void noSigpipe(int fd) {
-#ifdef SO_NOSIGPIPE
+#if defined(_WIN32)
+    (void)fd;
+#elif defined(SO_NOSIGPIPE)
     int one = 1;
     setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #else
@@ -44,8 +43,9 @@ static void writeFd(ZamThread *thread, uint64_t wordIndex, int fd) {
     *(ZamInt *)zam_native_argument_pointer(thread, wordIndex) = fd;
 }
 
+// writeErrno writes the socket error err, as zam_socket_error answers it.
 static void writeErrno(ZamThread *thread, uint64_t wordIndex, int err) {
-    codec_write_error(thread, wordIndex, err == 0 ? NULL : strerror(err));
+    codec_write_error(thread, wordIndex, err == 0 ? NULL : zam_socket_strerror(err));
 }
 
 // addrText writes the canonical text of an address and its port.
@@ -186,14 +186,14 @@ static void dial(ZamThread *thread, int socktype) {
     int err = 0;
     zam_native_block_begin(thread);
     for (struct addrinfo *ai = results; ai != NULL && fd < 0; ai = ai->ai_next) {
-        fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+        fd = zam_socket_fd(socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol));
         if (fd < 0) {
-            err = errno;
+            err = zam_socket_error();
             continue;
         }
-        if (connect(fd, ai->ai_addr, ai->ai_addrlen) != 0) {
-            err = errno;
-            close(fd);
+        if (connect(zam_fd_socket(fd), ai->ai_addr, (socklen_t)ai->ai_addrlen) != 0) {
+            err = zam_socket_error();
+            zam_socket_close(fd);
             fd = -1;
         }
     }
@@ -203,12 +203,12 @@ static void dial(ZamThread *thread, int socktype) {
         noSigpipe(fd);
         if (socktype == SOCK_STREAM) {
             int one = 1;
-            setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+            setsockopt(zam_fd_socket(fd), IPPROTO_TCP, TCP_NODELAY, (void *)&one, sizeof one);
         }
         err = 0;
     }
     writeFd(thread, 2, fd);
-    writeErrno(thread, 3, fd < 0 ? (err == 0 ? ECONNREFUSED : err) : 0);
+    writeErrno(thread, 3, fd < 0 ? (err == 0 ? ZAM_SOCKET_ECONNREFUSED : err) : 0);
     zam_native_return_void(thread);
 }
 
@@ -228,15 +228,15 @@ static void stdUnixDial(ZamThread *thread) {
     }
     strcpy(addr.sun_path, path);
     free(path);
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    int err = fd < 0 ? errno : 0;
+    int fd = zam_socket_fd(socket(AF_UNIX, SOCK_STREAM, 0));
+    int err = fd < 0 ? zam_socket_error() : 0;
     if (fd >= 0) {
         zam_native_block_begin(thread);
-        int result = connect(fd, (struct sockaddr *)&addr, sizeof addr);
-        err = result == 0 ? 0 : errno;
+        int result = connect(zam_fd_socket(fd), (struct sockaddr *)&addr, sizeof addr);
+        err = result == 0 ? 0 : zam_socket_error();
         zam_native_block_end(thread);
         if (err != 0) {
-            close(fd);
+            zam_socket_close(fd);
             fd = -1;
         } else
             noSigpipe(fd);
@@ -268,10 +268,10 @@ static void stdNetListen(ZamThread *thread) {
             message = "socket path is too long";
         else {
             strcpy(addr.sun_path, where);
-            fd = socket(AF_UNIX, SOCK_STREAM, 0);
-            if (fd < 0 || bind(fd, (struct sockaddr *)&addr, sizeof addr) != 0 ||
-                listen(fd, 128) != 0)
-                err = errno;
+            fd = zam_socket_fd(socket(AF_UNIX, SOCK_STREAM, 0));
+            if (fd < 0 || bind(zam_fd_socket(fd), (struct sockaddr *)&addr, sizeof addr) != 0 ||
+                listen(zam_fd_socket(fd), 128) != 0)
+                err = zam_socket_error();
         }
     } else {
         struct addrinfo *results = NULL;
@@ -280,24 +280,29 @@ static void stdNetListen(ZamThread *thread) {
             message = gai_strerror(status);
         else {
             struct addrinfo *ai = results;
-            fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+            fd = zam_socket_fd(socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol));
             int one = 1, zero = 0;
             if (fd >= 0) {
-                setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+#if !defined(_WIN32)
+                // Windows' SO_REUSEADDR lets another socket take a port in
+                // use; its default already allows rebinding one just closed.
+                setsockopt(zam_fd_socket(fd), SOL_SOCKET, SO_REUSEADDR, (void *)&one, sizeof one);
+#endif
                 if (ai->ai_family == AF_INET6)
-                    setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof zero);
+                    setsockopt(zam_fd_socket(fd), IPPROTO_IPV6, IPV6_V6ONLY, (void *)&zero, sizeof zero);
             }
-            if (fd < 0 || bind(fd, ai->ai_addr, ai->ai_addrlen) != 0 || listen(fd, 128) != 0)
-                err = errno;
+            if (fd < 0 || bind(zam_fd_socket(fd), ai->ai_addr, (socklen_t)ai->ai_addrlen) != 0 ||
+                listen(zam_fd_socket(fd), 128) != 0)
+                err = zam_socket_error();
             freeaddrinfo(results);
         }
     }
     if (message != NULL || err != 0) {
         if (fd >= 0)
-            close(fd);
+            zam_socket_close(fd);
         free(where);
         codec_write_word(thread, 3, 0);
-        codec_write_error(thread, 4, message != NULL ? message : strerror(err));
+        codec_write_error(thread, 4, message != NULL ? message : zam_socket_strerror(err));
         zam_native_return_void(thread);
         return;
     }
@@ -320,19 +325,20 @@ static void stdNetAccept(ZamThread *thread) {
     int err = 0;
     zam_native_block_begin(thread);
     while (!atomic_load(&l->closed)) {
-        struct pollfd p = {.fd = l->fd, .events = POLLIN};
-        int ready = poll(&p, 1, 100);
-        if (ready < 0 && errno != EINTR) {
-            err = errno;
+        struct pollfd p = {.fd = zam_fd_socket(l->fd), .events = POLLIN};
+        int ready = zam_socket_poll(&p, 1, 100);
+        if (ready < 0 && zam_socket_error() != ZAM_SOCKET_EINTR) {
+            err = zam_socket_error();
             break;
         }
         if (ready <= 0 || atomic_load(&l->closed))
             continue;
-        fd = accept(l->fd, NULL, NULL);
+        fd = zam_socket_fd(accept(zam_fd_socket(l->fd), NULL, NULL));
         if (fd >= 0)
             break;
-        if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR && errno != ECONNABORTED) {
-            err = errno;
+        int failure = zam_socket_error();
+        if (failure != ZAM_SOCKET_EAGAIN && failure != ZAM_SOCKET_EINTR && failure != ZAM_SOCKET_ECONNABORTED) {
+            err = failure;
             break;
         }
     }
@@ -340,11 +346,11 @@ static void stdNetAccept(ZamThread *thread) {
     if (fd >= 0) {
         noSigpipe(fd);
         int one = 1;
-        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
+        setsockopt(zam_fd_socket(fd), IPPROTO_TCP, TCP_NODELAY, (void *)&one, sizeof one);
     }
     writeFd(thread, 1, fd);
     if (fd < 0)
-        codec_write_error(thread, 2, err != 0 ? strerror(err) : "listener closed");
+        codec_write_error(thread, 2, err != 0 ? zam_socket_strerror(err) : "listener closed");
     else
         codec_write_error(thread, 2, NULL);
     zam_native_return_void(thread);
@@ -355,7 +361,7 @@ static void stdNetListenerClose(ZamThread *thread) {
     Listener *l = codec_handle(thread, 0);
     bool wasClosed = atomic_exchange(&l->closed, true);
     if (!wasClosed) {
-        close(l->fd);
+        zam_socket_close(l->fd);
         if (l->path != NULL)
             unlink(l->path);
     }
@@ -367,7 +373,7 @@ static void stdNetListenerFree(ZamThread *thread) {
     Listener *l = codec_handle(thread, 0);
     if (l != NULL) {
         if (!atomic_exchange(&l->closed, true)) {
-            close(l->fd);
+            zam_socket_close(l->fd);
             if (l->path != NULL)
                 unlink(l->path);
         }
@@ -389,8 +395,8 @@ static void stdNetListenerAddr(ZamThread *thread) {
     Listener *l = codec_handle(thread, 0);
     struct sockaddr_storage addr;
     socklen_t length = sizeof addr;
-    if (getsockname(l->fd, (struct sockaddr *)&addr, &length) != 0) {
-        int err = errno;
+    if (getsockname(zam_fd_socket(l->fd), (struct sockaddr *)&addr, &length) != 0) {
+        int err = zam_socket_error();
         codec_write_string(thread, 1, "", 0);
         *(ZamInt *)zam_native_argument_pointer(thread, 2) = 0;
         writeErrno(thread, 3, err);
@@ -407,10 +413,10 @@ static void stdSocketAddr(ZamThread *thread) {
     bool remote = zam_native_argument(thread, 1) != 0;
     struct sockaddr_storage addr;
     socklen_t length = sizeof addr;
-    int result = remote ? getpeername(fd, (struct sockaddr *)&addr, &length)
-                        : getsockname(fd, (struct sockaddr *)&addr, &length);
+    int result = remote ? getpeername(zam_fd_socket(fd), (struct sockaddr *)&addr, &length)
+                        : getsockname(zam_fd_socket(fd), (struct sockaddr *)&addr, &length);
     if (result != 0) {
-        int err = errno;
+        int err = zam_socket_error();
         codec_write_string(thread, 2, "", 0);
         *(ZamInt *)zam_native_argument_pointer(thread, 3) = 0;
         writeErrno(thread, 4, err);
@@ -426,9 +432,16 @@ static void stdSocketTimeout(ZamThread *thread) {
     int fd = (int)(ZamInt)zam_native_argument(thread, 0);
     bool write = zam_native_argument(thread, 1) != 0;
     ZamInt ms = (ZamInt)zam_native_argument(thread, 2);
+#if defined(_WIN32)
+    // Windows takes the bound as milliseconds.
+    DWORD bound = (DWORD)ms;
+    int result = setsockopt(zam_fd_socket(fd), SOL_SOCKET, write ? SO_SNDTIMEO : SO_RCVTIMEO, (void *)&bound,
+                            sizeof bound);
+#else
     struct timeval tv = {.tv_sec = (time_t)(ms / 1000), .tv_usec = (suseconds_t)(ms % 1000) * 1000};
     int result = setsockopt(fd, SOL_SOCKET, write ? SO_SNDTIMEO : SO_RCVTIMEO, &tv, sizeof tv);
-    writeErrno(thread, 3, result == 0 ? 0 : errno);
+#endif
+    writeErrno(thread, 3, result == 0 ? 0 : zam_socket_error());
     zam_native_return_void(thread);
 }
 
@@ -437,8 +450,13 @@ static void stdSocketTimeout(ZamThread *thread) {
 static void stdSocketShutdown(ZamThread *thread) {
     int fd = (int)(ZamInt)zam_native_argument(thread, 0);
     int how = (int)(ZamInt)zam_native_argument(thread, 1);
+#if defined(_WIN32)
+    int result = shutdown(zam_fd_socket(fd), how == 0 ? SD_RECEIVE : how == 1 ? SD_SEND : SD_BOTH);
+#else
     int result = shutdown(fd, how == 0 ? SHUT_RD : how == 1 ? SHUT_WR : SHUT_RDWR);
-    writeErrno(thread, 2, result == 0 || errno == ENOTCONN ? 0 : errno);
+#endif
+    int err = result == 0 ? 0 : zam_socket_error();
+    writeErrno(thread, 2, err == ZAM_SOCKET_ENOTCONN ? 0 : err);
     zam_native_return_void(thread);
 }
 
@@ -455,16 +473,16 @@ static void stdUdpBind(ZamThread *thread) {
         return;
     }
     struct addrinfo *ai = results;
-    int fd = socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol);
+    int fd = zam_socket_fd(socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol));
     int err = 0;
     if (fd >= 0 && ai->ai_family == AF_INET6) {
         int zero = 0;
-        setsockopt(fd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof zero);
+        setsockopt(zam_fd_socket(fd), IPPROTO_IPV6, IPV6_V6ONLY, (void *)&zero, sizeof zero);
     }
-    if (fd < 0 || bind(fd, ai->ai_addr, ai->ai_addrlen) != 0) {
-        err = errno;
+    if (fd < 0 || bind(zam_fd_socket(fd), ai->ai_addr, (socklen_t)ai->ai_addrlen) != 0) {
+        err = zam_socket_error();
         if (fd >= 0)
-            close(fd);
+            zam_socket_close(fd);
         fd = -1;
     }
     freeaddrinfo(results);
@@ -487,7 +505,7 @@ static void stdUdpSendTo(ZamThread *thread) {
     struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)&addr;
     struct sockaddr_storage local;
     socklen_t localLength = sizeof local;
-    bool localV6 = getsockname(fd, (struct sockaddr *)&local, &localLength) == 0 &&
+    bool localV6 = getsockname(zam_fd_socket(fd), (struct sockaddr *)&local, &localLength) == 0 &&
                    local.ss_family == AF_INET6;
     int err = 0;
     if (inet_pton(AF_INET, ip, &in4->sin_addr) == 1 && !localV6) {
@@ -508,7 +526,7 @@ static void stdUdpSendTo(ZamThread *thread) {
             memcpy(&in6->sin6_addr.s6_addr[12], &v4, 4);
             length = sizeof *in6;
         } else {
-            err = EINVAL;
+            err = ZAM_SOCKET_EINVAL;
             length = 0;
         }
     }
@@ -516,8 +534,8 @@ static void stdUdpSendTo(ZamThread *thread) {
     ssize_t sent = -1;
     if (err == 0) {
         zam_native_block_begin(thread);
-        sent = sendto(fd, data, (size_t)n, 0, (struct sockaddr *)&addr, length);
-        err = sent < 0 ? errno : 0;
+        sent = sendto(zam_fd_socket(fd), data, (size_t)n, 0, (struct sockaddr *)&addr, length);
+        err = sent < 0 ? zam_socket_error() : 0;
         zam_native_block_end(thread);
     }
     *(ZamInt *)zam_native_argument_pointer(thread, 5) = sent < 0 ? 0 : sent;
@@ -533,8 +551,8 @@ static void stdUdpRecvFrom(ZamThread *thread) {
     struct sockaddr_storage addr;
     socklen_t length = sizeof addr;
     zam_native_block_begin(thread);
-    ssize_t got = recvfrom(fd, buffer, (size_t)n, 0, (struct sockaddr *)&addr, &length);
-    int err = got < 0 ? errno : 0;
+    ssize_t got = recvfrom(zam_fd_socket(fd), buffer, (size_t)n, 0, (struct sockaddr *)&addr, &length);
+    int err = got < 0 ? zam_socket_error() : 0;
     zam_native_block_end(thread);
     *(ZamInt *)zam_native_argument_pointer(thread, 3) = got < 0 ? 0 : got;
     if (got < 0) {
@@ -554,7 +572,6 @@ static void stdUdpRecvFrom(ZamThread *thread) {
     writeErrno(thread, 6, err);
     zam_native_return_void(thread);
 }
-
 const ZamNativeEntry zamNetNativeTable[] = {
     {"STD_IP_PARSE", stdIpParse},
     {"STD_IP_STR", stdIpStr},

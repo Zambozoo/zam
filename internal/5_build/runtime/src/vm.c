@@ -6,6 +6,12 @@
 #include <time.h>
 #include <unistd.h>
 
+#if defined(_WIN32)
+#include <winsock2.h>
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 // resetThreshold grows the heap until what it holds no longer asks for a
 // collection, and sets the threshold the next one is asked for at.
 static void resetThreshold(ZamVM *vm) {
@@ -42,7 +48,7 @@ static void postImageLoad(ZamVM *vm) {
     vm->precleanPasses = vm->image.gcPrecleanPasses;
     long markerCount = (long)vm->image.gcMarkers;
     if (markerCount == 0) {
-        markerCount = sysconf(_SC_NPROCESSORS_ONLN) / 2;
+        markerCount = (long)zam_processor_count() / 2;
         if (markerCount > 8)
             markerCount = 8;
     }
@@ -90,6 +96,15 @@ static void postImageLoad(ZamVM *vm) {
     zam_thread_init(&vm->main, vm, vm->image.initialStackSize);
     zam_set_die_trace(zam_thread_trace_current);
     zam_thread_install_fault_handler();
+#if defined(_WIN32)
+    // Windows starts the standard streams translating line endings, and its
+    // sockets unready until asked for.
+    _setmode(STDIN_FILENO, _O_BINARY);
+    _setmode(STDOUT_FILENO, _O_BINARY);
+    _setmode(STDERR_FILENO, _O_BINARY);
+    WSADATA sockets;
+    (void)WSAStartup(MAKEWORD(2, 2), &sockets);
+#endif
 }
 
 void zam_vm_init(ZamVM *vm, const char *imagePath) {

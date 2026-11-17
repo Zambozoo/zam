@@ -14,7 +14,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -270,7 +269,7 @@ namespace Main {
 func TestHTTPServer(t *testing.T) {
 	t.Parallel()
 	binary := compile(t, webServerProgram)
-	cmd := exec.Command(binary)
+	cmd := targetCommand(binary)
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
 	var stderr strings.Builder
@@ -603,7 +602,7 @@ namespace Main {
     }
 }
 `)
-	cmd := exec.Command(binary, dir)
+	cmd := targetCommand(binary, dir)
 	stdout, err := cmd.StdoutPipe()
 	require.NoError(t, err)
 	var stderr strings.Builder

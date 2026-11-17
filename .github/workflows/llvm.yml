@@ -24,8 +24,15 @@ jobs:
           - { runner: macos-15-intel, platform: darwin-amd64 }
           - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
           - { runner: ubuntu-24.04, platform: linux-amd64 }
+          - { runner: windows-latest, platform: windows-amd64, target: x86_64-windows-gnu }
+          - { runner: windows-11-arm, platform: windows-arm64, target: aarch64-windows-gnu }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
+    defaults:
+      run:
+        shell: bash
+    env:
+      ZAM_TARGET: ${{ matrix.target }}
     steps:
       - uses: actions/checkout@v5
 
@@ -35,7 +42,7 @@ jobs:
           path: llvm
           key: llvm-${{ env.LLVM_VERSION }}-${{ matrix.platform }}-${{ hashFiles('release/llvm.sh') }}
 
-      - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
+      - if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'macOS'
         uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
@@ -45,6 +52,9 @@ jobs:
 
       - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'macOS'
         run: brew install ninja
+
+      - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Windows'
+        run: choco install ninja -y
 
       - if: steps.cache.outputs.cache-hit != 'true'
         run: release/llvm.sh "$LLVM_VERSION" "$PWD/llvm"

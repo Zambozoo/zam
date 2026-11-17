@@ -4726,12 +4726,12 @@ ZamTypeID zam_instance_type(const void *instance) {
 }
 
 uint32_t zam_interface_method_index(const ZamImage *image, ZamTypeShort concrete,
-                                    ZamTypeShort interface, uint32_t methodIndex) {
+                                    ZamTypeShort interfaceType, uint32_t methodIndex) {
     const ZamPerfectHash *dispatch = dispatchOf(image, (ZamTypeID){.shortID = concrete});
     uint32_t index = 0;
-    if (dispatch == NULL || !zam_dispatch_lookup(dispatch, interface, methodIndex, &index))
+    if (dispatch == NULL || !zam_dispatch_lookup(dispatch, interfaceType, methodIndex, &index))
         zam_die(ZAMEXIT_PANIC, "type %u implements no method %u of interface %u\n",
-                concrete, methodIndex, interface);
+                concrete, methodIndex, interfaceType);
     return index;
 }
 

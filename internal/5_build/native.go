@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	base "github.com/zambozoo/zam/internal/0_base"
 	"github.com/zambozoo/zam/internal/lld"
@@ -64,17 +65,31 @@ func runtimeCacheDir(opts Options) (string, error) {
 	return filepath.Join(dir, "runtime"), nil
 }
 
+// platform is the target opts link for: opts.Target, the host when unset.
+func platform(opts Options) (target.Target, error) {
+	if opts.Target.Name != "" {
+		return opts.Target, nil
+	}
+	return target.Host()
+}
+
+// ExecutablePath answers path as the name of an executable for the target
+// opts link for: with .exe added for Windows.
+func ExecutablePath(opts Options, path string) (string, error) {
+	t, err := platform(opts)
+	if err != nil {
+		return "", err
+	}
+	return t.Executable(path), nil
+}
+
 // LinkObject links a natively compiled program's object into an executable at
 // opts.OutputPath for opts.Target, the host when unset, against the runtime
 // and the libraries of the target's pack.
 func LinkObject(object []byte, opts Options) error {
-	t := opts.Target
-	if t.Name == "" {
-		host, err := target.Host()
-		if err != nil {
-			return err
-		}
-		t = host
+	t, err := platform(opts)
+	if err != nil {
+		return err
 	}
 	pack, err := Pack(t)
 	if err != nil {
@@ -138,8 +153,9 @@ var packLibraries = []string{
 // and archives of the program, against the target's pack and links, the
 // project's own linker flags, with debug information only when debuggable.
 var linkers = map[target.OS]func(t target.Target, pack, output string, inputs, links []string, debuggable bool) error{
-	target.MacOS: linkMachO,
-	target.Linux: linkELF,
+	target.MacOS:   linkMachO,
+	target.Linux:   linkELF,
+	target.Windows: linkCOFF,
 }
 
 // machOArchs are the -arch names of each architecture.
@@ -184,6 +200,41 @@ func linkELF(t target.Target, pack, output string, inputs, links []string, debug
 	args = append(args, links...)
 	args = append(args, "-lc", "-lcompiler_rt", "--end-group", filepath.Join(libc, "crtn.o"))
 	return lld.Link(lld.ELF, args)
+}
+
+// linkCOFF links a Windows executable in lld's mingw mode against the pack's
+// libraries, C runtime, start-up object and import libraries, with the flags
+// its link.txt says Zig links with.
+func linkCOFF(t target.Target, pack, output string, inputs, links []string, debuggable bool) error {
+	flags, err := os.ReadFile(filepath.Join(pack, "link.txt"))
+	if err != nil {
+		return fmt.Errorf("the %s pack says nothing of how to link: %w", t.Name, err)
+	}
+	args := append([]string{"-OUT:" + output}, strings.Fields(string(flags))...)
+	// Like an executable for any other target, it keeps its symbols, and its
+	// DWARF only for a debugger.
+	if debuggable {
+		args = append(args, "-DEBUG:DWARF")
+	} else {
+		args = append(args, "-DEBUG:SYMTAB")
+	}
+	lib := filepath.Join(pack, "lib")
+	startup, err := filepath.Glob(filepath.Join(lib, "*.obj"))
+	if err != nil {
+		return err
+	}
+	args = append(args, startup...)
+	args = append(args, inputs...)
+	for _, library := range packLibraries {
+		args = append(args, filepath.Join(lib, "lib"+strings.TrimPrefix(library, "-l")+".a"))
+	}
+	system, err := filepath.Glob(filepath.Join(lib, "*.lib"))
+	if err != nil {
+		return err
+	}
+	args = append(args, system...)
+	args = append(args, links...)
+	return lld.Link(lld.COFF, args)
 }
 
 // lldbFormatters is the lldb script zam's values are shown with.

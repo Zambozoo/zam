@@ -1,7 +1,8 @@
 #!/bin/bash
 # Builds LLVM and lld as static libraries for the machine it runs on, for zam
-# to link into itself: with the system's clang for macOS 13 and later, and with
-# Zig for musl on Linux, so that zam needs no C++ library where it runs.
+# to link into itself: with the system's clang for macOS 13 and later, with Zig
+# for musl on Linux, so that zam needs no C++ library where it runs, and with
+# Zig for mingw on Windows, as $ZAM_TARGET names the target there.
 #
 # usage: release/llvm.sh <version> <prefix>
 set -euo pipefail
@@ -9,6 +10,14 @@ set -euo pipefail
 version=$1
 prefix=$2
 work=${LLVM_WORK:-$(mktemp -d)}
+# Windows programs read paths as Windows writes them, not as Git Bash does.
+case $(uname -s) in
+MINGW* | MSYS*)
+    mkdir -p "$prefix"
+    prefix=$(cygpath -m "$prefix")
+    work=$(cygpath -m "$work")
+    ;;
+esac
 
 git clone --quiet --depth 1 --branch "llvmorg-$version" https://github.com/llvm/llvm-project.git "$work/src"
 
@@ -39,6 +48,22 @@ Linux)
     args+=(
         -DCMAKE_C_COMPILER="$tools/cc" -DCMAKE_CXX_COMPILER="$tools/c++"
         -DCMAKE_AR="$tools/ar" -DCMAKE_RANLIB="$tools/ranlib" -DLLVM_HOST_TRIPLE="$target"
+    )
+    ;;
+MINGW* | MSYS*)
+    target=${ZAM_TARGET:?set ZAM_TARGET to the Windows target, as x86_64-windows-gnu}
+    tools=$work/tools
+    mkdir -p "$tools"
+    # CMake runs a compiler on Windows only as a program or a batch file.
+    for tool in cc c++; do
+        printf '@zig %s -target %s %%*\r\n' "$tool" "$target" >"$tools/$tool.cmd"
+    done
+    printf '@zig ar %%*\r\n' >"$tools/ar.cmd"
+    printf '@zig ranlib %%*\r\n' >"$tools/ranlib.cmd"
+    args+=(
+        -DCMAKE_C_COMPILER="$tools/cc.cmd" -DCMAKE_CXX_COMPILER="$tools/c++.cmd"
+        -DCMAKE_AR="$tools/ar.cmd" -DCMAKE_RANLIB="$tools/ranlib.cmd"
+        -DLLVM_HOST_TRIPLE="${target%%-*}-w64-windows-gnu"
     )
     ;;
 *)

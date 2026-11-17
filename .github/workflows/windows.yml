@@ -1,0 +1,75 @@
+name: Windows
+
+# Runs the end-to-end tests on Windows, natively compiled, and reports how
+# many pass. Until the interpreter is gone they report rather than gate: its
+# build path needs a C compiler and libraries a Windows runner lacks.
+on:
+  push:
+    branches:
+      - 'ci/**'
+  workflow_dispatch:
+
+env:
+  ZIG_VERSION: 0.17.1
+
+jobs:
+  llvm:
+    uses: ./.github/workflows/llvm.yml
+
+  packs:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - run: docker build -t zam-linux docker
+
+      - run: docker run --rm -v "$PWD":/src zam-linux docker/pack.sh x86_64-windows-gnu aarch64-windows-gnu
+
+      - run: tar -czf windows-packs.tar.gz -C bin packs
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: windows-packs
+          path: windows-packs.tar.gz
+          retention-days: 1
+
+  test:
+    needs: [llvm, packs]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-latest, platform: windows-amd64, target: x86_64-windows-gnu }
+          - { runner: windows-11-arm, platform: windows-arm64, target: aarch64-windows-gnu }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      ZAM_TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: llvm-${{ matrix.platform }}
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-packs
+
+      - run: tar -xzf llvm.tar.gz && tar -xzf windows-packs.tar.gz
+
+      - run: |
+          source release/cgo.sh "$PWD/llvm"
+          export ZAM_PACKS=$(cygpath -m "$PWD/packs") ZAM_TEST_NATIVE=1
+          go test -tags zam_static ./internal/5_build -count=1 -timeout 30m -json > report.json || true
+          go run ./internal/5_build/nativereport < report.json

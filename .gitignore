@@ -14,3 +14,4 @@ editors/vscode/LICENSE
 editors/vscode/images
 native-report.json
 *.tar.gz
+windows-report.json

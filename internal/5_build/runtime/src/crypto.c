@@ -12,7 +12,7 @@
 #include <sodium.h>
 #include <stdio.h>
 
-#include "bcrypt.h"
+#include "openbsd_bcrypt.h"
 #include "codec.h"
 #include "crypto.h"
 

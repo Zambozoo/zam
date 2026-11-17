@@ -24,6 +24,17 @@ func TestHost(t *testing.T) {
 	host, err := Host()
 	require.NoError(t, err)
 	assert.True(t, host.IsHost())
-	assert.Equal(t, map[string]OS{"darwin": MacOS, "linux": Linux}[runtime.GOOS], host.OS)
+	assert.Equal(t, map[string]OS{"darwin": MacOS, "linux": Linux, "windows": Windows}[runtime.GOOS], host.OS)
 	assert.Equal(t, map[string]string{"arm64": "aarch64", "amd64": "x86_64"}[runtime.GOARCH], host.Arch)
+}
+
+func TestExecutable(t *testing.T) {
+	t.Parallel()
+	windows, err := Parse("x86_64-windows-gnu")
+	require.NoError(t, err)
+	linux, err := Parse("x86_64-linux-musl")
+	require.NoError(t, err)
+	assert.Equal(t, "out.exe", windows.Executable("out"))
+	assert.Equal(t, "out.exe", windows.Executable("out.exe"))
+	assert.Equal(t, "out", linux.Executable("out"))
 }

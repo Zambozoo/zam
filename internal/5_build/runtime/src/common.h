@@ -72,4 +72,7 @@ void *zam_alloc(size_t byteCount);
 // zam_alloc_size is how many bytes the allocator actually set aside for a
 // block zam_alloc returned, which is what the heap is measured in.
 size_t zam_alloc_size(void *pointer);
+
+// zam_processor_count is how many processors the system has online.
+unsigned zam_processor_count(void);
 void *zam_realloc(void *pointer, size_t byteCount);

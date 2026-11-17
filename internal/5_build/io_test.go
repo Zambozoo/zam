@@ -5,6 +5,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/zambozoo/zam/internal/target"
 )
 
 // TestLocalIO works through files, directories, buffers and pipes in a
@@ -62,7 +64,12 @@ namespace Main {
 `)
 	stdout, stderr, status := run(t, binary, t.TempDir())
 	require.Zero(t, status, stderr)
-	assert.Equal(t, "true true true true 19 false true true 384\n"+
+	// A Windows file has only a read-only flag, so 0600 reads back as 0666.
+	mode := "384"
+	if testTarget().OS == target.Windows {
+		mode = "438"
+	}
+	assert.Equal(t, "true true true true 19 false true true "+mode+"\n"+
 		"7 line2 19 17 true file already closed\n"+
 		"[line1][line2][last!] 10 yzabcdefgh 121 122\n"+
 		"[b, x.txt] true [b, y.txt] true true true false 0\n"+

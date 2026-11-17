@@ -478,12 +478,12 @@ ZamEntry zamrt_virtual_entry(ZamThread *thread, const void *receiver, uint64_t m
     return compiledMethod(thread, zam_instance_type(receiver).shortID, methodIndex);
 }
 
-ZamEntry zamrt_interface_entry(ZamThread *thread, const void *receiver, ZamTypeShort interface,
+ZamEntry zamrt_interface_entry(ZamThread *thread, const void *receiver, ZamTypeShort interfaceType,
                                uint32_t methodIndex) {
     if (receiver == NULL)
         zamrt_panic(thread, ZAMPANIC_NULL_RECEIVER);
     ZamTypeShort concrete = zam_instance_type(receiver).shortID;
-    uint32_t index = zam_interface_method_index(&thread->vm->image, concrete, interface, methodIndex);
+    uint32_t index = zam_interface_method_index(&thread->vm->image, concrete, interfaceType, methodIndex);
     return compiledMethod(thread, concrete, index);
 }
 

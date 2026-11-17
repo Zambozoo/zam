@@ -64,9 +64,10 @@ void *zam_string_concat(ZamThread *thread, const void *left, const void *right);
 ZamTypeID zam_instance_type(const void *instance);
 
 // zam_interface_method_index is the index, among concrete's methods, of the
-// methodIndex'th method of interface, panicking when concrete implements none.
+// methodIndex'th method of interfaceType, panicking when concrete implements
+// none.
 uint32_t zam_interface_method_index(const ZamImage *image, ZamTypeShort concrete,
-                                    ZamTypeShort interface, uint32_t methodIndex);
+                                    ZamTypeShort interfaceType, uint32_t methodIndex);
 
 // zam_virtual_method is the methodIndex'th method of the value of receiverType
 // laid out at receiver, looked up on its own class when its type is abstract,
