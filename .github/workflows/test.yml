@@ -1,11 +1,10 @@
 name: Test
 
 # Runs the tests on every platform zam is released for, the end-to-end tests
-# against both the interpreter and native code. Windows runs native code only,
-# as the interpreter's build is not ported there, and without the race
-# detector, whose runtime needs an import library Zig's mingw lacks. The LLVM
-# of every platform and the packs it leaves as artifacts are what a release
-# that calls it builds with.
+# against both the interpreter and native code, then builds zam as a release
+# does and checks the binary itself. Windows runs native code only, as the
+# interpreter's build is not ported there, and without the race detector,
+# whose runtime needs an import library Zig's mingw lacks.
 on:
   push:
     branches:
@@ -13,130 +12,34 @@ on:
       - 'ci/**'
   pull_request:
   workflow_dispatch:
-  workflow_call:
 
 env:
   ZIG_VERSION: 0.17.1
+  # VERSION names the zam the binary check builds, and the packs it downloads.
+  VERSION: v0.0.0-ci
 
 jobs:
   llvm:
     uses: ./.github/workflows/llvm.yml
 
-  # A restored pack keeps the libraries its stamps say are built at the locked
-  # versions, so only the runtime, which every run rebuilds, is compiled.
   packs:
-    strategy:
-      matrix:
-        target: [x86_64-linux-musl, aarch64-linux-musl, x86_64-macos, aarch64-macos, x86_64-windows-gnu, aarch64-windows-gnu]
-    runs-on: ubuntu-24.04-arm
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: docker
-          tags: zam-linux
-          load: true
-          cache-from: type=gha,scope=zam-linux-${{ runner.arch }}
-          cache-to: type=gha,mode=max,scope=zam-linux-${{ runner.arch }}
-
-      - uses: actions/cache@v5
-        with:
-          path: bin/packs/${{ matrix.target }}
-          key: pack-${{ matrix.target }}-${{ hashFiles('docker/pack.sh', 'docker/sources.lock', 'docker/Dockerfile') }}
-
-      - run: docker run --rm -v "$PWD":/src zam-linux docker/pack.sh ${{ matrix.target }}
-
-      - run: tar -czf pack-${{ matrix.target }}.tar.gz -C bin packs/${{ matrix.target }}
-
-      - uses: actions/upload-artifact@v6
-        with:
-          name: test-pack-${{ matrix.target }}
-          path: pack-${{ matrix.target }}.tar.gz
-          retention-days: 1
+    uses: ./.github/workflows/packs.yml
+    with:
+      version: v0.0.0-ci
 
   # Linux tests in the image zam is developed in, which has LLVM, the C
-  # libraries and the compiler both backends need.
-  linux:
-    needs: packs
-    strategy:
-      fail-fast: false
-      matrix:
-        runner: [ubuntu-24.04-arm, ubuntu-24.04]
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/download-artifact@v7
-        with:
-          pattern: test-pack-*
-          merge-multiple: true
-
-      - run: for pack in pack-*.tar.gz; do tar -xzf "$pack"; done
-
-      - uses: docker/setup-buildx-action@v3
-
-      - uses: docker/build-push-action@v6
-        with:
-          context: docker
-          tags: zam-linux
-          load: true
-          cache-from: type=gha,scope=zam-linux-${{ runner.arch }}
-          cache-to: type=gha,mode=max,scope=zam-linux-${{ runner.arch }}
-
-      - run: docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache -e ZAM_PACKS=/src/packs zam-linux go test ./... -count=1 -timeout 45m --race
-
-      - run: docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache -e ZAM_PACKS=/src/packs -e ZAM_TEST_NATIVE=1 zam-linux go test ./internal/5_build -count=1 -timeout 45m --race
-
-  # macOS links the LLVM the release links, and the interpreter's build takes
-  # the C libraries from Homebrew.
-  macos:
+  # libraries and the compiler both backends need; macOS links the LLVM the
+  # release links and takes the interpreter's C libraries from Homebrew.
+  test:
     needs: [llvm, packs]
     strategy:
       fail-fast: false
       matrix:
         include:
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { runner: ubuntu-24.04, platform: linux-amd64 }
           - { runner: macos-15, platform: darwin-arm64 }
           - { runner: macos-15-intel, platform: darwin-amd64 }
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-
-      - uses: mlugg/setup-zig@v2
-        with:
-          version: ${{ env.ZIG_VERSION }}
-
-      - run: brew install pkgconf json-c libyaml libxml2 mongo-c-driver libcbor lz4 zstd brotli openssl@3 curl llhttp libsodium
-
-      - uses: actions/download-artifact@v7
-        with:
-          name: llvm-${{ matrix.platform }}
-
-      - uses: actions/download-artifact@v7
-        with:
-          pattern: test-pack-*
-          merge-multiple: true
-
-      - run: tar -xzf llvm.tar.gz && for pack in pack-*.tar.gz; do tar -xzf "$pack"; done
-
-      - run: |
-          source release/cgo.sh "$PWD/llvm"
-          export ZAM_PACKS=$PWD/packs PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig"
-          go test -tags zam_static ./... -count=1 -timeout 45m --race
-          ZAM_TEST_NATIVE=1 go test -tags zam_static ./internal/5_build -count=1 -timeout 45m --race
-
-  windows:
-    needs: [llvm, packs]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
           - { runner: windows-latest, platform: windows-amd64, target: x86_64-windows-gnu }
           - { runner: windows-11-arm, platform: windows-arm64, target: aarch64-windows-gnu }
     runs-on: ${{ matrix.runner }}
@@ -148,6 +51,18 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: pack-*
+          merge-multiple: true
+
+      - run: for pack in pack-*.tar.gz; do tar -xzf "$pack"; done
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-packs
+          path: release-packs
+
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -160,14 +75,42 @@ jobs:
         with:
           name: llvm-${{ matrix.platform }}
 
-      - uses: actions/download-artifact@v7
+      - run: tar -xzf llvm.tar.gz
+
+      - if: runner.os == 'Linux'
+        uses: docker/setup-buildx-action@v3
+
+      - if: runner.os == 'Linux'
+        uses: docker/build-push-action@v6
         with:
-          pattern: test-pack-*
-          merge-multiple: true
+          context: docker
+          tags: zam-linux
+          load: true
+          cache-from: type=gha,scope=zam-linux-${{ runner.arch }}
+          cache-to: type=gha,mode=max,scope=zam-linux-${{ runner.arch }}
 
-      - run: tar -xzf llvm.tar.gz && for pack in pack-*.tar.gz; do tar -xzf "$pack"; done
+      - if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache -e ZAM_PACKS=/src/packs zam-linux go test ./... -count=1 -timeout 45m --race
+          docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache -e ZAM_PACKS=/src/packs -e ZAM_TEST_NATIVE=1 zam-linux go test ./internal/5_build -count=1 -timeout 45m --race
 
-      - run: |
+      - if: runner.os == 'macOS'
+        run: brew install pkgconf json-c libyaml libxml2 mongo-c-driver libcbor lz4 zstd brotli openssl@3 curl llhttp libsodium
+
+      - if: runner.os == 'macOS'
+        run: |
+          source release/cgo.sh "$PWD/llvm"
+          export ZAM_PACKS=$PWD/packs PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig"
+          go test -tags zam_static ./... -count=1 -timeout 45m --race
+          ZAM_TEST_NATIVE=1 go test -tags zam_static ./internal/5_build -count=1 -timeout 45m --race
+
+      - if: runner.os == 'Windows'
+        run: |
           source release/cgo.sh "$PWD/llvm"
           export ZAM_PACKS=$(cygpath -m "$PWD/packs") ZAM_TEST_NATIVE=1
           go test -tags zam_static ./... -count=1 -timeout 45m
+
+      # The binary as a release builds it, checked whether or not the tests
+      # passed.
+      - if: ${{ !cancelled() }}
+        run: release/check.sh --all "$VERSION" "$(release/dist.sh "$PWD/llvm" "$VERSION" ${{ matrix.platform }})" release-packs

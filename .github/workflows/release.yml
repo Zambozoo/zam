@@ -1,9 +1,10 @@
 name: Release
 
-# Releases main as the version it is given: builds zam for each platform with
-# LLVM linked in statically, and the target packs, then tags the commit built
-# and publishes them. A version with an -rc.N suffix is a prerelease, which
-# the Homebrew tap and the scoop bucket do not follow.
+# Releases main as the version it is given, once Test has passed on the commit:
+# builds zam for each platform with LLVM linked in statically, and the target
+# packs, checks each archive, then tags the commit built and publishes them. A
+# version with an -rc.N suffix is a prerelease, which the Homebrew tap and the
+# scoop bucket do not follow.
 on:
   workflow_dispatch:
     inputs:
@@ -13,6 +14,7 @@ on:
         required: true
 
 permissions:
+  actions: read
   contents: write
 
 env:
@@ -38,14 +40,26 @@ jobs:
             echo "$VERSION is already tagged" >&2
             exit 1
           fi
+          passed=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow test.yml --commit "$GITHUB_SHA" --status success --json databaseId --jq length)
+          if [[ $passed == 0 ]]; then
+            echo "Test has not passed on $GITHUB_SHA; run it there first" >&2
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-  # The tests leave the LLVM and the packs the release builds with.
-  test:
+  llvm:
     needs: version
-    uses: ./.github/workflows/test.yml
+    uses: ./.github/workflows/llvm.yml
+
+  packs:
+    needs: version
+    uses: ./.github/workflows/packs.yml
+    with:
+      version: ${{ inputs.version }}
 
   zam:
-    needs: test
+    needs: llvm
     strategy:
       matrix:
         include:
@@ -79,42 +93,15 @@ jobs:
 
       - run: tar -xzf llvm.tar.gz
 
-      - run: ZAM_VERSION="$VERSION" release/zam.sh "$PWD/llvm" "dist/zam${{ runner.os == 'Windows' && '.exe' || '' }}"
-
-      # Windows takes a zip, as scoop installs it.
-      - if: runner.os != 'Windows'
-        run: tar -czf "zam-$VERSION-${{ matrix.platform }}.tar.gz" -C dist zam
-
-      - if: runner.os == 'Windows'
-        run: cd dist && 7z a "../zam-$VERSION-${{ matrix.platform }}.zip" zam.exe
+      - run: release/dist.sh "$PWD/llvm" "$VERSION" ${{ matrix.platform }}
 
       - uses: actions/upload-artifact@v6
         with:
           name: zam-${{ matrix.platform }}
           path: zam-*-${{ matrix.platform }}.*
 
-  packs:
-    needs: test
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: actions/download-artifact@v7
-        with:
-          pattern: test-pack-*
-          merge-multiple: true
-
-      - run: mkdir -p bin && for pack in pack-*.tar.gz; do tar -xzf "$pack" -C bin; done
-
-      - run: release/packs.sh "$VERSION" dist
-
-      - uses: actions/upload-artifact@v6
-        with:
-          name: packs
-          path: dist/*
-
-  # Checks each platform's archive with this release's packs, without zig, as
-  # a user installs it.
+  # Checks each platform's archive as published, with this release's packs and
+  # without zig, as a user installs it; Test checked the rest on this commit.
   check:
     needs: [zam, packs]
     strategy:
@@ -141,10 +128,10 @@ jobs:
 
       - uses: actions/download-artifact@v7
         with:
-          name: packs
-          path: packs
+          name: release-packs
+          path: release-packs
 
-      - run: release/check.sh "$VERSION" dist/zam-"$VERSION"-${{ matrix.platform }}.* packs
+      - run: release/check.sh "$VERSION" dist/zam-"$VERSION"-${{ matrix.platform }}.* release-packs
 
   # Tags the commit built as it publishes, so a failed build leaves no tag.
   release:
@@ -153,8 +140,14 @@ jobs:
     steps:
       - uses: actions/download-artifact@v7
         with:
+          pattern: zam-*
           path: dist
           merge-multiple: true
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-packs
+          path: dist
 
       - run: cd dist && sha256sum zam-* > checksums.txt
 

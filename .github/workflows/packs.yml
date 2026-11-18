@@ -1,0 +1,71 @@
+name: Packs
+
+# Builds the target packs, one job a target, and archives them for version as
+# a release publishes them. Each target's pack is left as pack-<target> and
+# the archives, with the release notes, as release-packs.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: The version the archives are named for.
+        type: string
+        required: true
+
+jobs:
+  # A restored pack keeps the libraries its stamps say are built at the locked
+  # versions, so only the runtime, which every run rebuilds, is compiled.
+  build:
+    strategy:
+      matrix:
+        target: [x86_64-linux-musl, aarch64-linux-musl, x86_64-macos, aarch64-macos, x86_64-windows-gnu, aarch64-windows-gnu]
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker
+          tags: zam-linux
+          load: true
+          cache-from: type=gha,scope=zam-linux-${{ runner.arch }}
+          cache-to: type=gha,mode=max,scope=zam-linux-${{ runner.arch }}
+
+      - uses: actions/cache@v5
+        with:
+          path: bin/packs/${{ matrix.target }}
+          key: pack-${{ matrix.target }}-${{ hashFiles('docker/pack.sh', 'docker/sources.lock', 'docker/Dockerfile') }}
+
+      - run: docker run --rm -v "$PWD":/src zam-linux docker/pack.sh ${{ matrix.target }}
+
+      - run: tar -czf pack-${{ matrix.target }}.tar.gz -C bin packs/${{ matrix.target }}
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: pack-${{ matrix.target }}
+          path: pack-${{ matrix.target }}.tar.gz
+          retention-days: 1
+
+  archive:
+    needs: build
+    runs-on: ubuntu-24.04
+    env:
+      VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: pack-*
+          merge-multiple: true
+
+      - run: mkdir -p bin && for pack in pack-*.tar.gz; do tar -xzf "$pack" -C bin; done
+
+      - run: release/packs.sh "$VERSION" dist
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-packs
+          path: dist/*
+          retention-days: 1

@@ -4,11 +4,6 @@ name: LLVM
 # platform, and hands each to the jobs that call it as an artifact.
 on:
   workflow_call:
-    inputs:
-      platforms:
-        description: A JSON array of the platforms to build, every one when empty.
-        type: string
-        default: ''
   workflow_dispatch:
   push:
     branches: [main]
@@ -21,30 +16,16 @@ env:
   ZIG_VERSION: 0.17.1
 
 jobs:
-  platforms:
-    runs-on: ubuntu-24.04
-    outputs:
-      include: ${{ steps.filter.outputs.include }}
-    steps:
-      - id: filter
-        env:
-          PLATFORMS: ${{ inputs.platforms }}
-        run: |
-          jq -cn --argjson wanted "${PLATFORMS:-null}" '[
-            { runner: "macos-15", platform: "darwin-arm64" },
-            { runner: "macos-15-intel", platform: "darwin-amd64" },
-            { runner: "ubuntu-24.04-arm", platform: "linux-arm64" },
-            { runner: "ubuntu-24.04", platform: "linux-amd64" },
-            { runner: "windows-latest", platform: "windows-amd64", target: "x86_64-windows-gnu" },
-            { runner: "windows-11-arm", platform: "windows-arm64", target: "aarch64-windows-gnu" }
-          ] | map(select($wanted == null or (.platform | IN($wanted[]))))' |
-            sed 's/^/include=/' >> "$GITHUB_OUTPUT"
-
   llvm:
-    needs: platforms
     strategy:
       matrix:
-        include: ${{ fromJSON(needs.platforms.outputs.include) }}
+        include:
+          - { runner: macos-15, platform: darwin-arm64 }
+          - { runner: macos-15-intel, platform: darwin-amd64 }
+          - { runner: ubuntu-24.04-arm, platform: linux-arm64 }
+          - { runner: ubuntu-24.04, platform: linux-amd64 }
+          - { runner: windows-latest, platform: windows-amd64, target: x86_64-windows-gnu }
+          - { runner: windows-11-arm, platform: windows-arm64, target: aarch64-windows-gnu }
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 360
     defaults:

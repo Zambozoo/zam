@@ -1,11 +1,17 @@
 #!/bin/bash
-# Checks a release archive of zam as a user would meet it: zam downloads this
-# release's packs, served from packs, checks and extracts them, builds hello
-# world for every target, and runs it and a test on this machine.
+# Checks an archive of zam as a user would meet it: zam downloads its packs,
+# served from packs, checks and extracts them, and runs hello world on this
+# machine. With --all it also builds hello world for every target and runs a
+# test.
 #
-# usage: release/check.sh <version> <archive> <packs>
+# usage: release/check.sh [--all] <version> <archive> <packs>
 set -euo pipefail
 
+all=false
+if [[ ${1:-} == --all ]]; then
+    all=true
+    shift
+fi
 version=$1
 archive=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
 packs=$(cd "$3" && pwd)
@@ -22,6 +28,8 @@ native() {
 }
 
 work=$PWD/bin/check
+# zam keeps the packs it extracts read-only.
+[[ -d $work ]] && chmod -R u+w "$work"
 rm -rf "$work"
 mkdir -p "$work/releases/$version" "$work/bin" "$work/cache" "$work/smoke"
 
@@ -62,16 +70,21 @@ if [[ ${got%$'\r'} != "zam $version" ]]; then
     exit 1
 fi
 
-for target in aarch64-linux-musl x86_64-linux-musl aarch64-macos x86_64-macos aarch64-windows-gnu x86_64-windows-gnu; do
-    echo "build $target"
-    "$zam" build --native --target "$target" -o "$(native "$work/hello-$target")" docs/0_example/helloworld/Main.zam
-done
-
 got=$("$zam" run --native docs/0_example/helloworld/Main.zam)
 if [[ ${got%$'\r'} != "Hello World!" ]]; then
     echo "hello world wrote $got" >&2
     exit 1
 fi
+
+if ! $all; then
+    echo "zam $version checks out"
+    exit 0
+fi
+
+for target in aarch64-linux-musl x86_64-linux-musl aarch64-macos x86_64-macos aarch64-windows-gnu x86_64-windows-gnu; do
+    echo "build $target"
+    "$zam" build --native --target "$target" -o "$(native "$work/hello-$target")" docs/0_example/helloworld/Main.zam
+done
 
 cat >"$work/smoke/Smoke.test.zam" <<'EOF'
 import std("test/Assert.zam");
