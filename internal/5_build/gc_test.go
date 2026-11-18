@@ -68,14 +68,11 @@ func compileWith(t *testing.T, flags []string, source string) string {
 }
 
 // nativeTestVariable, when set, has the end-to-end tests compile their
-// programs to native code instead of embedding a bytecode image. Native code
-// generation is not complete, so a run with it set reports what is left
-// rather than gating anything.
+// programs to native code instead of embedding a bytecode image.
 const nativeTestVariable = "ZAM_TEST_NATIVE"
 
 // targetTestVariable names, when set, the target the end-to-end tests compile
-// their programs for natively, and run them for: under Wine for Windows. Like
-// a native run, a run for another target reports what is left to port.
+// their programs for natively, and run them for: under Wine for Windows.
 const targetTestVariable = "ZAM_TEST_TARGET"
 
 // compilesNatively reports whether the end-to-end tests compile to native code.

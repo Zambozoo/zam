@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +50,9 @@ type harnessEntry struct {
 // runtime.
 func buildHarness(t *testing.T, source, name string, extra ...string) string {
 	t.Helper()
+	if goruntime.GOOS == "windows" {
+		t.Skip("a harness links the runtime against the C libraries pkg-config finds, which Windows has none of")
+	}
 
 	runtime := filepath.Join("..", "5_build", "runtime")
 	sources := []string{

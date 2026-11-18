@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -64,6 +65,11 @@ func main() {
 
 	cmd, err := command.New(os.Args, &fileProvider)
 	handleErrors(&logger, stepCommand, err)
+
+	if cmd.Verb == command.VerbVersion {
+		fmt.Println("zam", build.Version)
+		return
+	}
 
 	if cmd.Verb == command.VerbLSP {
 		handleErrors(&logger, stepLSP, lsp.Run())

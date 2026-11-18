@@ -6,9 +6,10 @@ FROM golang:1.25-trixie
 ARG LLVM_VERSION=23
 ARG ZIG_VERSION=0.17.1
 # The SHA-256 of the Zig tarball for the image's architecture, as listed at
-# https://ziglang.org/download/. Known for arm64; pass it for any other.
+# https://ziglang.org/download/. ZIG_SHA256 overrides the one known here.
 ARG ZIG_SHA256
 ARG ZIG_SHA256_ARM64=a1546d5646eb184437918d6635ca6b762a0e889eac09cef720ee7a1ed3fe7795
+ARG ZIG_SHA256_AMD64=3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a
 ARG TARGETARCH
 
 RUN apt-get update \
@@ -26,7 +27,7 @@ RUN apt-get update \
         libssl-dev libcurl4-openssl-dev libllhttp-dev libsodium-dev libarchive-dev \
     && rm -rf /var/lib/apt/lists/*
 
-RUN case "${TARGETARCH}" in amd64) arch=x86_64 sum=${ZIG_SHA256} ;; arm64) arch=aarch64 sum=${ZIG_SHA256:-$ZIG_SHA256_ARM64} ;; *) exit 1 ;; esac \
+RUN case "${TARGETARCH}" in amd64) arch=x86_64 sum=${ZIG_SHA256:-$ZIG_SHA256_AMD64} ;; arm64) arch=aarch64 sum=${ZIG_SHA256:-$ZIG_SHA256_ARM64} ;; *) exit 1 ;; esac \
     && test -n "${sum}" || { echo "pass --build-arg ZIG_SHA256=<sha256 of the ${TARGETARCH} tarball>"; exit 1; } \
     && curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${arch}-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz \
     && echo "${sum}  /tmp/zig.tar.xz" | sha256sum -c - \

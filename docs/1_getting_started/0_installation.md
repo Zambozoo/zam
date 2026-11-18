@@ -2,7 +2,7 @@
 ## Mac and Linux
 Zam is available through homebrew.
 ```
-brew tap zambozoo/tap
+brew tap zambozoo/zam
 brew install zam
 zam -h
 ```

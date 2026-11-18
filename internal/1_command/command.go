@@ -131,6 +131,8 @@ const (
 	VerbLSP
 	// VerbDebug serves the debug adapter protocol over stdin and stdout.
 	VerbDebug
+	// VerbVersion prints the version of zam.
+	VerbVersion
 )
 
 // verbs are the names of the verbs, in the order usage lists them.
@@ -146,6 +148,7 @@ var verbs = []struct {
 	{"clean", VerbClean, "remove every fetched dependency and cached target pack and runtime"},
 	{"lsp", VerbLSP, "serve the language server protocol over stdin and stdout"},
 	{"debug", VerbDebug, "serve the debug adapter protocol over stdin and stdout"},
+	{"version", VerbVersion, "print the version of zam"},
 }
 
 // byteSizeUnits are the suffixes a size may be written with, longest first so
@@ -378,6 +381,8 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	switch name {
 	case "-h", "--help", "help":
 		return nil, &usageError{name: argv[0], flags: verbUsages()}
+	case "--version":
+		name = "version"
 	}
 	for _, v := range verbs {
 		if v.name != name {
@@ -400,7 +405,7 @@ func New(argv []string, fileProvider fileProvider) (*Command, error) {
 func verbUsages() string {
 	var b strings.Builder
 	for _, v := range verbs {
-		fmt.Fprintf(&b, "  %-6s %s\n", v.name, v.usage)
+		fmt.Fprintf(&b, "  %-7s %s\n", v.name, v.usage)
 	}
 	return b.String()
 }

@@ -16,7 +16,9 @@ import (
 )
 
 // TestRun runs a program that exits with a status chosen by its arguments, so
-// both the arguments reaching it and its status coming back are observed.
+// both the arguments reaching it and its status coming back are observed. It
+// runs native code when the end-to-end tests compile natively, and the
+// interpreter otherwise.
 func TestRun(t *testing.T) {
 	t.Parallel()
 
@@ -41,8 +43,22 @@ namespace Main {
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
-	result, err := codegen.GenerateCode(cmd, ast)
-	require.NoError(t, err)
+	opts := build.Options{Project: ast.MainCodeDecl.File().Project}
+	var run func(args []string) (int, error)
+	if compilesNatively() {
+		if !testTarget().IsHost() {
+			t.Skip("zam run runs programs for the host")
+		}
+		object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
+		require.NoError(t, err)
+		opts.RuntimeCacheDir, err = nativeRuntimeCache()
+		require.NoError(t, err)
+		run = func(args []string) (int, error) { return build.RunNative(object.Bytes, opts, args) }
+	} else {
+		result, err := codegen.GenerateCode(cmd, ast)
+		require.NoError(t, err)
+		run = func(args []string) (int, error) { return build.Run(result.Image, result.NativeNames, opts, args) }
+	}
 
 	tests := []struct {
 		name string
@@ -56,11 +72,9 @@ namespace Main {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			code, err := build.Run(result.Image, result.NativeNames, build.Options{
-				Project: ast.MainCodeDecl.File().Project,
-			}, tt.args)
+			code, err := run(tt.args)
 			require.NoError(t, err)
-			assert.Equal(t, tt.want, code)
+			assert.Equal(t, tt.want, exitStatus(code))
 		})
 	}
 }

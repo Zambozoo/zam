@@ -10,6 +10,7 @@
 | `clean` | | remove every fetched dependency and cached target pack and runtime |
 | `lsp` | | serve the language server protocol over stdin and stdout |
 | `debug` | | serve the debug adapter protocol over stdin and stdout; see [Debugging](../4_memory_and_runtime/3_debugging.md) |
+| `version` | | print the version of zam; `zam --version` does the same |
 
 `zam help` lists the commands, and `zam <command> -h` lists a command's flags.
 
