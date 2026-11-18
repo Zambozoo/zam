@@ -12,10 +12,12 @@ ARG ZIG_SHA256_ARM64=a1546d5646eb184437918d6635ca6b762a0e889eac09cef720ee7a1ed3f
 ARG ZIG_SHA256_AMD64=3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a
 ARG TARGETARCH
 
-RUN apt-get update \
+# apt.llvm.org goes down for minutes at a time, so every download retries.
+RUN echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/80-retries \
+    && apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl gnupg xz-utils \
     && install -d /etc/apt/keyrings \
-    && curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o /etc/apt/keyrings/llvm.asc \
+    && curl -fsSL --retry 5 --retry-all-errors --retry-delay 15 https://apt.llvm.org/llvm-snapshot.gpg.key -o /etc/apt/keyrings/llvm.asc \
     && echo "deb [signed-by=/etc/apt/keyrings/llvm.asc] http://apt.llvm.org/trixie/ llvm-toolchain-trixie-${LLVM_VERSION} main" \
         > /etc/apt/sources.list.d/llvm.list \
     && apt-get update \
@@ -29,7 +31,7 @@ RUN apt-get update \
 
 RUN case "${TARGETARCH}" in amd64) arch=x86_64 sum=${ZIG_SHA256:-$ZIG_SHA256_AMD64} ;; arm64) arch=aarch64 sum=${ZIG_SHA256:-$ZIG_SHA256_ARM64} ;; *) exit 1 ;; esac \
     && test -n "${sum}" || { echo "pass --build-arg ZIG_SHA256=<sha256 of the ${TARGETARCH} tarball>"; exit 1; } \
-    && curl -fsSL "https://ziglang.org/download/${ZIG_VERSION}/zig-${arch}-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz \
+    && curl -fsSL --retry 5 --retry-all-errors --retry-delay 15 "https://ziglang.org/download/${ZIG_VERSION}/zig-${arch}-linux-${ZIG_VERSION}.tar.xz" -o /tmp/zig.tar.xz \
     && echo "${sum}  /tmp/zig.tar.xz" | sha256sum -c - \
     && mkdir /opt/zig \
     && tar -xJf /tmp/zig.tar.xz -C /opt/zig --strip-components=1 \
