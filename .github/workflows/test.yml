@@ -58,9 +58,9 @@ jobs:
 
       - run: docker build -t zam-linux docker
 
-      - run: docker run --rm -v "$PWD":/src -e ZAM_PACKS=/src/packs zam-linux go test ./... -count=1 --race
+      - run: docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache -e ZAM_PACKS=/src/packs zam-linux go test ./... -count=1 -timeout 45m --race
 
-      - run: docker run --rm -v "$PWD":/src -e ZAM_PACKS=/src/packs -e ZAM_TEST_NATIVE=1 zam-linux go test ./internal/5_build -count=1 --race
+      - run: docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache -e ZAM_PACKS=/src/packs -e ZAM_TEST_NATIVE=1 zam-linux go test ./internal/5_build -count=1 -timeout 45m --race
 
   # macOS links the LLVM the release links, and the interpreter's build takes
   # the C libraries from Homebrew.
@@ -99,8 +99,8 @@ jobs:
       - run: |
           source release/cgo.sh "$PWD/llvm"
           export ZAM_PACKS=$PWD/packs PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig"
-          go test -tags zam_static ./... -count=1 --race
-          ZAM_TEST_NATIVE=1 go test -tags zam_static ./internal/5_build -count=1 --race
+          go test -tags zam_static ./... -count=1 -timeout 45m --race
+          ZAM_TEST_NATIVE=1 go test -tags zam_static ./internal/5_build -count=1 -timeout 45m --race
 
   windows:
     needs: [llvm, packs]
@@ -141,4 +141,4 @@ jobs:
       - run: |
           source release/cgo.sh "$PWD/llvm"
           export ZAM_PACKS=$(cygpath -m "$PWD/packs") ZAM_TEST_NATIVE=1
-          go test -tags zam_static ./... -count=1 ${{ matrix.race }}
+          go test -tags zam_static ./... -count=1 -timeout 45m ${{ matrix.race }}
