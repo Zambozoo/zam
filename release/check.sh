@@ -36,8 +36,9 @@ mkdir -p "$work/releases/$version" "$work/bin" "$work/cache" "$work/smoke"
 cp "$packs"/zam-pack-"$version"-*.tar.zst "$work/releases/$version"
 (
     cd "$work/releases/$version"
+    # As a release writes them, which Git Bash's binary mode, " *", is not.
     if command -v sha256sum >/dev/null; then
-        sha256sum zam-pack-* >checksums.txt
+        sha256sum --text zam-pack-* >checksums.txt
     else
         shasum -a 256 zam-pack-* >checksums.txt
     fi
