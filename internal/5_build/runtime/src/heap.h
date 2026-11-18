@@ -42,6 +42,9 @@ typedef struct ZamHeap {
     // objects has a bit for every block holding an allocation the collector
     // owns, set once the allocation is whole and cleared when it is freed.
     uint8_t *objects;
+    // allocated has a bit for every block handed out and not yet freed, laid
+    // out as objects is.
+    uint8_t *allocated;
 
     // returnAge is how many collections a run of pages has to stay free for
     // before its memory is given back to the system, so that a heap shrinking
@@ -99,6 +102,15 @@ void zam_heap_set_object(ZamHeap *heap, const void *block);
 // block of the program's own memory. It is safe on any address at all, and
 // while the program runs.
 void *zam_heap_object_of(const ZamHeap *heap, const void *at);
+
+// zam_heap_take_allocated reports whether block, the start of a block, is
+// handed out and not yet freed, and marks it no longer handed out, so that of
+// two frees of it only the first is answered true.
+bool zam_heap_take_allocated(ZamHeap *heap, const void *block);
+
+// zam_heap_block_of is the start of the block an address in the heap lies in,
+// allocated or not, or NULL when it lies in none.
+void *zam_heap_block_of(const ZamHeap *heap, const void *at);
 
 // zam_heap_size is how many bytes the block was given, which is at least what
 // was asked for.

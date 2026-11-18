@@ -122,9 +122,10 @@ void zam_native_block_end(ZamThread *thread);
 uint64_t zam_native_call(ZamThread *thread, uint64_t function, const uint64_t *args,
                          uint64_t argWords, uint64_t *result, uint64_t resultCapacity);
 
-// zam_native_panic ends the run from inside a native, for the failures a native
-// can see and the program cannot be handed back: there are no exceptions to
-// throw and no Result to return.
+// zam_native_panic raises a panic from inside a native, for the failures a
+// native can see and the program cannot be handed back, saying message. It
+// does not return: the thread unwinds out of the native to the defers it is
+// inside of, so the native has to release what it holds first.
 _Noreturn void zam_native_panic(ZamThread *thread, const char *message);
 
 // zam_native_new_string copies length bytes into a fresh string allocation and

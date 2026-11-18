@@ -53,7 +53,7 @@ Each check reports whether it held, and the test goes on either way.
 What a failure writes begins with the file and line in the test that led to it, as in `ArrList.test.zam:12: want 1, got 2`: the first call outside `std/test`.
 `std/test/Test.zam` gives the same at a lower level: `Fail(str)` fails the test running and goes on, `Log(str)` writes beneath it, and `Name()` says which it is.
 
-`Fatal` ends the test file's process, as does a panic or any fault that stops a program.
+`Fatal` ends the test file's process, as does a panic nothing recovers or any fault that stops a program.
 The rest of that file's tests do not run, and its line says how the process ended, but every other file still runs.
 A panic or fault also writes a [stack trace](../4_memory_and_runtime/2_stack_traces.md), which names the test it happened in.
 

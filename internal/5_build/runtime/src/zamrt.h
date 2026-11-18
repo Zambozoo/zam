@@ -62,6 +62,50 @@ typedef struct ZamFrame {
     ZamWord slots[];
 } ZamFrame;
 
+// ZAMHANDLER_JUMP_WORDS is room for any target's jmp_buf.
+#define ZAMHANDLER_JUMP_WORDS 64
+
+// ZAMHANDLER_WORDS is how many words compiled code sets aside for a ZamHandler.
+#define ZAMHANDLER_WORDS 80
+
+// ZamHandler is the landing pad of a running function that defers: where a
+// panic unwinding the thread runs the function's defers. jump is filled by the
+// setjmp of the function's entry, and the rest is the thread as it stands in
+// the function's own code, which landing puts back.
+typedef struct ZamHandler {
+    _Alignas(16) ZamWord jump[ZAMHANDLER_JUMP_WORDS];
+    struct ZamHandler *outer;
+    ZamFrame *frame;
+    uint64_t operandCount;
+    uint64_t markByteCount;
+    uint64_t functionEntry;
+    uint64_t scopeEntry;
+    uint64_t packEntry;
+    uint64_t heldCount;
+    uint64_t visitedCount;
+    uint64_t dirtiedCount;
+    uint64_t instructionOffset;
+} ZamHandler;
+
+// ZamPanicking is a panic unwinding a thread.
+typedef struct ZamPanicking {
+    struct ZamPanicking *outer;
+    // handler is the landing pad running defers for the panic, NULL until it
+    // lands.
+    ZamHandler *handler;
+    // status is what the program ends with if nothing recovers, and check
+    // whether a failed check rather than the program raised it.
+    uint8_t status;
+    bool check;
+    // fault is the signal, or on Windows the exception code, of the invalid
+    // access that raised the panic, which the program ends by instead of
+    // status; 0 for a panic that is not one.
+    uint32_t fault;
+    uint64_t length;
+    char *message;
+    ZamTrace trace;
+} ZamPanicking;
+
 // zamrt_frame_enter links frame onto thread as its innermost, with zeroed
 // slots.
 static inline void zamrt_frame_enter(ZamThread *thread, ZamFrame *frame, const ZamFrameInfo *info) {
@@ -73,9 +117,58 @@ static inline void zamrt_frame_enter(ZamThread *thread, ZamFrame *frame, const Z
     atomic_store_explicit((_Atomic(ZamFrame *) *)&thread->frames, frame, memory_order_release);
 }
 
-// zamrt_frame_leave unlinks frame, which has to be thread's innermost.
+// zamrt_frame_leave unlinks frame, which has to be thread's innermost, and
+// the landing pad of its function if it has one.
 static inline void zamrt_frame_leave(ZamThread *thread, ZamFrame *frame) {
+    ZamHandler *handler = thread->handlers;
+    if (handler != NULL && handler->frame == frame)
+        thread->handlers = handler->outer;
     atomic_store_explicit((_Atomic(ZamFrame *) *)&thread->frames, frame->caller, memory_order_release);
+}
+
+// zamrt_handler_push links handler, of the function running in frame, onto
+// thread as its innermost.
+void zamrt_handler_push(ZamThread *thread, ZamHandler *handler, ZamFrame *frame);
+
+// zamrt_raise unwinds thread for a panic saying the length bytes of message,
+// to the innermost landing pad, or, with none, writes the message and where
+// the thread was and ends the program with status. check says the message is
+// a failed check's, written as the runtime writes its own errors. skip is how
+// many of the innermost frames the trace leaves out.
+_Noreturn void zamrt_raise(ZamThread *thread, uint8_t status, bool check, const char *message,
+                           uint64_t length, uint64_t skip);
+
+// zamrt_fault raises a panic for the invalid access thread faulted at,
+// which ends the program by fault, its signal or exception code, if nothing
+// recovers it. bus says the access was to memory that is mapped but not
+// backed.
+_Noreturn void zamrt_fault(ZamThread *thread, uint32_t fault, uintptr_t address, bool bus);
+
+// zamrt_panicking reports whether thread is still unwinding for the panic that
+// landed at handler, none of its function's defers having recovered it.
+bool zamrt_panicking(ZamThread *thread, ZamHandler *handler);
+
+// zamrt_unwind leaves the function of handler, the thread's innermost, whose
+// defers have all run without recovering the panic, and unwinds to the next.
+_Noreturn void zamrt_unwind(ZamThread *thread, ZamHandler *handler);
+
+// zamrt_recover stops the panic the function running in frame is unwinding
+// for, and answers it, or NULL when that function is unwinding for none.
+ZamPanicking *zamrt_recover(ZamThread *thread, const ZamFrame *frame);
+
+// zamrt_handlers_hide hides thread's landing pads from what the runtime is
+// about to call compiled code for, so that a panic it raises ends the program
+// rather than unwind through the runtime, and answers them for
+// zamrt_handlers_show.
+static inline ZamHandler *zamrt_handlers_hide(ZamThread *thread) {
+    ZamHandler *handlers = thread->handlers;
+    thread->handlers = NULL;
+    return handlers;
+}
+
+// zamrt_handlers_show puts back the landing pads zamrt_handlers_hide hid.
+static inline void zamrt_handlers_show(ZamThread *thread, ZamHandler *handlers) {
+    thread->handlers = handlers;
 }
 
 // zamrt_frame_push and zamrt_frame_pop are zamrt_frame_enter and
@@ -117,10 +210,16 @@ typedef enum ZamPanic {
     ZAMPANIC_ANY_TYPE,
     ZAMPANIC_ENUM_UNBACKED,
     ZAMPANIC_FREE_INTERIOR,
+    ZAMPANIC_NULL_ANY,
+    ZAMPANIC_NULL_STRING,
+    ZAMPANIC_NEGATIVE_COUNT,
+    ZAMPANIC_COUNT_OVERFLOW,
+    ZAMPANIC_FREE_UNALLOCATED,
+    ZAMPANIC_DOUBLE_FREE,
     ZAMPANIC_COUNT,
 } ZamPanic;
 
-// zamrt_panic ends the program for a failed check.
+// zamrt_panic raises a panic for a failed check.
 _Noreturn void zamrt_panic(ZamThread *thread, ZamPanic panic);
 
 // zamrt_unsupported ends the program on reaching code native compilation

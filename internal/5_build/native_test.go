@@ -165,6 +165,8 @@ func TestNativeStatements(t *testing.T) {
         var uint big = 18446744073709551614U;
         result = (big / 2U - 9223372036854775800U){int};`, 7},
 		"shifts": {`result = (1 << 65) + ((-16) >>> 2) + 10 + ((-1) >> 62){int};`, 11},
+		"negative shifts": {`var int n = -2;
+        result = (8 << n) + (8 >> n) + (8 >>> n) + (1 << -65);`, 66},
 		"short circuit": {`
         var int calls = 0;
         var bool b = false && (calls++ > 0);
@@ -1705,6 +1707,46 @@ namespace Main {
 `)
 	assert.Zero(t, status, output)
 	assert.Equal(t, "blue blue blue light shade 2\n(blue, light, 2) (blue, shade) light (P3, 1)\nfalse true\n", output)
+}
+
+// TestNativeValueStrThroughRuntime calls the Str of an enum or struct a
+// pointer names where the runtime writes the pointer out, as in a tuple, with
+// a body that calls other code; the value itself is written out as a value.
+func TestNativeValueStrThroughRuntime(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `import std("io/local/*");
+
+namespace Main {
+    fun str(str) Wrap = (s) {
+        return "<" + s + ">";
+    }
+
+    enum Shade : str {
+        Dark("dark");
+
+        public fun str() Str = () {
+            return Main::Wrap("shade");
+        }
+    }
+
+    struct P {
+        var int x;
+
+        public fun str() Str = () {
+            return Main::Wrap("P" + this.x{str});
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Shade s = Shade::Dark;
+        var P p;
+        p.x = 3;
+        File::StdOut.WriteStr((&p, &s){str} + " " + (&p){str} + " " + (p{str} == (&p){str}){str} + "\n");
+    }
+}
+`)
+	assert.Zero(t, status, output)
+	assert.Equal(t, "(<P3>, <shade>) <P3> false\n", output)
 }
 
 // TestNativeDWARFEnumsAndTypeNames names an enum's values in DWARF, and lays

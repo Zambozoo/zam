@@ -10,8 +10,12 @@
 
 #include "instance.h"
 
+// codec_string is the zam string at wordIndex, panicking when it is null.
 static inline const ZamString *codec_string(ZamThread *thread, uint64_t wordIndex) {
-    return zam_string_of((void *)(uintptr_t)zam_native_argument(thread, wordIndex));
+    ZamWord word = zam_native_argument(thread, wordIndex);
+    if (word == 0)
+        zam_native_panic(thread, "handed a native a null string");
+    return zam_string_of((void *)(uintptr_t)word);
 }
 
 // codec_c_string copies the zam string at wordIndex into a NUL-terminated

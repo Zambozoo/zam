@@ -186,6 +186,7 @@ void zam_heap_init(ZamHeap *heap, uint64_t byteCount, uint64_t returnAge) {
     heap->cards = reserve(heap->byteCount >> ZAMHEAP_CARD_SHIFT);
     heap->pages = reserve(heap->pageCount * sizeof *heap->pages);
     heap->objects = reserve(heap->pageCount * OBJECT_MAP_BYTES);
+    heap->allocated = reserve(heap->pageCount * OBJECT_MAP_BYTES);
     pthread_mutex_init(&heap->lock, NULL);
 }
 
@@ -196,6 +197,7 @@ void zam_heap_destroy(ZamHeap *heap) {
     release(heap->cards, heap->byteCount >> ZAMHEAP_CARD_SHIFT);
     release(heap->pages, heap->pageCount * sizeof *heap->pages);
     release(heap->objects, heap->pageCount * OBJECT_MAP_BYTES);
+    release(heap->allocated, heap->pageCount * OBJECT_MAP_BYTES);
     pthread_mutex_destroy(&heap->lock);
     *heap = (ZamHeap){0};
 }
@@ -224,6 +226,21 @@ static void forgetObject(const ZamHeap *heap, const void *block) {
     uint8_t bit;
     uint8_t *byte = objectBit(heap, block, &bit);
     __atomic_fetch_and(byte, (uint8_t)~bit, __ATOMIC_RELAXED);
+    __atomic_fetch_and(heap->allocated + (byte - heap->objects), (uint8_t)~bit, __ATOMIC_RELAXED);
+}
+
+// handOut records block as handed out.
+static void *handOut(const ZamHeap *heap, void *block) {
+    uint8_t bit;
+    uint8_t *byte = objectBit(heap, block, &bit);
+    __atomic_fetch_or(heap->allocated + (byte - heap->objects), bit, __ATOMIC_RELAXED);
+    return block;
+}
+
+bool zam_heap_take_allocated(ZamHeap *heap, const void *block) {
+    uint8_t bit;
+    uint8_t *byte = objectBit(heap, block, &bit);
+    return (__atomic_fetch_and(heap->allocated + (byte - heap->objects), (uint8_t)~bit, __ATOMIC_RELAXED) & bit) != 0;
 }
 
 static void listPush(ZamHeap *heap, uint64_t *head, uint64_t index) {
@@ -448,7 +465,7 @@ static void *allocLarge(ZamHeap *heap, uint64_t byteCount) {
 
 void *zam_heap_alloc(ZamHeap *heap, ZamHeapCache *cache, uint64_t byteCount) {
     if (byteCount > ZAMHEAP_SMALL_MAX_BYTES)
-        return allocLarge(heap, byteCount);
+        return handOut(heap, allocLarge(heap, byteCount));
 
     unsigned sizeClass = classOf(byteCount == 0 ? 1 : byteCount);
     for (;;) {
@@ -456,7 +473,7 @@ void *zam_heap_alloc(ZamHeap *heap, ZamHeapCache *cache, uint64_t byteCount) {
         if (entry != 0) {
             void *block = takeSlot(heap, entry - 1);
             if (block != NULL)
-                return block;
+                return handOut(heap, block);
         }
 
         pthread_mutex_lock(&heap->lock);
@@ -574,6 +591,12 @@ void *zam_heap_object_of(const ZamHeap *heap, const void *at) {
     // an object is not handed out anew while a collection may look at it.
     uint8_t *again = blockOf(heap, at, &byte, &bit);
     return again == block ? block : NULL;
+}
+
+void *zam_heap_block_of(const ZamHeap *heap, const void *at) {
+    uint8_t *byte;
+    uint8_t bit;
+    return blockOf(heap, at, &byte, &bit);
 }
 
 uint64_t zam_heap_size(const ZamHeap *heap, const void *block) {

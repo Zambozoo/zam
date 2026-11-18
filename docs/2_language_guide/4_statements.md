@@ -24,4 +24,23 @@ A `return` works out its value before the deferred statements run, so they canno
 
 A deferred statement cannot `return`, or `break` or `continue` out of itself. It cannot be a declaration or another `defer` either, though a block it runs may hold both, along with loops that it breaks out of.
 
-Deferred statements do not run when the program ends by `System::Exit` or a panic.
+Deferred statements do not run when the program ends by `System::Exit`. A panic runs them, as below.
+
+## Panic and recover
+`System::Panic` panics, as does what the runtime catches a program doing wrong: dividing by zero, using a null pointer, string, `any` or thread, unboxing an `any` as a type it does not hold, asking `new` for a negative or impossibly large count, freeing what `new` did not allocate, a pointer into the middle of what it did, or what was already freed, and reading or writing memory the program does not have. The thread unwinds: it runs the deferred statements of every block it is inside of, innermost first, out through the methods that called it. Once none are left, the program writes the panic's message and where it was raised, and ends.
+
+`System::Recover`, called by a deferred statement a panic runs, stops the panic and answers its message. The rest of that block's deferred statements still run, and execution goes on past the block as though it had reached its end. A method whose outermost block recovers answers the zero value of its result.
+```
+var str failure;
+{
+    defer failure = System::Recover();
+    Main::parse(input);
+}
+if(failure != null) {
+    // parse panicked
+}
+```
+
+Anywhere else `System::Recover` answers `null`, in a method a deferred statement calls as much as outside a panic. A panic raised by a deferred statement as it runs replaces the one it was running for.
+
+A panic a native raises unwinds out of it like any other. A panic does not unwind out of what the runtime calls on a program's behalf to collect or deliver: a `Mark`, a `Delete`, a signal handler or a function a native calls back. It ends the program there. An `Eq`, `Cmp`, `Hash` or `Str` the runtime calls unwinds as any method does. An invalid memory access nothing recovers ends the process by the signal it raised, once the deferred statements have run. Programs the interpreter runs, rather than natively compiled ones, end at a panic without running their deferred statements.

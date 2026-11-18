@@ -8,20 +8,35 @@ public namespace System {
         native(STD_SYSTEM_EXIT){void(int)}(code);
     }
 
-    // Panic writes s and where the program is to stderr, and ends it.
+    // Panic unwinds the calling thread, running the defers of every scope it
+    // is inside of, innermost first, until one of them recovers. With none
+    // recovering, it writes s and where the program was to stderr, and ends
+    // it.
     public fun void(str) Panic = (s) {
+        native(STD_SYSTEM_FAILED){void(str)}(s);
+        native(STD_SYSTEM_PANIC){void(str)}(s);
         File::StdErr.WriteStr(s);
         System::Trace();
-        native(STD_SYSTEM_FAILED){void(str)}(s);
         System::Exit(-1);
     }
 
     public fun void(str, any...) Panicf = (fmt, args) {
         var str s = Strs::Sprintf(fmt, args);
+        native(STD_SYSTEM_FAILED){void(str)}(s);
+        native(STD_SYSTEM_PANIC){void(str)}(s);
         File::StdErr.WriteStr(s);
         System::Trace();
-        native(STD_SYSTEM_FAILED){void(str)}(s);
         System::Exit(-1);
+    }
+
+    // Recover, called by a statement its caller deferred, stops the panic
+    // that statement is running for and answers its message. Execution goes
+    // on past the scope that deferred it, once the rest of that scope's
+    // defers have run. Anywhere else, it answers null.
+    public fun str() Recover = () {
+        var str s;
+        native(STD_SYSTEM_RECOVER){void(str*)}(&s);
+        return s;
     }
 
     // Trace writes where the calling thread is to stderr, a line per call it is

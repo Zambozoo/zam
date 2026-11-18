@@ -260,6 +260,18 @@ struct ZamThread {
     // frames is the innermost compiled frame the thread is running, the
     // others reached through each one's caller.
     struct ZamFrame *frames;
+    // handlers is the innermost landing pad a panic on the thread unwinds to,
+    // the others reached through each one's outer, and panics the panics
+    // unwinding the thread, the newest first.
+    struct ZamHandler *handlers;
+    struct ZamPanicking *panics;
+    // faulting is set while an invalid access the thread made is on its way
+    // to being raised as a panic, by fault, its signal or exception code, at
+    // faultAddress.
+    volatile bool faulting;
+    uint32_t fault;
+    bool faultBus;
+    uintptr_t faultAddress;
 
     // result is how the last step ended, and so whether there is a next one.
    ZamResult result;
@@ -625,6 +637,30 @@ bool zam_frames_next(ZamFrames *frames, uint64_t *offset);
 // nothing of where its instructions came from has nothing written. It is safe
 // to call from a signal handler.
 void zam_thread_trace(const ZamThread *thread, uint64_t skip, int fd);
+
+// ZAMTRACE_FRAMES is how many frames a trace writes before saying how many
+// more there are, so that runaway recursion still ends in a readable trace.
+#define ZAMTRACE_FRAMES 64
+
+// ZamTrace is where a natively compiled thread was, kept to be written once
+// the frames it was taken from are gone.
+typedef struct ZamTrace {
+    uint64_t count;
+    // elided is how many frames past the first ZAMTRACE_FRAMES were left out.
+    uint64_t elided;
+    struct {
+        const struct ZamCompiledFunction *function;
+        uint64_t line;
+    } frames[ZAMTRACE_FRAMES];
+} ZamTrace;
+
+// zam_thread_capture takes where thread, natively compiled, is into trace,
+// leaving out the innermost skip frames.
+void zam_thread_capture(const ZamThread *thread, uint64_t skip, ZamTrace *trace);
+
+// zam_trace_write writes trace to fd as zam_thread_trace writes a thread. It is
+// safe to call from a signal handler.
+void zam_trace_write(const ZamTrace *trace, int fd);
 
 // zam_thread_compiled_caller reports the file and line of the compiled frame
 // skip frames out from the innermost, and whether there is one.

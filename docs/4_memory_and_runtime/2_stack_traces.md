@@ -1,5 +1,5 @@
 ## Stack Traces
-A program that fails says where it was. The runtime's own failures, such as dereferencing a null pointer or dividing by zero, and `System::Panic` both write their message followed by a line for each call the failing thread was inside of, innermost first:
+A program that fails says where it was. The runtime's own failures, such as dereferencing a null pointer or dividing by zero, and `System::Panic` both write their message, once nothing [recovers](/docs/2_language_guide/4_statements.md#panic-and-recover) them, followed by a line for each call the failing thread was inside of, innermost first:
 ```
 dereferenced a null pointer
 	at Main.Inner (/p/Main.zam:9)
@@ -8,7 +8,7 @@ dereferenced a null pointer
 ```
 A function is named by the declarations it lies in and its own name. A lambda is named after the function it was written in, with `.lambda` on the end, and the code that sets up statics is `<static init>`. A file is named by the path it was compiled from, or `std://` for the standard library.
 
-A read or write through a pointer that is not null but points nowhere, such as far past the end of an array, says the address it touched and writes the same trace, then ends the process by the signal it raised:
+A read or write through a pointer that is not null but points nowhere, such as far past the end of an array, panics too. Once nothing recovers it, it says the address it touched and writes the same trace, then ends the process by the signal it raised:
 ```
 invalid memory access at 0x10000000000
 	at Main.Read (/p/Main.zam:3)

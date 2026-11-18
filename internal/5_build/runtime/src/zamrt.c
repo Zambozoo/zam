@@ -1,7 +1,13 @@
 #include "zamrt.h"
 
+#include <setjmp.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if defined(_WIN32)
+#include <windows.h>
+#endif
 
 #include <zam/native.h>
 
@@ -19,8 +25,154 @@ static const char *const panicMessages[ZAMPANIC_COUNT] = {
     [ZAMPANIC_NULL_THREAD] = "waited on a null thread",
     [ZAMPANIC_ANY_TYPE] = "any holds a value of a type the unbox did not ask for",
     [ZAMPANIC_ENUM_UNBACKED] = "enum value has no backing value",
-    [ZAMPANIC_FREE_INTERIOR] = "freed an instance that is part of another",
+    [ZAMPANIC_FREE_INTERIOR] = "freed a pointer into the middle of what new allocated",
+    [ZAMPANIC_NULL_ANY] = "used a null any",
+    [ZAMPANIC_NULL_STRING] = "joined a null string",
+    [ZAMPANIC_NEGATIVE_COUNT] = "allocated a negative number of elements",
+    [ZAMPANIC_COUNT_OVERFLOW] = "allocated more elements than memory can hold",
+    [ZAMPANIC_FREE_UNALLOCATED] = "freed memory new did not allocate",
+    [ZAMPANIC_DOUBLE_FREE] = "freed memory that was already freed",
 };
+
+_Static_assert(sizeof(jmp_buf) <= sizeof(((ZamHandler *)0)->jump), "a jmp_buf outgrows a landing pad");
+_Static_assert(sizeof(ZamHandler) <= ZAMHANDLER_WORDS * sizeof(ZamWord), "a landing pad outgrows its words");
+
+// longJump returns to the setjmp compiled code filled jump with, without
+// unwinding anything on the way: on Windows x86-64 that setjmp is _setjmp
+// given no frame, and on Windows on Arm it is mingw's own.
+static _Noreturn void longJump(ZamWord *jump) {
+#if defined(_WIN32) && defined(__aarch64__)
+    __mingw_longjmp((void *)jump, 1);
+#elif defined(_WIN32)
+    longjmp((void *)jump, 1);
+#else
+    _longjmp((void *)jump, 1);
+#endif
+}
+
+void zamrt_handler_push(ZamThread *thread, ZamHandler *handler, ZamFrame *frame) {
+    handler->outer = thread->handlers;
+    handler->frame = frame;
+    handler->operandCount = thread->operandCount;
+    handler->markByteCount = thread->markByteCount;
+    handler->functionEntry = thread->functionEntry;
+    handler->scopeEntry = thread->scopeEntry;
+    handler->packEntry = thread->packEntry;
+    handler->heldCount = thread->heldCount;
+    handler->visitedCount = thread->visitedCount;
+    handler->dirtiedCount = thread->dirtiedCount;
+    handler->instructionOffset = thread->instructionOffset;
+    thread->handlers = handler;
+}
+
+// endPanic writes panic and where it was raised, and ends the program.
+static _Noreturn void endPanic(ZamPanicking *panic) {
+    if (panic->check)
+        fputs("\033[31m", stderr);
+    fwrite(panic->message, 1, panic->length, stderr);
+    if (panic->check)
+        fputs("\n\033[0m", stderr);
+    fflush(stderr);
+    zam_trace_write(&panic->trace, fileno(stderr));
+    if (panic->fault != 0) {
+#if defined(_WIN32)
+        TerminateProcess(GetCurrentProcess(), panic->fault);
+#else
+        signal((int)panic->fault, SIG_DFL);
+        raise((int)panic->fault);
+#endif
+    }
+    exit(panic->status);
+}
+
+// land puts thread back as it stood in the function of handler and runs that
+// function's defers for the newest panic, which any older one it was running
+// them for gives way to.
+static _Noreturn void land(ZamThread *thread, ZamHandler *handler) {
+    ZamPanicking *panic = thread->panics;
+    for (ZamPanicking **older = &panic->outer; *older != NULL;) {
+        ZamPanicking *p = *older;
+        if (p->handler != handler) {
+            older = &p->outer;
+            continue;
+        }
+        *older = p->outer;
+        free(p->message);
+        free(p);
+    }
+    panic->handler = handler;
+
+    // The cards a native running here was handed are dirtied, as its return
+    // would have dirtied them.
+    for (uint64_t at = handler->dirtiedCount; at < thread->dirtiedCount; at++)
+        zam_heap_dirty(&thread->vm->heap, thread->dirtied[at], ZAMHEAP_CARD_BYTES);
+    thread->dirtiedCount = handler->dirtiedCount;
+    thread->operandCount = handler->operandCount;
+    thread->markByteCount = handler->markByteCount;
+    thread->functionEntry = handler->functionEntry;
+    thread->scopeEntry = handler->scopeEntry;
+    thread->packEntry = handler->packEntry;
+    thread->heldCount = handler->heldCount;
+    thread->visitedCount = handler->visitedCount;
+    thread->instructionOffset = handler->instructionOffset;
+    thread->handlers = handler;
+    atomic_store_explicit((_Atomic(ZamFrame *) *)&thread->frames, handler->frame, memory_order_release);
+    longJump(handler->jump);
+}
+
+// raisePanic is zamrt_raise for a panic that ends the program by fault, when
+// that is not 0.
+static _Noreturn void raisePanic(ZamThread *thread, uint8_t status, bool check, uint32_t fault,
+                                 const char *message, uint64_t length, uint64_t skip) {
+    ZamPanicking *panic = malloc(sizeof(ZamPanicking));
+    char *copy = malloc(length + 1);
+    if (panic == NULL || copy == NULL)
+        zam_die(ZAMEXIT_OOM, "out of memory raising a panic\n");
+    memcpy(copy, message, length);
+    copy[length] = '\0';
+    *panic = (ZamPanicking){.outer = thread->panics,
+                            .status = status,
+                            .check = check,
+                            .fault = fault,
+                            .length = length,
+                            .message = copy};
+    zam_thread_capture(thread, skip, &panic->trace);
+    if (thread->handlers == NULL)
+        endPanic(panic);
+    thread->panics = panic;
+    land(thread, thread->handlers);
+}
+
+_Noreturn void zamrt_raise(ZamThread *thread, uint8_t status, bool check, const char *message,
+                           uint64_t length, uint64_t skip) {
+    raisePanic(thread, status, check, 0, message, length, skip);
+}
+
+_Noreturn void zamrt_fault(ZamThread *thread, uint32_t fault, uintptr_t address, bool bus) {
+    char message[64];
+    int length = snprintf(message, sizeof message, "%s at 0x%llx", bus ? "bus error" : "invalid memory access",
+                          (unsigned long long)address);
+    raisePanic(thread, ZAMEXIT_PANIC, true, fault, message, (uint64_t)length, 0);
+}
+
+bool zamrt_panicking(ZamThread *thread, ZamHandler *handler) {
+    return thread->panics != NULL && thread->panics->handler == handler;
+}
+
+_Noreturn void zamrt_unwind(ZamThread *thread, ZamHandler *handler) {
+    ZamHandler *outer = handler->outer;
+    if (outer == NULL)
+        endPanic(thread->panics);
+    land(thread, outer);
+}
+
+ZamPanicking *zamrt_recover(ZamThread *thread, const ZamFrame *frame) {
+    ZamPanicking *panic = thread->panics;
+    if (panic == NULL || panic->handler == NULL || panic->handler->frame != frame)
+        return NULL;
+    thread->panics = panic->outer;
+    return panic;
+}
 
 void zamrt_frame_push(ZamThread *thread, ZamFrame *frame, const ZamFrameInfo *info) {
     zamrt_frame_enter(thread, frame, info);
@@ -45,17 +197,19 @@ void zamrt_poll_slow(ZamThread *thread) {
     // statements, as the interpreter runs it between instructions.
     for (int sig; (sig = zam_thread_take_pending_signal(thread)) >= 0;) {
         ZamClosure *handler = thread->signalHandlers[sig];
-        if (handler != NULL)
+        if (handler != NULL) {
+            ZamHandler *handlers = zamrt_handlers_hide(thread);
             ((ZamEntry)(uintptr_t)handler->instruction)(thread, handler, NULL, NULL);
+            zamrt_handlers_show(thread, handlers);
+        }
     }
 }
 
 _Noreturn void zamrt_panic(ZamThread *thread, ZamPanic panic) {
-    (void)thread;
     const char *message = panic < ZAMPANIC_COUNT ? panicMessages[panic] : NULL;
     if (message == NULL)
         zam_die(ZAMEXIT_PANIC, "unknown panic %u\n", (unsigned)panic);
-    zam_die(ZAMEXIT_PANIC, "%s\n", message);
+    zamrt_raise(thread, ZAMEXIT_PANIC, true, message, strlen(message), 0);
 }
 
 _Noreturn void zamrt_unsupported(ZamThread *thread, const char *what) {
@@ -183,7 +337,7 @@ void *zamrt_spawn(ZamThread *thread, const ZamWord *threadType, ZamEntry entry, 
 
 void zamrt_wait(ZamThread *thread, void *target, const ZamWord *resultType, ZamWord *out) {
     if (target == NULL)
-        zam_die(ZAMEXIT_PANIC, "joined a null thread\n");
+        zamrt_panic(thread, ZAMPANIC_NULL_THREAD);
     ZamThread *joined = target;
     zam_thread_join(thread, joined);
     if (resultType == NULL)
@@ -300,6 +454,8 @@ ZamString *zamrt_str(ZamThread *thread, const ZamWord *type, const void *value) 
 }
 
 ZamString *zamrt_concat(ZamThread *thread, const ZamString *left, const ZamString *right) {
+    if (left == NULL || right == NULL)
+        zamrt_panic(thread, ZAMPANIC_NULL_STRING);
     return zam_string_concat(thread, left, right);
 }
 
@@ -351,7 +507,8 @@ void *zamrt_any_box(ZamThread *thread, const ZamWord *type, const void *value) {
 }
 
 ZamTypeID zamrt_any_type(ZamThread *thread, const void *any) {
-    (void)thread;
+    if (any == NULL)
+        zamrt_panic(thread, ZAMPANIC_NULL_ANY);
     return zam_any_type(any);
 }
 

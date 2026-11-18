@@ -1,6 +1,7 @@
 #include "vm.h"
 
 #include "gc.h"
+#include "zamrt.h"
 
 
 #include <time.h>
@@ -372,10 +373,15 @@ void *zam_vm_alloc_raw(ZamThread *thread, uint64_t byteCount) {
 }
 
 void zam_vm_free_raw(ZamThread *thread, void *block) {
-    if (zam_heap_contains(&thread->vm->heap, block))
-        zam_heap_free(&thread->vm->heap, &thread->heapCache, block);
-    else
-        free(block);
+    ZamHeap *heap = &thread->vm->heap;
+    void *start = zam_heap_contains(heap, block) ? zam_heap_block_of(heap, block) : NULL;
+    if (start == NULL)
+        zamrt_panic(thread, ZAMPANIC_FREE_UNALLOCATED);
+    if (start != block)
+        zamrt_panic(thread, ZAMPANIC_FREE_INTERIOR);
+    if (!zam_heap_take_allocated(heap, block))
+        zamrt_panic(thread, ZAMPANIC_DOUBLE_FREE);
+    zam_heap_free(heap, &thread->heapCache, block);
 }
 
 static double millisecondsSince(const struct timespec *start) {

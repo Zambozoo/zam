@@ -1,3 +1,8 @@
+// The register names a signal handler reads its context by are GNU's.
+#if defined(__linux__) && !defined(_GNU_SOURCE)
+#define _GNU_SOURCE
+#endif
+
 #include "thread.h"
 
 #include <errno.h>
@@ -8,6 +13,7 @@
 #include <windows.h>
 #endif
 
+#include "gc.h"
 #include "vm.h"
 #include "zamrt.h"
 
@@ -39,10 +45,6 @@ static void zamSignalHandler(int sig) {
 void zam_thread_bind_current(ZamThread *thread) { currentZamThread = thread; }
 
 ZamThread *zam_thread_current(void) { return currentZamThread; }
-
-// ZAMTRACE_FRAMES is how many frames a trace writes before saying how many
-// more there are, so that runaway recursion still ends in a readable trace.
-#define ZAMTRACE_FRAMES 64
 
 void zam_frames_begin(ZamFrames *frames, const ZamThread *thread) {
     *frames = (ZamFrames){
@@ -151,11 +153,9 @@ bool zam_thread_compiled_caller(const ZamThread *thread, uint64_t skip, const ch
     return false;
 }
 
-// traceCompiled is zam_thread_trace for a natively compiled program, whose
-// frames are linked onto the thread rather than laid on its stack.
-static void traceCompiled(const ZamThread *thread, uint64_t skip, int fd) {
-    TraceWriter w = {.fd = fd};
-    uint64_t written = 0, elided = 0;
+void zam_thread_capture(const ZamThread *thread, uint64_t skip, ZamTrace *trace) {
+    trace->count = 0;
+    trace->elided = 0;
     const ZamFrame *frame = atomic_load_explicit((_Atomic(ZamFrame *) *)&thread->frames,
                                                  memory_order_acquire);
     for (; frame != NULL; frame = frame->caller) {
@@ -166,23 +166,31 @@ static void traceCompiled(const ZamThread *thread, uint64_t skip, int fd) {
             skip--;
             continue;
         }
-        if (written == ZAMTRACE_FRAMES) {
-            elided++;
+        if (trace->count == ZAMTRACE_FRAMES) {
+            trace->elided++;
             continue;
         }
-        written++;
+        trace->frames[trace->count].function = function;
+        trace->frames[trace->count].line = frame->line;
+        trace->count++;
+    }
+}
+
+void zam_trace_write(const ZamTrace *trace, int fd) {
+    TraceWriter w = {.fd = fd};
+    for (uint64_t i = 0; i < trace->count; i++) {
         traceText(&w, "\tat ");
-        traceText(&w, function->name);
+        traceText(&w, trace->frames[i].function->name);
         traceText(&w, " (");
-        traceText(&w, function->file);
+        traceText(&w, trace->frames[i].function->file);
         traceText(&w, ":");
-        traceNumber(&w, frame->line, 10);
+        traceNumber(&w, trace->frames[i].line, 10);
         traceText(&w, ")\n");
         traceFlush(&w);
     }
-    if (elided > 0) {
+    if (trace->elided > 0) {
         traceText(&w, "\t... ");
-        traceNumber(&w, elided, 10);
+        traceNumber(&w, trace->elided, 10);
         traceText(&w, " more frames\n");
         traceFlush(&w);
     }
@@ -190,7 +198,9 @@ static void traceCompiled(const ZamThread *thread, uint64_t skip, int fd) {
 
 void zam_thread_trace(const ZamThread *thread, uint64_t skip, int fd) {
     if (thread->vm->compiledFunctions != NULL) {
-        traceCompiled(thread, skip, fd);
+        ZamTrace trace;
+        zam_thread_capture(thread, skip, &trace);
+        zam_trace_write(&trace, fd);
         return;
     }
     const ZamImage *image = &thread->vm->image;
@@ -243,7 +253,58 @@ void zam_thread_trace_current(int fd) {
         zam_thread_trace(thread, 0, fd);
 }
 
+// faultPanic is where a thread that made an invalid access a panic can be
+// raised for is sent to, as though the faulting instruction called it.
+static _Noreturn void faultPanic(void) {
+    ZamThread *thread = currentZamThread;
+    uint32_t fault = thread->fault;
+    uintptr_t address = thread->faultAddress;
+    bool bus = thread->faultBus;
+    thread->faulting = false;
+    zamrt_fault(thread, fault, address, bus);
+}
+
+// recoverable reports whether an invalid access thread made can be raised as
+// a panic: one it is running compiled code or a native for, with defers to
+// unwind to, rather than one made collecting, blocked or raising one already.
+static bool recoverable(const ZamThread *thread) {
+    return thread != NULL && !thread->faulting && thread->handlers != NULL &&
+           atomic_load_explicit(&thread->state, memory_order_relaxed) == ZAMTHREAD_RUNNING &&
+           !zam_gc_collecting(thread);
+}
+
+// faultAt records an invalid access thread made at address, for faultPanic.
+static void faultAt(ZamThread *thread, uint32_t fault, uintptr_t address, bool bus) {
+    thread->faulting = true;
+    thread->fault = fault;
+    thread->faultAddress = address;
+    thread->faultBus = bus;
+}
+
 #if defined(_WIN32)
+// faultVector sends a thread that made an invalid access a panic can be
+// raised for to faultPanic, leaving every other exception to what handles it.
+static LONG CALLBACK faultVector(EXCEPTION_POINTERS *exception) {
+    const EXCEPTION_RECORD *record = exception->ExceptionRecord;
+    bool access = record->ExceptionCode == EXCEPTION_ACCESS_VIOLATION ||
+                  record->ExceptionCode == EXCEPTION_IN_PAGE_ERROR;
+    ZamThread *thread = currentZamThread;
+    if (!access || record->NumberParameters < 2 || !recoverable(thread))
+        return EXCEPTION_CONTINUE_SEARCH;
+    faultAt(thread, (uint32_t)record->ExceptionCode, (uintptr_t)record->ExceptionInformation[1],
+            record->ExceptionCode == EXCEPTION_IN_PAGE_ERROR);
+    CONTEXT *context = exception->ContextRecord;
+#if defined(__aarch64__)
+    context->Sp &= ~(DWORD64)15;
+    context->Pc = (DWORD64)(uintptr_t)faultPanic;
+#else
+    // As a call leaves it: 8 past a multiple of 16.
+    context->Rsp = (context->Rsp & ~(DWORD64)15) - 8;
+    context->Rip = (DWORD64)(uintptr_t)faultPanic;
+#endif
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
 // faultFilter says what was touched and where the thread touching it was, for
 // a fault nothing handled, and ends the process with the fault's code, before
 // Windows' own crash handling reports it again or waits on a dialog.
@@ -265,7 +326,11 @@ static LONG CALLBACK faultFilter(EXCEPTION_POINTERS *exception) {
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
-void zam_thread_install_fault_handler(void) { SetUnhandledExceptionFilter(faultFilter); }
+void zam_thread_install_fault_handler(void) {
+    // Last, so that the heap commits reserved memory a touch faulted on first.
+    (void)AddVectoredExceptionHandler(0, faultVector);
+    SetUnhandledExceptionFilter(faultFilter);
+}
 
 void zam_thread_install_signal_slot(ZamThread *thread, int sig, void *closure) {
     if (sig < 0 || sig >= ZAM_SIGNAL_MAX)
@@ -274,11 +339,40 @@ void zam_thread_install_signal_slot(ZamThread *thread, int sig, void *closure) {
     (void)signal(sig, zamSignalHandler);
 }
 #else
-// faultHandler says what was touched and where the thread touching it was,
-// then returns to the instruction that faulted. The handler is reset on entry,
-// so it faults again and ends the process by the signal.
+// sendToFaultPanic has the interrupted context resume in faultPanic, below
+// the red zone the code it interrupted may be using.
+static void sendToFaultPanic(void *context) {
+    ucontext_t *uc = context;
+#if defined(__APPLE__) && defined(__aarch64__)
+    __darwin_arm_thread_state64_set_sp(uc->uc_mcontext->__ss,
+                                       (__darwin_arm_thread_state64_get_sp(uc->uc_mcontext->__ss) - 128) & ~(uint64_t)15);
+    __darwin_arm_thread_state64_set_pc_fptr(uc->uc_mcontext->__ss, faultPanic);
+#elif defined(__APPLE__)
+    uc->uc_mcontext->__ss.__rsp = ((uc->uc_mcontext->__ss.__rsp - 128) & ~(uint64_t)15) - 8;
+    uc->uc_mcontext->__ss.__rip = (uint64_t)(uintptr_t)faultPanic;
+#elif defined(__aarch64__)
+    uc->uc_mcontext.sp = (uc->uc_mcontext.sp - 128) & ~(uint64_t)15;
+    uc->uc_mcontext.pc = (uint64_t)(uintptr_t)faultPanic;
+#else
+    // As a call leaves it: 8 past a multiple of 16.
+    uc->uc_mcontext.gregs[REG_RSP] = (long long)(((uint64_t)uc->uc_mcontext.gregs[REG_RSP] - 128) & ~(uint64_t)15) - 8;
+    uc->uc_mcontext.gregs[REG_RIP] = (long long)(uintptr_t)faultPanic;
+#endif
+}
+
+// faultHandler sends a thread that made an invalid access a panic can be
+// raised for to faultPanic. For any other, it says what was touched and where
+// the thread touching it was, then returns to the instruction that faulted,
+// with the handler reset, so it faults again and ends the process by the
+// signal.
 static void faultHandler(int sig, siginfo_t *info, void *context) {
-    (void)context;
+    ZamThread *thread = currentZamThread;
+    if (recoverable(thread)) {
+        faultAt(thread, (uint32_t)sig, (uintptr_t)info->si_addr, sig == SIGBUS);
+        sendToFaultPanic(context);
+        return;
+    }
+    signal(sig, SIG_DFL);
     TraceWriter w = {.fd = STDERR_FILENO};
     traceText(&w, "\033[31m");
     traceText(&w, sig == SIGBUS ? "bus error" : "invalid memory access");
@@ -294,7 +388,7 @@ void zam_thread_install_fault_handler(void) {
     memset(&sa, 0, sizeof sa);
     sa.sa_sigaction = faultHandler;
     sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_SIGINFO | SA_RESETHAND | SA_NODEFER;
+    sa.sa_flags = SA_SIGINFO | SA_NODEFER;
     (void)sigaction(SIGSEGV, &sa, NULL);
     (void)sigaction(SIGBUS, &sa, NULL);
 }

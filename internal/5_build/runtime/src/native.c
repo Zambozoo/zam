@@ -28,6 +28,7 @@
 #include "run.h"
 #include "thread.h"
 #include "vm.h"
+#include "zamrt.h"
 
 
 // STD_MARK is Object's own Mark: while collecting, everything the receiver's
@@ -109,9 +110,16 @@ static ZamWord socketErrorMessage(ZamThread *thread, int err) {
     return (ZamWord)zam_native_new_string(thread, msg, strlen(msg));
 }
 
+// stringArgument is the zam string at wordIndex, panicking when it is null.
+static const ZamString *stringArgument(ZamThread *thread, uint64_t wordIndex) {
+    ZamWord word = zam_native_argument(thread, wordIndex);
+    if (word == 0)
+        zam_native_panic(thread, "handed a native a null string");
+    return zam_string_of((void *)(uintptr_t)word);
+}
+
 static void stdFileInit(ZamThread *thread) {
-    const ZamString *path =
-        zam_string_of((void *)(uintptr_t)zam_native_argument(thread, 0));
+    const ZamString *path = stringArgument(thread, 0);
     int mode = (int)zam_native_argument(thread, 1);
    ZamInt *fdOut = (ZamInt *)zam_native_argument_pointer(thread, 2);
    ZamWord *errOut = (ZamWord *)zam_native_argument_pointer(thread, 3);
@@ -154,8 +162,7 @@ static void stdFileInit(ZamThread *thread) {
 // cString copies the zam string at wordIndex into a NUL-terminated C string the
 // caller frees, which is what every path-taking call wants.
 static char *cString(ZamThread *thread, uint64_t wordIndex) {
-    const ZamString *s =
-        zam_string_of((void *)(uintptr_t)zam_native_argument(thread, wordIndex));
+    const ZamString *s = stringArgument(thread, wordIndex);
     char *c = malloc(s->length + 1);
     if (c == NULL)
         zam_native_panic(thread, "out of memory for a path");
@@ -561,15 +568,18 @@ static void stdFileRead(ZamThread *thread) {
 static void stdStrsFromBytes(ZamThread *thread) {
     const char *bytes =
         (const char *)zam_native_argument_pointer(thread, 0);
-    uint64_t length = (uint64_t)zam_native_argument(thread, 1);
+    ZamInt length = (ZamInt)zam_native_argument(thread, 1);
    ZamWord *strOut = (ZamWord *)zam_native_argument_pointer(thread, 2);
-    *strOut = zam_native_new_string(thread, bytes, length);
+    if (length < 0)
+        zam_native_panic(thread, "Strs.FromBytes: negative length");
+    if (bytes == NULL && length > 0)
+        zam_native_panic(thread, "Strs.FromBytes: null bytes");
+    *strOut = zam_native_new_string(thread, bytes, (uint64_t)length);
     zam_native_return_void(thread);
 }
 
 static void stdStrsByteLen(ZamThread *thread) {
-    const ZamString *s =
-        zam_string_of((void *)(uintptr_t)zam_native_argument(thread, 0));
+    const ZamString *s = stringArgument(thread, 0);
    ZamInt *nOut = (ZamInt *)zam_native_argument_pointer(thread, 1);
     *nOut = (ZamInt)s->length;
     zam_native_return_void(thread);
@@ -583,7 +593,9 @@ static void stdStrsToChars(ZamThread *thread) {
     ZamInt count = (ZamInt)zam_native_argument(thread, 1);
    ZamWord *strOut = (ZamWord *)zam_native_argument_pointer(thread, 2);
     if (count < 0)
-        zam_native_panic(thread, "STD_STRS_TO_CHARS: negative length");
+        zam_native_panic(thread, "Strs.ToChars: negative length");
+    if (chars == NULL && count > 0)
+        zam_native_panic(thread, "Strs.ToChars: null code points");
 
     char *bytes = zam_alloc(count == 0 ? 1 : (size_t)count * 4);
     uint64_t length = 0;
@@ -591,7 +603,7 @@ static void stdStrsToChars(ZamThread *thread) {
         uint32_t c = chars[i];
         if (c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) {
             free(bytes);
-            zam_native_panic(thread, "STD_STRS_TO_CHARS: invalid code point");
+            zam_native_panic(thread, "Strs.ToChars: invalid code point");
         }
         if (c < 0x80) {
             bytes[length++] = (char)c;
@@ -617,8 +629,7 @@ static void stdStrsToChars(ZamThread *thread) {
 // stdStrsCharLen counts the code points of a str by its lead bytes, every byte
 // that is not a continuation byte beginning one.
 static void stdStrsCharLen(ZamThread *thread) {
-    const ZamString *s =
-        zam_string_of((void *)(uintptr_t)zam_native_argument(thread, 0));
+    const ZamString *s = stringArgument(thread, 0);
    ZamInt *nOut = (ZamInt *)zam_native_argument_pointer(thread, 1);
     ZamInt n = 0;
     for (uint64_t i = 0; i < s->length; i++)
@@ -631,8 +642,8 @@ static void stdStrsCharLen(ZamThread *thread) {
 // stdArrsCopy moves a run of A elements from src to dst. The element type
 // rode across as its three-word id so the width is read off the image here:
 // a template is not one width, and baking a size for one instantiation would
-// be wrong for every other. The length is a uint, so there is no sign to
-// guard against. memmove rather than memcpy, so an overlapping range inside
+// be wrong for every other. A length with its sign bit set was a negative int
+// cast to uint. memmove rather than memcpy, so an overlapping range inside
 // the same run copies without the caller having to split it.
 static void stdArrsCopy(ZamThread *thread) {
    ZamWord typeWords[ZAMTYPE_ID_WORDS] = {
@@ -646,8 +657,15 @@ static void stdArrsCopy(ZamThread *thread) {
     void *dst = zam_native_argument_pointer(thread, 5);
 
     uint64_t stride = zam_type_bytes(&thread->vm->image, type);
-    memmove(dst, src, (size_t)len * stride);
-    zam_native_write_barrier(thread, dst, (uint64_t)len * stride);
+    uint64_t bytes;
+    if (len > INT64_MAX)
+        zam_native_panic(thread, "Arrs.Copy: negative length");
+    if (__builtin_mul_overflow(len, stride, &bytes))
+        zam_native_panic(thread, "Arrs.Copy: length too large");
+    if (bytes > 0 && (src == NULL || dst == NULL))
+        zam_native_panic(thread, "Arrs.Copy: null run");
+    memmove(dst, src, bytes);
+    zam_native_write_barrier(thread, dst, bytes);
     zam_native_return_void(thread);
 }
 
@@ -737,6 +755,34 @@ static void stdSystemTrace(ZamThread *thread) {
 // panic or a failed check does. It does nothing; it is where a debugger breaks
 // to stop on failures.
 static void stdSystemFailed(ZamThread *thread) {
+    zam_native_return_void(thread);
+}
+
+// stdSystemPanic raises a panic saying its message, unwinding the calling
+// thread to the defers it is inside of. The interpreter does not unwind, so
+// it returns there, for the method calling it to end the program.
+static void stdSystemPanic(ZamThread *thread) {
+    if (thread->vm->compiledFunctions == NULL) {
+        zam_native_return_void(thread);
+        return;
+    }
+    ZamWord word = zam_native_argument(thread, 0);
+    const ZamString *s = word == 0 ? NULL : zam_string_of((void *)(uintptr_t)word);
+    zamrt_raise(thread, (uint8_t)-1, false, s == NULL ? "" : s->bytes, s == NULL ? 0 : s->length, 0);
+}
+
+// stdSystemRecover stops the panic the method calling the method calling this
+// native is running its defers for, and answers its message, or leaves null
+// when there is none.
+static void stdSystemRecover(ZamThread *thread) {
+    const ZamFrame *frames = thread->frames;
+    ZamPanicking *panic = frames == NULL ? NULL : zamrt_recover(thread, frames->caller);
+    if (panic != NULL) {
+        ZamWord message = zam_native_new_string(thread, panic->message, panic->length);
+        *(ZamWord *)zam_native_argument_pointer(thread, 0) = message;
+        free(panic->message);
+        free(panic);
+    }
     zam_native_return_void(thread);
 }
 
@@ -1447,6 +1493,8 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_SYSTEM_EXIT", stdSystemExit},
     {"STD_SYSTEM_TRACE", stdSystemTrace},
     {"STD_SYSTEM_FAILED", stdSystemFailed},
+    {"STD_SYSTEM_PANIC", stdSystemPanic},
+    {"STD_SYSTEM_RECOVER", stdSystemRecover},
     {"STD_SYSTEM_CALLER", stdSystemCaller},
     {"STD_SYSTEM_PROCESS_ID", stdSystemProcessID},
     {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},
@@ -1694,8 +1742,13 @@ void zam_native_block_begin(ZamThread *thread) { zam_vm_enter_safe(thread); }
 void zam_native_block_end(ZamThread *thread) { zam_vm_leave_safe(thread); }
 
 _Noreturn void zam_native_panic(ZamThread *thread, const char *message) {
-    (void)thread;
-    zam_die(ZAMEXIT_PANIC, "panic in native: %s\n", message);
+    if (thread->vm->compiledFunctions == NULL)
+        zam_die(ZAMEXIT_PANIC, "panic in native: %s\n", message);
+    // The thread runs compiled code again once it lands, which a collection
+    // has to wait for.
+    if (atomic_load_explicit(&thread->state, memory_order_relaxed) == ZAMTHREAD_SAFE)
+        zam_vm_leave_safe(thread);
+    zamrt_raise(thread, ZAMEXIT_PANIC, true, message, strlen(message), 0);
 }
 
 uint64_t zam_native_new_string(ZamThread *thread, const char *bytes,

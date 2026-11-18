@@ -18,6 +18,9 @@ import (
 // caller, the frame info and the line.
 const frameHeaderWords = 3
 
+// handlerWords is how many words a ZamHandler is given, ZAMHANDLER_WORDS.
+const handlerWords = 80
+
 // ErrUnsupported is the error native code generation answers for source it
 // cannot compile yet.
 var ErrUnsupported = errors.New("not supported by native code generation yet")
@@ -39,6 +42,10 @@ type llvmProgram struct {
 	// frameInfoType is ZamFrameInfo.
 	frameInfoType llvm.Type
 	runtime       map[string]llvmRuntimeFunc
+	// setjmp is the target's setjmp that unwinds nothing when jumped to, and
+	// setjmpFrame whether it takes a frame after the buffer, given none.
+	setjmp      llvmRuntimeFunc
+	setjmpFrame bool
 	// rootType is ZamFrameRoot, and typeIDType ZamTypeID.
 	rootType   llvm.Type
 	typeIDType llvm.Type
@@ -114,6 +121,21 @@ func newLLVMProgram(ctx llvm.Context, mod llvm.Module, result *Result) *llvmProg
 	p.declare("zamrt_unsupported", void, p.ptr, p.ptr).fn.AddFunctionAttr(
 		ctx.CreateEnumAttribute(llvm.AttributeKindID("noreturn"), 0))
 	p.declare("zamrt_safepoint", void, p.ptr)
+	p.declare("zamrt_handler_push", void, p.ptr, p.ptr, p.ptr)
+	p.declare("zamrt_panicking", ctx.Int8Type(), p.ptr, p.ptr)
+	p.declare("zamrt_unwind", void, p.ptr, p.ptr).fn.AddFunctionAttr(
+		ctx.CreateEnumAttribute(llvm.AttributeKindID("noreturn"), 0))
+	triple := mod.Target()
+	switch {
+	case strings.HasPrefix(triple, "aarch64") && strings.Contains(triple, "windows"):
+		p.setjmp = p.declare("__mingw_setjmp", p.i32, p.ptr)
+	case strings.Contains(triple, "windows"):
+		p.setjmp = p.declare("_setjmp", p.i32, p.ptr, p.ptr)
+		p.setjmpFrame = true
+	default:
+		p.setjmp = p.declare("_setjmp", p.i32, p.ptr)
+	}
+	p.setjmp.fn.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("returns_twice"), 0))
 	p.declare("zamrt_static", p.ptr, p.ptr, p.i64)
 	p.declare("zamrt_concat", p.ptr, p.ptr, p.ptr, p.ptr)
 	p.declare("zamrt_eq", ctx.Int8Type(), p.ptr, p.ptr, p.ptr, p.ptr, p.ptr)
@@ -285,14 +307,23 @@ type llvmLocal struct {
 // llvmScope is the locals a block declares and the statements it defers.
 type llvmScope struct {
 	vars   map[string]llvmLocal
-	defers []llvmDefer
+	defers []*llvmDefer
+	// active is the defer innermost when the scope was opened, and resume
+	// where execution goes on once a panic one of its defers recovers has
+	// run the rest of them; a scope without one resumes at the function's end.
+	active int
+	resume llvm.BasicBlock
 }
 
 // llvmDefer is a deferred statement and the scopes its names mean what they
-// meant in when it was deferred.
+// meant in when it was deferred. id numbers it among the function's defers
+// from 1, and outer is the id of the defer innermost before it, 0 for none.
 type llvmDefer struct {
 	stmt   syntax.Stmt
 	scopes []*llvmScope
+	scope  *llvmScope
+	id     int
+	outer  int
 }
 
 // llvmLoop is a loop or switch a break or continue may leave, and how many
@@ -364,6 +395,14 @@ type funcEmitter struct {
 	// temporaries in, cleared as each statement ends so that what it no
 	// longer needs can be collected.
 	temps []llvmLocal
+
+	// defers is every statement the function defers, by id less one, and
+	// active the id of the innermost one deferred where it is compiling.
+	// deferred holds the id of the innermost one deferred where it is
+	// running, which is where a panic landing in it starts running them.
+	defers   []*llvmDefer
+	active   int
+	deferred llvm.Value
 }
 
 // llvmSpawn is a call async runs on a thread of its own: the thread's type,
@@ -593,7 +632,11 @@ func (p *llvmProgram) compiles(e *funcEmitter, emit func() error) (fn llvm.Value
 			fn, err = p.stub(e, unsupported.err), nil
 		}
 	}()
-	if err := emit(); err != nil {
+	err = emit()
+	if err == nil {
+		err = e.end()
+	}
+	if err != nil {
 		if errors.Is(err, ErrUnsupported) {
 			return p.stub(e, err), nil
 		}
@@ -739,16 +782,25 @@ func (p *llvmProgram) emitPending() error {
 	return nil
 }
 
-// finish sizes the function's frame and says which of its slots are roots,
-// now that every one has been handed out.
-func (e *funcEmitter) finish() llvm.Value {
-	defer e.b.Dispose()
+// end returns from the end of the body, and enters it from the function's
+// entry, by way of its landing pad if it defers.
+func (e *funcEmitter) end() error {
 	if !e.terminated() {
-		e.emitReturnVoid()
+		e.emitFallthroughReturn()
+	}
+	if len(e.defers) > 0 {
+		return e.emitLanding()
 	}
 	e.b.SetInsertPointAtEnd(e.entry)
 	e.locate(e.startLine, 0)
 	e.b.CreateBr(e.body)
+	return nil
+}
+
+// finish sizes the function's frame and says which of its slots are roots,
+// now that every one has been handed out.
+func (e *funcEmitter) finish() llvm.Value {
+	defer e.b.Dispose()
 	e.frame.SetOperand(0, e.const64(frameHeaderWords+e.slotCount))
 
 	roots := llvm.ConstNull(e.p.ptr)
@@ -889,6 +941,10 @@ func (p *llvmProgram) emitStaticInitializer(ast *syntax.AST) (llvm.Value, error)
 			e.b.CreateCall(p.entryType, fn, []llvm.Value{e.thread, null, null, null}, "")
 		}
 	}
+	if err := e.end(); err != nil {
+		e.b.Dispose()
+		return llvm.Value{}, err
+	}
 	return e.finish(), nil
 }
 
@@ -957,7 +1013,8 @@ func (e *funcEmitter) emitStaticMember(f *syntax.FieldMember) error {
 }
 
 // emitClassTable lays out the compiled methods of every class, sorted by short
-// id, as the runtime looks them up for dispatch.
+// id, as the runtime looks them up for dispatch. An enum or struct is given
+// only its Str, the one method the runtime calls on one, which is its first.
 func (p *llvmProgram) emitClassTable(ast *syntax.AST) (llvm.Value, int, error) {
 	type class struct {
 		short   uint64
@@ -965,17 +1022,23 @@ func (p *llvmProgram) emitClassTable(ast *syntax.AST) (llvm.Value, int, error) {
 		count   int
 	}
 	var classes []class
-	add := func(c syntax.DeclTypeable) {
+	add := func(c syntax.DeclTypeable, strOnly bool) {
 		if supportedObject(c) != nil {
 			return
 		}
 		methods := make([]llvm.Value, instanceFieldCount[*syntax.FieldMethod](c))
+		if strOnly {
+			methods = methods[:min(len(methods), 1)]
+		}
 		for i := range methods {
 			methods[i] = llvm.ConstNull(p.ptr)
 		}
 		for name, method := range instanceFields[*syntax.FieldMethod](c) {
+			if strOnly && name != syntax.StrMethodName {
+				continue
+			}
 			origin, ok := originMethod(c, name)
-			if ok && method.Body != nil && method.Generics() == nil {
+			if ok && method.Body != nil && method.Generics() == nil && *origin.Index() < len(methods) {
 				methods[*origin.Index()] = p.methodFunction(origin, c)
 			}
 		}
@@ -989,18 +1052,26 @@ func (p *llvmProgram) emitClassTable(ast *syntax.AST) (llvm.Value, int, error) {
 		a, _, _ := p.typeInstance(c.DeclType()).packed()
 		classes = append(classes, class{short: a >> 32, methods: table, count: len(methods)})
 	}
+	addGeneric := func(g syntax.DeclGeneric, strOnly bool) {
+		if g.Generics() == nil {
+			add(g, strOnly)
+			return
+		}
+		for _, entry := range g.Concretes().All() {
+			if !entry.Key.ContainsGenericArg() {
+				add(entry.Value, strOnly)
+			}
+		}
+	}
 	var visit func(d syntax.Decl)
 	visit = func(d syntax.Decl) {
-		if c, ok := d.(*syntax.DeclClass); ok {
-			if c.Generics() == nil {
-				add(c)
-			} else {
-				for _, entry := range c.Concretes().All() {
-					if !entry.Key.ContainsGenericArg() {
-						add(entry.Value)
-					}
-				}
-			}
+		switch d := d.(type) {
+		case *syntax.DeclClass:
+			addGeneric(d, false)
+		case *syntax.DeclStruct:
+			addGeneric(d, true)
+		case *syntax.DeclEnum:
+			add(d, true)
 		}
 		for child := range d.Decls() {
 			visit(child)
@@ -1168,7 +1239,7 @@ func (e *funcEmitter) entryAlloca(words uint64) llvm.Value {
 }
 
 func (e *funcEmitter) pushScope() {
-	e.scopes = append(e.scopes, &llvmScope{vars: map[string]llvmLocal{}})
+	e.scopes = append(e.scopes, &llvmScope{vars: map[string]llvmLocal{}, active: e.active})
 }
 
 func (e *funcEmitter) declare(name string, local llvmLocal) {
@@ -1176,6 +1247,7 @@ func (e *funcEmitter) declare(name string, local llvmLocal) {
 }
 
 func (e *funcEmitter) popScope() {
+	e.active = e.scopes[len(e.scopes)-1].active
 	e.scopes = e.scopes[:len(e.scopes)-1]
 }
 
@@ -1479,10 +1551,18 @@ func (e *funcEmitter) emitStmtKind(stmt syntax.Stmt) error {
 				return err
 			}
 		}
+		scope := e.scopes[len(e.scopes)-1]
 		if !e.terminated() {
-			if err := e.emitDefers(e.scopes[len(e.scopes)-1]); err != nil {
+			if err := e.emitDefers(scope); err != nil {
 				return err
 			}
+		}
+		if len(scope.defers) > 0 {
+			scope.resume = e.ctx.AddBasicBlock(e.fn, "resume")
+			if !e.terminated() {
+				e.b.CreateBr(scope.resume)
+			}
+			e.b.SetInsertPointAtEnd(scope.resume)
 		}
 		e.popScope()
 		return nil
@@ -1491,7 +1571,11 @@ func (e *funcEmitter) emitStmtKind(stmt syntax.Stmt) error {
 		scope := e.scopes[len(e.scopes)-1]
 		snapshot := append([]*llvmScope(nil), e.scopes...)
 		snapshot[len(snapshot)-1] = &llvmScope{vars: maps.Clone(scope.vars)}
-		scope.defers = append(scope.defers, llvmDefer{stmt: s.Stmt, scopes: snapshot})
+		d := &llvmDefer{stmt: s.Stmt, scopes: snapshot, scope: scope, id: len(e.defers) + 1, outer: e.active}
+		scope.defers = append(scope.defers, d)
+		e.defers = append(e.defers, d)
+		e.active = d.id
+		e.setDeferred(d.id)
 		return nil
 
 	case *syntax.StmtSwitch:
@@ -1640,10 +1724,14 @@ func (e *funcEmitter) emitBranch(block llvm.BasicBlock, stmt syntax.Stmt, end ll
 	if err := e.emitStmt(stmt); err != nil {
 		return err
 	}
+	scope := e.scopes[len(e.scopes)-1]
 	if !e.terminated() {
-		if err := e.emitDefers(e.scopes[len(e.scopes)-1]); err != nil {
+		if err := e.emitDefers(scope); err != nil {
 			return err
 		}
+	}
+	if len(scope.defers) > 0 {
+		scope.resume = end
 	}
 	e.popScope()
 	if !e.terminated() {
@@ -1658,14 +1746,124 @@ func (e *funcEmitter) emitDefers(scope *llvmScope) error {
 	scopes := e.scopes
 	defer func() { e.scopes = scopes }()
 	for i := len(scope.defers) - 1; i >= 0; i-- {
-		deferred := scope.defers[i]
-		e.scopes = append(deferred.scopes[:len(deferred.scopes):len(deferred.scopes)],
-			&llvmScope{vars: map[string]llvmLocal{}})
-		if err := e.emitStmt(deferred.stmt); err != nil {
+		if err := e.emitDeferred(scope.defers[i]); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// emitDeferred runs a deferred statement, with its names meaning what they
+// meant when it was deferred, once it is no longer one a panic would run.
+func (e *funcEmitter) emitDeferred(d *llvmDefer) error {
+	e.setDeferred(d.outer)
+	active := e.active
+	e.active = d.outer
+	defer func() { e.active = active }()
+	e.scopes = append(d.scopes[:len(d.scopes):len(d.scopes)], &llvmScope{vars: map[string]llvmLocal{}})
+	return e.emitStmt(d.stmt)
+}
+
+// setDeferred records id as the innermost defer where the function is
+// running.
+func (e *funcEmitter) setDeferred(id int) {
+	if e.deferred.IsNil() {
+		e.deferred = e.entryAlloca(1)
+	}
+	e.b.CreateStore(e.const64(uint64(id)), e.deferred).SetVolatile(true)
+}
+
+// emitLanding gives a function that defers its landing pad, which its entry
+// sets up: a panic landing there runs the defers innermost where it was, each
+// scope's last first. Once a scope's have run, execution goes on past the
+// scope if one of them recovered, and with the next scope's otherwise, until
+// none are left and the panic unwinds the function.
+func (e *funcEmitter) emitLanding() error {
+	landing := e.ctx.AddBasicBlock(e.fn, "landing")
+	unwind := e.ctx.AddBasicBlock(e.fn, "unwind")
+	handler := e.entryAlloca(handlerWords)
+	handler.SetAlignment(16)
+
+	e.b.SetInsertPointAtEnd(landing)
+	innermost := e.b.CreateLoad(e.p.i64, e.deferred, "")
+	innermost.SetVolatile(true)
+	choose := e.b.CreateSwitch(innermost, unwind, len(e.defers))
+	// A statement deferred inside a deferred block is a defer of its own each
+	// time that block is compiled, here too, so each gets its block as it is
+	// first named.
+	blocks := map[int]llvm.BasicBlock{}
+	blockOf := func(id int) llvm.BasicBlock {
+		block, ok := blocks[id]
+		if !ok {
+			block = e.ctx.AddBasicBlock(e.fn, "landing.defer")
+			blocks[id] = block
+			choose.AddCase(e.const64(uint64(id)), block)
+		}
+		return block
+	}
+
+	var recovered llvm.BasicBlock
+	scopes := e.scopes
+	defer func() { e.scopes = scopes }()
+	for i := 0; i < len(e.defers); i++ {
+		d := e.defers[i]
+		e.b.SetInsertPointAtEnd(blockOf(d.id))
+		if err := e.emitDeferred(d); err != nil {
+			return err
+		}
+		if e.terminated() {
+			continue
+		}
+		next := unwind
+		if d.outer != 0 {
+			next = blockOf(d.outer)
+			if e.defers[d.outer-1].scope == d.scope {
+				e.b.CreateBr(next)
+				continue
+			}
+		}
+		resume := d.scope.resume
+		if resume.IsNil() {
+			if recovered.IsNil() {
+				at := e.b.GetInsertBlock()
+				recovered = e.ctx.AddBasicBlock(e.fn, "recovered")
+				e.b.SetInsertPointAtEnd(recovered)
+				e.emitFallthroughReturn()
+				e.b.SetInsertPointAtEnd(at)
+			}
+			resume = recovered
+		}
+		panicking := e.call("zamrt_panicking", e.thread, handler)
+		e.b.CreateCondBr(e.b.CreateICmp(llvm.IntNE, panicking, llvm.ConstInt(e.p.ctx.Int8Type(), 0, false), ""), next, resume)
+	}
+
+	e.b.SetInsertPointAtEnd(unwind)
+	e.call("zamrt_unwind", e.thread, handler)
+	e.b.CreateUnreachable()
+
+	// The entry ends only once the defers above have taken what they need of
+	// it.
+	e.b.SetInsertPointAtEnd(e.entry)
+	e.locate(e.startLine, 0)
+	e.b.CreateStore(e.const64(0), e.deferred).SetVolatile(true)
+	e.call("zamrt_handler_push", e.thread, handler, e.frame)
+	args := []llvm.Value{handler}
+	if e.p.setjmpFrame {
+		args = append(args, llvm.ConstNull(e.p.ptr))
+	}
+	jumped := e.b.CreateCall(e.p.setjmp.typ, e.p.setjmp.fn, args, "")
+	e.b.CreateCondBr(e.b.CreateICmp(llvm.IntEQ, jumped, llvm.ConstInt(e.p.i32, 0, false), ""), e.body, landing)
+	return nil
+}
+
+// emitFallthroughReturn returns from the end of the function, answering what
+// its return slot holds: nothing a return wrote unless a panic interrupted
+// it, so the result's zero value.
+func (e *funcEmitter) emitFallthroughReturn() {
+	if e.returnType != nil {
+		e.copyWords(e.fn.Param(3), e.slot(e.returnSlot), stackWords(e.returnType))
+	}
+	e.emitReturnVoid()
 }
 
 // emitDefersFrom runs the defers of every scope from depth inward, innermost
@@ -1845,7 +2043,8 @@ func (e *funcEmitter) emitExprAs(expr syntax.Expr, target syntax.Type) (llvm.Val
 // word casts do.
 func (e *funcEmitter) convert(v llvm.Value, from, target syntax.Type) (llvm.Value, error) {
 	if syntax.StripConst(from).Kind() == syntax.TypeKindString && isStringBytesPointer(target) {
-		return e.b.CreateAdd(v, e.const64(stringBytesOffset), ""), nil
+		null := e.b.CreateICmp(llvm.IntEQ, v, e.const64(0), "")
+		return e.b.CreateSelect(null, v, e.b.CreateAdd(v, e.const64(stringBytesOffset), ""), ""), nil
 	}
 	toAny := syntax.StripConst(target).Kind() == syntax.TypeKindAny
 	fromAny := syntax.StripConst(from).Kind() == syntax.TypeKindAny
@@ -2286,7 +2485,14 @@ func (e *funcEmitter) pointeePlace(pointer syntax.Expr) (llvmPlace, error) {
 	if width != 1 && width != 4 && width != 8 && !isAggregate(w.Type) {
 		return llvmPlace{}, unsupported("dereferencing to %d bytes", width)
 	}
-	v, err := e.emitExpr(pointer)
+	// An index, p[i], is read as *(p + i): it is p that may not be null.
+	var v llvm.Value
+	var err error
+	if x, ok := pointer.(*syntax.ExprNAry); ok && (x.Kind() == syntax.ExprKindAdd || x.Kind() == syntax.ExprKindSubtract) {
+		v, err = e.pointerArithmetic(x, true)
+	} else {
+		v, err = e.emitExpr(pointer)
+	}
 	if err != nil {
 		return llvmPlace{}, err
 	}
@@ -2760,6 +2966,12 @@ func (e *funcEmitter) emitRuntimeComparison(x *syntax.ExprNAry) (llvm.Value, err
 // emitPointerArithmetic offsets a pointer by integers, each counting elements
 // of what the pointer points at.
 func (e *funcEmitter) emitPointerArithmetic(x *syntax.ExprNAry) (llvm.Value, error) {
+	return e.pointerArithmetic(x, false)
+}
+
+// pointerArithmetic is emitPointerArithmetic, panicking first when checked
+// and a pointer it offsets is null.
+func (e *funcEmitter) pointerArithmetic(x *syntax.ExprNAry, checked bool) (llvm.Value, error) {
 	if x.Kind() != syntax.ExprKindAdd && x.Kind() != syntax.ExprKindSubtract {
 		return llvm.Value{}, unsupported("pointer %s", x.Kind())
 	}
@@ -2783,6 +2995,8 @@ func (e *funcEmitter) emitPointerArithmetic(x *syntax.ExprNAry) (llvm.Value, err
 			word = e.b.CreatePtrToInt(word, e.p.i64, "")
 		case kind != syntax.TypeKindPointer:
 			return llvm.Value{}, unsupported("offsetting a pointer by %s", e.ground(operand.ResolvedType()))
+		case checked:
+			e.nullCheck(word, panicNullDereference)
 		}
 		switch {
 		case i == 0:
@@ -2894,20 +3108,38 @@ func (e *funcEmitter) binaryOp(op syntax.ExprKind, kind syntax.TypeKind, left, r
 		v = e.b.CreateOr(left, right, "")
 	case syntax.ExprKindBinaryXOR:
 		v = e.b.CreateXor(left, right, "")
-	case syntax.ExprKindBinaryShiftLeft:
-		v = e.b.CreateShl(left, e.shiftCount(right), "")
-	case syntax.ExprKindBinaryShiftRight:
-		v = e.b.CreateLShr(left, e.shiftCount(right), "")
-	case syntax.ExprKindBinaryShiftRightRight:
-		v = e.b.CreateAShr(left, e.shiftCount(right), "")
+	case syntax.ExprKindBinaryShiftLeft, syntax.ExprKindBinaryShiftRight, syntax.ExprKindBinaryShiftRightRight:
+		v = e.shift(op, kind, left, right)
 	}
 	return e.narrow(v, kind), nil
 }
 
-// shiftCount keeps a shift count to the word, as the hardware the
-// interpreter shifts on does.
-func (e *funcEmitter) shiftCount(v llvm.Value) llvm.Value {
-	return e.b.CreateAnd(v, e.const64(63), "")
+// shift shifts left by count as op says, or, by a negative int count, the
+// other way by its magnitude: a right shift for a left one, and a left shift
+// for either right one. The magnitude is kept to the word, as the hardware
+// the interpreter shifts on does.
+func (e *funcEmitter) shift(op syntax.ExprKind, kind syntax.TypeKind, left, count llvm.Value) llvm.Value {
+	by := func(op syntax.ExprKind, count llvm.Value) llvm.Value {
+		count = e.b.CreateAnd(count, e.const64(63), "")
+		switch op {
+		case syntax.ExprKindBinaryShiftLeft:
+			return e.b.CreateShl(left, count, "")
+		case syntax.ExprKindBinaryShiftRight:
+			return e.b.CreateLShr(left, count, "")
+		}
+		return e.b.CreateAShr(left, count, "")
+	}
+	forward := by(op, count)
+	if !signed(kind) {
+		return forward
+	}
+	back := syntax.ExprKindBinaryShiftLeft
+	if op == syntax.ExprKindBinaryShiftLeft {
+		back = syntax.ExprKindBinaryShiftRight
+	}
+	backward := by(back, e.b.CreateSub(e.const64(0), count, ""))
+	negative := e.b.CreateICmp(llvm.IntSLT, count, e.const64(0), "")
+	return e.b.CreateSelect(negative, backward, forward, "")
 }
 
 // emitDivision divides or takes the remainder, panicking on a zero divisor.

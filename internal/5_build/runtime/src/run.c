@@ -7,6 +7,7 @@
 #include "run.h"
 #include "thread.h"
 #include "vm.h"
+#include "zamrt.h"
 
 
 // How many operand words a value of the type occupies. The stack counts in
@@ -473,6 +474,8 @@ static void *instanceAt(const ZamThread *thread, const ZamImage *image,
                         ZamTypeID type, const ZamWord *value);
 static bool callCompiled(ZamThread *thread, void *instance, uint64_t slot,
                          ZamWord argument, ZamWord *answer);
+static bool callCompiledAs(ZamThread *thread, void *receiver, ZamTypeShort shortID,
+                           uint64_t slot, ZamWord argument, ZamWord *answer);
 
 // Declared ahead of itself because running that Eq is running instructions. It
 // is the one call out of these helpers back into the loop they are called from.
@@ -1592,15 +1595,30 @@ static void *instanceAt(const ZamThread *thread, const ZamImage *image,
 // program has it compiled. What the method answers, a word, is left in answer.
 static bool callCompiled(ZamThread *thread, void *instance, uint64_t slot,
                          ZamWord argument, ZamWord *answer) {
-    if (instance == NULL || thread->vm->compiledClasses == NULL)
+    if (instance == NULL)
         return false;
-    ZamEntry entry = zam_vm_compiled_method(
-        thread->vm, zam_instance_type(instance).shortID, slot);
+    return callCompiledAs(thread, instance, zam_instance_type(instance).shortID, slot,
+                          argument, answer);
+}
+
+// callCompiledAs is callCompiled for a receiver of the type shortID, which an
+// enum or struct, having no header, cannot say of itself.
+static bool callCompiledAs(ZamThread *thread, void *receiver, ZamTypeShort shortID,
+                           uint64_t slot, ZamWord argument, ZamWord *answer) {
+    if (receiver == NULL || thread->vm->compiledClasses == NULL)
+        return false;
+    ZamEntry entry = zam_vm_compiled_method(thread->vm, shortID, slot);
     if (entry == NULL)
         return false;
-    ZamWord args[2] = {(ZamWord)(uintptr_t)instance, argument};
+    ZamWord args[2] = {(ZamWord)(uintptr_t)receiver, argument};
     ZamWord result = 0;
+    // A Mark or Delete runs for the collector or the allocator, which a panic
+    // may not unwind; an Eq, Cmp, Hash or Str leaves nothing a landing does
+    // not put back.
+    bool unwinds = slot != ZAMOBJECT_SLOT_MARK && slot != ZAMOBJECT_SLOT_DELETE && !zam_gc_collecting(thread);
+    ZamHandler *handlers = unwinds ? thread->handlers : zamrt_handlers_hide(thread);
     entry(thread, NULL, args, &result);
+    zamrt_handlers_show(thread, handlers);
     if (answer != NULL)
         *answer = result;
     return true;
@@ -2392,8 +2410,16 @@ static ZamResult callObjectMethod(ZamThread *thread, const ZamImage *image,
                                   ZamTypeID argumentType, ZamTypeID answerType,
                                   ZamWord *answer) {
     const ZamWord *value = zam_thread_location_address(thread, receiver);
-    if (callCompiled(thread, instanceAt(thread, image, type, value), slot,
-                     argument, answer))
+    bool compiled;
+    if (namesValueWithStr(image, type)) {
+        void *pointee = *value == 0 ? NULL : zam_thread_location_address(thread, *value);
+        compiled = callCompiledAs(thread, pointee, pointeeOf(image, type).shortID, slot,
+                                  argument, answer);
+    } else {
+        compiled = callCompiled(thread, instanceAt(thread, image, type, value), slot,
+                                argument, answer);
+    }
+    if (compiled)
         return ZAMRESULT_CONTINUE;
     uint64_t outerEntry = thread->functionEntry;
     pushValueFrom(thread, image, type, receiver);
@@ -2743,11 +2769,10 @@ ZamTypeID zam_any_type(const void *anyBox) {
 void zam_any_unbox(ZamThread *thread, const void *anyBox, ZamTypeID target, void *out) {
     const ZamImage *image = &thread->vm->image;
     if (anyBox == NULL)
-        zam_die(ZAMEXIT_PANIC, "unbox of a null any\n");
+        zamrt_panic(thread, ZAMPANIC_NULL_ANY);
     const ZamWord *body = anyBody(anyBox);
     if (!typeIsSubtypeOf(image, zam_type_id_read(body), target))
-        zam_die(ZAMEXIT_PANIC, "any holds a value of a type the unbox "
-                                 "did not ask for\n");
+        zamrt_panic(thread, ZAMPANIC_ANY_TYPE);
     const void *payloadBox = (const void *)(uintptr_t)body[3];
     if (payloadBox == NULL)
         zam_die(ZAMEXIT_PANIC, "unbox of an any with no payload\n");
@@ -4688,7 +4713,7 @@ void zam_value_free(ZamThread *thread, ZamTypeID type, ZamWord pointer) {
         ZamMarkWord mark = zam_mark_load((void *)(uintptr_t)pointer);
         if (mark.contained) {
             if (mark.upvalue != 0)
-                zam_die(ZAMEXIT_PANIC, "freed an instance that lies inside another\n");
+                zamrt_panic(thread, ZAMPANIC_FREE_INTERIOR);
             zam_vm_free_raw(thread, (void *)(uintptr_t)pointer);
             return;
         }
@@ -4699,6 +4724,12 @@ void zam_value_free(ZamThread *thread, ZamTypeID type, ZamWord pointer) {
         if (typeIsPointer && !isMarkableInstance(image, pointee)) {
             zam_vm_free_raw(thread, (void *)(uintptr_t)pointer);
             return;
+        }
+        void *object = (void *)(uintptr_t)pointer;
+        ZamHeap *heap = &thread->vm->heap;
+        if (zam_heap_object_of(heap, object) != object) {
+            bool start = zam_heap_contains(heap, object) && zam_heap_block_of(heap, object) == object;
+            zamrt_panic(thread, start ? ZAMPANIC_DOUBLE_FREE : ZAMPANIC_FREE_INTERIOR);
         }
         zam_mark_kill((void *)(uintptr_t)pointer);
         return;
@@ -4834,7 +4865,14 @@ void *zam_thread_allocate(ZamThread *thread, ZamTypeID type, uint64_t elementCou
     element.arrayLength = 0;
     bool markable = isMarkableInstance(image, type);
     uint64_t elementBytes = zam_type_bytes(image, element);
-    uint64_t objectBytes = elementCount * elementBytes;
+    // A count is a word an int may have written, so one with its sign bit set
+    // was negative.
+    if (elementCount > INT64_MAX)
+        zamrt_panic(thread, ZAMPANIC_NEGATIVE_COUNT);
+    uint64_t objectBytes;
+    if (__builtin_mul_overflow(elementCount, elementBytes, &objectBytes) ||
+        (markable && !manual && elementCount > UINT32_MAX))
+        zamrt_panic(thread, ZAMPANIC_COUNT_OVERFLOW);
     void *object;
 
     if (markable && manual) {
@@ -5173,7 +5211,9 @@ static uint64_t callCompiledFunction(ZamThread *thread, ZamWord function, const 
     ZamWord *copy = zam_alloc((argWords + words + 1) * sizeof(ZamWord));
     memcpy(copy, args, argWords * sizeof(ZamWord));
     ZamWord *answer = copy + argWords;
+    ZamHandler *handlers = zamrt_handlers_hide(thread);
     ((ZamEntry)(uintptr_t)closure->instruction)(thread, closure, copy, answer);
+    zamrt_handlers_show(thread, handlers);
     memcpy(result, answer, words * sizeof(ZamWord));
     free(copy);
     return words;
