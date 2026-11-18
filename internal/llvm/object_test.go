@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -13,6 +14,9 @@ import (
 // TestEmitObjectLinksAndRuns emits an object for a main that calls puts, links
 // it with the system C compiler, and runs it.
 func TestEmitObjectLinksAndRuns(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no system C compiler for its own objects; lld links them in TestLinkCOFF")
+	}
 	InitializeAllTargetInfos()
 	InitializeAllTargets()
 	InitializeAllTargetMCs()

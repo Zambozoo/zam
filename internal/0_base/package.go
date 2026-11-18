@@ -189,9 +189,10 @@ func (pp *PackageProvider) download(repo, version, archive string) error {
 }
 
 // git runs git with args in dir, failing rather than prompting for
-// credentials.
+// credentials. Line endings are checked out as committed, so a dependency packs
+// to the same bytes and hash on Windows as anywhere else.
 func git(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
+	cmd := exec.Command("git", append([]string{"-c", "core.autocrlf=false"}, args...)...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.CombinedOutput(); err != nil {

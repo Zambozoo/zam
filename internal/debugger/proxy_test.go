@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -70,8 +71,10 @@ func fakeAdapter(record string) {
 		case "launch":
 			launch := fakeLaunch{Arguments: request.Arguments}
 			if program, ok := request.Arguments["program"].(string); ok {
+				// Windows marks a program by its .exe, having no execute bits.
 				info, err := os.Stat(program)
-				launch.Executable = err == nil && info.Mode()&0o111 != 0
+				launch.Executable = err == nil && (info.Mode()&0o111 != 0 ||
+					runtime.GOOS == "windows" && strings.EqualFold(filepath.Ext(program), ".exe"))
 			}
 			if commands, ok := request.Arguments["initCommands"].([]any); ok && len(commands) == 1 {
 				path := strings.Trim(strings.TrimPrefix(commands[0].(string), "command script import "), `"`)

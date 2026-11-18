@@ -61,6 +61,16 @@
 #define	BCRYPT_SALTSPACE	(7 + (BCRYPT_MAXSALT * 4 + 2) / 3 + 1)
 #define	BCRYPT_HASHSPACE	61
 
+/* Marks an array a string fills without its terminator, where the compiler
+ * knows the attribute. */
+#define BCRYPT_NONSTRING
+#ifdef __has_attribute
+#if __has_attribute(nonstring)
+#undef BCRYPT_NONSTRING
+#define BCRYPT_NONSTRING __attribute__((nonstring))
+#endif
+#endif
+
 static int encode_base64(char *, const uint8_t *, size_t);
 static int decode_base64(uint8_t *, size_t, const char *);
 
@@ -105,7 +115,7 @@ bcrypt_hashpass(const char *key, const char *salt, char *encrypted,
 	uint16_t j;
 	size_t key_len;
 	uint8_t salt_len, logr, minor;
-	uint8_t ciphertext[4 * BCRYPT_WORDS] __attribute__((nonstring)) = "OrpheanBeholderScryDoubt";
+	uint8_t ciphertext[4 * BCRYPT_WORDS] BCRYPT_NONSTRING = "OrpheanBeholderScryDoubt";
 	uint8_t csalt[BCRYPT_MAXSALT];
 	uint32_t cdata[BCRYPT_WORDS];
 

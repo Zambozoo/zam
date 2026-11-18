@@ -41,7 +41,8 @@ func runCReference(t *testing.T, harness string, input string, arg ...string) []
 	out, err := run.Output()
 	require.NoError(t, err)
 
-	return strings.Split(strings.TrimSpace(string(out)), "\n")
+	// A Windows program writes its lines ending \r\n.
+	return strings.Split(strings.TrimSpace(strings.ReplaceAll(string(out), "\r\n", "\n")), "\n")
 }
 
 // TestPerfectHashCConformance runs the reference lookup over tables the

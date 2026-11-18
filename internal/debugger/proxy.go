@@ -246,8 +246,13 @@ func (p *proxy) launch(body []byte, arguments json.RawMessage) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	binary := filepath.Join(p.dir, strings.TrimSuffix(filepath.Base(args.Program), filepath.Ext(args.Program)))
-	if err := build.LinkObject(object.Bytes, build.Options{OutputPath: binary, Project: project, Debugger: true}); err != nil {
+	opts := build.Options{Project: project, Debugger: true}
+	binary, err := build.ExecutablePath(opts, filepath.Join(p.dir, strings.TrimSuffix(filepath.Base(args.Program), filepath.Ext(args.Program))))
+	if err != nil {
+		return nil, err
+	}
+	opts.OutputPath = binary
+	if err := build.LinkObject(object.Bytes, opts); err != nil {
 		return nil, err
 	}
 	formatters := filepath.Join(p.dir, "zam_lldb.py")

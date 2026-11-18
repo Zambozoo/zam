@@ -575,8 +575,12 @@ func (p *projectParser) parseFile(path base.Path) (*File, error) {
 
 		lexer, err := NewLexer(newRuneReader(reader))
 		if err != nil {
+			reader.Close()
 			return nil, base.NewError(err, base.NewLocation(path, nil))
 		}
+		// A parse that stops before the end leaves the file open, which Windows
+		// will not remove.
+		defer lexer.Close()
 
 		// An error the parse recovered from is located at the token it was raised
 		// at, and one it gave up on at the token it had reached: a parse gives up

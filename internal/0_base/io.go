@@ -76,10 +76,11 @@ func StdName(p Path) string {
 // What comes back is a path string rather than a Path because normalizing it
 // is [FileProvider.NewPath]'s to do.
 func (p Path) Resolve(pathStr string) string {
-	// An absolute path names a file outright; one already spelled std:// is
-	// itself a standard library path, which a user import by package name was
-	// rewritten to by ResolveInto. Either is returned as it is.
-	if filepath.IsAbs(pathStr) || isStdPathStr(pathStr) {
+	// An absolute path names a file outright, as does a rooted one, which on
+	// Windows is on the current drive; one already spelled std:// is itself a
+	// standard library path, which a user import by package name was rewritten
+	// to by ResolveInto. Each is returned as it is.
+	if filepath.IsAbs(pathStr) || path.IsAbs(filepath.ToSlash(pathStr)) || isStdPathStr(pathStr) {
 		return pathStr
 	}
 
@@ -119,7 +120,7 @@ func ComparePath(a, b Path) int {
 
 // Base returns the base name of the path.
 func (p Path) Base() string {
-	return path.Base(string(p))
+	return path.Base(filepath.ToSlash(string(p)))
 }
 
 // Dir names the directory the path's file sits in, which is the package its

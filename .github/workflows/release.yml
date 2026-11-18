@@ -101,9 +101,10 @@ jobs:
 
       - uses: actions/download-artifact@v7
         with:
-          name: test-packs
+          pattern: test-pack-*
+          merge-multiple: true
 
-      - run: mkdir -p bin && tar -xzf packs.tar.gz -C bin
+      - run: mkdir -p bin && for pack in pack-*.tar.gz; do tar -xzf "$pack" -C bin; done
 
       - run: release/packs.sh "$VERSION" dist
 

@@ -25,13 +25,15 @@ void GC_STEP_TRACE(ZamThread *thread) {
 }
 
 // GC_STEP_FINISH() lets the remark run and waits for the collection to be
-// swept.
+// swept. The remark clears marking before it sets sweeping, so the stop it
+// runs in is waited out too, as awaitCycle does.
 void GC_STEP_FINISH(ZamThread *thread) {
     ZamVM *vm = thread->vm;
     zam_vm_release_remark(vm);
     zam_vm_enter_safe(thread);
     pthread_mutex_lock(&vm->collectionLock);
-    while (atomic_load(&vm->marking) || atomic_load(&vm->sweeping))
+    while (atomic_load(&vm->marking) || atomic_load(&vm->sweeping) ||
+           atomic_load(&vm->stopRequested))
         pthread_cond_wait(&vm->collectionChanged, &vm->collectionLock);
     pthread_mutex_unlock(&vm->collectionLock);
     zam_vm_leave_safe(thread);
