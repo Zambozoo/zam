@@ -51,12 +51,17 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # The end-to-end tests' binaries need more disk than a Linux runner has
+      # free beside toolchains zam does not use.
+      - if: runner.os == 'Linux'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
       - uses: actions/download-artifact@v7
         with:
           pattern: pack-*
           merge-multiple: true
 
-      - run: for pack in pack-*.tar.gz; do tar -xzf "$pack"; done
+      - run: for pack in pack-*.tar.gz; do tar -xzf "$pack" && rm "$pack"; done
 
       - uses: actions/download-artifact@v7
         with:
@@ -75,7 +80,7 @@ jobs:
         with:
           name: llvm-${{ matrix.platform }}
 
-      - run: tar -xzf llvm.tar.gz
+      - run: tar -xzf llvm.tar.gz && rm llvm.tar.gz
 
       - if: runner.os == 'Linux'
         uses: docker/setup-buildx-action@v3
