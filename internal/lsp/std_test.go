@@ -1,7 +1,6 @@
 package lsp
 
 import (
-	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,7 +27,7 @@ func TestServerChecksStdSourceAsTheStdLibrary(t *testing.T) {
 	filePath := filepath.Join(dir, "io", "local", "File.zam")
 	text, err := os.ReadFile(filePath)
 	require.NoError(t, err)
-	uri := (&url.URL{Scheme: "file", Path: filePath}).String()
+	uri := fileURI(filePath)
 
 	c := newClient(t)
 	c.call(protocol.MethodInitialize, protocol.InitializeParams{})

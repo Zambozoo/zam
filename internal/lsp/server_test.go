@@ -2,7 +2,9 @@ package lsp
 
 import (
 	"encoding/json"
-	"net/url"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
+	base "github.com/zambozoo/zam/internal/0_base"
 )
 
 // client drives a server through its handler the way the transport would, and
@@ -61,7 +64,7 @@ func (c *client) next() protocol.PublishDiagnosticsParams {
 // and closing it.
 func TestServerPublishesDiagnosticsAsDocumentsChange(t *testing.T) {
 	paths := project(t, map[string]string{"Main.zam": ""})
-	uri := (&url.URL{Scheme: "file", Path: paths["Main.zam"].String()}).String()
+	uri := fileURI(paths["Main.zam"].String())
 	c := newClient(t)
 
 	result := c.call(protocol.MethodInitialize, protocol.InitializeParams{}).(protocol.InitializeResult)
@@ -98,4 +101,22 @@ func TestServerPublishesDiagnosticsAsDocumentsChange(t *testing.T) {
 	assert.Empty(t, published.Diagnostics)
 
 	c.call(protocol.MethodShutdown, nil)
+}
+
+// TestFileURIsNameTheirFiles turns a path into the URI an editor names it by
+// and back, as an editor writes the URI too: VS Code escapes a drive's colon.
+func TestFileURIsNameTheirFiles(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "Main.zam")
+	want, err := base.ParsePath(file)
+	require.NoError(t, err)
+
+	uris := []protocol.DocumentUri{fileURI(file)}
+	if runtime.GOOS == "windows" {
+		uris = append(uris, "file:///"+strings.Replace(filepath.ToSlash(file), ":", "%3A", 1))
+	}
+	for _, uri := range uris {
+		got, err := pathOf(uri)
+		require.NoError(t, err, uri)
+		assert.Equal(t, want, got, uri)
+	}
 }

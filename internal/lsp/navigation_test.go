@@ -1,7 +1,6 @@
 package lsp
 
 import (
-	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -25,8 +24,8 @@ func TestServerAnswersQuestionsAboutNames(t *testing.T) {
 		"Main.zam":  main,
 		"Other.zam": "namespace Other {\n    // g returns *one*.\n    static fun int() g = () { return 1; }\n}\n",
 	})
-	uri := (&url.URL{Scheme: "file", Path: paths["Main.zam"].String()}).String()
-	otherURI := (&url.URL{Scheme: "file", Path: paths["Other.zam"].String()}).String()
+	uri := fileURI(paths["Main.zam"].String())
+	otherURI := fileURI(paths["Other.zam"].String())
 
 	c := newClient(t)
 	c.call(protocol.MethodInitialize, protocol.InitializeParams{})
@@ -109,7 +108,7 @@ func TestServerNavigatesEachFieldOfADottedName(t *testing.T) {
 		"    }\n" +
 		"}\n"
 	paths := project(t, map[string]string{"Main.zam": main})
-	uri := (&url.URL{Scheme: "file", Path: paths["Main.zam"].String()}).String()
+	uri := fileURI(paths["Main.zam"].String())
 
 	c := newClient(t)
 	c.call(protocol.MethodInitialize, protocol.InitializeParams{})

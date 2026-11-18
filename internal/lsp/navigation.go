@@ -2,7 +2,6 @@ package lsp
 
 import (
 	"io"
-	"net/url"
 	"sort"
 	"strings"
 
@@ -130,7 +129,7 @@ func (s *server) locationOf(path base.Path, name *syntax.Token) (protocol.Locati
 	if !ok {
 		return protocol.Location{}, false
 	}
-	return protocol.Location{URI: (&url.URL{Scheme: "file", Path: filePath}).String(), Range: rng}, true
+	return protocol.Location{URI: fileURI(filePath), Range: rng}, true
 }
 
 // rangeOf returns the range of a name written in a file. A name is an

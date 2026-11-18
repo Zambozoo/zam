@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -230,5 +231,19 @@ func pathOf(uri protocol.DocumentUri) (base.Path, error) {
 	if u.Scheme != "file" {
 		return "", fmt.Errorf("unsupported document URI %q: only file URIs are checked", uri)
 	}
-	return base.ParsePath(u.Path)
+	p := u.Path
+	// A Windows path is written after a slash, as /C:/dir/file.
+	if runtime.GOOS == "windows" && len(p) >= 3 && p[0] == '/' && p[2] == ':' {
+		p = p[1:]
+	}
+	return base.ParsePath(filepath.FromSlash(p))
+}
+
+// fileURI returns the file URI of the file at path.
+func fileURI(path string) protocol.DocumentUri {
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
 }

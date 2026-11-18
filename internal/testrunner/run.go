@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"sync"
 	"time"
@@ -258,8 +259,21 @@ func runFile(binary string, index int, args []string) result {
 	switch {
 	case errors.As(err, &exit):
 		r.status, r.ending = exit.ExitCode(), exit.String()
+		if runtime.GOOS == "windows" {
+			r.status, r.ending = windowsStatus(r.status, r.ending)
+		}
 	case err != nil:
 		r.err = fmt.Errorf("cannot run tests: %w", err)
 	}
 	return r
+}
+
+// windowsStatus answers a Windows process's exit code as a POSIX status: an
+// exception, as an access violation is, ends it as a signal does, with status
+// -1, and any other code is its low byte, as a POSIX system keeps.
+func windowsStatus(code int, ending string) (int, string) {
+	if c := uint32(code); c >= 0xC0000000 && c < 0xD0000000 {
+		return -1, fmt.Sprintf("exception %#08x", c)
+	}
+	return code & 0xff, ending
 }

@@ -2,8 +2,10 @@ package testrunner
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +13,15 @@ import (
 	base "github.com/zambozoo/zam/internal/0_base"
 	command "github.com/zambozoo/zam/internal/1_command"
 )
+
+// skipInterpreterOnWindows skips a test of the interpreter's build, which is
+// not ported to Windows.
+func skipInterpreterOnWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("the interpreter's build is not ported to Windows")
+	}
+}
 
 // run runs zam test with args after the verb, returning what it wrote and
 // whether every test passed.
@@ -31,6 +42,7 @@ func run(t *testing.T, args ...string) (string, bool) {
 // ended. No file's outcome reaches any other's.
 func TestRun(t *testing.T) {
 	t.Parallel()
+	skipInterpreterOnWindows(t)
 	dir := writeFiles(t, map[string]string{
 		"list/List.zam": `namespace List {
     fun int(int) Double = (x) {
@@ -94,8 +106,8 @@ public namespace CrashTest {
 	assert.Regexp(t, `^=== RUN   CrashTest.Panics
 boom
 \tat System.Panic \(std://lang/System.zam:\d+\)
-\tat CrashTest.Panics \(\S*/Crash.test.zam:5\)
-\tat ZamTestMain.main \(\S*/ZamTestMain\.test\.zam:\d+\)
+\tat CrashTest.Panics \(\S*[/\\]Crash.test.zam:5\)
+\tat ZamTestMain.main \(\S*[/\\]ZamTestMain\.test\.zam:\d+\)
 FAIL \S*`+regexpQuote(crash)+` \(exit 255\)
 === RUN   FatalTest.Stops
     Fatal.test.zam:5: stopped
@@ -123,6 +135,7 @@ $`, out)
 // passes.
 func TestRunPicksTests(t *testing.T) {
 	t.Parallel()
+	skipInterpreterOnWindows(t)
 	dir := writeFiles(t, map[string]string{
 		"List.test.zam": `import std("test/Assert.zam");
 
@@ -187,8 +200,8 @@ public namespace CrashTest {
 	assert.Regexp(t, `^=== RUN   CrashTest.Panics
 boom
 \tat System.Panic \(std://lang/System.zam:\d+\)
-\tat CrashTest.Panics \(\S*/Crash.test.zam:5\)
-\tat ZamTestMain.main \(\S*/ZamTestMain\.test\.zam:\d+\)
+\tat CrashTest.Panics \(\S*[/\\]Crash.test.zam:5\)
+\tat ZamTestMain.main \(\S*[/\\]ZamTestMain\.test\.zam:\d+\)
 FAIL \S*`+regexpQuote(crash)+` \(exit 255\)
 === RUN   ListTest.Doubles
 --- PASS: ListTest.Doubles
@@ -198,4 +211,22 @@ FAIL \S*`+regexpQuote(crash)+` \(exit 255\)
 FAIL
 FAIL \S*`+regexpQuote(list)+` \S+
 $`, out)
+}
+
+// TestWindowsStatusReadsAsPOSIX reads Windows exit codes as POSIX statuses: a
+// panic's -1 as its low byte, and an access violation as a crash.
+func TestWindowsStatusReadsAsPOSIX(t *testing.T) {
+	for _, test := range []struct {
+		code   int
+		status int
+		ending string
+	}{
+		{code: 1, status: 1, ending: "exit status 1"},
+		{code: 0xFFFFFFFF, status: 255, ending: "exit status 4294967295"},
+		{code: 0xC0000005, status: -1, ending: "exception 0xc0000005"},
+	} {
+		status, ending := windowsStatus(test.code, fmt.Sprintf("exit status %d", test.code))
+		assert.Equal(t, test.status, status, "%#x", test.code)
+		assert.Equal(t, test.ending, ending, "%#x", test.code)
+	}
 }

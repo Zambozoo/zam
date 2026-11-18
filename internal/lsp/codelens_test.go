@@ -1,7 +1,6 @@
 package lsp
 
 import (
-	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -23,7 +22,7 @@ const lensTestSource = `public namespace XTest {
 // been checked.
 func lenses(t *testing.T, path base.Path, text string) []protocol.CodeLens {
 	t.Helper()
-	uri := (&url.URL{Scheme: "file", Path: path.String()}).String()
+	uri := fileURI(path.String())
 	c := newClient(t)
 	c.call(protocol.MethodInitialize, protocol.InitializeParams{})
 	c.call(protocol.MethodTextDocumentDidOpen, protocol.DidOpenTextDocumentParams{TextDocument: protocol.TextDocumentItem{
