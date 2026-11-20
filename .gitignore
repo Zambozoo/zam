@@ -6,7 +6,7 @@ out
 internal/compiler/3_build/runtime/build
 bin
 vendor
-zam
+/zam
 node_modules
 *.vsix
 editors/vscode/LICENSE
