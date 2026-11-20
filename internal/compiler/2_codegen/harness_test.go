@@ -18,8 +18,8 @@ import (
 // package-wide run compiles each one once rather than once per test.
 //
 // Entries live for the test binary's whole run — the binary itself sits in a
-// package-level temp dir that the OS cleans up — so a later test that asks
-// for the same harness gets back the path the first test already compiled to.
+// package-level temp dir that TestMain removes — so a later test that asks for
+// the same harness gets back the path the first test already compiled to.
 var (
 	harnessCacheMu sync.Mutex
 	harnessCache   = map[string]*harnessEntry{}
@@ -34,6 +34,15 @@ type harnessEntry struct {
 	once sync.Once
 	path string
 	err  error
+}
+
+// TestMain removes the harness binaries once every test has run.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if harnessDir != "" {
+		_ = os.RemoveAll(harnessDir)
+	}
+	os.Exit(code)
 }
 
 // harnessSystemLinks are what a harness links from the system beyond the pack,

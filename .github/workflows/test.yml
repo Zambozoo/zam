@@ -61,11 +61,6 @@ jobs:
 
       - run: for pack in pack-*.tar.gz; do tar -xzf "$pack" && rm "$pack"; done
 
-      - uses: actions/download-artifact@v7
-        with:
-          name: release-packs
-          path: release-packs
-
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -74,11 +69,15 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      - uses: actions/download-artifact@v7
+      # Linux tests in the image, with its own LLVM, so the release's LLVM is
+      # fetched there only once they are done, for the binary check.
+      - if: runner.os != 'Linux'
+        uses: actions/download-artifact@v7
         with:
           name: llvm-${{ matrix.platform }}
 
-      - run: tar -xzf llvm.tar.gz && rm llvm.tar.gz
+      - if: runner.os != 'Linux'
+        run: tar -xzf llvm.tar.gz && rm llvm.tar.gz
 
       - if: runner.os == 'Linux'
         uses: docker/setup-buildx-action@v3
@@ -107,6 +106,29 @@ jobs:
           source build/release/cgo.sh "$PWD/llvm"
           export ZAM_PACKS=$(cygpath -m "$PWD/packs")
           go test -tags zam_static ./... -count=1 -timeout 45m
+
+      # The image and what it built are done with, and leave room for the
+      # release's LLVM.
+      - if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          docker image rm -f zam-linux
+          docker volume rm -f zam-linux-cache
+          docker builder prune -af
+          df -h /
+
+      - if: ${{ !cancelled() && runner.os == 'Linux' }}
+        uses: actions/download-artifact@v7
+        with:
+          name: llvm-${{ matrix.platform }}
+
+      - if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: tar -xzf llvm.tar.gz && rm llvm.tar.gz
+
+      - if: ${{ !cancelled() }}
+        uses: actions/download-artifact@v7
+        with:
+          name: release-packs
+          path: release-packs
 
       # The binary as a release builds it, checked whether or not the tests
       # passed.
