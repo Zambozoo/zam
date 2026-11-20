@@ -1,0 +1,12 @@
+import "Shapes.zam";
+
+public namespace Aliases {
+    alias Number = int;
+    alias Twin[T] = Shapes.Pair[T, T];
+    alias Fn[R, P] = R(P);
+    alias Duo[T] = (T, T)[2];
+    var Number n = 1;
+    var Twin[int] twin;
+    var Fn[int, str] fn;
+    var Duo[int] duo;
+}

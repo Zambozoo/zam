@@ -1,0 +1,4 @@
+name: norepo
+dependencies:
+  dep:
+    hash: h1

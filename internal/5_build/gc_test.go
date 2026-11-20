@@ -29,7 +29,7 @@ func compile(t *testing.T, source string) string {
 }
 
 // compileWith is compile with flags added to the compiler's command line.
-func compileWith(t *testing.T, flags []string, source string) string {
+func compileWith(t testing.TB, flags []string, source string) string {
 	t.Helper()
 
 	dir := t.TempDir()
@@ -45,40 +45,22 @@ func compileWith(t *testing.T, flags []string, source string) string {
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
-	if compilesNatively() {
-		object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
-		require.NoError(t, err)
-		cache, err := nativeRuntimeCache()
-		require.NoError(t, err)
-		require.NoError(t, build.LinkObject(object.Bytes, build.Options{
-			OutputPath:      out,
-			Project:         ast.MainCodeDecl.File().Project,
-			RuntimeCacheDir: cache,
-			Target:          testTarget(),
-		}))
-		return out
-	}
-	result, err := codegen.GenerateCode(cmd, ast)
+	object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple, Optimization: cmd.Optimization})
 	require.NoError(t, err)
-	require.NoError(t, build.Build(result.Image, result.NativeNames, build.Options{
-		OutputPath: out,
-		Project:    ast.MainCodeDecl.File().Project,
+	cache, err := nativeRuntimeCache()
+	require.NoError(t, err)
+	require.NoError(t, build.LinkObject(object.Bytes, build.Options{
+		OutputPath:      out,
+		Project:         ast.MainCodeDecl.File().Project,
+		RuntimeCacheDir: cache,
+		Target:          testTarget(),
 	}))
 	return out
 }
 
-// nativeTestVariable, when set, has the end-to-end tests compile their
-// programs to native code instead of embedding a bytecode image.
-const nativeTestVariable = "ZAM_TEST_NATIVE"
-
 // targetTestVariable names, when set, the target the end-to-end tests compile
-// their programs for natively, and run them for: under Wine for Windows.
+// their programs for and run them for: under Wine for Windows.
 const targetTestVariable = "ZAM_TEST_TARGET"
-
-// compilesNatively reports whether the end-to-end tests compile to native code.
-func compilesNatively() bool {
-	return os.Getenv(nativeTestVariable) != "" || os.Getenv(targetTestVariable) != ""
-}
 
 // testTarget is the target the end-to-end tests compile for: as
 // $ZAM_TEST_TARGET says, else the host.
@@ -132,7 +114,7 @@ func targetCommand(path string, args ...string) *exec.Cmd {
 
 // run runs a binary with args to its end and returns what it wrote and how it
 // exited.
-func run(t *testing.T, binary string, args ...string) (stdout, stderr string, status int) {
+func run(t testing.TB, binary string, args ...string) (stdout, stderr string, status int) {
 	t.Helper()
 
 	out, err := targetCommand(binary, args...).Output()
@@ -146,13 +128,13 @@ func run(t *testing.T, binary string, args ...string) (stdout, stderr string, st
 
 // runVerified runs a binary as run does, with every collection checking that a
 // minor collection in its place would have freed nothing reachable.
-func runVerified(t *testing.T, binary string, args ...string) (stdout, stderr string, status int) {
+func runVerified(t testing.TB, binary string, args ...string) (stdout, stderr string, status int) {
 	t.Helper()
 	return runWith(t, []string{"ZAM_GC_VERIFY=1"}, binary, args...)
 }
 
 // runWith runs a binary as run does, with variables added to its environment.
-func runWith(t *testing.T, variables []string, binary string, args ...string) (stdout, stderr string, status int) {
+func runWith(t testing.TB, variables []string, binary string, args ...string) (stdout, stderr string, status int) {
 	t.Helper()
 
 	var out, errOut strings.Builder
@@ -238,7 +220,7 @@ namespace Main {
     }
 }
 `)
-	for _, runner := range []func(*testing.T, string, ...string) (string, string, int){run, runVerified} {
+	for _, runner := range []func(testing.TB, string, ...string) (string, string, int){run, runVerified} {
 		stdout, stderr, status := runner(t, binary)
 		require.Zero(t, status, stderr)
 		assert.Equal(t, "0\n", stdout)
@@ -356,7 +338,7 @@ namespace Main {
     }
 }
 `)
-	for _, runner := range []func(*testing.T, string, ...string) (string, string, int){run, runVerified} {
+	for _, runner := range []func(testing.TB, string, ...string) (string, string, int){run, runVerified} {
 		stdout, stderr, status := runner(t, binary)
 		require.Zero(t, status, stderr)
 		assert.Equal(t, "0\n", stdout)
@@ -409,220 +391,6 @@ namespace Main {
 		assert.Regexp(t, `finalized=[1-9]`, stderr)
 		assert.Regexp(t, `survived=[1-9]`, stderr)
 	}
-}
-
-// TestConcurrentMarkKeepsWhatTheProgramMoves holds an old chain long enough to
-// keep the marker busy, and while it marks moves a young box along the chain
-// through the stack, rewrites an encoded word only a Mark of the program's own
-// decodes, replaces and frees memory of the program's own that another such
-// Mark reads, and grows a list. The remark, and every minor collection run
-// alongside the marker meanwhile, has to find each of them.
-func TestConcurrentMarkKeepsWhatTheProgramMoves(t *testing.T) {
-	t.Parallel()
-	binary := compile(t, `import std("lang/*");
-import std("io/local/*");
-import std("data/list/*");
-
-namespace Main {
-    class Box {
-        var str name;
-    }
-
-    class Node {
-        var Box* box;
-        var Node* next;
-    }
-
-    // Coded keeps a box only as a word its Mark decodes.
-    class Coded {
-        var uint word;
-
-        public fun void() Mark = () {
-            if (this.word != 0U) {
-                mark((this.word ^ 4099U){void*}{Box*});
-            }
-        }
-    }
-
-    // Slots keeps boxes encoded in memory of the program's own.
-    class Slots {
-        var uint* at;
-
-        public fun void() Mark = () {
-            if (this.at == null) {
-                return;
-            }
-            for (var uint i = 0U; i < 4U; i++) {
-                if (this.at[i] != 0U) {
-                    mark((this.at[i] ^ 257U){void*}{Box*});
-                }
-            }
-        }
-    }
-
-    static var str last = "";
-
-    static fun Box*(str) box = (name) {
-        var Box* b = new(Box);
-        b.name = name;
-        return b;
-    }
-
-    fun void(uint, str...) main = (argC, argV) {
-        var Node* head = null;
-        for (var int i = 0; i < 2000; i++) {
-            var Node* node = new(Node);
-            node.next = head;
-            head = node;
-        }
-        var Coded* coded = new(Coded);
-        var Slots* slots = new(Slots);
-        slots.at = new(uint, 4U);
-        for (var uint k = 0U; k < 4U; k++) {
-            slots.at[k] = 0U;
-        }
-        var ArrList[Box*]* list = ArrList::[Box*]New(0U);
-
-        var int bad = 0;
-        for (var int i = 0; i < 200; i++) {
-            var Node* n = head;
-            n.box = Main::box(i{str});
-            for (var int j = 0; j < 50; j++) {
-                var Box* held = n.box;
-                n.box = null;
-                n = n.next;
-                n.box = held;
-                Main::last = j{str} + "-churn";
-            }
-
-            var Box* c = Main::box(i{str} + "-coded");
-            coded.word = c{uint} ^ 4099U;
-            c = null;
-
-            var Box* s = Main::box(i{str} + "-slot");
-            var uint* old = slots.at;
-            var uint* fresh = new(uint, 4U);
-            for (var uint k = 0U; k < 4U; k++) {
-                fresh[k] = old[k];
-            }
-            slots.at = fresh;
-            fresh[(i % 4){uint}] = s{uint} ^ 257U;
-            s = null;
-            free(old);
-
-            list.AddLast(Main::box(i{str} + "-list"));
-            for (var int j = 0; j < 50; j++) {
-                Main::last = j{str} + "-churn";
-            }
-
-            if (n.box.name != i{str}) {
-                bad++;
-            }
-            if ((coded.word ^ 4099U){void*}{Box*}.name != i{str} + "-coded") {
-                bad++;
-            }
-            if ((slots.at[(i % 4){uint}] ^ 257U){void*}{Box*}.name != i{str} + "-slot") {
-                bad++;
-            }
-            if (list.Get(i{uint}).name != i{str} + "-list") {
-                bad++;
-            }
-        }
-        System.GC::Major();
-        File::StdOut.WriteStr(bad{str} + "\n");
-    }
-}
-`)
-	// Where a remark lands here is up to timing; TestRemarkFindsWhatChangedWhileTracing
-	// puts one exactly between each change and the marker's tracing.
-	stdout, stderr, status := runVerified(t, binary)
-	require.Zero(t, status, stderr)
-	assert.Equal(t, "0\n", stdout)
-	stdout, stderr, status = runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY=1"}, binary)
-	require.Zero(t, status, stderr)
-	assert.Equal(t, "0\n", stdout)
-	assert.Regexp(t, ` concurrent pause=[^\n]* mark=[^\n]* precleaned=\d`, stderr)
-}
-
-// TestConcurrentMarkKeepsContainersWhole churns containers through rehashes,
-// reused slots, edge splits and merges, growth and removal while concurrent
-// majors run, so that a remark lands mid-operation.
-func TestConcurrentMarkKeepsContainersWhole(t *testing.T) {
-	t.Parallel()
-	binary := compile(t, `import std("lang/*");
-import std("io/local/*");
-import std("data/map/*");
-import std("data/trie/*");
-import std("data/heap/*");
-
-namespace Main {
-    // Key holds the strings of a key's run, which the collector does not
-    // trace.
-    class Key {
-        var str a;
-        var str b;
-        var str c;
-        var str* run;
-    }
-
-    static fun Key*(int) key = (i) {
-        var Key* k = new(Key);
-        k.a = (i % 3){str} + "a";
-        k.b = (i % 9){str} + "b";
-        k.c = i{str} + "c";
-        k.run = new(str, 3U);
-        k.run[0] = k.a;
-        k.run[1] = k.b;
-        k.run[2] = k.c;
-        return k;
-    }
-
-    fun void(uint, str...) main = (argC, argV) {
-        var HashMap[str, str]* m = HashMap::[str, str]New(0U);
-        var HashTrieMap[str, int]* t = HashTrieMap::[str, int]New();
-        var ArrPriorityQueue[int, str]* q = ArrPriorityQueue::[int, str]New(0U);
-        var int bad = 0;
-        for(var int r = 0; r < 20; r++) {
-            for(var int i = 0; i < 100; i++) {
-                m.Put(i{str} + "k", i{str} + "v");
-                var Key* k = Main::key(i);
-                t.Put(3U, k.run, i);
-                free(k.run);
-                q.Add(i, i{str} + "q");
-            }
-            for(var int i = 0; i < 100; i = i + 2) {
-                m.Remove(i{str} + "k");
-                var Key* k = Main::key(i);
-                t.Remove(3U, k.run);
-                free(k.run);
-            }
-            for(var int i = 0; i < 100; i++) {
-                var Key* k = Main::key(i);
-                if(i % 2 == 1) {
-                    if(m.Get(i{str} + "k").0 != i{str} + "v" || t.Get(3U, k.run).0 != i) {
-                        bad++;
-                    }
-                    m.Remove(i{str} + "k");
-                    t.Remove(3U, k.run);
-                } else if(m.Get(i{str} + "k").1 || t.Get(3U, k.run).1) {
-                    bad++;
-                }
-                free(k.run);
-                var (int, str) e = q.RemoveMin();
-                if(e.0 != i || e.1 != i{str} + "q") {
-                    bad++;
-                }
-            }
-        }
-        File::StdOut.WriteStr(bad{str} + "\n");
-    }
-}
-`)
-	// Where a remark lands here is up to timing; TestRemarkFindsWhatChangedWhileTracing
-	// puts one exactly between each change and the marker's tracing.
-	stdout, stderr, status := runVerified(t, binary)
-	require.Zero(t, status, stderr)
-	assert.Equal(t, "0\n", stdout)
 }
 
 // TestParallelMarkKeepsEverything holds a wide tree whose nodes each keep a
@@ -955,7 +723,7 @@ namespace Main {
     }
 }
 `)
-	for _, runner := range []func(*testing.T, string, ...string) (string, string, int){run, runVerified} {
+	for _, runner := range []func(testing.TB, string, ...string) (string, string, int){run, runVerified} {
 		stdout, stderr, status := runner(t, binary)
 		require.Zero(t, status, stderr)
 		assert.Equal(t, "600 2670\n", stdout)

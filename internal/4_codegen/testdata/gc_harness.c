@@ -8,10 +8,12 @@
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "definition.h"
 #include "gc.h"
+#include "harness_image.h"
 #include "image.h"
 #include "instance.h"
 #include "run.h"
@@ -141,8 +143,10 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    size_t byteCount;
+    uint8_t *image = readImage(argv[2], &byteCount);
     ZamVM vm;
-    zam_vm_init(&vm, argv[2]);
+    zam_vm_init(&vm, image, byteCount);
     vm.stats = true;
     if (strcmp(argv[1], "handOver") == 0)
         handOver(&vm);
@@ -154,5 +158,6 @@ int main(int argc, char **argv) {
     }
     fflush(stdout);
     zam_vm_free(&vm);
+    free(image);
     return 0;
 }

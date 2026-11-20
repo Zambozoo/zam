@@ -27,9 +27,9 @@ typedef uint64_t ZamWord;
 #error "the Zamylene image format is little-endian; this host is not"
 #endif
 
-// Exit statuses the runtime itself ends with. A program's own status comes from
-// OpExit and is whatever the program said, so these are deliberately kept to
-// the low numbers a program is unlikely to mean anything by.
+// Exit statuses the runtime itself ends with. A program's own status is
+// whatever it exits with, so these are deliberately kept to the low numbers a
+// program is unlikely to mean anything by.
 typedef enum ZamExit {
     ZAMEXIT_OK = 0,
     // ZAMEXIT_USAGE is a command line the runtime could not read.

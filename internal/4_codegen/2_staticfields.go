@@ -84,8 +84,8 @@ type staticTypesandTypeDefinitionsPopulatorVisitor struct {
 }
 
 // typeResolver turns a syntax type into the ids the runtime knows it by. Both
-// the static-field pass and the operations pass need this: the former writes
-// ids into type definitions, the latter into instructions.
+// the static-field pass and the LLVM emitter need this: the former writes ids
+// into type definitions, the latter into code.
 type typeResolver struct {
 	typeIndices *syntax.TypeMap[int]
 	// counts holds where each definition bucket's type ids begin. A declaration
@@ -599,9 +599,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) fillMembers(dst []member
 }
 
 // fillMethods resolves every instance method's function type id into the method
-// slice, indexed by the method's field index. Instructions are left zeroed for
-// [operationVisitor.recordMethodInstructions], which fills them once the bodies
-// they name have been emitted and their offsets are known.
+// slice, indexed by the method's field index.
 func (p *staticTypesandTypeDefinitionsPopulatorVisitor) fillMethods(dst []methodDefinition, d syntax.Decl) {
 	for _, m := range instanceFields[*syntax.FieldMethod](d) {
 		dst[*m.Index()] = methodDefinition{typeListID: p.functionTypeID(m.FieldType())}

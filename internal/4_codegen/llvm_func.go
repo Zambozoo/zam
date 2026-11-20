@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	base "github.com/zambozoo/zam/internal/0_base"
 	syntax "github.com/zambozoo/zam/internal/2_syntax"
 	"github.com/zambozoo/zam/internal/llvm"
 )
@@ -292,11 +293,37 @@ func (e *funcEmitter) at(tok *syntax.Token) {
 		e.locate(e.line, e.column)
 	}
 	line := e.b.CreateInBoundsGEP(e.p.i64, e.frame, []llvm.Value{e.const64(frameLineWord)}, "")
-	e.b.CreateStore(e.const64(uint64(position.Line)), line)
+	// Volatile, for a fault traces the line at any load or store, so the store
+	// must not be dropped for the next statement's.
+	e.b.CreateStore(e.const64(uint64(position.Line)), line).SetVolatile(true)
 }
 
 // frameLineWord is the word of a ZamFrame its line is.
 const frameLineWord = 2
+
+// defers reports whether s defers a statement, outside the lambdas it holds,
+// which are functions of their own.
+func defers(s syntax.Stmt) bool {
+	switch s := s.(type) {
+	case *syntax.StmtDefer:
+		return true
+	case *syntax.StmtBlock:
+		return slices.ContainsFunc(s.Stmts, defers)
+	case *syntax.StmtFor:
+		return defers(s.Body) || defers(s.Step) || defers(s.Else)
+	case *syntax.StmtIf:
+		return defers(s.Then) || defers(s.Else)
+	case *syntax.StmtLabel:
+		return defers(s.LoopStmt)
+	case *syntax.StmtSwitch:
+		for body := range s.Bodies() {
+			if defers(body) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // llvmLocal is a local variable: the slot it begins at and its type.
 type llvmLocal struct {
@@ -403,6 +430,12 @@ type funcEmitter struct {
 	defers   []*llvmDefer
 	active   int
 	deferred llvm.Value
+
+	// volatileSlots is whether the function defers, so that its stores to its
+	// frame are volatile. A fault longjmps into the landing pad at any load or
+	// store, and the defers it runs read the frame, so no store to it may be
+	// dropped for one that overwrites it.
+	volatileSlots bool
 }
 
 // llvmSpawn is a call async runs on a thread of its own: the thread's type,
@@ -681,6 +714,13 @@ type llvmOwnedMethod struct {
 	owner  syntax.DeclConcrete
 }
 
+// objectDefault reports whether the method named name that d has is Object's
+// own, inherited unchanged, as it is for a class that never declares one.
+func objectDefault(d syntax.Decl, name string) bool {
+	method, ok := originMethod(d, name)
+	return !ok || method.OuterDecl().File().Path == base.StdPath("lang/Obj"+base.CodeFileExtension)
+}
+
 // originMethod is the method named name that d has, as it is declared: d's
 // template's own where d instantiates a generic declaration.
 func originMethod(d syntax.Decl, name string) (*syntax.FieldMethod, bool) {
@@ -868,6 +908,7 @@ type llvmCapture struct {
 // captures a lambda's closure holds, each copied into a rooted slot of the
 // frame before the first poll.
 func (e *funcEmitter) emitBody(ft *syntax.TypeFunction, receiver syntax.Type, params []string, captures []llvmCapture, body syntax.Stmt) error {
+	e.volatileSlots = defers(body)
 	args := e.fn.Param(2)
 	argWord := uint64(0)
 	if receiver != nil {
@@ -915,7 +956,7 @@ func (e *funcEmitter) emitBody(ft *syntax.TypeFunction, receiver syntax.Type, pa
 }
 
 // emitStaticInitializer compiles what every static is initialized to, in the
-// order the interpreter runs it: file by file, declaration by declaration.
+// order the program runs it in: file by file, declaration by declaration.
 func (p *llvmProgram) emitStaticInitializer(ast *syntax.AST) (llvm.Value, error) {
 	e := p.newFunc(p.newFunction("zam_static_init"), ast.MainCodeDecl)
 	e.named("<static init>", nil)
@@ -1012,19 +1053,48 @@ func (e *funcEmitter) emitStaticMember(f *syntax.FieldMember) error {
 	return nil
 }
 
+// classMarksCustom and classDeletesCustom are the flags a class table entry
+// carries when the class's Mark or Delete is its own rather than Object's.
+const (
+	classMarksCustom   = 1 << 0
+	classDeletesCustom = 1 << 1
+)
+
 // emitClassTable lays out the compiled methods of every class, sorted by short
-// id, as the runtime looks them up for dispatch. An enum or struct is given
-// only its Str, the one method the runtime calls on one, which is its first.
+// id, as the runtime looks them up for dispatch, with the routine that
+// initializes a fresh instance and whether its Mark and Delete are its own. An
+// enum or struct is given only its Str, the one method the runtime calls on
+// one, which is its first.
 func (p *llvmProgram) emitClassTable(ast *syntax.AST) (llvm.Value, int, error) {
 	type class struct {
-		short   uint64
-		methods llvm.Value
-		count   int
+		short       uint64
+		methods     llvm.Value
+		count       int
+		initializer llvm.Value
+		flags       uint64
 	}
 	var classes []class
+	var failed error
 	add := func(c syntax.DeclTypeable, strOnly bool) {
 		if supportedObject(c) != nil {
 			return
+		}
+		initializer, err := p.initializerFor(c)
+		if err != nil {
+			failed = err
+			return
+		}
+		if initializer.IsNil() {
+			initializer = llvm.ConstNull(p.ptr)
+		}
+		var flags uint64
+		if !strOnly {
+			if !objectDefault(c, base.MarkMethodName) {
+				flags |= classMarksCustom
+			}
+			if !objectDefault(c, base.DeleteMethodName) {
+				flags |= classDeletesCustom
+			}
 		}
 		methods := make([]llvm.Value, instanceFieldCount[*syntax.FieldMethod](c))
 		if strOnly {
@@ -1050,7 +1120,7 @@ func (p *llvmProgram) emitClassTable(ast *syntax.AST) (llvm.Value, int, error) {
 		table.SetGlobalConstant(true)
 		table.SetLinkage(llvm.PrivateLinkage)
 		a, _, _ := p.typeInstance(c.DeclType()).packed()
-		classes = append(classes, class{short: a >> 32, methods: table, count: len(methods)})
+		classes = append(classes, class{short: a >> 32, methods: table, count: len(methods), initializer: initializer, flags: flags})
 	}
 	addGeneric := func(g syntax.DeclGeneric, strOnly bool) {
 		if g.Generics() == nil {
@@ -1080,16 +1150,20 @@ func (p *llvmProgram) emitClassTable(ast *syntax.AST) (llvm.Value, int, error) {
 	for _, entry := range ast.CodeFiles.All() {
 		visit(entry.Value.Decl)
 	}
+	if failed != nil {
+		return llvm.Value{}, 0, failed
+	}
 	if len(classes) == 0 {
 		return llvm.ConstNull(p.ptr), 0, nil
 	}
 	slices.SortFunc(classes, func(a, b class) int { return cmp.Compare(a.short, b.short) })
 
-	entryType := p.ctx.StructType([]llvm.Type{p.i32, p.i32, p.ptr}, false)
+	entryType := p.ctx.StructType([]llvm.Type{p.i32, p.i32, p.ptr, p.ptr, p.i32}, false)
 	entries := make([]llvm.Value, len(classes))
 	for i, c := range classes {
 		entries[i] = llvm.ConstNamedStruct(entryType, []llvm.Value{
 			llvm.ConstInt(p.i32, c.short, false), llvm.ConstInt(p.i32, uint64(c.count), false), c.methods,
+			c.initializer, llvm.ConstInt(p.i32, c.flags, false),
 		})
 	}
 	table := llvm.AddGlobal(p.mod, llvm.ArrayType(entryType, len(entries)), "zam.classes")
@@ -2039,8 +2113,7 @@ func (e *funcEmitter) emitExprAs(expr syntax.Expr, target syntax.Type) (llvm.Val
 	return e.convert(v, e.ground(expr.ResolvedType()), target)
 }
 
-// convert converts the word v of type from to target, as the interpreter's
-// word casts do.
+// convert converts the word v of type from to target.
 func (e *funcEmitter) convert(v llvm.Value, from, target syntax.Type) (llvm.Value, error) {
 	if syntax.StripConst(from).Kind() == syntax.TypeKindString && isStringBytesPointer(target) {
 		null := e.b.CreateICmp(llvm.IntEQ, v, e.const64(0), "")
@@ -2163,8 +2236,7 @@ func (e *funcEmitter) convert(v llvm.Value, from, target syntax.Type) (llvm.Valu
 	case toKind == syntax.TypeKindFloat:
 		return e.fromFloat(e.b.CreateSIToFP(v, e.p.f64, "")), nil
 
-	// A float out of an integer's range saturates and NaN becomes zero, which
-	// is what the interpreter's C cast does on the hardware it runs on.
+	// A float out of an integer's range saturates and NaN becomes zero.
 	case fromKind == syntax.TypeKindFloat && toKind == syntax.TypeKindUint:
 		return e.call("llvm.fptoui.sat.i64.f64", e.toFloat(v)), nil
 	case fromKind == syntax.TypeKindFloat:
@@ -2184,7 +2256,7 @@ func (e *funcEmitter) enumBacking(v llvm.Value, enum *syntax.DeclEnum, target sy
 	primitive := enum.Primitive()
 	width, _ := fieldByteInfo(primitive)
 	base := e.staticAddress(*values[0].ValueIndex())
-	address := e.b.CreateInBoundsGEP(e.ctx.Int8Type(), base, []llvm.Value{v}, "")
+	address := e.b.CreateGEP(e.ctx.Int8Type(), base, []llvm.Value{v}, "")
 	backing := e.load(llvmPlace{address: address, typ: primitive, width: width})
 	return e.convert(backing, primitive, target)
 }
@@ -2225,8 +2297,7 @@ func (e *funcEmitter) equal(kind syntax.TypeKind, left, right llvm.Value) llvm.V
 	return e.b.CreateICmp(llvm.IntEQ, left, right, "")
 }
 
-// narrow keeps a char or byte to its width, as the interpreter does after
-// every operation on one.
+// narrow keeps a char or byte to its width after an operation on one.
 func (e *funcEmitter) narrow(v llvm.Value, kind syntax.TypeKind) llvm.Value {
 	switch kind {
 	case syntax.TypeKindChar:
@@ -2330,6 +2401,7 @@ func (e *funcEmitter) load(pl llvmPlace) llvm.Value {
 // store writes the word v to pl, truncating it to a narrow one, or copies an
 // aggregate's bytes from the address v.
 func (e *funcEmitter) store(pl llvmPlace, v llvm.Value) {
+	volatile := e.volatileSlots && !pl.heap
 	if d, ok := instanceDecl(pl.typ); ok {
 		// A store moves what an instance holds and leaves where it lies alone:
 		// the header in the heap says what contains it, and one in a frame is
@@ -2337,19 +2409,19 @@ func (e *funcEmitter) store(pl llvmPlace, v llvm.Value) {
 		if pl.heap {
 			header := instanceHeaderByteSizeOf(syntax.KindClass, isTailed(d))
 			at := func(p llvm.Value) llvm.Value {
-				return e.b.CreateInBoundsGEP(e.ctx.Int8Type(), p, []llvm.Value{e.const64(header)}, "")
+				return e.b.CreateGEP(e.ctx.Int8Type(), p, []llvm.Value{e.const64(header)}, "")
 			}
 			e.copyBytes(at(pl.address), at(v), pl.width-header)
 		} else {
-			e.copyBytes(pl.address, v, pl.width)
+			e.copyMemory(pl.address, v, pl.width, volatile)
 			e.call("zamrt_stamp", e.thread, e.p.typeID(pl.typ), pl.address)
 		}
 	} else if isAggregate(pl.typ) {
-		e.copyBytes(pl.address, v, pl.width)
+		e.copyMemory(pl.address, v, pl.width, volatile)
 	} else if pl.width == 8 {
-		e.b.CreateStore(v, pl.address)
+		e.b.CreateStore(v, pl.address).SetVolatile(volatile)
 	} else {
-		e.b.CreateStore(e.b.CreateTrunc(v, e.ctx.IntType(int(pl.width*8)), ""), pl.address)
+		e.b.CreateStore(e.b.CreateTrunc(v, e.ctx.IntType(int(pl.width*8)), ""), pl.address).SetVolatile(volatile)
 	}
 	if pl.heap && rooted(pl.typ) {
 		e.call("zamrt_record_write", e.thread, pl.address, e.const64(pl.width))
@@ -2358,7 +2430,16 @@ func (e *funcEmitter) store(pl llvmPlace, v llvm.Value) {
 
 // copyBytes copies n bytes from src to dst.
 func (e *funcEmitter) copyBytes(dst, src llvm.Value, n uint64) {
-	e.call("llvm.memcpy.p0.p0.i64", dst, src, e.const64(n), llvm.ConstInt(e.p.i1, 0, false))
+	e.copyMemory(dst, src, n, false)
+}
+
+// copyMemory copies n bytes from src to dst, as a volatile copy when volatile.
+func (e *funcEmitter) copyMemory(dst, src llvm.Value, n uint64, volatile bool) {
+	flag := uint64(0)
+	if volatile {
+		flag = 1
+	}
+	e.call("llvm.memcpy.p0.p0.i64", dst, src, e.const64(n), llvm.ConstInt(e.p.i1, flag, false))
 }
 
 // slotPlace is the place a frame slot holding a value of t is.
@@ -2467,7 +2548,7 @@ func (e *funcEmitter) elementPlace(object syntax.Expr, tuple *syntax.TypeTuple, 
 	}
 	_, _, offsets := tupleLayout(tuple)
 	element := tuple.Types[index]
-	address := e.b.CreateInBoundsGEP(e.ctx.Int8Type(), base, []llvm.Value{e.const64(offsets[index])}, "")
+	address := e.b.CreateGEP(e.ctx.Int8Type(), base, []llvm.Value{e.const64(offsets[index])}, "")
 	return llvmPlace{address: address, typ: element, width: byteSize(element), heap: true}, nil
 }
 
@@ -2563,7 +2644,9 @@ func (e *funcEmitter) memberPlace(obj llvm.Value, objectType syntax.Type, name s
 		base = e.b.CreateIntToPtr(obj, e.p.ptr, "")
 	}
 	offset := instanceHeaderByteSizeOf(syntax.KindClass, isTailed(d)) + uint64(*member.Offset())
-	address := e.b.CreateInBoundsGEP(e.ctx.Int8Type(), base, []llvm.Value{e.const64(offset)}, "")
+	// Not inbounds: the pointer may name nothing, and an access through it has
+	// to fault rather than be poison the optimizer may drop.
+	address := e.b.CreateGEP(e.ctx.Int8Type(), base, []llvm.Value{e.const64(offset)}, "")
 	return llvmPlace{address: address, typ: member.FieldType(), width: width, heap: true}, nil
 }
 
@@ -2594,7 +2677,7 @@ func (e *funcEmitter) structMemberPlace(base llvm.Value, d syntax.Decl, name str
 	if _, err := valueKind(member.FieldType()); err != nil {
 		return llvmPlace{}, err
 	}
-	address := e.b.CreateInBoundsGEP(e.ctx.Int8Type(), base,
+	address := e.b.CreateGEP(e.ctx.Int8Type(), base,
 		[]llvm.Value{e.const64(valueHeaderSize(d) + uint64(*member.Offset()))}, "")
 	return llvmPlace{address: address, typ: member.FieldType(), width: byteSize(member.FieldType()), heap: true}, nil
 }
@@ -2884,8 +2967,7 @@ func (e *funcEmitter) emitComparison(x *syntax.ExprNAry) (llvm.Value, error) {
 	return e.b.CreateZExt(e.b.CreateICmp(predicate, left, right, ""), e.p.i64, ""), nil
 }
 
-// floatComparison compares two floats as the interpreter does: equality as
-// numbers, and order through (l > r) - (l < r), under which NaN orders as
+// floatComparison compares two floats: equality as numbers, and order through (l > r) - (l < r), under which NaN orders as
 // equal to everything.
 func (e *funcEmitter) floatComparison(op syntax.ExprKind, left, right llvm.Value) llvm.Value {
 	l, r := e.toFloat(left), e.toFloat(right)
@@ -3116,8 +3198,7 @@ func (e *funcEmitter) binaryOp(op syntax.ExprKind, kind syntax.TypeKind, left, r
 
 // shift shifts left by count as op says, or, by a negative int count, the
 // other way by its magnitude: a right shift for a left one, and a left shift
-// for either right one. The magnitude is kept to the word, as the hardware
-// the interpreter shifts on does.
+// for either right one. The magnitude is kept to the word.
 func (e *funcEmitter) shift(op syntax.ExprKind, kind syntax.TypeKind, left, count llvm.Value) llvm.Value {
 	by := func(op syntax.ExprKind, count llvm.Value) llvm.Value {
 		count = e.b.CreateAnd(count, e.const64(63), "")
@@ -3143,8 +3224,7 @@ func (e *funcEmitter) shift(op syntax.ExprKind, kind syntax.TypeKind, left, coun
 }
 
 // emitDivision divides or takes the remainder, panicking on a zero divisor.
-// The most negative integer over -1 answers itself and a zero remainder, as in
-// the interpreter.
+// The most negative integer over -1 answers itself and a zero remainder.
 func (e *funcEmitter) emitDivision(left, right llvm.Value, isSigned, quotient bool) llvm.Value {
 	zero := e.ctx.AddBasicBlock(e.fn, "div.zero")
 	ok := e.ctx.AddBasicBlock(e.fn, "div.ok")
@@ -3165,8 +3245,8 @@ func (e *funcEmitter) emitDivision(left, right llvm.Value, isSigned, quotient bo
 	overflows := e.b.CreateAnd(
 		e.b.CreateICmp(llvm.IntEQ, left, minInt, ""),
 		e.b.CreateICmp(llvm.IntEQ, right, e.const64(^uint64(0)), ""), "")
-	// Dividing by one instead leaves the answer the interpreter gives, and
-	// keeps the instruction from trapping.
+	// Dividing by one instead leaves that answer, and keeps the instruction
+	// from trapping.
 	divisor := e.b.CreateSelect(overflows, e.const64(1), right, "")
 	if quotient {
 		return e.b.CreateSDiv(left, divisor, "")
@@ -3369,7 +3449,7 @@ func (e *funcEmitter) emitUnpack(s *syntax.StmtUnpack) error {
 	_, _, offsets := tupleLayout(tuple)
 	values := make([]llvm.Value, len(s.Variables))
 	for i, element := range tuple.Types {
-		address := e.b.CreateInBoundsGEP(e.ctx.Int8Type(), v, []llvm.Value{e.const64(offsets[i])}, "")
+		address := e.b.CreateGEP(e.ctx.Int8Type(), v, []llvm.Value{e.const64(offsets[i])}, "")
 		value := e.load(llvmPlace{address: address, typ: element, width: byteSize(element)})
 		if values[i], err = e.convert(value, element, e.ground(s.Variables[i].Type)); err != nil {
 			return err

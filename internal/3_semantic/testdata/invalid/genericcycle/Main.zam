@@ -1,0 +1,11 @@
+public namespace Main {
+    class List[T] {
+        var List[T*]* next;
+    }
+    struct Twice[A, B] {
+        var Twice[B[2], A[2]]* twice;
+    }
+    struct Pair[A, B] {
+        var Pair[B, A[2]]* swapped;
+    }
+}

@@ -1,0 +1,3 @@
+public namespace Main {
+    alias Unused[T] = int;
+}

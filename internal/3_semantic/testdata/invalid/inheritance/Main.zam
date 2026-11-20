@@ -1,0 +1,6 @@
+public namespace Main {
+    class A <: B* {
+    }
+    class B <: A* {
+    }
+}

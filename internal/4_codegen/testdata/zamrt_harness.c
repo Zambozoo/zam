@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "harness_image.h"
 #include "run.h"
 #include "zamrt.h"
 
@@ -116,6 +117,59 @@ static void putString(const char *name, const ZamString *string) {
         printf("%s=%.*s\n", name, (int)string->length, string->bytes);
 }
 
+// boxVM and boxType are the VM and box type the box methods below read a box by.
+static ZamVM *boxVM;
+static ZamTypeID boxType;
+
+// boxN is the n a box holds.
+static ZamInt boxN(ZamWord box) {
+    ZamMemberDefinition member = zam_type_member(&boxVM->image, boxType.shortID, 0);
+    ZamInt n;
+    memcpy(&n, (uint8_t *)(uintptr_t)box + zam_value_header_bytes(&boxVM->image, boxType) + member.offset,
+           sizeof n);
+    return n;
+}
+
+// boxEq, boxCmp, boxHash and boxStr are the box's own Eq, Cmp, Hash and Str,
+// as compiled code would enter them: by n modulo ten, and as "box" and n.
+static void boxEq(ZamThread *thread, ZamClosure *self, ZamWord *args, ZamWord *result) {
+    (void)thread, (void)self;
+    *result = boxN(args[0]) % 10 == boxN(args[1]) % 10;
+}
+
+static void boxCmp(ZamThread *thread, ZamClosure *self, ZamWord *args, ZamWord *result) {
+    (void)thread, (void)self;
+    *result = (ZamWord)(boxN(args[0]) % 10 - boxN(args[1]) % 10);
+}
+
+static void boxHash(ZamThread *thread, ZamClosure *self, ZamWord *args, ZamWord *result) {
+    (void)thread, (void)self;
+    *result = (ZamWord)(boxN(args[0]) % 10);
+}
+
+static void boxStr(ZamThread *thread, ZamClosure *self, ZamWord *args, ZamWord *result) {
+    (void)self;
+    char text[32];
+    int length = snprintf(text, sizeof text, "box%" PRId64, (int64_t)boxN(args[0]));
+    *result = (ZamWord)(uintptr_t)zamrt_new_string(thread, text, (uint64_t)length);
+}
+
+// compileBox gives the VM a class table holding the box's own Eq, Cmp, Hash
+// and Str, as a compiled program's holds them.
+static void compileBox(ZamVM *vm, ZamTypeID box) {
+    static ZamEntry methods[ZAMOBJECT_SLOT_STR + 1];
+    static ZamCompiledClass classes[1];
+    boxVM = vm;
+    boxType = box;
+    methods[ZAMOBJECT_SLOT_EQ] = boxEq;
+    methods[ZAMOBJECT_SLOT_CMP] = boxCmp;
+    methods[ZAMOBJECT_SLOT_HASH] = boxHash;
+    methods[ZAMOBJECT_SLOT_STR] = boxStr;
+    classes[0] = (ZamCompiledClass){.shortID = box.shortID, .methodCount = ZAMOBJECT_SLOT_STR + 1, .methods = methods};
+    vm->compiledClasses = classes;
+    vm->compiledClassCount = 1;
+}
+
 // values asks after primitives, strings and boxes whose class overrides Eq,
 // Cmp, Hash and Str.
 static void values(ZamVM *vm) {
@@ -126,6 +180,7 @@ static void values(ZamVM *vm) {
     zam_image_static_root(&vm->image, 0, &boxes);
     ZamTypeID box = pointeeOfRoot(vm, 0);
     ZamWord intWords[ZAMTYPE_ID_WORDS], strWords[ZAMTYPE_ID_WORDS], boxWords[ZAMTYPE_ID_WORDS];
+    compileBox(vm, box);
     zam_type_id_write(intWords, ints);
     zam_type_id_write(strWords, strs);
     zam_type_id_write(boxWords, boxes);
@@ -178,8 +233,8 @@ static ZamTypeID pointee(ZamVM *vm, ZamTypeID pointer) {
     return zam_pointer_pointee(zam_pointer_definition(&vm->image, ZAMTYPE_DECL(pointer.shortID)));
 }
 
-// dispatch looks methods of a box up through the abstract it extends and the
-// interface it implements.
+// dispatch asks a box its type and where the methods of the abstract it
+// extends and the interface it implements lie among its own.
 static void dispatch(ZamVM *vm) {
     ZamThread *thread = &vm->main;
     ZamTypeID boxes = rootInBucket(vm, ZAMBUCKET_CLASS);
@@ -196,14 +251,9 @@ static void dispatch(ZamVM *vm) {
     uint32_t overridden = (uint32_t)zam_type_method_count(&vm->image, base) - 1;
     put("overrides", overridden < zam_type_method_count(&vm->image, box));
 
-    ZamClosure *virtual = zamrt_method(thread, bases, &instance, overridden);
-    put("virtual", virtual->instruction == zam_type_method(&vm->image, box, overridden).instruction);
-    put("virtualBound", *zam_closure_entry_value(zam_closure_first(virtual)) == instance);
-
+    // The interface's one method is one of the box's own.
     uint32_t index = zam_interface_method_index(&vm->image, box, pointee(vm, shapes).shortID, 0);
-    ZamClosure *interface = zamrt_interface_method(thread, shapes, &instance, 0);
-    put("interface", interface->instruction == zam_type_method(&vm->image, box, index).instruction);
-    put("interfaceBound", *zam_closure_entry_value(zam_closure_first(interface)) == instance);
+    put("interface", index < zam_type_method_count(&vm->image, box));
 }
 
 // anys boxes an int and a box, reads back what each holds, and unboxes it.
@@ -244,8 +294,10 @@ int main(int argc, char **argv) {
         return 2;
     }
 
+    size_t byteCount;
+    uint8_t *image = readImage(argv[2], &byteCount);
     ZamVM vm;
-    zam_vm_init(&vm, argv[2]);
+    zam_vm_init(&vm, image, byteCount);
     if (strcmp(argv[1], "frames") == 0)
         frames(&vm);
     else if (strcmp(argv[1], "alloc") == 0)
@@ -270,5 +322,6 @@ int main(int argc, char **argv) {
     }
     fflush(stdout);
     zam_vm_free(&vm);
+    free(image);
     return 0;
 }

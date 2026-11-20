@@ -49,24 +49,15 @@ func compileWithNativesAndFlags(t *testing.T, flags []string, source string, nat
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
-	if compilesNatively() {
-		object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
-		require.NoError(t, err)
-		cache, err := nativeRuntimeCache()
-		require.NoError(t, err)
-		require.NoError(t, build.LinkObject(object.Bytes, build.Options{
-			OutputPath:      out,
-			Project:         ast.MainCodeDecl.File().Project,
-			RuntimeCacheDir: cache,
-			Target:          testTarget(),
-		}))
-		return out
-	}
-	result, err := codegen.GenerateCode(cmd, ast)
+	object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
 	require.NoError(t, err)
-	require.NoError(t, build.Build(result.Image, result.NativeNames, build.Options{
-		OutputPath: out,
-		Project:    ast.MainCodeDecl.File().Project,
+	cache, err := nativeRuntimeCache()
+	require.NoError(t, err)
+	require.NoError(t, build.LinkObject(object.Bytes, build.Options{
+		OutputPath:      out,
+		Project:         ast.MainCodeDecl.File().Project,
+		RuntimeCacheDir: cache,
+		Target:          testTarget(),
 	}))
 	return out
 }

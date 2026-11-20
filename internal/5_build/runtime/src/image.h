@@ -36,10 +36,7 @@ typedef enum ZamHeaderWord {
     ZAMHEADER_STATIC_REGION_BYTES,
     ZAMHEADER_STATIC_IMAGE_OFFSET,
     ZAMHEADER_NATIVES_OFFSET,
-    ZAMHEADER_GENERIC_STATIC_METHODS_OFFSET,
     ZAMHEADER_STATIC_ROOTS_OFFSET,
-    ZAMHEADER_OPERATIONS_OFFSET,
-    ZAMHEADER_DEBUG_OFFSET,
 
     ZAMHEADER_WORDS,
 } ZamHeaderWord;
@@ -49,7 +46,7 @@ typedef enum ZamHeaderWord {
 // version it was handed. This runtime reads exactly one version: the format is
 // still being decided, so there is nothing yet to be compatible with.
 #define ZAMVERSION_MAJOR 0
-#define ZAMVERSION_MINOR 2
+#define ZAMVERSION_MINOR 3
 #define ZAMVERSION_PATCH 0
 #define ZAMVERSION_WORD                                                       \
     (((ZamWord)ZAMVERSION_MAJOR << 32) | ((ZamWord)ZAMVERSION_MINOR << 16) | \
@@ -82,14 +79,9 @@ typedef enum ZamTypeBucket {
 // so a definition is reached by arithmetic rather than by having been copied
 // into a struct on the way in.
 typedef struct ZamImage {
-    // bytes is the whole file, read in place.
+    // bytes is the whole image, read in place.
     uint8_t *bytes;
     size_t byteCount;
-
-    // ownsBytes is true when the bytes above were allocated by the loader and
-    // must be freed on close, as zam_image_open does. An image loaded from a
-    // byte array baked into the binary (zam_image_load) does not own them.
-    bool ownsBytes;
 
     // header is the first ZAMHEADER_WORDS words, and body is the byte after
     // them, which every offset in the header is measured from.
@@ -144,18 +136,9 @@ typedef struct ZamImage {
 
     // natives is the table of C symbol names, opening with how many follow.
     // Each is laid out as a literal is. What stands in a slot at run time is
-    // resolved against the table the interpreter was built with.
+    // resolved against the tables the program was linked with.
     const uint8_t *natives;
     uint64_t nativeCount;
-
-    // genericStaticMethods is the runtime dispatch table for generic static
-    // methods called with open-generic type arguments. It opens with the entry
-    // count, then one entry per generic method the compiler needed a dispatch
-    // for: the method's arity and the run of concretes, each written as its
-    // type arguments (arity * typeInstance), its static slot, and the function
-    // type id its body was emitted as. OpPushGenericStaticSlot walks it.
-    const uint8_t *genericStaticMethods;
-    uint64_t genericStaticMethodCount;
 
     // staticRoots is every static whose value may hold something the
     // collector must visit, opening with how many follow: each is its slot
@@ -163,59 +146,20 @@ typedef struct ZamImage {
     const ZamWord *staticRoots;
     uint64_t staticRootCount;
 
-    // operations is the program, and runs up to the debug section. Execution
-    // begins at offset zero of it.
-    const uint8_t *operations;
-    size_t operationsByteCount;
-
-    // debugStrings are the file paths and function names the debug tables name
-    // by index, each pointing at its NUL-terminated bytes in the image.
-    const char **debugStrings;
-    uint64_t debugStringCount;
-    // debugFunctions are the function bodies, ZAMDEBUG_FUNCTION_WORDS each
-    // and sorted by where they start: start, end, the index of the function
-    // enclosing it or ZAMDEBUG_NO_PARENT, the index of its name, and where its
-    // line program begins among debugPrograms.
-    const ZamWord *debugFunctions;
-    uint64_t debugFunctionCount;
-    // debugPrograms are the functions' line programs, each saying which line
-    // of which file the function's own instructions were emitted for, as how
-    // far each change lies from the one before it. See zam_image_locate.
-    const uint8_t *debugPrograms;
-    uint64_t debugProgramsByteCount;
 } ZamImage;
 
-#define ZAMDEBUG_FUNCTION_WORDS 5
-#define ZAMDEBUG_NO_PARENT UINT64_MAX
-
-// zam_image_open reads the file and validates the header. It dies rather than
+// zam_image_load takes an image whose bytes sit in memory, as the compiler
+// bakes them into the binary, and validates the header. The bytes are read in
+// place and never freed, so they must outlive the image. It dies rather than
 // returning a failure: an image that cannot be read is the end of the run, and
 // there is no caller with anything better to do about it.
-void zam_image_open(ZamImage *image, const char *path);
-
-// zam_image_load takes an image whose bytes already sit in memory — the usual
-// case for a program that was compiled against the runtime, where the compiler
-// baked the image into the binary as a static byte array. The bytes are read
-// in place and are not freed on close, so the caller may hand in storage of
-// any lifetime and need not keep a second pointer to free.
 void zam_image_load(ZamImage *image, const uint8_t *bytes, size_t byteCount);
-
-void zam_image_close(ZamImage *image);
 
 // zam_image_type_definition is where the type's definition begins. What is
 // there depends on which bucket the id falls in, which zam_image_bucket_of
 // answers; a primitive has no definition and asking for one is a bug.
 const uint8_t *zam_image_type_definition(const ZamImage *image,
                                          uint16_t declID);
-
-// zam_image_locate says which file and line the instruction at offset was
-// emitted for, answering false if the image does not say.
-bool zam_image_locate(const ZamImage *image, uint64_t offset, const char **file,
-                      uint32_t *line);
-
-// zam_image_function names the innermost function whose body holds the
-// instruction at offset, or answers NULL if the image does not say.
-const char *zam_image_function(const ZamImage *image, uint64_t offset);
 
 // zam_image_bucket_of says which kind of definition a type id names.
 ZamTypeBucket zam_image_bucket_of(const ZamImage *image, uint16_t declID);
@@ -238,12 +182,3 @@ uint64_t zam_image_static_root(const ZamImage *image, uint64_t index,
 const char *zam_image_native_name(const ZamImage *image, uint64_t slot,
                                   uint64_t *byteCount);
 
-// zam_image_generic_static_method_entry is the pointer to the id's entry in
-// the generic static method registry, together with its arity and concrete
-// count. The entry's concretes follow it as a flat run of (arity typeInstance
-// words, slot word, 3 typeInstance words) each — the shape readers used to
-// pick a slot by matching the type arguments on the stack walk through it.
-const uint8_t *zam_image_generic_static_method_entry(const ZamImage *image,
-                                                     uint64_t id,
-                                                     uint64_t *arity,
-                                                     uint64_t *concreteCount);

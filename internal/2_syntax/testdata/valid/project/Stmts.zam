@@ -1,0 +1,77 @@
+import std("lang/Strs.zam");
+
+public namespace Stmts {
+    fun void() All = () {
+        var int a;
+        var int b = 1;
+        var int c, str d = 1, "x";
+        var int _ = 2;
+        var int x, int _;
+        var int y, int z;
+        a = b;
+        a++;
+        if (a == b) a = 2;
+        if (a) {
+        } else {
+        }
+        if (a) {} else if (b) {} else {}
+        for (var int i = 0; i < 10; i++) {
+            continue;
+        }
+        for (a = 0; a < 3; a++) {}
+        for (;;) {
+            break;
+        }
+        for (; a < 1;) {}
+        for {
+            break;
+        }
+        for (;;) {} else {}
+        for (;; ++a) {}
+        for (;; a{int}) {}
+        for (;; a.b) {}
+        for (;; a.0) {}
+        for (;; a().b) {}
+        for (;; lambda void(): () {}) {}
+        for (;; native(X)) {}
+        for (;; new(int)) {}
+        for (;; type(int)) {}
+        for (;; a++) {}
+        label outer: for (;;) {
+            break outer;
+            continue outer;
+        }
+        label choice: switch (a) {
+            case (1): break choice;
+        }
+        switch (a) {
+            case (1, 2): a = 3;
+            case (3): {
+            }
+        } else {
+            a = 0;
+        }
+        switch (a) {
+        }
+        defer a = 1;
+        defer {
+        }
+        delete a;
+        free a;
+        mark a;
+        {
+            import "Types.zam";
+            var int scoped;
+            import {
+                "Decls.zam";
+            }
+            import types = "Types.zam";
+        }
+        {}
+        return;
+    }
+
+    fun int() Value = () {
+        return 1;
+    }
+}

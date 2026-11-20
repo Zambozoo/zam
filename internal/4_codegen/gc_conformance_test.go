@@ -40,6 +40,12 @@ func gcImage(t *testing.T, source string) string {
 	return image
 }
 
+// wholeRuntime is every runtime source a harness that runs a VM links, beside
+// the readers buildHarness always brings.
+var wholeRuntime = []string{
+	"run.c", "thread.c", "vm.c", "gc.c", "heap.c", "native.c", "json.c", "yaml.c", "xml.c", "bson.c", "compress.c", "cbor.c", "archive.c", "net.c", "tls.c", "curl.c", "http.c", "ws.c", "crypto.c", "bcrypt.c", "blowfish.c", "pki.c", "time.c", "arena.c", "posit.c", "zamrt.c", "stdtables.c",
+}
+
 // runGCHarness runs one case of the collector harness over image, answering
 // what it reported by name and the collector's statistics lines.
 func runGCHarness(t *testing.T, name, image string) (map[string]string, []string) {

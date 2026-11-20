@@ -1,0 +1,5 @@
+name: outside
+dependencies:
+  outside:
+    repo: example.com/outside@v1
+    hash: h1

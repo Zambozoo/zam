@@ -11,7 +11,7 @@ import (
 // calls on identical input land in different buckets and every lookup misses.
 // FNV-1a takes no seed and so has nothing to vary.
 //
-// Bytes go in big-endian, unlike the little-endian bytecode, because nothing
+// Bytes go in big-endian, unlike the little-endian image, because nothing
 // outside this package ever sees them.
 
 // Hash returns the hash of the given words.

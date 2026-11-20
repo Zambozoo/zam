@@ -1,0 +1,4 @@
+import outside("Outside.zam");
+
+public namespace Main {
+}

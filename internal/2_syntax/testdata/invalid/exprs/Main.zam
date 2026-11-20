@@ -1,0 +1,249 @@
+public namespace Main {
+    fun void() E1 = () {
+        a = 1 ? 2 3;
+    }
+
+    fun void() E2 = () {
+        a = 1 ? ;
+    }
+
+    fun void() E3 = () {
+        a = 1 ? 2 : ;
+    }
+
+    fun void() E4 = () {
+        a = 1 = ;
+    }
+
+    fun void() E5 = () {
+        a = 1 + ;
+    }
+
+    fun void() E6 = () {
+        a = 1 + 2 + ;
+    }
+
+    fun void() E7 = () {
+        a = 1, ;
+    }
+
+    fun void() E8 = () {
+        a = - ;
+    }
+
+    fun void() E9 = () {
+        a = @{int;
+    }
+
+    fun void() E10 = () {
+        a = @{;
+    }
+
+    fun void() E11 = () {
+        a = x. ;
+    }
+
+    fun void() E12 = () {
+        a = x.y. ;
+    }
+
+    fun void() E13 = () {
+        a = f(). ;
+    }
+
+    fun void() E14 = () {
+        a = x[1;
+    }
+
+    fun void() E15 = () {
+        a = x[;
+    }
+
+    fun void() E16 = () {
+        a = x{int;
+    }
+
+    fun void() E17 = () {
+        a = x{;
+    }
+
+    fun void() E18 = () {
+        a = (1;
+    }
+
+    fun void() E19 = () {
+        a = async 1;
+    }
+
+    fun void() E20 = () {
+        a = async(1);
+    }
+
+    fun void() E21 = () {
+        a = async(f();
+    }
+
+    fun void() E22 = () {
+        a = async(;
+    }
+
+    fun void() E23 = () {
+        a = type int;
+    }
+
+    fun void() E24 = () {
+        a = type(;
+    }
+
+    fun void() E25 = () {
+        a = type(int;
+    }
+
+    fun void() E26 = () {
+        a = wait 1;
+    }
+
+    fun void() E27 = () {
+        a = wait(;
+    }
+
+    fun void() E28 = () {
+        a = wait(1;
+    }
+
+    fun void() E29 = () {
+        a = x::;
+    }
+
+    fun void() E30 = () {
+        a = x::[int;
+    }
+
+    fun void() E31 = () {
+        a = x::[;
+    }
+
+    fun void() E32 = () {
+        a = x::[int]1;
+    }
+
+    fun void() E33 = () {
+        a = f(1;
+    }
+
+    fun void() E34 = () {
+        a = f(;
+    }
+
+    fun void() E35 = () {
+        a = f(1 2);
+    }
+
+    fun void() E36 = () {
+        a = f(b... 2);
+    }
+
+    fun void() E37 = () {
+        a = native 1;
+    }
+
+    fun void() E38 = () {
+        a = native(1);
+    }
+
+    fun void() E39 = () {
+        a = native(x;
+    }
+
+    fun void() E40 = () {
+        a = new 1;
+    }
+
+    fun void() E41 = () {
+        a = new(;
+    }
+
+    fun void() E42 = () {
+        a = new(int 1);
+    }
+
+    fun void() E43 = () {
+        a = new(int, ;
+    }
+
+    fun void() E44 = () {
+        a = new(int, 1 1);
+    }
+
+    fun void() E45 = () {
+        a = new(int, 1, ;
+    }
+
+    fun void() E46 = () {
+        a = new(int, 1, 2;
+    }
+
+    fun void() E47 = () {
+        a = lambda int: (x) {};
+    }
+
+    fun void() E48 = () {
+        a = lambda int(int) (x) {};
+    }
+
+    fun void() E49 = () {
+        a = lambda int(int): x {};
+    }
+
+    fun void() E50 = () {
+        a = lambda int(int): (x, y) {};
+    }
+
+    fun void() E51 = () {
+        a = lambda int(int): (1) {};
+    }
+
+    fun void() E52 = () {
+        a = lambda int(int): (x 1) {};
+    }
+
+    fun void() E53 = () {
+        a = lambda int(int): (x) var;
+    }
+
+    fun void() E54 = () {
+        a = lambda ;
+    }
+
+    fun void() E55 = () {
+        a = ;
+    }
+
+    fun void() E56 = () {
+        a = async(b{int});
+    }
+
+    fun void() E57 = () {
+        a = async(b.c);
+    }
+
+    fun void() E58 = () {
+        a = async(b.0);
+    }
+
+    fun void() E59 = () {
+        a = async(lambda void(): () {});
+    }
+
+    fun void() E60 = () {
+        a = async(native(X));
+    }
+
+    fun void() E61 = () {
+        a = async(new(int));
+    }
+
+    fun void() E62 = () {
+        a = async(type(int));
+    }
+}

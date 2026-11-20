@@ -30,13 +30,6 @@ tasks:
       - go test ./... -count=1 -cover -coverprofile=coverage.out
       - go tool cover -func=coverage.out
 
-  test:native-report:
-    desc: Run the end-to-end tests against the native backend and summarize what passes (report only)
-    cmds:
-      - cmd: ZAM_TEST_NATIVE=1 go test ./internal/5_build -count=1 -timeout 20m -json > native-report.json
-        ignore_error: true
-      - go run ./internal/5_build/nativereport < native-report.json
-
   linux:image:
     desc: Build the Linux image zam is built and tested in (set ZIG_SHA256 to override the Zig tarball's known checksum)
     cmds:
@@ -71,8 +64,8 @@ tasks:
       - mkdir -p bin/cross && go build -o bin/zam ./cmd/
       - |
         for target in aarch64-linux-musl x86_64-linux-musl; do
-          ZAM_PACKS="$PWD/bin/packs" bin/zam build --native --target $target -o bin/cross/hello-$target docs/0_example/helloworld/Main.zam
-          ZAM_PACKS="$PWD/bin/packs" bin/zam build --native --target $target -o bin/cross/https-$target docker/cross/https/Main.zam
+          ZAM_PACKS="$PWD/bin/packs" bin/zam build --target $target -o bin/cross/hello-$target docs/0_example/helloworld/Main.zam
+          ZAM_PACKS="$PWD/bin/packs" bin/zam build --target $target -o bin/cross/https-$target docker/cross/https/Main.zam
         done
       - docker run --rm --platform linux/arm64 -v "$PWD/bin/cross":/cross zam-linux sh -c '/cross/hello-aarch64-linux-musl && /cross/https-aarch64-linux-musl {{.URL}}'
       - docker run --rm --platform linux/amd64 -v "$PWD/bin/cross":/cross alpine:3 sh -c '/cross/hello-x86_64-linux-musl && /cross/https-x86_64-linux-musl {{.URL}}'
@@ -94,7 +87,7 @@ tasks:
         exit $status
 
   runtime:
-    desc: Build the C runtime
+    desc: Compile the C runtime's sources, warnings as errors
     cmds:
       - make -C internal/5_build/runtime
 
@@ -102,10 +95,3 @@ tasks:
     cmds:
       - make -C internal/5_build/runtime clean
 
-  runtime:run:
-    desc: Run an image through the C runtime (set CLI_ARGS to the image path)
-    silent: true
-    cmds:
-      - make -C internal/5_build/runtime
-      - cmd: ./internal/5_build/runtime/bin/zam {{.CLI_ARGS}}
-        ignore_error: true

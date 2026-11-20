@@ -1,0 +1,53 @@
+import "a/Twin.zam";
+import "b/Twin.zam";
+import "Other.zam";
+import again = "Other.zam";
+import "./Other.zam";
+
+public namespace Main {
+    struct Plain {}
+    struct Tailed~ {
+        var int[~] t;
+    }
+    struct Gen[T] {
+        var T t;
+    }
+    struct GenTailed~[T] {
+        var T[~] t;
+    }
+    alias Al = int;
+    alias AlG[T] = Gen[T];
+    namespace Ns {
+    }
+    enum Kind {
+        A;
+    }
+    var Kind[int] notGeneric;
+
+    var Missing a;
+    var Gen b;
+    var Tailed c;
+    var Plain[int] d;
+    var Gen[int, int] e;
+    var Gen~[int]* f;
+    var GenTailed[int] g;
+    var Al~* h;
+    var AlG~[int]* i;
+    var Missing[int] j;
+    var Plain~* k;
+    var GenTailed~* l;
+    var Plain.Missing m;
+    var Missing~* n;
+    var Twin o;
+    var Other p;
+
+    fun void() Statics = () {
+        var int x = Missing::Y;
+        var int y = Ns::[int]Z;
+        {
+            import "a/Twin.zam";
+            import "b/Twin.zam";
+            var Twin z;
+        }
+    }
+}

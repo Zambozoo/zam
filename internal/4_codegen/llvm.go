@@ -17,8 +17,33 @@ import (
 )
 
 // irVariable names a file GenerateObject writes the module's textual IR to
-// before compiling it, for looking into what native compilation emits.
+// once optimized, before compiling it, for looking into what native
+// compilation emits.
 const irVariable = "ZAM_LLVM_IR"
+
+// passesVariable names an LLVM pass pipeline GenerateObject runs over the
+// module in place of the one its optimization names, unless it compiles for a
+// debugger.
+const passesVariable = "ZAM_LLVM_PASSES"
+
+// llvmOptimization is how a module is compiled at an optimization: the
+// backend's level, the pass pipeline it runs, none when empty, and whether
+// every function is marked to be optimized for size.
+type llvmOptimization struct {
+	level   llvm.CodeGenOptLevel
+	passes  string
+	optsize bool
+}
+
+// llvmOptimizations are how a module is compiled at each optimization. LLVM 23
+// has no size pipeline, so size is O2 over functions marked optsize.
+var llvmOptimizations = map[command.Optimization]llvmOptimization{
+	command.OptimizeNone:       {level: llvm.CodeGenLevelNone},
+	command.OptimizeLess:       {level: llvm.CodeGenLevelLess, passes: "default<O1>"},
+	command.OptimizeDefault:    {level: llvm.CodeGenLevelDefault, passes: "default<O2>"},
+	command.OptimizeAggressive: {level: llvm.CodeGenLevelAggressive, passes: "default<O3>"},
+	command.OptimizeSize:       {level: llvm.CodeGenLevelDefault, passes: "default<O2>", optsize: true},
+}
 
 // stdNativePrefix starts the name of every native the runtime itself answers
 // for.
@@ -46,8 +71,11 @@ var initializeTargets = sync.OnceFunc(func() {
 type ObjectOptions struct {
 	// Triple is the target to compile for, the host when empty.
 	Triple string
-	// Debug compiles without optimizing, so that a debugger stepping the
-	// program sees each line's effects by the next.
+	// Optimization is how far the program is optimized, OptimizeDefault when
+	// empty.
+	Optimization command.Optimization
+	// Debug compiles without optimizing, whatever Optimization says, so that a
+	// debugger stepping the program sees each line's effects by the next.
 	Debug bool
 }
 
@@ -93,10 +121,21 @@ func GenerateObject(cmd *command.Command, ast *syntax.AST, opts ObjectOptions) (
 	if err != nil {
 		return nil, err
 	}
-	level := llvm.CodeGenLevelDefault
-	if opts.Debug {
-		level = llvm.CodeGenLevelNone
+	optimization := opts.Optimization
+	if optimization == "" {
+		optimization = command.OptimizeDefault
 	}
+	if opts.Debug {
+		optimization = command.OptimizeNone
+	}
+	optimize, ok := llvmOptimizations[optimization]
+	if !ok {
+		return nil, fmt.Errorf("unknown optimization %q", optimization)
+	}
+	if override := os.Getenv(passesVariable); override != "" && !opts.Debug {
+		optimize.passes = override
+	}
+	level := optimize.level
 	machine := llvmTarget.CreateTargetMachine(triple, "", "", level, llvm.RelocPIC, llvm.CodeModelDefault)
 	defer machine.Dispose()
 
@@ -115,6 +154,24 @@ func GenerateObject(cmd *command.Command, ast *syntax.AST, opts ObjectOptions) (
 	}
 	if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
 		return nil, fmt.Errorf("generated module is invalid: %w", err)
+	}
+	if optimize.optsize {
+		optsize := ctx.CreateEnumAttribute(llvm.AttributeKindID("optsize"), 0)
+		for fn := mod.FirstFunction(); !fn.IsNil(); fn = llvm.NextFunction(fn) {
+			if !fn.IsDeclaration() {
+				fn.AddFunctionAttr(optsize)
+			}
+		}
+	}
+	if optimize.passes != "" {
+		options := llvm.NewPassBuilderOptions()
+		defer options.Dispose()
+		if err := mod.RunPasses(optimize.passes, machine, options); err != nil {
+			return nil, fmt.Errorf("running %s: %w", optimize.passes, err)
+		}
+		if err := llvm.VerifyModule(mod, llvm.ReturnStatusAction); err != nil {
+			return nil, fmt.Errorf("optimized module is invalid: %w", err)
+		}
 	}
 
 	if path := os.Getenv(irVariable); path != "" {

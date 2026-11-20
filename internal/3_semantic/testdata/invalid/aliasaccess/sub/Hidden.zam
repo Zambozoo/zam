@@ -1,0 +1,6 @@
+import std("lang/Obj.zam");
+
+public namespace Hidden {
+    private alias Secret = int;
+    public alias Bounded[T <: Obj*] = T;
+}

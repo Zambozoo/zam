@@ -11,14 +11,14 @@
 typedef struct ZamThread ZamThread;
 
 // A native is a C function reached by name. The compiler writes the name into
-// the image and the interpreter is built with a table of them, so a name that
+// the image and the program is linked with tables of them, so a name that
 // answers to nothing is caught when the two are put together rather than
 // reported by a compiler that has never seen the C side.
 //
 // It is handed nothing but the thread. A native reads its arguments out of the
 // frame the call built and leaves what it returns through that same frame, the
 // same way a body compiled from Zamylene does — which is what lets a call to a
-// native be a call like any other, with no instruction of its own.
+// native be a call like any other.
 //
 // What a native takes and gives back is not written anywhere the compiler can
 // check. The source says it by casting the address to a signature, and being
@@ -41,9 +41,9 @@ typedef struct ZamNativeTables {
     const uint64_t *count;
 } ZamNativeTables;
 
-// The table the interpreter was built with. A project's natives are appended to
-// this by the file the build generates from the project's `native:` block; what
-// is here is the standard library's own.
+// The core table the runtime is built with. A project's natives are in a table
+// of their own the compiler lays out from the project's `native:` block; what is
+// here is the standard library's own.
 extern const ZamNativeEntry zamNativeTable[];
 extern const uint64_t zamNativeTableCount;
 
@@ -76,9 +76,9 @@ void zam_native_write_barrier(ZamThread *thread, const void *at,
 
 // zam_native_return leaves a value where the caller reads one, and
 // zam_native_return_void leaves the caller the stack it had before the call.
-// Either must run before the native returns to C, or the frame it was handed is
-// still open when the dispatch loop sees it next — the opcode handler panics in
-// that case rather than leaving the entry to shift every walk after it.
+// Either must run before the native returns, or the frame it was handed is still
+// open when its caller resumes, which ends the program rather than leaving the
+// entry to shift every walk after it.
 //
 // markPointerBits names which words of the result are addresses the collector
 // has to visit, as a bitmask with bit i set for word i. A result of plain

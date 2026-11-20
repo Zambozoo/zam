@@ -281,11 +281,12 @@ static void stdNetListen(ZamThread *thread) {
         else {
             struct addrinfo *ai = results;
             fd = zam_socket_fd(socket(ai->ai_family, ai->ai_socktype, ai->ai_protocol));
-            int one = 1, zero = 0;
+            int zero = 0;
             if (fd >= 0) {
 #if !defined(_WIN32)
                 // Windows' SO_REUSEADDR lets another socket take a port in
                 // use; its default already allows rebinding one just closed.
+                int one = 1;
                 setsockopt(zam_fd_socket(fd), SOL_SOCKET, SO_REUSEADDR, (void *)&one, sizeof one);
 #endif
                 if (ai->ai_family == AF_INET6)

@@ -16,9 +16,7 @@ import (
 )
 
 // TestRun runs a program that exits with a status chosen by its arguments, so
-// both the arguments reaching it and its status coming back are observed. It
-// runs native code when the end-to-end tests compile natively, and the
-// interpreter otherwise.
+// both the arguments reaching it and its status coming back are observed.
 func TestRun(t *testing.T) {
 	t.Parallel()
 
@@ -44,21 +42,14 @@ namespace Main {
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
 	opts := build.Options{Project: ast.MainCodeDecl.File().Project}
-	var run func(args []string) (int, error)
-	if compilesNatively() {
-		if !testTarget().IsHost() {
-			t.Skip("zam run runs programs for the host")
-		}
-		object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
-		require.NoError(t, err)
-		opts.RuntimeCacheDir, err = nativeRuntimeCache()
-		require.NoError(t, err)
-		run = func(args []string) (int, error) { return build.RunNative(object.Bytes, opts, args) }
-	} else {
-		result, err := codegen.GenerateCode(cmd, ast)
-		require.NoError(t, err)
-		run = func(args []string) (int, error) { return build.Run(result.Image, result.NativeNames, opts, args) }
+	if !testTarget().IsHost() {
+		t.Skip("zam run runs programs for the host")
 	}
+	object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
+	require.NoError(t, err)
+	opts.RuntimeCacheDir, err = nativeRuntimeCache()
+	require.NoError(t, err)
+	run := func(args []string) (int, error) { return build.Run(object.Bytes, opts, args) }
 
 	tests := []struct {
 		name string

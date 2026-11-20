@@ -379,8 +379,8 @@ func (r *referenceTypeResolverVisitor) VisitTypeGeneric(t *syntax.TypeGeneric) e
 		err = r.visitTypeReference(t.Type.(*syntax.TypeReference))
 	case syntax.TypeKindTailed:
 		err = r.visitTypeReference(t.Type.(*syntax.TypeTailed).Type)
-	default:
-		panic("unreachable")
+		// default:
+		// panic("unreachable")
 	}
 	if err != nil {
 		r.err(t, err)
@@ -399,7 +399,7 @@ func (r *referenceTypeResolverVisitor) VisitTypeGeneric(t *syntax.TypeGeneric) e
 
 	decl := t.Type.Decl()
 	genericDecl, ok := decl.(syntax.DeclGeneric)
-	if !ok {
+	if !ok || genericDecl.Generics() == nil {
 		r.errf(t, "declaration %q is not a generic type", t.String())
 		return nil
 	} else if genericDecl.Generics().Len() != len(t.ParameterTypes) {
@@ -445,20 +445,17 @@ func nestedDecl(d syntax.Decl, ids []string) (syntax.Decl, bool) {
 	return d, true
 }
 
-// setDecl points t at the declaration it was resolved to, which has to be one a
-// type can be written of or an alias for one.
-func (r *referenceTypeResolverVisitor) setDecl(t *syntax.TypeReference, d syntax.Decl) error {
+// setDecl points t at the declaration it was resolved to: an alias, or a
+// declaration a type can be written of, which every other declaration is.
+func (r *referenceTypeResolverVisitor) setDecl(t *syntax.TypeReference, d syntax.Decl) {
 	if alias, ok := d.(*syntax.DeclAlias); ok {
 		t.SetAlias(alias)
-	} else if declTypeable, ok := d.(syntax.DeclTypeable); ok {
-		t.SetDecl(declTypeable)
 	} else {
-		return fmt.Errorf("declaration %q is not a typeable", t.String())
+		t.SetDecl(d.(syntax.DeclTypeable))
 	}
 	if n := len(t.IdTokens); n > 0 {
 		r.ast.References.Add(t.OuterDecl().File(), t.IdTokens[n-1], syntax.TargetOf(d), nil)
 	}
-	return nil
 }
 
 // visitTypeReference resolves a written name to the declaration it stands for.
@@ -476,18 +473,17 @@ func (r *referenceTypeResolverVisitor) setDecl(t *syntax.TypeReference, d syntax
 // there being no other way to write it.
 func (r *referenceTypeResolverVisitor) visitTypeReference(t *syntax.TypeReference) error {
 	if t.Path != "" {
-		file, i := r.ast.CodeFiles.Get(t.Path)
-		if i < 0 {
-			return fmt.Errorf("declaration %q not found", t.String())
-		}
-		return r.setDecl(t, file.Decl)
+		file, _ := r.ast.CodeFiles.Get(t.Path)
+		r.setDecl(t, file.Decl)
+		return nil
 	}
 
 	for scope := t.Imports(); scope != nil; scope = scope.Outer {
 		if decl, err := r.importsDecl(t, scope.Imports); err != nil {
 			return err
 		} else if decl != nil {
-			return r.setDecl(t, decl)
+			r.setDecl(t, decl)
+			return nil
 		}
 	}
 
@@ -512,13 +508,15 @@ func (r *referenceTypeResolverVisitor) visitTypeReference(t *syntax.TypeReferenc
 		if !ok {
 			return fmt.Errorf("declaration %q not found", t.String())
 		}
-		return r.setDecl(t, decl)
+		r.setDecl(t, decl)
+		return nil
 	}
 
 	if decl, err := r.importsDecl(t, t.OuterDecl().File().Imports); err != nil {
 		return err
 	} else if decl != nil {
-		return r.setDecl(t, decl)
+		r.setDecl(t, decl)
+		return nil
 	}
 
 	return fmt.Errorf("declaration %q not found", t.String())

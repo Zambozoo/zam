@@ -547,10 +547,10 @@ func ownerContainingDecl(o GenericOwner) Decl {
 	switch o := o.(type) {
 	case Decl:
 		return o
-	case *FieldMethod:
-		return o.OuterDecl()
+	default:
+		return o.(*FieldMethod).OuterDecl()
 	}
-	panic("unknown GenericOwner kind")
+	// panic("unknown GenericOwner kind")
 }
 
 // readDottedIds reads the ids of a dotted name whose first id, start, has
@@ -1706,10 +1706,9 @@ func (t *TypeWrapped) String() string {
 		return fmt.Sprintf("thread[%s]", t.Type.String())
 	case TypeKindVariadic:
 		return fmt.Sprintf("%s...", t.Type.String())
-	case TypeKindConst:
-		return fmt.Sprintf("%s$", t.Type.String())
 	default:
-		panic("unreachable")
+		return fmt.Sprintf("%s$", t.Type.String())
+		// panic("unreachable")
 	}
 }
 

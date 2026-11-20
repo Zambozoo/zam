@@ -1,0 +1,13 @@
+public namespace Far {
+    private class Hidden {
+    }
+    class Local {
+        var int near;
+        private var int secret;
+    }
+    private var int secret;
+    var int near;
+    class Guarded {
+        protected var int inner;
+    }
+}

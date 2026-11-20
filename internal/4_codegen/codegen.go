@@ -23,7 +23,7 @@ const magic = "ZAM_LANG"
 // and still say which version it was handed rather than only that it was wrong.
 const (
 	versionMajor = 0
-	versionMinor = 2
+	versionMinor = 3
 	versionPatch = 0
 
 	versionWord = versionMajor<<32 | versionMinor<<16 | versionPatch
@@ -89,18 +89,12 @@ type (
 		// with the number of entries: the names are not all the same width, so
 		// the run cannot be walked by anything not first told how far it goes.
 		nativesByteOffset int
-		// genericStaticMethodsByteOffset is the byte offset of the generic
-		// static method registry, the lookup table OpPushGenericStaticSlot
-		// walks when a generic method is called with open type arguments.
-		genericStaticMethodsByteOffset int
 		// staticRootsByteOffset is the byte offset of the static root table,
 		// which opens with the number of entries.
 		staticRootsByteOffset int
-		// operationsByteOffset is the byte offset of the operations.
-		operationsByteOffset int
-		// debugByteOffset is the byte offset of the debug section, which is
-		// where the operations end.
-		debugByteOffset int
+		// bodyByteCount is how many bytes follow the header, which is where the
+		// static root table ends.
+		bodyByteCount int
 	}
 
 	codegenReader struct {
@@ -180,27 +174,10 @@ type (
 		// the rest. See zam_vm_init in internal/5_build/runtime/src/vm.c.
 		staticImage []byte
 
-		// genericStaticMethods is the registry of generic static methods that
-		// may be called with open type arguments. Each entry carries one
-		// concrete per instantiation — its ground type arguments, its static
-		// slot, and the function type id the body was emitted as — and the
-		// runtime binary-searches the entry by the type arguments on the stack
-		// at the call site to find the right slot. A method ends up here when
-		// a reference to it is compiled with any open-generic type argument;
-		// a reference with ground arguments takes the compile-time fast path
-		// and never touches this.
-		genericStaticMethods []genericStaticMethodEntry
-
 		// staticRoots is every static member, method and enum value, with the
 		// type of what its slot holds, which is what the collector reads the
 		// static region by.
 		staticRoots []staticRoot
-		// genericStaticMethodIDs maps a generic static method's syntax field
-		// to the id it was assigned in the registry above. Lookups happen at
-		// every call site that needs the runtime dispatch path, and the first
-		// one assigns the id; the field pointer identifies the method the
-		// same way across them.
-		genericStaticMethodIDs map[*syntax.FieldMethod]uint16
 
 		// natives maps each native's name to the slot it holds in the native
 		// table section of the image. The name is a C symbol, so the table is
@@ -209,11 +186,6 @@ type (
 		// C side's to know — the SDK reads the frame, and the compiler has no
 		// signature to hand over.
 		natives *base.StaticOrderedMap[string, uint64]
-
-		// operations are the readers for the op code instructions.
-		operations []operation
-		// debug says which line and function each operation was emitted for.
-		debug *debugInfo
 
 		// counts holds the per-bucket type-id start indices, computed once all
 		// skeletons are built. Byte offsets are filled in at serialization time.
@@ -241,27 +213,6 @@ type (
 	// declaration that carries its virtual generic id.
 	virtualConcrete interface {
 		ConcreteID() *uint16
-	}
-
-	// genericStaticMethodEntry is one generic static method's dispatch row:
-	// its arity (the number of type arguments the call site pushes) and the
-	// run of concretes to search by those arguments. Linear search is fine —
-	// a generic method rarely has more than a handful of concretes — and
-	// avoids the perfect-hash machinery an interface dispatch pays for.
-	genericStaticMethodEntry struct {
-		arity     uint64
-		concretes []genericStaticMethodConcrete
-	}
-
-	// genericStaticMethodConcrete is one monomorphization of a generic static
-	// method: the ground type arguments that select it, the static slot its
-	// closure was built into, and the function type id its body was emitted
-	// as. OpPushGenericStaticSlot leaves both on the stack so the caller
-	// treats it as a single-step replacement for OpPushStatic + emitPushTypeID.
-	genericStaticMethodConcrete struct {
-		typeArgs []typeInstance
-		slot     uint64
-		fnType   typeInstance
 	}
 )
 
@@ -347,10 +298,7 @@ func (b *counts) words() []int {
 		b.staticRegionByteSize,
 		b.staticImageByteOffset,
 		b.nativesByteOffset,
-		b.genericStaticMethodsByteOffset,
 		b.staticRootsByteOffset,
-		b.operationsByteOffset,
-		b.debugByteOffset,
 	}
 }
 
@@ -411,13 +359,13 @@ func (cr *codegenReader) staticImageAt(offset, byteCount uint64) []byte {
 }
 
 // nativeNames is the native table in slot order, which is the order the names
-// were interned in and so the order [operationVisitor.nativeIndex] numbered them.
-// An OpNative operand names a slot of this run, so a name written anywhere else
-// in it is a different function than the one that was compiled.
+// were interned in and so the order [collectNativesAndLiterals] numbered them.
+// A native call names a slot of this run, so a name written anywhere else in it
+// is a different function than the one that was compiled.
 //
 // A name is laid out as a string literal is — a length and its bytes, padded out
 // to a word — without being one. What is written is a C symbol to be resolved
-// against the interpreter's table when the two are built together, not a value
+// against the program's native tables when it starts, not a value
 // the static region holds; the encoding is shared, the meaning is not.
 func (cr *codegenReader) nativeNames() []stringLiteral {
 	names := make([]stringLiteral, 0, cr.natives.Len())
@@ -471,83 +419,11 @@ func (cr *codegenReader) calculateByteCounts() (*counts, []int) {
 	bc.nativesByteOffset = offset
 	offset += countedByteCount(cr.nativeNames())
 
-	bc.genericStaticMethodsByteOffset = offset
-	offset += genericStaticMethodsByteCount(cr.genericStaticMethods)
-
 	bc.staticRootsByteOffset = offset
 	offset += wordByteSize + len(cr.staticRoots)*staticRootByteCount
-
-	bc.operationsByteOffset = offset
-	offset += byteCount(cr.operations)
-
-	// Operations are not all a word wide, so the debug section after them is
-	// put back on a word boundary for its words to be read in place.
-	bc.debugByteOffset = int(alignUp(uint64(offset), wordByteSize))
+	bc.bodyByteCount = offset
 
 	return &bc, typeDefinitionMap
-}
-
-// genericStaticMethodsByteCount is the serialized size of the registry: an
-// entry count, then for each entry the arity and a counted list of concretes,
-// then for each concrete its type arguments, slot, and function type id. The
-// shape mirrors the counted-list idiom every other variable-length table in
-// the image uses.
-func genericStaticMethodsByteCount(entries []genericStaticMethodEntry) int {
-	total := wordByteSize
-	for _, entry := range entries {
-		total += 2 * wordByteSize // arity, concreteCount
-		for _, c := range entry.concretes {
-			total += len(c.typeArgs) * (3 * wordByteSize)
-			total += wordByteSize     // slot
-			total += 3 * wordByteSize // fnType
-			_ = c                     // sum includes every field; this guards against drift
-		}
-	}
-	return total
-}
-
-// readGenericStaticMethods writes the registry: the entry count, then each
-// entry's arity and concrete count, then every concrete laid as its type
-// arguments followed by the slot and function type id. The runtime walks the
-// section with the same shape — arity tells it how many type words to compare
-// per concrete, and the two counts bound the walk.
-func readGenericStaticMethods(p []byte, entries []genericStaticMethodEntry) (int, error) {
-	totalBytes, err := readInt(p, len(entries))
-	if err != nil {
-		return 0, err
-	}
-
-	for _, entry := range entries {
-		n, err := readAllWords(p[totalBytes:], entry.arity, uint64(len(entry.concretes)))
-		if err != nil {
-			return 0, err
-		}
-		totalBytes += n
-
-		for _, c := range entry.concretes {
-			for _, ta := range c.typeArgs {
-				n, err = ta.Read(p[totalBytes:])
-				if err != nil {
-					return 0, err
-				}
-				totalBytes += n
-			}
-
-			n, err = readUint64(p[totalBytes:], c.slot)
-			if err != nil {
-				return 0, err
-			}
-			totalBytes += n
-
-			n, err = c.fnType.Read(p[totalBytes:])
-			if err != nil {
-				return 0, err
-			}
-			totalBytes += n
-		}
-	}
-
-	return totalBytes, nil
 }
 
 // countedByteCount and readCounted lay out a variable-length list the way every
@@ -592,7 +468,7 @@ func readAll[T byteCountable](bs []byte, readers ...[]T) (int, error) {
 // size is everything that follows the header.
 func (cr *codegenReader) ByteCount() int {
 	bc, _ := cr.calculateByteCounts()
-	return bc.ByteCount() + bc.debugByteOffset + cr.debug.ByteCount()
+	return bc.ByteCount() + bc.bodyByteCount
 }
 
 func (cr *codegenReader) Read(p []byte) (int, error) {
@@ -699,32 +575,7 @@ func (cr *codegenReader) Read(p []byte) (int, error) {
 	}
 	totalBytes += n
 
-	n, err = readGenericStaticMethods(p[totalBytes:], cr.genericStaticMethods)
-	if err != nil {
-		return 0, err
-	}
-	totalBytes += n
-
 	n, err = readStaticRoots(p[totalBytes:], cr.staticRoots)
-	if err != nil {
-		return 0, err
-	}
-	totalBytes += n
-
-	n, err = readAll(p[totalBytes:], cr.operations)
-	if err != nil {
-		return 0, err
-	}
-	totalBytes += n
-
-	debugStart := bc.ByteCount() + bc.debugByteOffset
-	if len(p) < debugStart {
-		return 0, io.ErrShortBuffer
-	}
-	clear(p[totalBytes:debugStart])
-	totalBytes = debugStart
-
-	n, err = cr.debug.Read(p[totalBytes:])
 	if err != nil {
 		return 0, err
 	}
@@ -766,12 +617,11 @@ func readStaticRoots(p []byte, roots []staticRoot) (int, error) {
 	return totalBytes, nil
 }
 
-// Result is what codegen produces: the serialized bytecode image and the
-// ordered list of native names the image's native table carries. The build
-// driver reads both — the bytes to embed in the generated wrapper, and the
-// names to generate the per-project ZamNativeEntry table against. Keeping
-// them side by side keeps the two tables in agreement, since each name's
-// index in the slice is the slot the image names it under.
+// Result is what codegen produces: the serialized image and the ordered list
+// of native names the image's native table carries. The module reads both — the
+// bytes to embed, and the names to lay its native tables out against. Keeping
+// them side by side keeps the two tables in agreement, since each name's index
+// in the slice is the slot the image names it under.
 type Result struct {
 	Image       []byte
 	NativeNames []string
@@ -807,17 +657,16 @@ func GenerateCode(cmd *command.Command, ast *syntax.AST) (*Result, error) {
 	}
 
 	reader := &codegenReader{
-		gcTriggerRatio:         cmd.GCTriggerRatio,
-		initialStackSize:       cmd.InitialStackSize,
-		initialHeapSize:        cmd.InitialHeapSize,
-		nurserySize:            cmd.NurserySize,
-		maxHeapSize:            cmd.MaxHeapSize,
-		gcMarkers:              cmd.GCMarkers,
-		gcConcurrent:           cmd.GCConcurrent,
-		gcRemarkGrowth:         cmd.GCRemarkGrowth,
-		gcPrecleanPasses:       cmd.GCPrecleanPasses,
-		gcReturnAge:            cmd.GCReturnAge,
-		genericStaticMethodIDs: map[*syntax.FieldMethod]uint16{},
+		gcTriggerRatio:   cmd.GCTriggerRatio,
+		initialStackSize: cmd.InitialStackSize,
+		initialHeapSize:  cmd.InitialHeapSize,
+		nurserySize:      cmd.NurserySize,
+		maxHeapSize:      cmd.MaxHeapSize,
+		gcMarkers:        cmd.GCMarkers,
+		gcConcurrent:     cmd.GCConcurrent,
+		gcRemarkGrowth:   cmd.GCRemarkGrowth,
+		gcPrecleanPasses: cmd.GCPrecleanPasses,
+		gcReturnAge:      cmd.GCReturnAge,
 	}
 
 	// build type definition skeletons
@@ -827,11 +676,10 @@ func GenerateCode(cmd *command.Command, ast *syntax.AST) (*Result, error) {
 	// lay out the static instance maps in the same traversal
 	populateTypeDefinitions(ast, reader, typeIndices)
 
-	// run through operations to populate operations, interning each string
-	// literal as it is first emitted and laying them ahead of the statics
-	if err := populateOperations(ast, reader, typeIndices); err != nil {
-		return nil, err
-	}
+	// collect the natives and string literals the program names, laying the
+	// literals ahead of the statics
+	collectNativesAndLiterals(ast, reader)
+	reader.placeLiterals()
 
 	// The image is serialized here rather than handed back as a reader over the
 	// compiler's own state. Read writes the whole image wherever it is pointed

@@ -1,0 +1,8 @@
+public namespace Main {
+    alias Number = int;
+    alias Two[T] = (T, T);
+    var Two[int, int] wrong;
+    var Number[int] extra;
+    class Base <: Number* {
+    }
+}

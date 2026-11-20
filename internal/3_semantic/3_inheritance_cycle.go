@@ -17,18 +17,9 @@ func detectInheritanceCycles(ast *syntax.AST) []error {
 		visited: base.Set[syntax.Decl]{},
 	}
 	for _, entry := range ast.CodeFiles.All() {
-		v.VisitFile(entry.Value)
+		entry.Value.Decl.Accept(v)
 	}
 	return v.errs
-}
-
-func (v *inheritanceCycleDetectorVisitor) VisitFile(f *syntax.File) error {
-	f.Decl.Accept(v)
-	return nil
-}
-
-func (v *inheritanceCycleDetectorVisitor) VisitImport(i *syntax.Import) error {
-	return nil
 }
 
 func (v *inheritanceCycleDetectorVisitor) visitDeclSubtypeable(d syntax.DeclSubtypeable) {
@@ -45,7 +36,12 @@ func (v *inheritanceCycleDetectorVisitor) visitDeclSubtypeable(d syntax.DeclSubt
 	}
 	delete(v.cycle, d)
 	v.visited[d] = struct{}{}
+	v.visitInnerDecls(d)
+}
 
+// visitInnerDecls checks the declarations nested in d, each chain of bases
+// starting afresh.
+func (v *inheritanceCycleDetectorVisitor) visitInnerDecls(d syntax.Decl) {
 	prevCycle := v.cycle
 	v.cycle = base.Set[syntax.Decl]{}
 	for decl := range d.Decls() {
@@ -65,14 +61,17 @@ func (v *inheritanceCycleDetectorVisitor) VisitDeclClass(d *syntax.DeclClass) er
 }
 
 func (v *inheritanceCycleDetectorVisitor) VisitDeclEnum(d *syntax.DeclEnum) error {
+	v.visitInnerDecls(d)
 	return nil
 }
 
 func (v *inheritanceCycleDetectorVisitor) VisitDeclInterface(d *syntax.DeclInterface) error {
+	v.visitInnerDecls(d)
 	return nil
 }
 
 func (v *inheritanceCycleDetectorVisitor) VisitDeclNamespace(d *syntax.DeclNamespace) error {
+	v.visitInnerDecls(d)
 	return nil
 }
 
@@ -84,6 +83,7 @@ func (v *inheritanceCycleDetectorVisitor) VisitDeclAlias(*syntax.DeclAlias) erro
 }
 
 func (v *inheritanceCycleDetectorVisitor) VisitDeclStruct(d *syntax.DeclStruct) error {
+	v.visitInnerDecls(d)
 	return nil
 }
 

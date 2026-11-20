@@ -57,17 +57,7 @@ func (z *zig) command(tool string, args ...string) *exec.Cmd {
 // cflags are the flags C is compiled with for the target, against the pack's
 // headers.
 func (z *zig) cflags() []string {
-	include := filepath.Join(z.pack, "include")
-	flags := []string{
-		"-target", z.target.Zig, "-std=gnu11", "-O3", "-fPIC",
-		"-DCURL_STATICLIB", "-DBSON_STATIC", "-DLIBXML_STATIC",
-		"-I" + include, "-I" + filepath.Join(include, "libxml2"),
-	}
-	bson, _ := filepath.Glob(filepath.Join(include, "bson-*"))
-	for _, dir := range bson {
-		flags = append(flags, "-I"+dir)
-	}
-	return flags
+	return append([]string{"-target", z.target.Zig, "-std=gnu11", "-O3", "-fPIC"}, target.PackCFlags(z.pack)...)
 }
 
 // RuntimeArchive answers the path of the runtime compiled for t into a static

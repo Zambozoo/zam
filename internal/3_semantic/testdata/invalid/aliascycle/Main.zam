@@ -1,0 +1,5 @@
+public namespace Main {
+    alias A = B;
+    alias B = A*;
+    alias Self = Self[2];
+}

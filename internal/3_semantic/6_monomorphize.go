@@ -42,7 +42,7 @@ func monomorphize(ast *syntax.AST) {
 		tupleTypes:    syntax.NewTypeSet(),
 	}
 	for _, entry := range ast.CodeFiles.All() {
-		entry.Value.Accept(v)
+		entry.Value.Decl.Accept(v)
 	}
 	v.drain()
 
@@ -104,13 +104,12 @@ func bindingsHash(bindings map[syntax.GenericArgKey]syntax.Type) uint64 {
 	return h
 }
 
+// sameBindings reports whether two bindings of one owner bind every parameter to
+// the same type. Bindings of one owner bind the same parameters, so only the
+// types are compared.
 func sameBindings(a, b map[syntax.GenericArgKey]syntax.Type) bool {
-	if len(a) != len(b) {
-		return false
-	}
 	for k, t := range a {
-		other, ok := b[k]
-		if !ok || !t.Equals(other) {
+		if !t.Equals(b[k]) {
 			return false
 		}
 	}
@@ -164,10 +163,7 @@ func (v *monomorphizer) drain() {
 // existence and queues its template for walking under the binding that
 // produced it.
 func (v *monomorphizer) materialize(t *syntax.TypeGeneric) {
-	gd, ok := t.Type.Decl().(syntax.DeclGeneric)
-	if !ok || gd.Generics() == nil {
-		return
-	}
+	gd := t.Type.Decl().(syntax.DeclGeneric)
 	gd.GetConcreteDecl(t)
 
 	bindings := make(map[syntax.GenericArgKey]syntax.Type, len(t.ParameterTypes))
@@ -186,25 +182,12 @@ func (v *monomorphizer) materialize(t *syntax.TypeGeneric) {
 // signature and body for walking under the resolved bindings.
 //
 // stampConcrete is true only when the call site's type arguments were already
-// ground in the source. Open sites must leave e.Concrete unset so codegen
-// emits OpPushGenericStaticSlot against the receiver's binding.
+// ground in the source. Open sites must leave e.Concrete unset, since which
+// concrete runs is the receiver's binding to say.
 func (v *monomorphizer) materializeMethod(e *syntax.ExprType, typeArgs []syntax.Type, stampConcrete bool) {
-	tr, ok := e.Type.(syntax.TypeResolvable)
-	if !ok {
-		return
-	}
-	fi, ok := tr.Decl().GetStaticField(e.Field)
-	if !ok {
-		return
-	}
-	method, ok := fi.(*syntax.FieldMethod)
-	if !ok || method.Generics() == nil {
-		return
-	}
+	fi, _ := e.Type.(syntax.TypeResolvable).Decl().GetStaticField(e.Field)
+	method := fi.(*syntax.FieldMethod)
 	concrete, _ := method.GetConcreteMethod(typeArgs)
-	if concrete == nil {
-		return
-	}
 	if stampConcrete {
 		e.Concrete = concrete
 	}
@@ -364,14 +347,6 @@ func (v *monomorphizer) visitInheritedFields(d syntax.Decl) {
 			v.recordOpen(field.FieldType())
 		}
 	}
-}
-
-func (v *monomorphizer) VisitFile(f *syntax.File) error {
-	return f.Decl.Accept(v)
-}
-
-func (v *monomorphizer) VisitImport(*syntax.Import) error {
-	return nil
 }
 
 func (v *monomorphizer) VisitDeclAbstract(d *syntax.DeclAbstract) error {

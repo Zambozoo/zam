@@ -1,6 +1,7 @@
 // The standard library's tables of natives beyond the core one, all of them,
-// for a program run under the interpreter, which may call any. A natively
-// compiled program defines its own, naming only the tables it calls into.
+// for the conformance harnesses, which link the runtime with no compiled
+// module of their own. A compiled program defines its own, naming only the
+// tables it calls into.
 
 #include "zam/native.h"
 

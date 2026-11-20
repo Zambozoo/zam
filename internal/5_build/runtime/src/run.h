@@ -4,9 +4,8 @@
 #include "thread.h"
 #include "vm.h"
 
-// What the interpreter answers about values and runs on behalf of the
-// collector, which walks the same layouts the instructions do and runs the
-// same methods.
+// What the runtime answers about values and runs on behalf of compiled code
+// and the collector, which walk the same layouts and run the same methods.
 
 // zam_type_is_markable_reference reports whether the one word a value of the
 // type is names something with a mark word the collector owns.
@@ -69,29 +68,6 @@ ZamTypeID zam_instance_type(const void *instance);
 uint32_t zam_interface_method_index(const ZamImage *image, ZamTypeShort concrete,
                                     ZamTypeShort interfaceType, uint32_t methodIndex);
 
-// zam_virtual_method is the methodIndex'th method of the value of receiverType
-// laid out at receiver, looked up on its own class when its type is abstract,
-// and zam_interface_method is the methodIndex'th method of the interface
-// receiverType points at, as the class of the instance at receiver implements
-// it. Both panic on a null receiver they have to look into.
-ZamMethodDefinition zam_virtual_method(const ZamThread *thread, ZamTypeID receiverType,
-                                       const void *receiver, uint32_t methodIndex);
-ZamMethodDefinition zam_interface_method(const ZamThread *thread, ZamTypeID receiverType,
-                                         const void *receiver, uint32_t methodIndex);
-
-// zam_method_closure allocates a closure over method bound to the receiver of
-// receiverType laid out at receiver.
-void *zam_method_closure(ZamThread *thread, ZamTypeID receiverType, const void *receiver,
-                         ZamMethodDefinition method);
-
-// zam_image_generic_static_arity is how many type arguments the generic static
-// method id takes, and zam_generic_static_slot is the static slot holding its
-// instantiation for the type-id words at args, with that instantiation's
-// function type at *fnType, panicking when there is none.
-uint64_t zam_image_generic_static_arity(const ZamImage *image, uint64_t id);
-uint8_t *zam_generic_static_slot(ZamVM *vm, uint64_t id, const ZamWord *args,
-                                 const ZamWord **fnType);
-
 // zam_any_box allocates an any holding a copy of the value of payloadType laid
 // out at value, zam_any_type is the type the any at anyBox holds, and
 // zam_any_unbox lays what it holds out at out as a value of target, panicking
@@ -103,14 +79,13 @@ void zam_any_unbox(ZamThread *thread, const void *anyBox, ZamTypeID target, void
 // zam_value_eq, zam_value_cmp, zam_value_hash and zam_value_str are
 // equality, order, hashing and the string form of values laid out at the
 // addresses given as a frame lays them out, calling a type's own Eq, Cmp, Hash
-// or Str where it has one. Each answers how the program ran, which is
-// ZAMRESULT_CONTINUE unless an override ended it.
-ZamResult zam_value_eq(ZamThread *thread, ZamTypeID leftType, const void *left,
-                       ZamTypeID rightType, const void *right, bool *equal);
-ZamResult zam_value_cmp(ZamThread *thread, ZamTypeID leftType, const void *left,
-                        ZamTypeID rightType, const void *right, ZamInt *order);
-ZamResult zam_value_hash(ZamThread *thread, ZamTypeID type, const void *value, ZamWord *hash);
-ZamResult zam_value_str(ZamThread *thread, ZamTypeID type, const void *value, ZamString **string);
+// or Str where it has one.
+bool zam_value_eq(ZamThread *thread, ZamTypeID leftType, const void *left,
+                  ZamTypeID rightType, const void *right);
+ZamInt zam_value_cmp(ZamThread *thread, ZamTypeID leftType, const void *left,
+                     ZamTypeID rightType, const void *right);
+ZamWord zam_value_hash(ZamThread *thread, ZamTypeID type, const void *value);
+ZamString *zam_value_str(ZamThread *thread, ZamTypeID type, const void *value);
 
 // zam_value_stamp writes the headers a fresh value of type laid out at value
 // carries, as one standing in a frame: a class instance's, contained by
@@ -120,7 +95,7 @@ void zam_value_stamp(ZamThread *thread, ZamTypeID type, void *value);
 // zam_value_delete runs the Delete of the instance the value of type at value
 // is or points at, doing nothing for a null pointer or a value that answers
 // through no instance.
-ZamResult zam_value_delete(ZamThread *thread, ZamTypeID type, const void *value);
+void zam_value_delete(ZamThread *thread, ZamTypeID type, const void *value);
 
 // zam_value_mark says the value of type at value is reachable when the thread
 // is collecting, and does nothing otherwise.
@@ -130,26 +105,14 @@ void zam_value_mark(ZamThread *thread, ZamTypeID type, const void *value);
 // is asked for.
 bool zam_type_is_subtype(const ZamImage *image, ZamTypeID child, ZamTypeID parent);
 
-// zam_thread_initialize runs the type's initializer over a stamped run of
-// elementCount values at object, to its return.
-ZamResult zam_thread_initialize(ZamThread *thread, void *object,
-                                ZamTypeID element, uint64_t elementCount);
+// zam_thread_initialize runs the type's compiled initializer over a stamped
+// run of elementCount values at object.
+void zam_thread_initialize(ZamThread *thread, void *object, ZamTypeID element,
+                           uint64_t elementCount);
 
 // zam_thread_call_method runs one of Object's methods on the instance at a
 // location, through the method table of the instance's own type, to its
 // return. The location is an address or, for an instance on the thread's own
 // stack, a frame location.
-ZamResult zam_thread_call_method(ZamThread *thread, ZamWord receiver,
-                                 uint64_t slot);
+void zam_thread_call_method(ZamThread *thread, ZamWord receiver, uint64_t slot);
 
-// zam_frame_receiver answers the location of the word naming the receiver of
-// the call a function entry opened, or of main's when the entry is
-// ZAMMARK_NONE, answering 0 for a call through no closure or a frame that
-// cannot be read. Slot 0 of the frame is trusted to hold a closure, as the
-// frame of any call with a receiver's does.
-ZamWord zam_frame_receiver(const ZamThread *thread, uint64_t entry);
-
-// zam_type_template_ancestor answers the instantiation of the generic
-// declaration templateDecl that type descends from, or 0 if none.
-ZamTypeShort zam_type_template_ancestor(const ZamImage *image, ZamTypeID type,
-                                        uint16_t templateDecl);

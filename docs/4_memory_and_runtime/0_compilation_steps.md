@@ -28,10 +28,9 @@
 1. String Literal Enumeration
     * Enumerates and populates string literals.
 1. Static Field Enumeration and Type Definition Resolution
-    * Computes static field offsets for bytecode mapping and populates type definition type references.
-1. Operation Generation
-    * Generates a list of executable bytecode.
-    * Records, for each run of instructions, the line of source it was emitted for and the function body it lies in. These go into the image as a debug section, which the runtime reads stack traces from.
+    * Computes static field offsets and populates type definition type references. The type definitions, statics, string literals and native names make up the image the runtime reads.
+1. Native Code Generation
+    * Compiles every function to LLVM IR, along with a table of the program's classes and functions and the image as a constant, optimizes it with LLVM's pipeline for the `-O` level, `2` by default, and emits an object for the target. `zam debug` compiles without optimizing.
 ### Build
-1. Build Executable
-    * Bundles the executable bytecode and any provided native C code into a C program that is shelled out to `cc` to produce a single executable.
+1. Link Executable
+    * Compiles the runtime with `zig cc` against the target's pack, or takes the pack's prebuilt runtime, compiles the project's `native.files`, and links them with the object and the pack's libraries through lld into a single executable.

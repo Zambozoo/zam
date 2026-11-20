@@ -20,11 +20,13 @@ A thread started by `async` is traced back to the call it was started on. A trac
 `System::Trace()` writes the calling thread's trace to stderr without stopping it, and `System::Caller(skip)` answers the file and line `skip` calls out from the method calling it.
 
 ### How
-The compiler records, as it emits each method, the offsets each function body begins and ends at, and the instruction offset at which each of its statements begins together with its file and line. The functions go into the image as a table sorted by offset. Each function's lines go in as a line program of its own: every entry is how far its offset and line lie from the entry before it, which is rarely more than a byte each, so the program takes a fraction of the space a table of whole offsets and lines would.
+Every function keeps a frame the runtime can walk, linked to its caller's, which names the function and holds the line it last reached. The compiler writes that line as each statement begins, so a frame's line is the statement it is in. The function's name and file come from a table the compiler emits beside the program.
 
-The runtime walks a thread's frames from the instruction it is running outward through the place each frame will return to. For each, it finds the innermost function holding the instruction by binary search, then reads that function's line program forward to the instruction.
+The runtime walks a thread's frames from the innermost outward and writes a line for each.
 
 ### Limitations
 * A line is a statement's: an expression spread over several lines is placed at the line the statement begins on.
 * An access past the end of an array that lands in memory the process owns is not caught at all.
 * A program that handles `SIGSEGV` or `SIGBUS` itself through `Signal` replaces the trace.
+* An invalid memory access whose result is never used may be optimized away, and so never caught.
+* After recovering an invalid memory access, a number the failing function stored into the heap just before it may be lost.

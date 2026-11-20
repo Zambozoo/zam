@@ -71,7 +71,7 @@ if [[ ${got%$'\r'} != "zam $version" ]]; then
     exit 1
 fi
 
-got=$("$zam" run --native docs/0_example/helloworld/Main.zam)
+got=$("$zam" run docs/0_example/helloworld/Main.zam)
 if [[ ${got%$'\r'} != "Hello World!" ]]; then
     echo "hello world wrote $got" >&2
     exit 1
@@ -84,7 +84,7 @@ fi
 
 for target in aarch64-linux-musl x86_64-linux-musl aarch64-macos x86_64-macos aarch64-windows-gnu x86_64-windows-gnu; do
     echo "build $target"
-    "$zam" build --native --target "$target" -o "$(native "$work/hello-$target")" docs/0_example/helloworld/Main.zam
+    "$zam" build --target "$target" -o "$(native "$work/hello-$target")" docs/0_example/helloworld/Main.zam
 done
 
 cat >"$work/smoke/Smoke.test.zam" <<'EOF'
@@ -96,5 +96,5 @@ public namespace SmokeTest {
     }
 }
 EOF
-"$zam" test --native -n "$(native "$work/smoke")"
+"$zam" test -n "$(native "$work/smoke")"
 echo "zam $version checks out"

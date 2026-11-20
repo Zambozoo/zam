@@ -2,162 +2,19 @@ package codegen
 
 import (
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
-	goruntime "runtime"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
-	build "github.com/zambozoo/zam/internal/5_build"
 )
-
-// harnessCache memoizes each compiled harness binary by its config, so a
-// package-wide run compiles each one once rather than once per test. The
-// subprocess cc is ~800ms a call and the conformance tests make 40-plus
-// calls, so caching is where most of the suite's wall time lives.
-//
-// Entries live for the test binary's whole run — the binary itself sits in a
-// package-level temp dir that the OS cleans up — so a later test that asks
-// for the same harness gets back the path the first test already compiled to.
-var (
-	harnessCacheMu sync.Mutex
-	harnessCache   = map[string]*harnessEntry{}
-	harnessDir     string
-	harnessDirOnce sync.Once
-)
-
-// harnessEntry holds one harness's build, guarded by a sync.Once so parallel
-// tests that ask for the same binary wait for one compile rather than racing
-// the compiler over the same output path.
-type harnessEntry struct {
-	once sync.Once
-	path string
-	err  error
-}
-
-// buildHarness compiles one of the readers in testdata against the runtime's
-// own headers and sources, so what it reads with is what the runtime reads with
-// rather than a copy that could be updated separately.
-//
-// The runtime sources a harness needs beyond the four every one of them reads
-// with are named by the caller. main.c is never among them: a harness brings its
-// own entry point, which is the whole of what makes it a harness rather than the
-// runtime.
-func buildHarness(t *testing.T, source, name string, extra ...string) string {
-	t.Helper()
-	if goruntime.GOOS == "windows" {
-		t.Skip("a harness links the runtime against the C libraries pkg-config finds, which Windows has none of")
-	}
-
-	runtime := filepath.Join("..", "5_build", "runtime")
-	sources := []string{
-		filepath.Join("testdata", source),
-		filepath.Join(runtime, "src", "definition.c"),
-		filepath.Join(runtime, "src", "instance.c"),
-		filepath.Join(runtime, "src", "image.c"),
-		filepath.Join(runtime, "src", "common.c"),
-	}
-	for _, extraSrc := range extra {
-		sources = append(sources, filepath.Join(runtime, "src", extraSrc))
-	}
-
-	// Opening the sources here is what puts them in each test's own cache key:
-	// the compiler runs in a subprocess, so nothing it opens is visible to go
-	// test, and a run whose only change was on the C side would be answered
-	// from a previous one. Every test does this read even when the compile
-	// itself is served from the package cache, so test caching invalidates for
-	// every test alike when a .c or .h is touched.
-	for _, s := range append(sources, headersIn(t, filepath.Join(runtime, "src"))...) {
-		_, err := os.ReadFile(s)
-		require.NoError(t, err, "the harness cannot be held to a source it cannot read")
-	}
-
-	// Cache the compile by the tuple that decides it — the entry source, the
-	// output name, and the extra runtime .c files — so two tests asking for
-	// the same harness share one build.
-	key := strings.Join(append([]string{source, name}, extra...), "|")
-
-	harnessCacheMu.Lock()
-	entry, ok := harnessCache[key]
-	if !ok {
-		entry = &harnessEntry{}
-		harnessCache[key] = entry
-	}
-	harnessCacheMu.Unlock()
-
-	entry.once.Do(func() {
-		entry.path, entry.err = compileHarness(name, sources, runtime)
-	})
-	require.NoError(t, entry.err, "building the %s harness", name)
-	return entry.path
-}
-
-// compileHarness runs cc with the same flags the runtime is built with — plus
-// the undefined behaviour sanitizer, which the runtime is not. These harnesses
-// are the only place the C side is ever run, so they are the only place UB can
-// be caught at all, and the kind this catches is the kind no assertion would:
-// an image is read in place, so a field reached at an address the type may not
-// be read from is a bug that gives the right answer on x86-64 and arm64 and
-// would fault elsewhere. Recovery is off so that the first one fails the test
-// it is in rather than printing into output nothing reads.
-func compileHarness(name string, sources []string, runtime string) (string, error) {
-	compiler, err := exec.LookPath("cc")
-	if err != nil {
-		return "", fmt.Errorf("the layout cannot be held to the runtime without a C compiler: %w", err)
-	}
-
-	harnessDirOnce.Do(func() {
-		harnessDir, _ = os.MkdirTemp("", "zam-harness-")
-	})
-	if harnessDir == "" {
-		return "", fmt.Errorf("could not create a scratch directory for harness binaries")
-	}
-
-	cflags, libs, err := build.CodecFlags()
-	if err != nil {
-		return "", err
-	}
-
-	harness := filepath.Join(harnessDir, name)
-	args := append([]string{
-		"-std=gnu11", "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-O1",
-		"-fsanitize=undefined", "-fno-sanitize-recover=all",
-		"-I" + filepath.Join(runtime, "src"),
-		"-I" + filepath.Join(runtime, "include"),
-		"-o", harness,
-	}, cflags...)
-	args = append(append(args, sources...), libs...)
-	args = append(args, "-lpthread", "-lm")
-	cmd := exec.Command(compiler, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("%w: %s", err, out)
-	}
-	return harness, nil
-}
-
-// headersIn is every header beside the sources, which the compiler reads but
-// never names on the command line.
-func headersIn(t *testing.T, directory string) []string {
-	t.Helper()
-
-	headers, err := filepath.Glob(filepath.Join(directory, "*.h"))
-	require.NoError(t, err)
-	return headers
-}
 
 // The lines every dump that carries methods, members or a supertype set ends up
 // with, written once so a fixture change moves one place.
 var (
 	wantMethods = []string{
-		"method[0].instruction=10",
 		"method[0].typeListID=11",
-		"method[1].instruction=20",
 		"method[1].typeListID=21",
 	}
 	wantMembers = []string{
@@ -243,28 +100,25 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 			definition: &typeDefinitionStruct{
 				instanceMethods: testMethods(), instanceMembers: testMembers(),
 				instanceByteSize: 24, instanceTailByteSize: 8,
-				initializerInstruction: 40,
 			},
 			want: concat([]string{
 				"methodCount=2",
 				"memberCount=2",
 				"instanceByteSize=24",
 				"instanceTailByteSize=8",
-				"initializerInstruction=40",
 			}, wantMethods, wantMembers),
 		},
 		{
 			kind: "enum",
 			definition: &typeDefinitionEnum{
 				instanceMethods: testMethods(), instanceMembers: testMembers(),
-				instanceByteSize: 16, initializerInstruction: 41,
-				valueCount: 3, valueSlot: 12, valueType: 7 << 16,
+				instanceByteSize: 16,
+				valueCount:       3, valueSlot: 12, valueType: 7 << 16,
 			},
 			want: concat([]string{
 				"methodCount=2",
 				"memberCount=2",
 				"instanceByteSize=16",
-				"initializerInstruction=41",
 				"valueCount=3",
 				"valueSlot=12",
 				"valueType=458752",
@@ -274,13 +128,12 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 			kind: "enum",
 			definition: &typeDefinitionEnum{
 				instanceMethods: testMethods(), instanceMembers: testMembers(),
-				instanceByteSize: 16, initializerInstruction: 41,
+				instanceByteSize: 16,
 			},
 			want: concat([]string{
 				"methodCount=2",
 				"memberCount=2",
 				"instanceByteSize=16",
-				"initializerInstruction=41",
 				"valueCount=0",
 				"valueSlot=0",
 				"valueType=0",
@@ -291,14 +144,13 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 			definition: &typeDefinitionAbstract{
 				instanceMethods: testMethods(), instanceMembers: testMembers(),
 				instanceByteSize: 24, instanceTailByteSize: 0,
-				initializerInstruction: 42, supertypeSet: testSupertypeSet(),
+				supertypeSet: testSupertypeSet(),
 			},
 			want: concat([]string{
 				"methodCount=2",
 				"memberCount=2",
 				"instanceByteSize=24",
 				"instanceTailByteSize=0",
-				"initializerInstruction=42",
 			}, wantMethods, wantMembers, wantSupertypes),
 		},
 		{
@@ -307,7 +159,7 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 				typeDefinitionAbstract: typeDefinitionAbstract{
 					instanceMethods: testMethods(), instanceMembers: testMembers(),
 					instanceByteSize: 24, instanceTailByteSize: 8,
-					initializerInstruction: 42, supertypeSet: testSupertypeSet(),
+					supertypeSet: testSupertypeSet(),
 				},
 				dispatchEntries: testDispatch(),
 			},
@@ -316,7 +168,6 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 				"memberCount=2",
 				"instanceByteSize=24",
 				"instanceTailByteSize=8",
-				"initializerInstruction=42",
 			}, wantMethods, wantMembers, wantSupertypes, wantDispatch),
 		},
 		{
@@ -327,34 +178,24 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 		{
 			kind: "generic-abstract",
 			definition: &typeDefinitionGenericAbstract{
-				concreteTypesSizeMap:       []genericMapEntry{testGenericEntry()},
-				instanceMethodInstructions: []uint64{50, 51, 52},
-				initializerInstruction:     43,
+				concreteTypesSizeMap: []genericMapEntry{testGenericEntry()},
+				methodCount:          3,
 			},
 			want: concat([]string{
 				"methodCount=3",
 				"concreteCount=1",
-				"initializerInstruction=43",
-				"methodInstruction[0].at=50",
-				"methodInstruction[1].at=51",
-				"methodInstruction[2].at=52",
 				"concrete=0",
 			}, wantGenericEntry),
 		},
 		{
 			kind: "generic-class",
 			definition: &typeDefinitionGenericClass{
-				concreteTypesSizeMap:       []genericClassMapEntry{testGenericClassEntry()},
-				instanceMethodInstructions: []uint64{50, 51, 52},
-				initializerInstruction:     43,
+				concreteTypesSizeMap: []genericClassMapEntry{testGenericClassEntry()},
+				methodCount:          3,
 			},
 			want: concat([]string{
 				"methodCount=3",
 				"concreteCount=1",
-				"initializerInstruction=43",
-				"methodInstruction[0].at=50",
-				"methodInstruction[1].at=51",
-				"methodInstruction[2].at=52",
 				"concrete=0",
 			}, wantGenericEntry, wantDispatch),
 		},
@@ -409,8 +250,7 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 		{
 			kind: "tuple",
 			definition: &tupleDefinition{
-				instanceByteSize:       24,
-				initializerInstruction: 42,
+				instanceByteSize: 24,
 				types: typeListInstance{typeIDs: []typeInstance{
 					{typeInstanceShort: typeInstanceShort{typeID: 4}},
 					{typeInstanceShort: typeInstanceShort{typeID: 6, genericID: 1}, arrayLength: 2},
@@ -419,7 +259,6 @@ func TestDefinitionLayoutCConformance(t *testing.T) {
 			},
 			want: []string{
 				"instanceByteSize=24",
-				"initializerInstruction=42",
 				"types[0].count=2",
 				"types[0].type[0].shortID=262144",
 				"types[0].type[0].arrayLength=0",

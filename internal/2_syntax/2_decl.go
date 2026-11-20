@@ -2563,8 +2563,9 @@ func Instantiate(t Type, types map[GenericArgKey]Type, start *Token, outerDecl D
 		return &TypeTailed{start: start, outerDecl: outerDecl, Type: Instantiate(t.Type, types, start, outerDecl).(*TypeReference), Size: t.Size}
 	case *TypeTuple:
 		return &TypeTuple{start: start, outerDecl: outerDecl, Types: each(t.Types)}
-	case *TypeWrapped:
-		return &TypeWrapped{start: start, kind: t.kind, outerDecl: outerDecl, Type: Instantiate(t.Type, types, start, outerDecl)}
+	default:
+		w := t.(*TypeWrapped)
+		return &TypeWrapped{start: start, kind: w.kind, outerDecl: outerDecl, Type: Instantiate(w.Type, types, start, outerDecl)}
 	}
-	panic(fmt.Sprintf("unknown type %T", t))
+	// panic(fmt.Sprintf("unknown type %T", t))
 }

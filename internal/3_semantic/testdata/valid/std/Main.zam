@@ -1,0 +1,30 @@
+import std("codec/archive/*");
+import std("codec/compress/*");
+import std("codec/format/*");
+import std("codec/text/*");
+import std("crypto/*");
+import std("crypto/asymmetric/*");
+import std("crypto/cipher/*");
+import std("crypto/hash/*");
+import std("crypto/kdf/*");
+import std("crypto/mac/*");
+import std("crypto/pki/*");
+import std("data/heap/*");
+import std("data/list/*");
+import std("data/map/*");
+import std("data/set/*");
+import std("data/sort/*");
+import std("data/trie/*");
+import std("io/local/*");
+import std("io/net/*");
+import std("io/web/*");
+import std("lang/*");
+import std("lang/time/*");
+import std("math/*");
+import std("sync/*");
+import std("test/*");
+
+public namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+    }
+}

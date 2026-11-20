@@ -1,0 +1,24 @@
+// Main reaches every other file of the project, and the dependency.
+/* A block comment
+   over two lines. */
+import std("lang/Strs.zam");
+import std("lang/Arrs.zam");
+import arrs = std("lang/Arrs.zam");
+import decls = "Decls.zam";
+import "Types.zam";
+import {
+    "Fields.zam";
+    "Stmts.zam";
+}
+import "Exprs.zam";
+import "Top.zam";
+import "sub/*";
+import dep("Dep.zam");
+import dep("*");
+
+public namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        Exprs::Run();
+    }
+}
+// The file ends inside this comment

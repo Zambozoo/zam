@@ -1,0 +1,6 @@
+import "sub/Hidden.zam";
+
+public namespace Main {
+    var Hidden.Secret secret;
+    var Hidden.Bounded[int] bounded;
+}

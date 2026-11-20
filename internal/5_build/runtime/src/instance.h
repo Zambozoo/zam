@@ -164,8 +164,8 @@ typedef enum ZamObjectKind {
     // the one word an address is, and what it names lives elsewhere; a value
     // method closure's entry holds the receiver itself, the closure being the
     // only home a homeless value got. The collector has to visit the second
-    // and walk into the third, and OpCallMethod has to hand the frame a word
-    // from one or the address of the other. Reading the kind is how both learn
+    // and walk into the third, and a call has to hand the body a word from one
+    // or the address of the other. Reading the kind is how both learn
     // which, without a type definition in hand.
     ZAMOBJECT_FUNCTION_CLOSURE,
     ZAMOBJECT_REFERENCE_METHOD_CLOSURE,
@@ -177,8 +177,8 @@ typedef enum ZamObjectKind {
     // the three words of the payload's type id, and a pointer to the payload
     // box the value lives in. The walker's rule is fixed by the kind — a
     // follow of word 5 as a pointer and nothing else — so the stored id is
-    // plain data from the collector's point of view, read only by OpAnyUnbox
-    // and OpAnyPayloadType when a program asks what the any holds.
+    // plain data from the collector's point of view, read only when a program
+    // unboxes the any or asks what it holds.
     //
     // The payload is a markable allocation of its own, headered like any
     // other instance; its own kind is what the walker reads when it reaches
@@ -266,7 +266,7 @@ _Static_assert(sizeof(ZamMarkWord) == ZAMWORD_BYTES,
 // generic class needs nothing a plain one does not.
 typedef struct ZamObjectHeader {
     uint64_t shortID : 32;
-    // elementCount is how many instances lie behind the pointer, since OpNew
+    // elementCount is how many instances lie behind the pointer, since new
     // allocates an array of them and the collector has to walk all of them
     // rather than the first. One for the ordinary single allocation, which is
     // what a closure and a thread always are.
@@ -567,16 +567,15 @@ static inline ZamString *zam_string_of(void *object) {
 //
 // The receiver is written in exactly that form as the first of them, which is
 // what makes walking a closure one loop rather than a special case followed by
-// a loop. It is stored the way OpPushMethod pushed it: a pointer receiver as
-// the single word it is, a value receiver entire and then a second entry
+// a loop. A pointer receiver is stored as the single word it is, a value receiver entire and then a second entry
 // holding the address of that copy, since the body reads a receiver as an
 // address whichever kind it was called through. Which of the three the first
 // entry is is the kind's to say — a function closure writes a void entry there
 // and has no receiver — and the type id under it says only how wide it is.
 typedef struct ZamClosure {
    ZamTypedObjectHeader header;
-    // instruction is where the body begins in the operations section.
-    uint64_t instruction;
+    // entry is the compiled function the body begins at, as a ZamEntry.
+    uint64_t entry;
     // captureCount is how many captures follow the receiver. The caller counts
     // none of them: captures are laid past the arguments on entry, which is
     // where the body was compiled to read them.
@@ -588,7 +587,8 @@ typedef struct ZamClosure {
     // The receiver is one entry, except in a value method closure, where it is
     // two: the value and then the address of it. So a capture walk begins one
     // entry further along there than it does in the other two kinds, and the
-    // kind is what says which. See OpPushMethod for why the second is written.
+    // kind is what says which: the body reads a receiver as an address
+    // whichever kind it was called through.
    ZamWord body[];
 } ZamClosure;
 
@@ -636,14 +636,11 @@ static inline const ZamWord *zam_closure_entry_next(const ZamWord *entry,
 // is a thread at all is the mark word's kind.
 //
 //ZamThread is already what the user meant by a thread getting its own vm: it
-// holds a line of execution's own state — its two stacks, where it is in the
-// operations, what it has allocated since the last collection — and points at
-// the ZamVM it shares the statics, the instructions and the type definitions
-// with. Nothing about a spawned thread is a copy of the program.
+// holds a line of execution's own state — its stacks, its frames, what it has
+// allocated since the last collection — and points at the ZamVM it shares the
+// statics and the type definitions with. Nothing about a spawned thread is a copy of the program.
 //
-// So there is no frame here and no result field. The frame OpNewThread builds
-// is pushed onto the new thread's own operand stack, which is where a call
-// already puts one; the value the body returns is left on that same stack,
-// which is where returning already puts one; and whether it has finished is
-//ZamThread.result, which the run loop already sets. A second account of any of
-// the three would only be a thing to keep in step.
+// So there is no frame here and no result field. The value the body returns is
+// left on the new thread's own operand stack, which is where returning already
+// puts one, and whether it has finished is its state. A second account of
+// either would only be a thing to keep in step.

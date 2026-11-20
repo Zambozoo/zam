@@ -31,8 +31,7 @@ type (
 	}
 
 	methodDefinition struct {
-		instruction uint64
-		typeListID  uint64
+		typeListID uint64
 	}
 	memberDefinition struct {
 		Offset uint64
@@ -60,19 +59,6 @@ type (
 		dispatchEntries map[uint64]uint32
 	}
 
-	// The four definitions below each carry an initializerInstruction: the
-	// operations offset of the routine that fills a fresh instance of the type
-	// in, which OpNew and OpDefaultValue run over what they produce. Zero names
-	// no routine, since offset zero is where the program begins and so is never
-	// an initializer.
-	//
-	// The routine is entered as a method is, with the instance in slot 0 and a
-	// frame one word wide, and it returns nothing. There is one per declaration
-	// rather than one per instantiation: it reaches every member by index, and
-	// an index means the same thing in every instantiation, so a template's
-	// concretes all name the same offset and the layout each index lands in is
-	// recovered from the type id at run time.
-
 	// An abstract is laid out nowhere, so no instance is ever one: a value of
 	// abstract type is a reference to the class implementing it, and a call
 	// through that value reads the record of the class the instance actually is.
@@ -87,11 +73,10 @@ type (
 		//instanceMethodsCount uint64
 		instanceMethods []methodDefinition
 		//	instanceMembersCount uint64
-		instanceMembers        []memberDefinition
-		instanceByteSize       uint64
-		instanceTailByteSize   uint64
-		initializerInstruction uint64
-		supertypeSet           map[typeInstanceShort]struct{}
+		instanceMembers      []memberDefinition
+		instanceByteSize     uint64
+		instanceTailByteSize uint64
+		supertypeSet         map[typeInstanceShort]struct{}
 	}
 	typeDefinitionClass struct {
 		typeDefinitionAbstract
@@ -101,22 +86,19 @@ type (
 		// instanceMethodsCount       uint64
 		// instanceMembersCount       uint64
 		// concreteTypesCount         uint64
-		concreteTypesSizeMap       []genericMapEntry
-		instanceMethodInstructions []uint64
-		initializerInstruction     uint64
+		concreteTypesSizeMap []genericMapEntry
+		methodCount          int
 	}
 	typeDefinitionGenericClass struct {
-		concreteTypesSizeMap       []genericClassMapEntry
-		instanceMethodInstructions []uint64
-		initializerInstruction     uint64
+		concreteTypesSizeMap []genericClassMapEntry
+		methodCount          int
 	}
 	typeDefinitionEnum struct {
 		// instanceMethodsCount uint64
 		instanceMethods []methodDefinition
 		// instanceMembersCount uint64
-		instanceMembers        []memberDefinition
-		instanceByteSize       uint64
-		initializerInstruction uint64
+		instanceMembers  []memberDefinition
+		instanceByteSize uint64
 		// valueCount is how many values are backed by a primitive: every
 		// value of an enum declared with one, and none otherwise.
 		valueCount uint64
@@ -132,10 +114,9 @@ type (
 		// instanceMethodsCount uint64
 		instanceMethods []methodDefinition
 		// instanceMembersCount uint64
-		instanceMembers        []memberDefinition
-		instanceByteSize       uint64
-		instanceTailByteSize   uint64
-		initializerInstruction uint64
+		instanceMembers      []memberDefinition
+		instanceByteSize     uint64
+		instanceTailByteSize uint64
 	}
 
 	// An interface is laid out nowhere and dispatched to through the record of
@@ -168,10 +149,9 @@ type (
 	// runtime reads it as the same type list; the offsets follow it, one word
 	// per element.
 	tupleDefinition struct {
-		instanceByteSize       uint64
-		initializerInstruction uint64
-		types                  typeListInstance
-		offsets                []uint64
+		instanceByteSize uint64
+		types            typeListInstance
+		offsets          []uint64
 	}
 )
 
@@ -224,17 +204,14 @@ func (m memberDefinition) Read(p []byte) (int, error) {
 	return totalBytes + n, nil
 }
 
-// A method is where its body begins, and the id of the function type naming its
-// signature.
-func (m methodDefinition) ByteCount() int { return 2 * wordByteSize }
+// A method is the id of the function type naming its signature.
+func (m methodDefinition) ByteCount() int { return wordByteSize }
 
 func (m methodDefinition) Read(p []byte) (int, error) {
 	if len(p) < m.ByteCount() {
 		return 0, io.ErrShortBuffer
 	}
-	totalBytes, _ := readUint64(p, m.instruction)
-	n, _ := readUint64(p[totalBytes:], m.typeListID)
-	return totalBytes + n, nil
+	return readUint64(p, m.typeListID)
 }
 
 func (t typeListInstance) ByteCount() int { return countedByteCount(t.typeIDs) }
@@ -306,12 +283,11 @@ func readDispatch(p []byte, entries map[uint64]uint32) (int, error) {
 // perfect hashes, and lists of lists — describes its own width in its first
 // words, so it can be stepped over but only by reading it.
 //
-// A struct is its methods, its members, how much room an instance takes, and the
-// routine that fills a fresh one in.
+// A struct is its methods, its members, and how much room an instance takes.
 func (t *typeDefinitionStruct) ByteCount() int {
 	return countedByteCount(t.instanceMethods) +
 		countedByteCount(t.instanceMembers) +
-		3*wordByteSize
+		2*wordByteSize
 }
 
 func (t *typeDefinitionStruct) Read(p []byte) (int, error) {
@@ -321,7 +297,7 @@ func (t *typeDefinitionStruct) Read(p []byte) (int, error) {
 
 	totalBytes, _ := readAllWords(p, len(t.instanceMethods), len(t.instanceMembers))
 	n, _ := readAllWords(p[totalBytes:],
-		t.instanceByteSize, t.instanceTailByteSize, t.initializerInstruction)
+		t.instanceByteSize, t.instanceTailByteSize)
 	totalBytes += n
 	n, _ = readAll(p[totalBytes:], t.instanceMethods)
 	totalBytes += n
@@ -334,7 +310,7 @@ func (t *typeDefinitionStruct) Read(p []byte) (int, error) {
 func (t *typeDefinitionEnum) ByteCount() int {
 	return countedByteCount(t.instanceMethods) +
 		countedByteCount(t.instanceMembers) +
-		5*wordByteSize
+		4*wordByteSize
 }
 
 func (t *typeDefinitionEnum) Read(p []byte) (int, error) {
@@ -343,7 +319,7 @@ func (t *typeDefinitionEnum) Read(p []byte) (int, error) {
 	}
 
 	totalBytes, _ := readAllWords(p, len(t.instanceMethods), len(t.instanceMembers))
-	n, _ := readAllWords(p[totalBytes:], t.instanceByteSize, t.initializerInstruction, t.valueCount, t.valueSlot, t.valueType)
+	n, _ := readAllWords(p[totalBytes:], t.instanceByteSize, t.valueCount, t.valueSlot, t.valueType)
 	totalBytes += n
 	n, _ = readAll(p[totalBytes:], t.instanceMethods)
 	totalBytes += n
@@ -352,12 +328,11 @@ func (t *typeDefinitionEnum) Read(p []byte) (int, error) {
 }
 
 // An abstract is its methods, its members, how much room an instance of a class
-// implementing it takes, the routine that fills a fresh one in, and what stands
-// above it.
+// implementing it takes, and what stands above it.
 func (t *typeDefinitionAbstract) ByteCount() int {
 	return countedByteCount(t.instanceMethods) +
 		countedByteCount(t.instanceMembers) +
-		3*wordByteSize +
+		2*wordByteSize +
 		supertypeSetByteCount(t.supertypeSet)
 }
 
@@ -368,7 +343,7 @@ func (t *typeDefinitionAbstract) Read(p []byte) (int, error) {
 
 	totalBytes, _ := readAllWords(p, len(t.instanceMethods), len(t.instanceMembers))
 	n, _ := readAllWords(p[totalBytes:],
-		t.instanceByteSize, t.instanceTailByteSize, t.initializerInstruction)
+		t.instanceByteSize, t.instanceTailByteSize)
 	totalBytes += n
 	n, _ = readAll(p[totalBytes:], t.instanceMethods)
 	totalBytes += n
@@ -396,12 +371,10 @@ func (t *typeDefinitionClass) Read(p []byte) (int, error) {
 	return totalBytes + n, nil
 }
 
-// A generic class or abstract holds one entry per instantiation, and above them
-// the method bodies the instantiations share. A method is compiled once however
-// many times its declaration is instantiated: it reaches members by index, and
-// an index means the same thing in every instantiation.
+// A generic class or abstract holds how many methods it has and one entry per
+// instantiation, which carries those methods' signatures.
 func (t *typeDefinitionGenericAbstract) ByteCount() int {
-	byteCount := 3*wordByteSize + len(t.instanceMethodInstructions)*wordByteSize
+	byteCount := 2 * wordByteSize
 	for i := range t.concreteTypesSizeMap {
 		byteCount += t.concreteTypesSizeMap[i].ByteCount()
 	}
@@ -413,25 +386,16 @@ func (t *typeDefinitionGenericAbstract) Read(p []byte) (int, error) {
 		return 0, io.ErrShortBuffer
 	}
 
-	// The initializer is written in the head rather than after the entries. It is
-	// one word whatever the instantiations are, and leaving it at the end would
-	// mean walking every entry — each of them variable-width — to reach it.
-	totalBytes, _ := readAllWords(p,
-		len(t.instanceMethodInstructions), len(t.concreteTypesSizeMap))
-	n, _ := readUint64(p[totalBytes:], t.initializerInstruction)
-	totalBytes += n
-
-	n, _ = readAllWords(p[totalBytes:], t.instanceMethodInstructions...)
-	totalBytes += n
+	totalBytes, _ := readAllWords(p, t.methodCount, len(t.concreteTypesSizeMap))
 	for i := range t.concreteTypesSizeMap {
-		n, _ = t.concreteTypesSizeMap[i].Read(p[totalBytes:])
+		n, _ := t.concreteTypesSizeMap[i].Read(p[totalBytes:])
 		totalBytes += n
 	}
 	return totalBytes, nil
 }
 
 func (t *typeDefinitionGenericClass) ByteCount() int {
-	byteCount := 3*wordByteSize + len(t.instanceMethodInstructions)*wordByteSize
+	byteCount := 2 * wordByteSize
 	for i := range t.concreteTypesSizeMap {
 		byteCount += t.concreteTypesSizeMap[i].ByteCount()
 	}
@@ -443,18 +407,9 @@ func (t *typeDefinitionGenericClass) Read(p []byte) (int, error) {
 		return 0, io.ErrShortBuffer
 	}
 
-	// The initializer is written in the head rather than after the entries. It is
-	// one word whatever the instantiations are, and leaving it at the end would
-	// mean walking every entry — each of them variable-width — to reach it.
-	totalBytes, _ := readAllWords(p,
-		len(t.instanceMethodInstructions), len(t.concreteTypesSizeMap))
-	n, _ := readUint64(p[totalBytes:], t.initializerInstruction)
-	totalBytes += n
-
-	n, _ = readAllWords(p[totalBytes:], t.instanceMethodInstructions...)
-	totalBytes += n
+	totalBytes, _ := readAllWords(p, t.methodCount, len(t.concreteTypesSizeMap))
 	for i := range t.concreteTypesSizeMap {
-		n, _ = t.concreteTypesSizeMap[i].Read(p[totalBytes:])
+		n, _ := t.concreteTypesSizeMap[i].Read(p[totalBytes:])
 		totalBytes += n
 	}
 	return totalBytes, nil
@@ -548,7 +503,7 @@ func (t *typeDefinitionGenericInterface) Read(p []byte) (int, error) {
 func (t *pointerDefinition) ByteCount() int { return t.pointee.ByteCount() }
 
 func (t *tupleDefinition) ByteCount() int {
-	return 2*wordByteSize + t.types.ByteCount() + len(t.offsets)*wordByteSize
+	return wordByteSize + t.types.ByteCount() + len(t.offsets)*wordByteSize
 }
 
 // Read implements the [byteCountable] interface.
@@ -557,7 +512,7 @@ func (t *tupleDefinition) Read(p []byte) (int, error) {
 		return 0, io.ErrShortBuffer
 	}
 
-	totalBytes, _ := readAllWords(p, t.instanceByteSize, t.initializerInstruction)
+	totalBytes, _ := readUint64(p, t.instanceByteSize)
 	n, _ := t.types.Read(p[totalBytes:])
 	totalBytes += n
 	n, _ = readAllWords(p[totalBytes:], t.offsets...)
@@ -569,8 +524,8 @@ func (t *pointerDefinition) Read(p []byte) (int, error) { return t.pointee.Read(
 
 // buildTypeDefinitionSkeletons walks every declaration in the AST and appends a
 // correctly-sized, but otherwise empty, type definition to the matching bucket.
-// Referential fields (type ids, offsets, instructions) are left zeroed for the
-// later passes to populate.
+// Referential fields (type ids, offsets) are left zeroed for the later passes
+// to populate.
 //
 // Instance fields are renumbered first, since a definition is sized by how many
 // fields an instance has rather than by how many its declaration writes, and
@@ -712,8 +667,8 @@ func (cv *typeDefinitionsInstantiatorVisitor) VisitDeclClass(d *syntax.DeclClass
 	if d.Generics() != nil {
 		*d.TypeIndex() = len(r.genericClassDefinitions)
 		r.genericClassDefinitions = append(r.genericClassDefinitions, &typeDefinitionGenericClass{
-			concreteTypesSizeMap:       make([]genericClassMapEntry, d.Concretes().Len()),
-			instanceMethodInstructions: make([]uint64, instanceFieldCount[*syntax.FieldMethod](d)),
+			concreteTypesSizeMap: make([]genericClassMapEntry, d.Concretes().Len()),
+			methodCount:          instanceFieldCount[*syntax.FieldMethod](d),
 		})
 		cv.assignConcreteIDs(d)
 	} else {
@@ -736,8 +691,8 @@ func (cv *typeDefinitionsInstantiatorVisitor) VisitDeclAbstract(d *syntax.DeclAb
 	if d.Generics() != nil {
 		*d.TypeIndex() = len(r.genericAbstractDefinitions)
 		r.genericAbstractDefinitions = append(r.genericAbstractDefinitions, &typeDefinitionGenericAbstract{
-			concreteTypesSizeMap:       make([]genericMapEntry, d.Concretes().Len()),
-			instanceMethodInstructions: make([]uint64, instanceFieldCount[*syntax.FieldMethod](d)),
+			concreteTypesSizeMap: make([]genericMapEntry, d.Concretes().Len()),
+			methodCount:          instanceFieldCount[*syntax.FieldMethod](d),
 		})
 		cv.assignConcreteIDs(d)
 	} else {

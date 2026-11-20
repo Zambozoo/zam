@@ -1,0 +1,44 @@
+public namespace Main {
+    var int x = ;
+    var int x;
+    var int x;
+    fun void() NoBody;
+    var int pad;
+
+    abstract Abstract {
+        var int a = ;
+        var int b;
+        var int b;
+        virtual fun void() V;
+        fun void() W = () var;
+        var int;
+    }
+
+    enum Enum {
+        A;
+        var int a = ;
+        var int b;
+        var int b;
+        var int;
+    }
+
+    interface Interface {
+        fun void() A = ;
+        static var int b;
+        static var int b;
+        fun;
+        static fun void() Kept = ;
+    }
+
+    struct Struct {
+        var int a = ;
+        var int b;
+        var int b;
+        var int;
+    }
+
+    namespace Namespace {
+        var int a = ;
+        var int;
+    }
+}

@@ -1,0 +1,5 @@
+name: mismatch
+dependencies:
+  dep:
+    repo: example.com/dep@v1
+    hash: wrong

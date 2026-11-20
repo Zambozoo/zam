@@ -1,0 +1,15 @@
+public namespace Main {
+    fun int() Unfinished = () {
+        var int x = ;
+    }
+
+    fun int(int) Falls = (n) {
+        switch (n) {
+            case (0): {
+                var int y = ;
+            }
+        } else {
+            return 1;
+        }
+    }
+}

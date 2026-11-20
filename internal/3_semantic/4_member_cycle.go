@@ -23,7 +23,7 @@ func detectMemberCycles(ast *syntax.AST) []error {
 		cyclicFields: base.NewStaticOrderedMap[syntax.Decl, []string](),
 	}
 	for _, entry := range ast.CodeFiles.All() {
-		v.VisitFile(entry.Value)
+		entry.Value.Decl.Accept(v)
 	}
 
 	errs := make([]error, 0, v.cyclicFields.Len())
@@ -32,15 +32,6 @@ func detectMemberCycles(ast *syntax.AST) []error {
 			"member cycle detected: %s.{%s}", entry.Key.Name(), strings.Join(entry.Value, ", ")))
 	}
 	return errs
-}
-
-func (v *memberCycleDetectorVisitor) VisitFile(f *syntax.File) error {
-	f.Decl.Accept(v)
-	return nil
-}
-
-func (v *memberCycleDetectorVisitor) VisitImport(i *syntax.Import) error {
-	return nil
 }
 
 func (v *memberCycleDetectorVisitor) visitInnerDecls(d syntax.Decl) {

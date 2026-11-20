@@ -1,0 +1,5 @@
+import "Inner.zam";
+import std("lang/Strs.zam");
+
+public namespace Dep {
+}

@@ -1,0 +1,34 @@
+import "Decls.zam";
+
+public namespace Types {
+    var void* v;
+    var any a;
+    var bool b;
+    var char c;
+    var byte by;
+    var int i;
+    var uint u;
+    var flt f;
+    var pst p;
+    var str s;
+    var type t;
+    var thread[int] th;
+    var (int, str) tuple;
+    var (int, (bool, char), str) nested;
+    var int[4] array;
+    var int[4][2] arrays;
+    var int*[3] pointers;
+    var int$ constant;
+    var int$* constantPointer;
+    var int() noArguments;
+    var int(str, bool) arguments;
+    var void(int, str...) variadic;
+    var int(int)(str) curried;
+    var Decls.Point dotted;
+    var Decls.Point[2] points;
+    var Decls.Pair[int, str] generic;
+    var Decls.Buffer~4 sized;
+    var Decls.Buffer~* unsizedPointer;
+    var Decls.Buffer~4[2] sizedArray;
+    var Decls.Pair[int, str]* genericPointer;
+}

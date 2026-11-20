@@ -1,0 +1,4 @@
+import rootless("Rootless.zam");
+
+public namespace Main {
+}

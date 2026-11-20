@@ -248,6 +248,7 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
+				Optimization:     OptimizeDefault,
 				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
@@ -256,7 +257,7 @@ func TestNew(t *testing.T) {
 			// Paths are the keys files are known by, and their order decides
 			// type ids and the order static initializers run in. Two spellings
 			// of one file have to name one file, or the same source compiles to
-			// different bytecode depending on how it was invoked.
+			// a different program depending on how it was invoked.
 			name: "entry path is the same file however it is spelled",
 			argv: []string{"zam", "build", "./sub/../input"},
 			fileProvider: func() fileProvider {
@@ -280,13 +281,14 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
+				Optimization:     OptimizeDefault,
 				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
 		},
 		{
-			name: "native build for a target",
-			argv: []string{"zam", "build", "--native", "--target", "x86_64-macos", "input"},
+			name: "build for a target",
+			argv: []string{"zam", "build", "--target", "x86_64-macos", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
 				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
@@ -307,25 +309,15 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
-				Native:           true,
+				Optimization:     OptimizeDefault,
 				Target:           mustTarget(t, "x86_64-macos"),
 				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
 		},
 		{
-			name: "target needs native",
-			argv: []string{"zam", "build", "--target", "x86_64-macos", "input"},
-			fileProvider: func() fileProvider {
-				m := newMock_FileProvider(t)
-				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
-				return m
-			}(),
-			errFunc: errorContains("--target needs --native"),
-		},
-		{
 			name: "unknown target",
-			argv: []string{"zam", "build", "--native", "--target", "riscv64-linux-musl", "input"},
+			argv: []string{"zam", "build", "--target", "riscv64-linux-musl", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
 				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
@@ -335,7 +327,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name:    "run takes no target",
-			argv:    []string{"zam", "run", "--native", "--target", "x86_64-macos", "input"},
+			argv:    []string{"zam", "run", "--target", "x86_64-macos", "input"},
 			errFunc: errorContains("unknown flag: --target"),
 		},
 		{
@@ -362,6 +354,7 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
+				Optimization:     OptimizeDefault,
 				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
@@ -388,6 +381,7 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
+				Optimization:     OptimizeDefault,
 				RunArgs:          []string{"a", "-b"},
 				WriteProject:     true,
 			},
@@ -416,6 +410,7 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
+				Optimization:     OptimizeDefault,
 				NoProject:        true,
 				WriteProject:     true,
 			},
@@ -423,7 +418,7 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name: "short flags combine",
-			argv: []string{"zam", "run", "-nk", "input"},
+			argv: []string{"zam", "run", "-nv", "input"},
 			fileProvider: func() fileProvider {
 				m := newMock_FileProvider(t)
 				m.EXPECT().FileExists(inputPath).Return(true, nil)
@@ -443,7 +438,8 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   defaultGCRemarkGrowth,
 				GCPrecleanPasses: defaultGCPrecleanPasses,
 				GCReturnAge:      defaultGCReturnAge,
-				KeepBuild:        true,
+				Optimization:     OptimizeDefault,
+				Verbose:          true,
 				RunArgs:          []string{},
 				NoProject:        true,
 				WriteProject:     true,
@@ -452,13 +448,8 @@ func TestNew(t *testing.T) {
 		},
 		{
 			name:    "single dash long flag",
-			argv:    []string{"zam", "build", "-keep-build", "input"},
+			argv:    []string{"zam", "build", "-verbose", "input"},
 			errFunc: errorContains("unknown shorthand flag: 'e'"),
-		},
-		{
-			name:    "run does not emit an image",
-			argv:    []string{"zam", "run", "-E", "input"},
-			errFunc: errorContains("unknown shorthand flag: 'E'"),
 		},
 		{
 			name:    "run does not take an output",
@@ -528,6 +519,7 @@ func TestNew(t *testing.T) {
 				GCRemarkGrowth:   0.5,
 				GCPrecleanPasses: 0,
 				GCReturnAge:      1,
+				Optimization:     OptimizeDefault,
 				WriteProject:     true,
 			},
 			errFunc: assert.NoError,
@@ -571,6 +563,72 @@ func TestNew(t *testing.T) {
 				return m
 			}(),
 			errFunc: errorContains("gc preclean passes must be within [0, 16]: 17"),
+		},
+		{
+			name: "optimization",
+			argv: []string{"zam", "build", "-O3", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
+				m.EXPECT().FileExists(inputPath).Return(true, nil)
+				return m
+			}(),
+			want: &Command{
+				InputPath:        inputPath,
+				OutputPath:       base.Path("out"),
+				MaxThreads:       1,
+				GCTriggerRatio:   defaultGCRatio,
+				InitialStackSize: int(defaultStackSize),
+				InitialHeapSize:  int(defaultHeapSize),
+				NurserySize:      int(defaultNursery),
+				MaxHeapSize:      int(defaultMaxHeap),
+				GCMarkers:        defaultGCMarkers,
+				GCConcurrent:     defaultGCConcurrent,
+				GCRemarkGrowth:   defaultGCRemarkGrowth,
+				GCPrecleanPasses: defaultGCPrecleanPasses,
+				GCReturnAge:      defaultGCReturnAge,
+				Optimization:     OptimizeAggressive,
+				WriteProject:     true,
+			},
+			errFunc: assert.NoError,
+		},
+		{
+			name: "optimization for size",
+			argv: []string{"zam", "build", "-Os", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
+				m.EXPECT().FileExists(inputPath).Return(true, nil)
+				return m
+			}(),
+			want: &Command{
+				InputPath:        inputPath,
+				OutputPath:       base.Path("out"),
+				MaxThreads:       1,
+				GCTriggerRatio:   defaultGCRatio,
+				InitialStackSize: int(defaultStackSize),
+				InitialHeapSize:  int(defaultHeapSize),
+				NurserySize:      int(defaultNursery),
+				MaxHeapSize:      int(defaultMaxHeap),
+				GCMarkers:        defaultGCMarkers,
+				GCConcurrent:     defaultGCConcurrent,
+				GCRemarkGrowth:   defaultGCRemarkGrowth,
+				GCPrecleanPasses: defaultGCPrecleanPasses,
+				GCReturnAge:      defaultGCReturnAge,
+				Optimization:     OptimizeSize,
+				WriteProject:     true,
+			},
+			errFunc: assert.NoError,
+		},
+		{
+			name: "unknown optimization",
+			argv: []string{"zam", "build", "-O4", "input"},
+			fileProvider: func() fileProvider {
+				m := newMock_FileProvider(t)
+				m.EXPECT().FileExists(base.Path("out")).Return(true, nil)
+				return m
+			}(),
+			errFunc: errorContains("optimization must be one of 0, 1, 2, 3 or s: 4"),
 		},
 		{
 			name: "gc return age of zero",
@@ -619,7 +677,7 @@ func TestCommand_String(t *testing.T) {
 				InitialStackSize: 1 << 19,
 				InitialHeapSize:  1 << 24,
 			},
-			want: `{"Verb":0,"InputPath":"input","OutputPath":"out","Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"EmitImage":false,"Native":false,"Target":{"Name":"","OS":"","Arch":"","Triple":"","Zig":""},"KeepBuild":false,"RunArgs":null,"TestTargets":null,"TestPaths":null,"RunPattern":"","Parallel":0,"Refs":null,"As":"","NoProject":false,"WriteProject":false}`,
+			want: `{"Verb":0,"InputPath":"input","OutputPath":"out","Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"Optimization":"","Target":{"Name":"","OS":"","Arch":"","Triple":"","Zig":""},"RunArgs":null,"TestTargets":null,"TestPaths":null,"RunPattern":"","Parallel":0,"Refs":null,"As":"","NoProject":false,"WriteProject":false}`,
 		},
 	}
 

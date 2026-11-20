@@ -14,8 +14,8 @@
 //
 // Marking runs every reached instance's Mark: Object's own walks the
 // instance's members, and an override walks whatever it says to instead.
-// Mark bodies are run on collector, between its instructions, and a major
-// collection's also on the helpers marking alongside it.
+// Mark bodies are run on collector, and a major collection's also on the
+// helpers marking alongside it.
 bool zam_gc_collect(ZamVM *vm, ZamThread *collector, bool major);
 
 // zam_gc_begin is the first stop of a concurrent major collection: it leaves

@@ -1,7 +1,6 @@
 package semantic
 
 import (
-	"iter"
 	"slices"
 
 	base "github.com/zambozoo/zam/internal/0_base"
@@ -127,15 +126,6 @@ func validateStaticSemantics(ast *syntax.AST) []error {
 	return v.errs
 }
 
-func (v *staticSemanticsValidatorVisitor) VisitFile(f *syntax.File) error {
-	f.Decl.Accept(v)
-	return nil
-}
-
-func (v *staticSemanticsValidatorVisitor) VisitImport(i *syntax.Import) error {
-	return nil
-}
-
 // visitDecl validates every field a declaration holds, with the declaration's
 // statics in scope throughout. A nested declaration is validated from here too,
 // under the scope this pushed, which is what makes an enclosing declaration's
@@ -186,19 +176,11 @@ func (v *staticSemanticsValidatorVisitor) VisitDeclAlias(alias *syntax.DeclAlias
 	return nil
 }
 
-// declStaticScope binds the names a declaration's statics are written under. A
-// nested declaration is a static field too, but it names a type rather than a
-// value, so it has no type to be bound to and is left out.
+// declStaticScope binds the names a declaration's statics are written under.
 func declStaticScope(d syntax.Decl) map[string]binding {
 	scope := map[string]binding{}
 	for name, field := range d.StaticFields() {
-		indexable, ok := field.(syntax.FieldIndexable)
-		if !ok {
-			continue
-		}
-		if t, ok := staticFieldType(indexable); ok {
-			scope[name] = staticBinding{typ: t, target: syntax.TargetOf(field)}
-		}
+		scope[name] = staticBinding{typ: staticFieldType(field), target: syntax.TargetOf(field)}
 	}
 	return scope
 }
@@ -217,21 +199,20 @@ func declInstanceScope(d syntax.Decl) map[string]binding {
 	return scope
 }
 
-func baseDecls(d syntax.DeclSubtypeable) iter.Seq[syntax.Decl] {
-	return func(yield func(syntax.Decl) bool) {
-		for ancestor := d.BaseDeclType(); ancestor != nil; {
-			decl := ancestor.Type.(syntax.TypeResolvable).Decl()
-			if !yield(decl) {
-				return
-			}
-
-			inheritable, ok := decl.(syntax.DeclSubtypeable)
-			if !ok {
-				break
-			}
-			ancestor = inheritable.BaseDeclType()
+// baseDecls answers the declarations d descends from, nearest first, up to the
+// first that does not descend from anything in turn.
+func baseDecls(d syntax.DeclSubtypeable) []syntax.Decl {
+	var decls []syntax.Decl
+	for ancestor := d.BaseDeclType(); ancestor != nil; {
+		decl := ancestor.Type.(syntax.TypeResolvable).Decl()
+		decls = append(decls, decl)
+		inheritable, ok := decl.(syntax.DeclSubtypeable)
+		if !ok {
+			break
 		}
+		ancestor = inheritable.BaseDeclType()
 	}
+	return decls
 }
 
 // validateBaseDecl reports whether the base clause names something the
@@ -249,10 +230,7 @@ func (v *staticSemanticsValidatorVisitor) validateBaseDecl(d syntax.DeclSubtypea
 	if baseType == nil {
 		return true
 	}
-	resolvable, ok := baseType.Type.(syntax.TypeResolvable)
-	if !ok {
-		return true
-	}
+	resolvable := baseType.Type.(syntax.TypeResolvable)
 	if generic, ok := resolvable.(*syntax.TypeGeneric); ok {
 		defer v.at(baseType)()
 		if !v.checkBounds(generic) {
@@ -295,12 +273,9 @@ func (v *staticSemanticsValidatorVisitor) visitDeclSubtypeable(d syntax.DeclSubt
 	}
 
 	// Every method that overrides a base method must be a subtype of it.
-	for base := range baseDecls(d) {
+	for _, base := range baseDecls(d) {
 		for name, parentMethod := range base.InstanceMethods() {
-			childMethod, ok := d.GetInstanceMethod(name)
-			if !ok {
-				continue
-			}
+			childMethod, _ := d.GetInstanceMethod(name)
 			if !childMethod.FieldType().IsSubtypeOf(parentMethod.FieldType()) {
 				v.errf(
 					"%s.%s does not override %s.%s with a subtype",
@@ -328,7 +303,7 @@ func (v *staticSemanticsValidatorVisitor) VisitDeclClass(d *syntax.DeclClass) er
 	for name, method := range d.InstanceMethods() {
 		effective.Set(name, method)
 	}
-	for b := range baseDecls(d) {
+	for _, b := range baseDecls(d) {
 		for name, method := range b.InstanceMethods() {
 			if _, i := effective.Get(name); i < 0 {
 				effective.Set(name, method)
@@ -861,23 +836,6 @@ func breaksOut(s syntax.Stmt, inner []string) bool {
 // Only a local is closed over. A static outlives every frame and a field is
 // reached through the receiver a closure already carries, so neither is
 // something a lambda has to be handed a copy of.
-// bindingOf resolves name the way [staticSemanticsValidatorVisitor.lookupVariable]
-// does, but without recording a capture. It answers what a name already resolved
-// once stands for, which is a question asked about the name rather than a second
-// reach for it: counting it as another capture would close a lambda over a name
-// its body never reached out for.
-// A name that resolves to nothing comes back nil, which no binding kind matches,
-// so a use that has already been reported as unresolved is not reported again as
-// something else.
-func (v *staticSemanticsValidatorVisitor) bindingOf(name string) binding {
-	for scope := range v.variableScopes.All() {
-		if b, ok := scope[name]; ok {
-			return b
-		}
-	}
-	return nil
-}
-
 func (v *staticSemanticsValidatorVisitor) lookupVariable(name string) (binding, bool) {
 	depth := v.variableScopes.Len()
 	for scope := range v.variableScopes.All() {
@@ -934,9 +892,6 @@ func (v *staticSemanticsValidatorVisitor) parameterScope(file *syntax.File, name
 // reference records that the name written at a token in the file being
 // validated refers to target, and comes to type t there.
 func (v *staticSemanticsValidatorVisitor) reference(name *syntax.Token, target syntax.Target, t syntax.Type) {
-	if v.currentDecl == nil {
-		return
-	}
 	v.ast.References.Add(v.currentDecl.File(), name, target, t)
 }
 
@@ -1409,9 +1364,6 @@ func (v *staticSemanticsValidatorVisitor) VisitExprNAry(e *syntax.ExprNAry) erro
 		v.lastExprType = ts[1]
 	// function call
 	case syntax.ExprKindAsync:
-		if e.Exprs[0].Kind() != syntax.ExprKindCall {
-			return v.errf("async expression must be a function call, got %s", e.Exprs[0].Kind().String())
-		}
 		v.lastExprType = syntax.NewWrappedType(syntax.TypeKindThread, v.lastExprType)
 	// thread
 	case syntax.ExprKindWait:
@@ -1569,8 +1521,8 @@ func (v *staticSemanticsValidatorVisitor) VisitExprNAry(e *syntax.ExprNAry) erro
 	// lvalue
 	case syntax.ExprKindAddressOf:
 		// Only a location has an address to take. A temporary could be given
-		// one — OpAddressOf is written to materialize a value that has no home,
-		// which is how a method call on an rvalue reaches a receiver — but that
+		// one — a method call on an rvalue materializes a home for its
+		// receiver — but that
 		// is a home the source never named and cannot name again, so & of one
 		// hands back a pointer to a place the program has no other way to reach.
 		if !v.isLValue(e.Exprs[0]) {
@@ -1592,8 +1544,8 @@ func (v *staticSemanticsValidatorVisitor) VisitExprNAry(e *syntax.ExprNAry) erro
 	case syntax.ExprKindTypeof:
 		v.lastExprType = syntax.TypeType
 
-	default:
-		panic("unreachable")
+		// default:
+		// panic("unreachable")
 	}
 	e.ComputedType = v.lastExprType
 	return nil
@@ -1623,9 +1575,6 @@ func (v *staticSemanticsValidatorVisitor) errfOn(n node, format string, args ...
 // errfAtToken is errf reported where tok was written, or where the node being
 // validated starts if tok is nil.
 func (v *staticSemanticsValidatorVisitor) errfAtToken(tok *syntax.Token, format string, args ...any) error {
-	if tok == nil {
-		tok = v.currentStart
-	}
 	err := errfAt(v.currentDecl, tok, format, args...)
 	v.errs = append(v.errs, err)
 	return err
@@ -1873,7 +1822,8 @@ func (v *staticSemanticsValidatorVisitor) checkSpreadArg(inner syntax.Expr, inne
 func (v *staticSemanticsValidatorVisitor) isLValue(e syntax.Expr) bool {
 	switch e.Kind() {
 	case syntax.ExprKindIdentifier:
-		b, isInstance := v.bindingOf(e.Start().Value.(string)).(instanceBinding)
+		resolved, _ := v.lookupVariable(e.Start().Value.(string))
+		b, isInstance := resolved.(instanceBinding)
 		return !isInstance || !b.isMethod
 	case syntax.ExprKindDereference:
 		return true
@@ -1925,10 +1875,7 @@ func (v *staticSemanticsValidatorVisitor) memberHasHome(object syntax.Expr, name
 	if _, ok := syntax.TupleSelectionTarget(object.ResolvedType()); ok {
 		return v.hasHome(object)
 	}
-	resolvable, ok := syntax.SelectionTarget(object.ResolvedType())
-	if !ok {
-		return false
-	}
+	resolvable, _ := syntax.SelectionTarget(object.ResolvedType())
 	f, _ := resolvable.Decl().GetInstanceField(name)
 	if _, isMember := f.(*syntax.FieldMember); !isMember {
 		return false
@@ -2066,11 +2013,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprSymbol(e *syntax.ExprSymbol) 
 	// homeless one is the caller's to decide; either way what the frame holds is
 	// the one word, which is what super's base type already is.
 	case syntax.ExprKindThis:
-		declTypeable, ok := v.currentDecl.(syntax.DeclTypeable)
-		if !ok {
-			return v.errf("current declaration %s is not a typeable", v.currentDecl.Name())
-		}
-		v.lastExprType = syntax.NewWrappedType(syntax.TypeKindPointer, declTypeable.DeclType())
+		v.lastExprType = syntax.NewWrappedType(syntax.TypeKindPointer, v.currentDecl.(syntax.DeclTypeable).DeclType())
 	case syntax.ExprKindSuper:
 		declSubtypeable, ok := v.currentDecl.(syntax.DeclSubtypeable)
 		if !ok {
@@ -2093,8 +2036,8 @@ func (v *staticSemanticsValidatorVisitor) VisitExprSymbol(e *syntax.ExprSymbol) 
 		v.lastExprType = syntax.TypeFloat
 	case syntax.ExprKindLiteralPosit:
 		v.lastExprType = syntax.TypePosit
-	default:
-		panic("unreachable")
+		// default:
+		// panic("unreachable")
 	}
 	e.ComputedType = v.lastExprType
 	return nil
@@ -2105,9 +2048,6 @@ func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) erro
 	defer v.at(e)()
 	if e.Field == "" {
 		e.Type.Accept(v)
-		if len(e.TypeArgs) > 0 {
-			return v.errf("type arguments %v cannot be written without a field name", e.TypeArgs)
-		}
 		v.lastExprType = syntax.TypeType
 		return nil
 	}
@@ -2134,14 +2074,11 @@ func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) erro
 	if !v.accessible(fi.Modifiers(), fi.OuterDecl()) {
 		return v.errfAtToken(e.FieldToken, "static field %s::%s is not accessible", tr.Decl().Name(), e.Field)
 	}
-	fieldType, _ := staticFieldType(fi)
-	v.reference(e.FieldToken, syntax.TargetOf(fi), fieldType)
+	v.reference(e.FieldToken, syntax.TargetOf(fi), staticFieldType(fi))
 
 	if len(e.TypeArgs) > 0 {
 		for _, arg := range e.TypeArgs {
-			if err := arg.Accept(v); err != nil {
-				return err
-			}
+			arg.Accept(v)
 		}
 		method, ok := fi.(*syntax.FieldMethod)
 		if !ok {
@@ -2175,11 +2112,7 @@ func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) erro
 			tr.Decl().Name(), e.Field, method.Generics().Len())
 	}
 
-	ct, ok := staticFieldType(fi)
-	if !ok {
-		return v.errf("static field %s::%s is not typeable", tr.Decl().Name(), e.Field)
-	}
-	e.ComputedType = ct
+	e.ComputedType = staticFieldType(fi)
 	v.lastExprType = e.ComputedType
 
 	return nil
@@ -2189,14 +2122,11 @@ func (v *staticSemanticsValidatorVisitor) VisitExprType(e *syntax.ExprType) erro
 // static like any other and lies in a slot of its own, but it is not among the
 // typeable fields: the only type it could have is the enum it is a value of, so
 // it answers with that rather than carrying one written for it.
-func staticFieldType(f syntax.FieldIndexable) (syntax.Type, bool) {
-	switch f := f.(type) {
-	case *syntax.FieldEnum:
-		return f.Type(), true
-	case syntax.FieldTypeable:
-		return f.FieldType(), true
+func staticFieldType(f syntax.Field) syntax.Type {
+	if enum, ok := f.(*syntax.FieldEnum); ok {
+		return enum.Type()
 	}
-	return nil, false
+	return f.(syntax.FieldTypeable).FieldType()
 }
 
 // VisitTypeArray implements [syntax.TypeVisitor].
@@ -2230,10 +2160,7 @@ func (v *staticSemanticsValidatorVisitor) VisitTypeGeneric(t *syntax.TypeGeneric
 // checkBounds requires that the arguments of t satisfy the bounds of the
 // parameters they are given for, reporting whether they do.
 func (v *staticSemanticsValidatorVisitor) checkBounds(t *syntax.TypeGeneric) bool {
-	generic, ok := t.Type.Decl().(syntax.DeclGeneric)
-	if !ok {
-		return true
-	}
+	generic := t.Type.Decl().(syntax.DeclGeneric)
 	if err := unsatisfiedBound(generic.Generics(), t.ParameterTypes); err != nil {
 		v.errf("type %s: %v", t.String(), err)
 		return false
@@ -2351,7 +2278,7 @@ func accessibleFrom(current syntax.Decl, modifiers syntax.Modifier, owner syntax
 // instantiation of either.
 func descends(d, ancestor syntax.Decl) bool {
 	ancestor = syntax.TemplateOf(ancestor)
-	for d != nil {
+	for {
 		if syntax.TemplateOf(d) == ancestor {
 			return true
 		}
@@ -2359,13 +2286,8 @@ func descends(d, ancestor syntax.Decl) bool {
 		if !ok || subtypeable.BaseDeclType() == nil {
 			return false
 		}
-		resolvable, ok := subtypeable.BaseDeclType().Type.(syntax.TypeResolvable)
-		if !ok {
-			return false
-		}
-		d = resolvable.Decl()
+		d = subtypeable.BaseDeclType().Type.(syntax.TypeResolvable).Decl()
 	}
-	return false
 }
 
 // VisitTypeTailed implements [syntax.TypeVisitor].

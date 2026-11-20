@@ -1,0 +1,4 @@
+name: unfetchable
+dependencies:
+  missing:
+    repo: example.com/missing@v1

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	base "github.com/zambozoo/zam/internal/0_base"
+	syntax "github.com/zambozoo/zam/internal/2_syntax"
 )
 
 func TestReadInt(t *testing.T) {
@@ -105,7 +106,6 @@ func newTestReader() *codegenReader {
 		staticInstanceMaps: []int{0, wordByteSize},
 		stringLiterals:     base.NewStaticOrderedMap[stringLiteral, uint64](),
 		natives:            base.NewStaticOrderedMap[string, uint64](),
-		operations:         []operation{OpPopWord, newUnaryOp(OpPushStatic, 1)},
 	}
 	cr.stringLiterals.Set(stringLiteral("hi"), 0)
 	// The literal's bytes are the head of the static region, so the section is
@@ -158,8 +158,8 @@ func TestCalculateByteCounts(t *testing.T) {
 	mapWordCount := int(reservedTypeIDCount) + 3
 	definitionsStart := configurationWords*wordByteSize + mapWordCount*wordByteSize
 	// Two pointer definitions of three words, then an empty struct: two empty
-	// counted lists and the three trailing sizes.
-	definitionsEnd := definitionsStart + 2*3*wordByteSize + 5*wordByteSize
+	// counted lists and the two instance sizes.
+	definitionsEnd := definitionsStart + 2*3*wordByteSize + 4*wordByteSize
 
 	t.Run("a section is offset by the bytes before it", func(t *testing.T) {
 		// A definition counts the bytes it writes, so counting it in words and
@@ -174,15 +174,10 @@ func TestCalculateByteCounts(t *testing.T) {
 		// The table opens with how many names follow, and each is laid out as a
 		// literal is: a length word and its bytes, padded out to a whole word.
 		nativesEnd := literalsEnd + wordByteSize + 2*2*wordByteSize
-		assert.Equal(t, nativesEnd, bc.genericStaticMethodsByteOffset)
-		// The generic static method registry opens with the entry count — zero
-		// here, since the fixture names no generics — so the whole section is
-		// that one word.
-		genericsEnd := nativesEnd + wordByteSize
-		assert.Equal(t, genericsEnd, bc.staticRootsByteOffset)
+		assert.Equal(t, nativesEnd, bc.staticRootsByteOffset)
 		// The static root table opens with its entry count the same way, and
-		// the fixture lays out no statics for it to name.
-		assert.Equal(t, genericsEnd+wordByteSize, bc.operationsByteOffset)
+		// the fixture lays out no statics for it to name, so it ends the image.
+		assert.Equal(t, nativesEnd+wordByteSize, bc.bodyByteCount)
 	})
 
 	t.Run("the map is indexed by type id", func(t *testing.T) {
@@ -225,17 +220,12 @@ func TestCalculateByteCounts(t *testing.T) {
 
 		// Offsets are measured from the end of the header, so the header is
 		// added back to reach the byte the section actually begins at.
-		// The operations are followed by the debug section, put back on a word
-		// boundary, which says nothing for a reader with no debug info.
 		headerEnd := headerByteSize(t)
-		operationsEnd := bc.operationsByteOffset + OpPopWord.ByteCount() + newUnaryOp(OpPushStatic, 1).ByteCount()
-		assert.Equal(t, int(alignUp(uint64(operationsEnd), wordByteSize)), bc.debugByteOffset)
-		assert.Equal(t, headerEnd+bc.debugByteOffset+3*wordByteSize, n)
+		assert.Equal(t, headerEnd+bc.bodyByteCount, n)
 
 		// The literal region opens with its first literal's mark word, and the
 		// length a word past it, which is the offset the slot map records. The
-		// native table opens with how many names it holds and the operations
-		// region with the first opcode.
+		// native table opens with how many names it holds.
 		literalsStart := headerEnd + bc.staticImageByteOffset
 		assert.Equal(t, uint64(staticStringMarkWord),
 			binary.LittleEndian.Uint64(p[literalsStart:]))
@@ -243,24 +233,21 @@ func TestCalculateByteCounts(t *testing.T) {
 			binary.LittleEndian.Uint64(p[literalsStart+wordByteSize:]))
 		assert.Equal(t, uint64(2),
 			binary.LittleEndian.Uint64(p[headerEnd+bc.nativesByteOffset:]))
-		assert.Equal(t, byte(OpPopWord), p[headerEnd+bc.operationsByteOffset])
 	})
 }
 
-// TestNativeTableIsWrittenInSlotOrder covers the one thing an OpNative operand
-// rests on: the nth name in the table is the native the nth slot was handed out
-// for. Slots are assigned while operations are emitted and the table is written
-// while the image is laid out, so an order held in only one of the two walks
-// leaves an operand naming a different C function than the one compiled.
+// TestNativeTableIsWrittenInSlotOrder covers what a native call rests on: the
+// nth name in the table is the native the nth slot was handed out for, and a
+// name met again is the slot it was first given.
 func TestNativeTableIsWrittenInSlotOrder(t *testing.T) {
-	cr := &codegenReader{natives: base.NewStaticOrderedMap[string, uint64]()}
-	v := &operationVisitor{reader: cr}
-
-	assert.Equal(t, uint64(0), v.nativeIndex("STD_MARK"))
-	assert.Equal(t, uint64(1), v.nativeIndex("STD_ALLOC"))
-	// A C symbol is one entry however many places name it, so meeting a name
-	// again is not a second slot.
-	assert.Equal(t, uint64(0), v.nativeIndex("STD_MARK"))
+	cr := &codegenReader{
+		natives:        base.NewStaticOrderedMap[string, uint64](),
+		stringLiterals: base.NewStaticOrderedMap[stringLiteral, uint64](),
+	}
+	c := &collector{reader: cr}
+	for _, name := range []string{"STD_MARK", "STD_ALLOC", "STD_MARK"} {
+		c.expr(&syntax.ExprNative{ID: name})
+	}
 
 	assert.Equal(t, []stringLiteral{"STD_MARK", "STD_ALLOC"}, cr.nativeNames())
 }

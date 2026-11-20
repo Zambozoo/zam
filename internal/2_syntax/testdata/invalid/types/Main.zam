@@ -1,0 +1,29 @@
+public namespace Main {
+    var Chars~ unsized;
+    var Chars~[2] arrayOfUnsized;
+    var Chars~(int) functionOfUnsized;
+    var int$$ twice;
+    var Pair[int <: Obj] bound;
+    var Pair[int :> Obj] lowerBound;
+    var (int) single;
+    var int[] missingSize;
+    var int[2 missingBracket;
+    var Pair[int missingClose;
+    var Pair[] empty;
+    var int(int missingParen;
+    var int(int..., int) afterVariadic;
+    var int(int... missingVariadicParen;
+    var int( missingParameter;
+    var thread int t;
+    var thread[int t2;
+    var thread[] t3;
+    var (int, str x;
+    var (int, ) y;
+    var . dot;
+    var Chars. dotted;
+    var Chars[2 c;
+    var Chars~[~] tilde;
+    var Chars~4[2 sized;
+    var Chars~4[] sizedEmpty;
+    var int[~] noTail;
+}

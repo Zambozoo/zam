@@ -1,0 +1,4 @@
+import "../dep/Inner.zam";
+
+namespace Outside {
+}

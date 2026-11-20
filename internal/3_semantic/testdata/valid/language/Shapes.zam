@@ -1,0 +1,63 @@
+import std("lang/Obj.zam");
+
+public namespace Shapes {
+    public interface Named {
+        fun str() Name;
+    }
+
+    public abstract Shape {
+        protected var int sides;
+        virtual fun int() Area;
+        public fun str() Name = () {
+            return "shape";
+        }
+        fun int() Sides = () {
+            return this.sides;
+        }
+    }
+
+    public class Square <: Shape* {
+        var int side;
+        public fun int() Area = () {
+            return this.side * this.side;
+        }
+        fun int() Inherited = () {
+            return this.sides + sides;
+        }
+    }
+
+    public class Unit <: Square* {
+        public fun int() Area = () {
+            return 1;
+        }
+    }
+
+    public struct Pair[A, B] {
+        var A first;
+        var B second;
+    }
+
+    public class Box[T <: Obj*] {
+        var T item;
+        fun T() Get = () {
+            return this.item;
+        }
+    }
+
+    public class Holder[T :> Square*] {
+        var T held;
+    }
+
+    public struct Tail~ {
+        var int length;
+        var int[~] items;
+    }
+
+    public class Node {
+        var Node* next;
+    }
+
+    public fun[T] T(T) Same = (t) {
+        return t;
+    }
+}

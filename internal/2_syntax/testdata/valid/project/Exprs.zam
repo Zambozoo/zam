@@ -1,0 +1,96 @@
+import "Decls.zam";
+
+public namespace Exprs {
+    fun int() Work = () {
+        return 1;
+    }
+
+    fun void(int...) Many = (xs) {
+        Exprs::Many(xs...);
+        Exprs::Many(1, xs...);
+    }
+
+    fun void() Run = () {
+        var int a = 1 + 2 - 3 * 4 / 5 % 6;
+        a = 1 + 2 + 3;
+        a = 1 + 2 - 3;
+        a = a << 1 >> 2 >>> 3;
+        var bool b = a < 1 && a > 2 || a <= 3 && a >= 4;
+        a = a <=> 1;
+        b = a <: b;
+        b = a == 1 != false;
+        a = a & 1 ^ 2 | 3;
+        var str s = null ?? "x";
+        a = b ? 1 : 2;
+        a = -a;
+        a = +a;
+        a = ~a;
+        b = !b;
+        var int* p = &a;
+        a = *p;
+        ++a;
+        --a;
+        a++;
+        a--;
+        var int h = #s;
+        var type t = @s;
+        t = @{int};
+        t = type(int);
+        Exprs::Run();
+        Exprs::[int]Generic(1);
+        Exprs::[int, str]Generic(1, "a");
+        Decls.Node::Same(1);
+        s.Len();
+        a = p[0];
+        a = s{int};
+        var (int, int) tuple = 1, 2;
+        a = tuple.0;
+        a = tuple.first.0;
+        a = tuple.first.second;
+        a = Exprs::Work().value;
+        a = Exprs::Work().1;
+        a = (1, 2).1;
+        a = Exprs::Work()[0]{int}++;
+        var any n = native(STD_NOTHING);
+        var Decls.Point* point = new(Decls.Point);
+        p = new(int, 4);
+        var Decls.Buffer~* buffer = new(Decls.Buffer~, 1, 4);
+        var thread[int] th = async(Exprs::Work());
+        a = wait(th);
+        var int(int) f = lambda int(int): (x) {
+            return x;
+        };
+        var void() g = lambda void(): () {};
+        var void(int, int) g2 = lambda void(int, int): (_, y) {};
+        var char c = 'c';
+        c = '\n';
+        c = '\t';
+        c = '\r';
+        c = '\0';
+        c = '\\';
+        c = '\'';
+        c = '"';
+        c = '\u0041';
+        c = '\U0001F600';
+        s = "escaped \" \n \u00e9 ' é € 😀";
+        var flt fl = 1.5;
+        fl = 1.25;
+        fl = 1e10;
+        fl = 1.5e-3;
+        fl = 2E5;
+        var uint u = 5u;
+        u = 5U;
+        var pst ps = 1.5p;
+        ps = 3p;
+        ps = 1e2P;
+        this;
+        super;
+        b = true;
+        b = false;
+        a = (1);
+        var int interfaces = 0;
+        var int int2 = 0;
+        var int _x = 0;
+        a = a/b;
+    }
+}

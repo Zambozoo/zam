@@ -16,6 +16,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #include "definition.h"
 
 static void put(const char *name, uint64_t value) {
@@ -62,7 +67,6 @@ static void putDispatch(const ZamPerfectHash *table) {
 
 static void putMethods(const ZamMethodDefinition *methods, uint64_t count) {
     for (uint64_t i = 0; i < count; i++) {
-        putAt("method", i, "instruction", methods[i].instruction);
         putAt("method", i, "typeListID", methods[i].typeListID);
     }
 }
@@ -135,7 +139,6 @@ static void structDump(const ZamStructDefinition *d) {
     put("memberCount", d->memberCount);
     put("instanceByteSize", d->instanceByteSize);
     put("instanceTailByteSize", d->instanceTailByteSize);
-    put("initializerInstruction", d->initializerInstruction);
     putMethods(zam_struct_methods(d), d->methodCount);
     putMembers(zam_struct_members(d), d->memberCount);
     put("wordCount",
@@ -146,7 +149,6 @@ static void enumDump(const ZamEnumDefinition *d) {
     put("methodCount", d->methodCount);
     put("memberCount", d->memberCount);
     put("instanceByteSize", d->instanceByteSize);
-    put("initializerInstruction", d->initializerInstruction);
     put("valueCount", d->valueCount);
     put("valueSlot", d->valueSlot);
     put("valueType", d->valueType);
@@ -160,7 +162,6 @@ static void abstractDump(const ZamAbstractDefinition *d) {
     put("memberCount", d->memberCount);
     put("instanceByteSize", d->instanceByteSize);
     put("instanceTailByteSize", d->instanceTailByteSize);
-    put("initializerInstruction", d->initializerInstruction);
     putMethods(zam_abstract_methods(d), d->methodCount);
     putMembers(zam_abstract_members(d), d->memberCount);
     putSupertypes("supertype", zam_abstract_supertypes(d));
@@ -173,7 +174,6 @@ static void classDump(const ZamClassDefinition *d) {
     put("memberCount", d->memberCount);
     put("instanceByteSize", d->instanceByteSize);
     put("instanceTailByteSize", d->instanceTailByteSize);
-    put("initializerInstruction", d->initializerInstruction);
     putMethods(zam_class_methods(d), d->methodCount);
     putMembers(zam_class_members(d), d->memberCount);
     putSupertypes("supertype", zam_class_supertypes(d));
@@ -190,11 +190,6 @@ static void interfaceDump(const ZamInterfaceDefinition *d) {
 static void genericDump(const ZamGenericAbstractDefinition *d, bool isClass) {
     put("methodCount", d->methodCount);
     put("concreteCount", d->concreteCount);
-    put("initializerInstruction", d->initializerInstruction);
-
-    const ZamWord *instructions = zam_generic_abstract_method_instructions(d);
-    for (uint64_t i = 0; i < d->methodCount; i++)
-        putAt("methodInstruction", i, "at", instructions[i]);
 
     const ZamGenericMapEntry *entry = zam_generic_abstract_first_concrete(d);
     const ZamWord *end = (const ZamWord *)entry;
@@ -232,11 +227,10 @@ static void pointerDump(const ZamPointerDefinition *d) {
     put("wordCount", ZAMTYPE_ID_WORDS);
 }
 
-// A tuple definition is its size and initializer, its element types read as the
+// A tuple definition is its size, its element types read as the
 // type list a signature is, and each element's offset behind the list.
 static void tupleDump(const ZamTupleDefinition *d) {
     put("instanceByteSize", d->instanceByteSize);
-    put("initializerInstruction", d->initializerInstruction);
     putTypeList("types", 0, zam_tuple_types(d));
     for (uint64_t i = 0; i < d->elementCount; i++)
         put("offset", zam_tuple_offsets(d)[i]);
@@ -268,6 +262,12 @@ static void entryDump(const ZamGenericMapEntry *e, bool isClass) {
 }
 
 int main(int argc, char **argv) {
+#if defined(_WIN32)
+    // Windows opens the standard streams translating line endings, which would
+    // corrupt the bytes read in and the lines written out.
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     if (argc != 2) {
         fprintf(stderr, "usage: %s <kind>\n", argv[0]);
         return 2;

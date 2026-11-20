@@ -1,0 +1,55 @@
+import "Shapes.zam";
+
+public namespace Flow {
+    fun int(int) Classify = (n) {
+        switch (n) {
+            case (0): return 0;
+            case (1, 2): continue;
+            case (3): {
+                return 3;
+            }
+        } else {
+            return -1;
+        }
+    }
+
+    fun void() Run = () {
+        var int total = 0;
+        label outer: for (var int i = 0; i < 3; i++) {
+            for (var int j = 0; j < 3; j++) {
+                if (j == 1) {
+                    continue outer;
+                }
+                if (j == 2) {
+                    break outer;
+                }
+                total = total + j;
+            }
+        } else {
+            total = 0;
+        }
+        label pick: switch (total) {
+            case (1): break pick;
+        }
+        for {
+            break;
+        }
+        defer total = 1;
+        defer {
+            total = 2;
+        }
+        var int a, int b = 1, 2;
+        var (int, str) pair = 1, "x";
+        var int c, str d = pair;
+        var int _, str e = pair;
+        var int(int) twice = lambda int(int): (x) {
+            return x + total;
+        };
+        var void() nothing = lambda void(): () {
+            var int(int) inner = lambda int(int): (y) {
+                return y + total;
+            };
+        };
+        total = twice(2);
+    }
+}

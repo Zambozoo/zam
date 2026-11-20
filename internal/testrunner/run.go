@@ -61,30 +61,17 @@ func Run(cmd *command.Command, files *base.FileProvider, packages packageProvide
 	}
 	defer os.RemoveAll(dir)
 
-	opts := build.Options{
-		Project:      runner.ast.MainCodeDecl.File().Project,
-		KeepBuildDir: cmd.KeepBuild,
-	}
+	opts := build.Options{Project: runner.ast.MainCodeDecl.File().Project}
 	binary, err := build.ExecutablePath(opts, filepath.Join(dir, "test"))
 	if err != nil {
 		return false, err
 	}
 	opts.OutputPath = binary
-	if cmd.Native {
-		object, err := codegen.GenerateObject(runner.cmd, runner.ast, codegen.ObjectOptions{})
-		if err != nil {
-			return false, err
-		}
-		if err := build.LinkObject(object.Bytes, opts); err != nil {
-			return false, err
-		}
-		return runFiles(cmd, tests, binary, out)
-	}
-	result, err := codegen.GenerateCode(runner.cmd, runner.ast)
+	object, err := codegen.GenerateObject(runner.cmd, runner.ast, codegen.ObjectOptions{Optimization: runner.cmd.Optimization})
 	if err != nil {
 		return false, err
 	}
-	if err := build.Build(result.Image, result.NativeNames, opts); err != nil {
+	if err := build.LinkObject(object.Bytes, opts); err != nil {
 		return false, err
 	}
 	return runFiles(cmd, tests, binary, out)
@@ -98,31 +85,18 @@ type program struct {
 }
 
 var (
-	// ErrNoTestFiles is what Compile answers when cmd targets no test file.
+	// ErrNoTestFiles is what Run and Object answer when cmd targets no test
+	// file.
 	ErrNoTestFiles = errors.New("no test files")
-	// ErrNoTests is what Compile answers when no test is picked.
+	// ErrNoTests is what Run and Object answer when no test is picked.
 	ErrNoTests = errors.New("no tests to run")
 )
 
-// Compile compiles the tests in the test files cmd targets into one program,
-// whose first argument is the index among the files answered of the file whose
-// tests it runs, and whose other arguments it passes on to each test. It
-// answers the program, the project it belongs to, and the files.
-func Compile(cmd *command.Command, files *base.FileProvider, packages packageProvider) (*codegen.Result, *syntax.Project, []File, error) {
-	runner, tests, err := prepare(cmd, files, packages)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	result, err := codegen.GenerateCode(runner.cmd, runner.ast)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return result, runner.ast.MainCodeDecl.File().Project, tests, nil
-}
-
-// Object compiles the tests in the test files cmd targets natively, as opts
-// says, into one program as Compile does, answering it, its project, the files
-// and the name its main is compiled as.
+// Object compiles the tests in the test files cmd targets into one program, as
+// opts says, whose first argument is the index among the files answered of the
+// file whose tests it runs, and whose other arguments it passes on to each
+// test. It answers the program, its project, the files and the name its main is
+// compiled as.
 func Object(cmd *command.Command, files *base.FileProvider, packages packageProvider, opts codegen.ObjectOptions) (*codegen.Object, *syntax.Project, []File, string, error) {
 	runner, tests, err := prepare(cmd, files, packages)
 	if err != nil {

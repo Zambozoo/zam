@@ -1,0 +1,4 @@
+name: reserved
+dependencies:
+  std:
+    repo: example.com/dep@v1

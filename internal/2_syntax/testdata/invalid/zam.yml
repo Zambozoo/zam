@@ -1,0 +1,6 @@
+name: invalid
+version: 1.0.0
+dependencies:
+  dep:
+    repo: example.com/dep@v1
+    hash: h1

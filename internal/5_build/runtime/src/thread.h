@@ -11,55 +11,31 @@
 typedef struct ZamVM ZamVM;
 typedef struct ZamThread ZamThread;
 
-// How a step ended, which is the whole of what the loop reads off one.
-typedef enum ZamResult {
-    // ZAMRESULT_CONTINUE is the ordinary case: the instruction ran and the
-    // next one should.
-    ZAMRESULT_CONTINUE,
-    // ZAMRESULT_EXIT is OpExit reached. The thread's exitStatus is what the
-    // program said to end with.
-    ZAMRESULT_EXIT,
-    // ZAMRESULT_RETURNED is a thread other than main running off the end of
-    // the body it was started on, which is how one finishes.
-    ZAMRESULT_RETURNED,
-    // ZAMRESULT_PANIC is the program brought down by something it did.
-    ZAMRESULT_PANIC,
-} ZamResult;
-
-const char *zam_result_name(ZamResult result);
-
 // The mark stack is a run of tightly packed variable-width entries, each led by
 // a one-byte header naming its kind. It is bytes and not a struct array because
-// the four kinds are four different widths and the narrow ones are the ones
+// the kinds are different widths and the narrow ones are the ones
 // pushed most.
 //
 // Packing costs backward traversal: an entry can only be found by walking
-// forward from the bottom, which is what the collector does anyway. The two
-// kinds that have to be found from the top — function frames and scope frames —
-// pay for it with a back pointer to the previous entry of their own kind, so
-// each is the head of a linked list threaded through the stack.
+// forward from the bottom, which is what the collector does anyway. The one
+// kind that has to be found from the top, a function frame, pays for it with a
+// back pointer to the previous one, so the innermost is the head of a linked
+// list threaded through the stack.
 typedef enum ZamMarkKind {
-    // ZAMMARK_FUNCTION is a call: where to resume the caller, and how far to
-    // rewind the operand stack when this returns.
+    // ZAMMARK_FUNCTION is a call: how far to rewind the operand stack when it
+    // returns.
     ZAMMARK_FUNCTION,
     // ZAMMARK_OBJECT is one markable object or function on the operand stack.
     ZAMMARK_OBJECT,
     // ZAMMARK_ARRAY is a markable array: its type id says how many entries lie
     // behind the pointer and what they are.
     ZAMMARK_ARRAY,
-    // ZAMMARK_SCOPE is a lexical scope opened inside a function.
-    ZAMMARK_SCOPE,
     // ZAMMARK_VALUE is a value laid out inline on the operand stack that holds
     // something the collector must visit: a class held by value, or a struct,
     // enum or run with one inside it. Its type is what walking it needs.
     ZAMMARK_VALUE,
-    // ZAMMARK_INTERIOR is a location inside a markable object, such as the
-    // address of one of its members, which keeps the object alive the way a
-    // pointer to it would. Its distance is how far back the object lies.
-    ZAMMARK_INTERIOR,
-    // ZAMMARK_PACK is a call whose variadic arguments are kept on the operand
-    // stack beneath its frame until it returns.
-    ZAMMARK_PACK,
+    // ZAMMARK_COUNT is how many kinds there are.
+    ZAMMARK_COUNT,
 } ZamMarkKind;
 
 // The kind byte is the first field of every entry, sharing its word with one
@@ -86,18 +62,8 @@ typedef struct ZamMarkFunction {
     uint64_t kind : 8;
     // previous is the mark offset of the enclosing function entry.
     uint64_t previous : ZAMMARK_LOCATION_BITS;
-    // returnInstruction is where in the operations section the caller resumes.
-    uint64_t returnInstruction;
     // operandPop is how far the operand stack rewinds when this returns.
     uint64_t operandPop;
-    // direct says the call was made with OpCallMethodDirect: slot 0 of the
-    // frame holds the receiver's address rather than a closure, and
-    // receiverType is the type the receiver was passed as.
-    uint64_t receiverType : 32;
-    uint64_t direct : 1;
-    // heldBase is how many values the thread held when the call was made,
-    // which returning lets go of the rest of.
-    uint64_t heldBase : 31;
 } ZamMarkFunction;
 
 typedef struct ZamMarkObject {
@@ -108,8 +74,7 @@ typedef struct ZamMarkObject {
 
 typedef struct ZamMarkArray {
     uint64_t kind : 8;
-    // operand is the operand stack offset of the run's first word, or, where
-    // indirect is set, of the one word holding the address the run lies at.
+    // operand is the operand stack offset of the run's first word.
     uint64_t operand : ZAMMARK_LOCATION_BITS;
     // element is the packed short id of what the array holds, and length is how
     // many of them there are. Together they are the whole of what traversing
@@ -120,19 +85,9 @@ typedef struct ZamMarkArray {
     // here is the run of elements, so the tail would be a word carried for
     // nothing on the second most common entry there is.
     uint64_t element : 32;
-    uint64_t indirect : 1;
-    uint64_t spare : 31;
+    uint64_t spare : 32;
     uint64_t length;
 } ZamMarkArray;
-
-typedef struct ZamMarkScope {
-    uint64_t kind : 8;
-    // previous is the mark offset of the enclosing scope entry.
-    uint64_t previous : ZAMMARK_LOCATION_BITS;
-    // frame is the operand stack offset the scope began at, and so where
-    // leaving it rewinds to.
-    uint64_t frame;
-} ZamMarkScope;
 
 typedef struct ZamMarkValue {
     uint64_t kind : 8;
@@ -142,34 +97,12 @@ typedef struct ZamMarkValue {
     ZamTypeIDWords type;
 } ZamMarkValue;
 
-typedef struct ZamMarkInterior {
-    uint64_t kind : 8;
-    // operand is the operand stack offset of the location.
-    uint64_t operand : ZAMMARK_LOCATION_BITS;
-    // distance is how many bytes before the location the mark word of the
-    // object it lies inside begins.
-    uint64_t distance;
-} ZamMarkInterior;
-
-typedef struct ZamMarkPack {
-    uint64_t kind : 8;
-    // previous is the mark offset of the enclosing pack entry.
-    uint64_t previous : ZAMMARK_LOCATION_BITS;
-    // frame is the operand stack offset the call began at, where the packed
-    // values lie once they are packed, and values is how many words they are.
-    uint64_t frame;
-    uint64_t values;
-} ZamMarkPack;
-
 // Entries are stacked with nothing between them, so a width that stopped being
 // a multiple of a word would misalign every entry above it.
-_Static_assert(sizeof(ZamMarkFunction) == 4 * ZAMWORD_BYTES, "function entry");
+_Static_assert(sizeof(ZamMarkFunction) == 2 * ZAMWORD_BYTES, "function entry");
 _Static_assert(sizeof(ZamMarkObject) == 1 * ZAMWORD_BYTES, "object entry");
 _Static_assert(sizeof(ZamMarkArray) == 3 * ZAMWORD_BYTES, "array entry");
-_Static_assert(sizeof(ZamMarkScope) == 2 * ZAMWORD_BYTES, "scope entry");
 _Static_assert(sizeof(ZamMarkValue) == 4 * ZAMWORD_BYTES, "value entry");
-_Static_assert(sizeof(ZamMarkInterior) == 2 * ZAMWORD_BYTES, "interior entry");
-_Static_assert(sizeof(ZamMarkPack) == 3 * ZAMWORD_BYTES, "pack entry");
 
 // zam_mark_entry_bytes is how wide an entry of the given kind is, header
 // included. Walking the stack forward is this applied to each header in turn.
@@ -231,18 +164,6 @@ typedef enum ZamThreadState {
     ZAMTHREAD_EXITED,
 } ZamThreadState;
 
-// How far a thread a debugger is stepping runs before it stops.
-typedef enum ZamDebugStep {
-    ZAMDEBUG_STEP_NONE,
-    // ZAMDEBUG_STEP_IN stops on the next line, or in the next call made.
-    ZAMDEBUG_STEP_IN,
-    // ZAMDEBUG_STEP_OVER stops on the next line of the call it began in, or
-    // in its caller.
-    ZAMDEBUG_STEP_OVER,
-    // ZAMDEBUG_STEP_OUT stops in the caller of the call it began in.
-    ZAMDEBUG_STEP_OUT,
-} ZamDebugStep;
-
 //ZamThread is one line of execution: its two stacks and where it is in the
 // program. The main thread is one of these like any other, which is what lets
 // the loop be written once.
@@ -273,10 +194,8 @@ struct ZamThread {
     bool faultBus;
     uintptr_t faultAddress;
 
-    // result is how the last step ended, and so whether there is a next one.
-   ZamResult result;
-    // exitStatus is what OpExit was given, kept to the low eight bits, since a
-    // status is a byte to whoever started the program.
+    // exitStatus is what the program exited with, kept to the low eight bits,
+    // since a status is a byte to whoever started the program.
     uint8_t exitStatus;
 
     // operands are the values in flight. A value laid out inline spans as many
@@ -310,22 +229,9 @@ struct ZamThread {
     uint64_t visitedCount;
     uint64_t visitedCapacity;
 
-    // functionEntry, scopeEntry and packEntry are the mark offsets of the
-    // innermost open call, scope and pack, the heads of the three back pointer
-    // chains. ZAMMARK_NONE when nothing of that kind is open.
+    // functionEntry is the mark offset of the innermost open call, the head of
+    // the chain of function entries. ZAMMARK_NONE when no call is open.
     uint64_t functionEntry;
-    uint64_t scopeEntry;
-    uint64_t packEntry;
-
-    // held is every receiver a method was called on that no location names,
-    // kept reachable until the expression it was called in ends.
-    ZamWord *held;
-    uint64_t heldCount;
-    uint64_t heldCapacity;
-
-    // instructionOffset is where in the operations section the next instruction
-    // begins, in bytes. A jump target is one of these.
-    uint64_t instructionOffset;
 
     // young is what this thread has allocated since the last collection. Only
     // the thread pushes onto it; a collection splices it onto the VM's young
@@ -366,22 +272,8 @@ struct ZamThread {
     // other thread to stop, during which its stacks are still.
     atomic_bool awaitingStop;
 
-    // id names the thread to a debugger, and is never given to another.
+    // id names the thread, and is never given to another.
     uint64_t id;
-
-    // What a debugger keeps of the thread, under the debugger's lock.
-    // debugParked is set while the debugger holds the thread, and
-    // debugBoundary when that is between instructions rather than inside one.
-    // debugSkip lets a thread let go at a breakpoint run the instruction it
-    // stopped at. debugStep is the step the thread is taking, from the depth,
-    // file and line it began at.
-    atomic_bool debugParked;
-    bool debugBoundary;
-    bool debugSkip;
-    ZamDebugStep debugStep;
-    uint64_t debugStepDepth;
-    const char *debugStepFile;
-    uint32_t debugStepLine;
 
     // finalizing is the contained value an arena is running Delete on, which
     // STD_DELETE leaves alone rather than refusing: it has no allocation of
@@ -400,8 +292,8 @@ struct ZamThread {
     // Signal state lives here rather than process-wide so each thread
     // dispatches only the handlers it registered. The C signal handler reads
     // its ZamThread back out of thread-local storage (see currentZamThread
-    // in native.c) and ORs the bit into this mask; the interpreter polls
-    // between instructions on the thread it is driving.
+    // in native.c) and ORs the bit into this mask, which the thread polls at
+    // its safepoints.
     //
     // pendingSignalMask is written from the signal context, which is why it
     // is volatile sig_atomic_t rather than a plain uint. signalHandlers
@@ -427,13 +319,11 @@ ZamWord zam_thread_pop(ZamThread *thread);
 ZamWord zam_thread_peek(const ZamThread *thread, uint64_t depth);
 
 // zam_thread_push_type and zam_thread_pop_type move the three words a type id
-// occupies, which is the unit almost every instruction told a type is told.
+// occupies.
 void zam_thread_push_type(ZamThread *thread, ZamTypeID type);
 ZamTypeID zam_thread_pop_type(ZamThread *thread);
 // zam_thread_peek_type reads a type id back without spending it, at the depth of
-// its topmost word. It is what an instruction told two type ids with a value
-// between them reads the deeper one through, that one not being on top and not
-// being finished with.
+// its topmost word.
 ZamTypeID zam_thread_peek_type(const ZamThread *thread, uint64_t depth);
 
 // zam_thread_push_mark and zam_thread_push_array_mark put on an entry naming an
@@ -449,23 +339,16 @@ void zam_thread_push_mark(ZamThread *thread, uint64_t operand);
 void zam_thread_push_array_mark(ZamThread *thread, ZamTypeID type,
                                 uint64_t operand);
 
-// zam_thread_push_indirect_array_mark is the array form for a run that lies
-// elsewhere, its address standing in the operand word.
-void zam_thread_push_indirect_array_mark(ZamThread *thread, ZamTypeID type,
-                                         uint64_t operand);
-
 // zam_thread_push_value_mark names a value laid out inline from the operand
 // word on, and zam_thread_push_interior_mark a location distance bytes past
 // the mark word of the object it lies in.
 void zam_thread_push_value_mark(ZamThread *thread, ZamTypeID type,
                                 uint64_t operand);
-void zam_thread_push_interior_mark(ZamThread *thread, uint64_t operand,
-                                   uint64_t distance);
 
 // zam_thread_pop_mark takes the entry the given operand word owns back off, if
-// it owns one, and answers whether it did. It is what OpPopWord and OpStore
-// spend a marked word through: the word goes, so the entry naming it has to go
-// with it or the collector would start from a slot the program has given up.
+// it owns one, and answers whether it did. A marked word that goes takes the
+// entry naming it with it, or the collector would start from a slot the
+// program has given up.
 //
 // Nothing is being said about the object here. An entry is a word of the operand
 // stack the collector has to visit, so pushing one and taking it back off is how
@@ -480,18 +363,11 @@ void zam_thread_push_interior_mark(ZamThread *thread, uint64_t operand,
 // program's history.
 bool zam_thread_pop_mark(ZamThread *thread, uint64_t operand);
 
-// zam_thread_pop_object_mark is zam_thread_pop_mark that also answers how far
-// into its object the word points: zero for a markable reference, and the
-// distance of an interior location. It is false, having popped nothing or an
-// entry of another kind, where the word reaches no object.
-bool zam_thread_pop_object_mark(ZamThread *thread, uint64_t operand,
-                                uint64_t *distance);
-
 // A location is an address, except where it names a slot on the operand stack.
 // The stack is reallocated as it grows, so an address into it stops meaning
 // anything the moment it moves; a frame slot is therefore named by how far into
-// the stack it lies and turned into an address only at the instruction that
-// reaches through it.
+// the stack it lies and turned into an address only where it is reached
+// through.
 //
 // The two are told apart by the top bit, which no address on the platforms this
 // runs on has set: user space is the low half of the range and the kernel keeps
@@ -512,68 +388,21 @@ static inline bool zam_is_frame_location(ZamWord location) {
     return (location & ZAMFRAME_LOCATION_BIT) != 0;
 }
 
-// zam_thread_location_address is where a location actually is, now. Every
-// instruction that reads or writes through one goes through this rather than
-// casting, which is what keeps the frame form from being an address anywhere
+// zam_thread_location_address is where a location actually is, now. Whatever
+// reads or writes through one goes through this rather than casting, which is what keeps the frame form from being an address anywhere
 // but here.
 void *zam_thread_location_address(const ZamThread *thread, ZamWord location);
 
 // zam_thread_frame_base is the operand offset the innermost open call's frame
-// begins at, which is what an OpPushVariable offset is measured from. It is zero
-// when no call is open: that is the main body, which is fallen into rather than
-// called and runs on the frame zam_vm_run lays at the bottom of the stack.
+// begins at, which is what a native's arguments are read from. It is zero when
+// no call is open.
 uint64_t zam_thread_frame_base(const ZamThread *thread);
 
-// zam_thread_push_function opens a call and zam_thread_pop_function returns
-// from the innermost one, rewinding both stacks to where it began and giving
-// back the entry so the caller can be resumed at its return instruction.
-void zam_thread_push_function(ZamThread *thread, uint64_t returnInstruction,
-                              uint64_t operandPop);
+// zam_thread_push_function opens a call whose frame begins at operandPop, and
+// zam_thread_pop_function returns from the innermost one, rewinding both stacks
+// to where it began and giving back its entry.
+void zam_thread_push_function(ZamThread *thread, uint64_t operandPop);
 ZamMarkFunction zam_thread_pop_function(ZamThread *thread);
-
-// zam_thread_push_direct_function opens a call made with the receiver's
-// address in slot 0 rather than a closure, recording the type it was passed
-// as.
-void zam_thread_push_direct_function(ZamThread *thread, uint64_t returnInstruction,
-                                     uint64_t operandPop, ZamTypeShort receiverType);
-
-// zam_thread_frame_direct reports whether the innermost open call was made
-// directly, and if so writes the type its receiver was passed as.
-bool zam_thread_frame_direct(const ZamThread *thread, ZamTypeID *receiverType);
-
-// zam_thread_function_entry reads the function entry at a mark offset,
-// answering false if none could lie there.
-bool zam_thread_function_entry(const ZamThread *thread, uint64_t offset,
-                               ZamMarkFunction *entry);
-
-// zam_thread_push_scope opens a lexical scope at the top of the operand stack,
-// and zam_thread_pop_scope rewinds both stacks to where the innermost open one
-// began.
-void zam_thread_push_scope(ZamThread *thread);
-void zam_thread_pop_scope(ZamThread *thread);
-
-// zam_thread_hold keeps a value reachable until zam_thread_release, which lets
-// go of every value held since the innermost open call was made.
-void zam_thread_hold(ZamThread *thread, ZamWord value);
-void zam_thread_release(ZamThread *thread);
-
-// zam_thread_push_pack opens a pack at the top of the operand stack, where the
-// call it is for begins.
-void zam_thread_push_pack(ZamThread *thread);
-
-// zam_thread_sink_pack moves the innermost pack's call frame, everything from
-// where it began up to the top valueWords words, above those words, so that
-// they lie beneath the frame, and moves the frame's mark entries with it.
-void zam_thread_sink_pack(ZamThread *thread, uint64_t valueWords);
-
-// zam_thread_pop_pack drops the innermost pack's values from beneath what its
-// call left above them, with their mark entries, and closes it.
-void zam_thread_pop_pack(ZamThread *thread);
-
-// zam_thread_pack_of reports the innermost pack whose values lie directly
-// beneath the frame beginning at base, writing it to pack.
-bool zam_thread_pack_of(const ZamThread *thread, uint64_t base,
-                        ZamMarkPack *pack);
 
 // zam_thread_push_visited opens a set over a structural comparison and
 // zam_thread_pop_visited closes the innermost one. A descent that records
@@ -599,10 +428,6 @@ void zam_thread_pop_visited(ZamThread *thread);
 bool zam_thread_visit(ZamThread *thread, ZamWord left, ZamWord right,
                      ZamTypeShort type);
 
-// zam_thread_run drives one thread until it stops, and is what a spawned thread
-// is started on as much as what the main thread is run by.
-ZamResult zam_thread_run(ZamThread *thread);
-
 // zam_thread_install_signal_slot records the C signal handler on the OS side
 // and binds this thread as the one that dispatches it. Storage for the
 // closure pointer is on the thread itself.
@@ -610,32 +435,12 @@ void zam_thread_install_signal_slot(ZamThread *thread, int sig, void *closure);
 
 // zam_thread_take_pending_signal returns the next signal this thread has
 // pending, clearing the bit as part of the read, or -1 if nothing is
-// pending. Called by the interpreter's poll between instructions.
+// pending.
 int zam_thread_take_pending_signal(ZamThread *thread);
 
-// ZamFrames walks a thread's frames outward from where it is: first the
-// instruction it is running, then the call each frame it is inside was made by.
-// Each step answers the offset just past the instruction, which is where the
-// thread stood or will come back to.
-typedef struct ZamFrames {
-    const ZamThread *thread;
-    uint64_t entry;
-    uint64_t next;
-    uint64_t last;
-    bool more;
-} ZamFrames;
-
-// zam_frames_begin starts a walk of thread's frames.
-void zam_frames_begin(ZamFrames *frames, const ZamThread *thread);
-
-// zam_frames_next answers the next frame's offset, or false once there are
-// none. A native's own frame is not one, since it stands where its caller does.
-bool zam_frames_next(ZamFrames *frames, uint64_t *offset);
-
 // zam_thread_trace writes where thread is to fd, a line per frame and
-// innermost first, leaving out the innermost skip frames. An image that says
-// nothing of where its instructions came from has nothing written. It is safe
-// to call from a signal handler.
+// innermost first, leaving out the innermost skip frames. It is safe to call
+// from a signal handler.
 void zam_thread_trace(const ZamThread *thread, uint64_t skip, int fd);
 
 // ZAMTRACE_FRAMES is how many frames a trace writes before saying how many

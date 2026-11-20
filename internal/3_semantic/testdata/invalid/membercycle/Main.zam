@@ -1,0 +1,11 @@
+public namespace Main {
+    struct A {
+        var B b;
+    }
+    struct B {
+        var A a;
+    }
+    struct Self {
+        var Self[2] selves;
+    }
+}

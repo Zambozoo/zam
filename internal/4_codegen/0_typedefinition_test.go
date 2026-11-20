@@ -9,7 +9,7 @@ import (
 )
 
 func testMethods() []methodDefinition {
-	return []methodDefinition{{instruction: 10, typeListID: 11}, {instruction: 20, typeListID: 21}}
+	return []methodDefinition{{typeListID: 11}, {typeListID: 21}}
 }
 
 func testMembers() []memberDefinition {
@@ -69,35 +69,33 @@ func TestTypeDefinitionByteCountMatchesWhatIsWritten(t *testing.T) {
 	definitions := map[string]typeDefinition{
 		"struct": &typeDefinitionStruct{
 			instanceMethods: testMethods(), instanceMembers: testMembers(),
-			instanceByteSize: 24, instanceTailByteSize: 8, initializerInstruction: 40,
+			instanceByteSize: 24, instanceTailByteSize: 8,
 		},
 		"enum": &typeDefinitionEnum{
 			instanceMethods: testMethods(), instanceMembers: testMembers(),
-			instanceByteSize: 16, initializerInstruction: 41,
-			valueCount: 3, valueSlot: 5, valueType: 7 << 16,
+			instanceByteSize: 16,
+			valueCount:       3, valueSlot: 5, valueType: 7 << 16,
 		},
 		"abstract": &typeDefinitionAbstract{
 			instanceMethods: testMethods(), instanceMembers: testMembers(),
-			instanceByteSize: 24, instanceTailByteSize: 0, initializerInstruction: 42,
+			instanceByteSize: 24, instanceTailByteSize: 0,
 			supertypeSet: testSupertypeSet(),
 		},
 		"class": &typeDefinitionClass{
 			typeDefinitionAbstract: typeDefinitionAbstract{
 				instanceMethods: testMethods(), instanceMembers: testMembers(),
-				instanceByteSize: 24, instanceTailByteSize: 0, initializerInstruction: 42,
+				instanceByteSize: 24, instanceTailByteSize: 0,
 				supertypeSet: testSupertypeSet(),
 			},
 			dispatchEntries: testDispatch(),
 		},
 		"generic abstract": &typeDefinitionGenericAbstract{
-			concreteTypesSizeMap:       []genericMapEntry{entry},
-			instanceMethodInstructions: []uint64{50, 51, 52},
-			initializerInstruction:     43,
+			concreteTypesSizeMap: []genericMapEntry{entry},
+			methodCount:          3,
 		},
 		"generic class": &typeDefinitionGenericClass{
-			concreteTypesSizeMap:       []genericClassMapEntry{classEntry},
-			instanceMethodInstructions: []uint64{50, 51, 52},
-			initializerInstruction:     43,
+			concreteTypesSizeMap: []genericClassMapEntry{classEntry},
+			methodCount:          3,
 		},
 		"empty struct":            &typeDefinitionStruct{},
 		"empty generic":           &typeDefinitionGenericAbstract{},
@@ -138,12 +136,11 @@ func TestTypeDefinitionByteCountMatchesWhatIsWritten(t *testing.T) {
 func TestTypeDefinitionClassRead(t *testing.T) {
 	def := &typeDefinitionClass{
 		typeDefinitionAbstract: typeDefinitionAbstract{
-			instanceMethods:        testMethods(),
-			instanceMembers:        testMembers(),
-			instanceByteSize:       24,
-			instanceTailByteSize:   8,
-			initializerInstruction: 42,
-			supertypeSet:           testSupertypeSet(),
+			instanceMethods:      testMethods(),
+			instanceMembers:      testMembers(),
+			instanceByteSize:     24,
+			instanceTailByteSize: 8,
+			supertypeSet:         testSupertypeSet(),
 		},
 		dispatchEntries: testDispatch(),
 	}
@@ -161,12 +158,11 @@ func TestTypeDefinitionClassRead(t *testing.T) {
 	assert.Equal(t, uint64(2), word(1), "member count")
 	assert.Equal(t, uint64(24), word(2), "instance byte size")
 	assert.Equal(t, uint64(8), word(3), "instance tail byte size")
-	assert.Equal(t, uint64(42), word(4), "initializer instruction")
 
-	// Then the runs, methods first: two methods of two words, then two members of
+	// Then the runs, methods first: two methods of one word, then two members of
 	// four words, and the supertype set after them.
-	assert.Equal(t, uint64(10), word(5), "first method's instruction")
-	assert.Equal(t, uint64(8), word(13), "second member's offset")
+	assert.Equal(t, uint64(11), word(4), "first method's signature")
+	assert.Equal(t, uint64(8), word(10), "second member's offset")
 }
 
 // A supertype table is asked about ids that may not be in it, which is the one

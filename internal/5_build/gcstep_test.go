@@ -18,6 +18,8 @@ const gcStepPrelude = `import std("lang/*");
 import std("io/local/*");
 import std("data/list/*");
 import std("data/map/*");
+import std("data/trie/*");
+import std("data/heap/*");
 
 namespace Main {
     class Box {
@@ -65,7 +67,9 @@ func compileStepped(t *testing.T, source string) string {
 // Each case changes, between the marker's tracing and its remark, what holds a
 // box allocated meanwhile, so that only what the remark rescans says the box
 // is held: a dirtied card, a Mark of the program's own run again against what
-// memory holds then, or a container grown or rearranged.
+// memory holds then, or a container grown or rearranged. A case that asks for a
+// minor collection in between has it run alongside the held marker, which has
+// to keep the box by the same means and leave it for the remark.
 func TestRemarkFindsWhatChangedWhileTracing(t *testing.T) {
 	t.Parallel()
 	for name, test := range map[string]struct {
@@ -73,6 +77,9 @@ func TestRemarkFindsWhatChangedWhileTracing(t *testing.T) {
 		want   string
 		// remarked is what the remark's statistics show it rescanned.
 		remarked string
+		// minor is what the statistics of a minor collection alongside the
+		// marker show, when the case asks for one.
+		minor string
 	}{
 		"a card the store dirtied": {`
     class Node {
@@ -89,7 +96,24 @@ func TestRemarkFindsWhatChangedWhileTracing(t *testing.T) {
         Main::finish();
         File::StdOut.WriteStr(Main::kept(node.box){str} + " " + node.box.name + "\n");
     }
-`, "true moved\n", ` cards=[1-9]`},
+`, "true moved\n", ` cards=[1-9]`, ""},
+		"a card the store dirtied, with a minor collection alongside": {`
+    class Node {
+        var Box* box;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Node* node = new(Node);
+        Main::age();
+        Main::trace();
+        var Box* b = Main::box("moved");
+        node.box = b;
+        b = null;
+        System.GC::Minor();
+        Main::finish();
+        File::StdOut.WriteStr(Main::kept(node.box){str} + " " + node.box.name + "\n");
+    }
+`, "true moved\n", ` cards=[1-9]`, ` alongside=1`},
 		"a word only a Mark decodes": {`
     class Coded {
         var uint word;
@@ -112,7 +136,31 @@ func TestRemarkFindsWhatChangedWhileTracing(t *testing.T) {
         var Box* back = (coded.word ^ 4099U){void*}{Box*};
         File::StdOut.WriteStr(Main::kept(back){str} + " " + back.name + "\n");
     }
-`, "true coded\n", ` retraced=[1-9]`},
+`, "true coded\n", ` retraced=[1-9]`, ""},
+		"a word only a Mark decodes, with a minor collection alongside": {`
+    class Coded {
+        var uint word;
+
+        public fun void() Mark = () {
+            if (this.word != 0U) {
+                mark((this.word ^ 4099U){void*}{Box*});
+            }
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Coded* coded = new(Coded);
+        Main::age();
+        Main::trace();
+        var Box* c = Main::box("coded");
+        coded.word = c{uint} ^ 4099U;
+        c = null;
+        System.GC::Minor();
+        Main::finish();
+        var Box* back = (coded.word ^ 4099U){void*}{Box*};
+        File::StdOut.WriteStr(Main::kept(back){str} + " " + back.name + "\n");
+    }
+`, "true coded\n", ` retraced=[1-9]`, ` alongside=1`},
 		"memory of the program's own a Mark reads, replaced and freed": {`
     class Slots {
         var uint* at;
@@ -151,7 +199,7 @@ func TestRemarkFindsWhatChangedWhileTracing(t *testing.T) {
         var Box* back = (slots.at[1] ^ 257U){void*}{Box*};
         File::StdOut.WriteStr(Main::kept(back){str} + " " + back.name + "\n");
     }
-`, "true slot\n", ` retraced=[1-9]`},
+`, "true slot\n", ` retraced=[1-9]`, ""},
 		"a list grown into a new run": {`
     fun void(uint, str...) main = (argC, argV) {
         var ArrList[Box*]* list = ArrList::[Box*]New(0U);
@@ -171,7 +219,7 @@ func TestRemarkFindsWhatChangedWhileTracing(t *testing.T) {
         }
         File::StdOut.WriteStr(bad{str} + "\n");
     }
-`, "0\n", ` cards=[1-9][^\n]* retraced=[1-9]`},
+`, "0\n", ` cards=[1-9][^\n]* retraced=[1-9]`, ""},
 		"maps rehashed, rebalanced and removed from": {`
     fun void(uint, str...) main = (argC, argV) {
         var HashMap[int, Box*]* hashed = HashMap::[int, Box*]New(0U);
@@ -201,7 +249,52 @@ func TestRemarkFindsWhatChangedWhileTracing(t *testing.T) {
         }
         File::StdOut.WriteStr(bad{str} + " " + hashed.Len(){str} + " " + sorted.Len(){str} + "\n");
     }
-`, "0 50 50\n", ` cards=[1-9][^\n]* retraced=[1-9]`},
+`, "0 50 50\n", ` cards=[1-9][^\n]* retraced=[1-9]`, ""},
+		"a trie split and merged, a queue grown and drained": {`
+    static fun str*(int) key = (i) {
+        var str* k = new(str, 2U);
+        k[0] = (i % 3){str} + "a";
+        k[1] = i{str} + "b";
+        return k;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var HashTrieMap[str, Box*]* trie = HashTrieMap::[str, Box*]New();
+        var ArrPriorityQueue[int, Box*]* queue = ArrPriorityQueue::[int, Box*]New(0U);
+        for (var int i = 0; i < 10; i++) {
+            var str* k = Main::key(i);
+            trie.Put(2U, k, Main::box("t" + i{str}));
+            free(k);
+            queue.Add(i, Main::box("q" + i{str}));
+        }
+        Main::age();
+        Main::trace();
+        for (var int i = 10; i < 60; i++) {
+            var str* k = Main::key(i);
+            trie.Put(2U, k, Main::box("t" + i{str}));
+            free(k);
+            queue.Add(i, Main::box("q" + i{str}));
+        }
+        for (var int i = 0; i < 10; i++) {
+            var str* k = Main::key(i);
+            trie.Remove(2U, k);
+            free(k);
+            queue.RemoveMin();
+        }
+        Main::finish();
+        var int bad = 0;
+        for (var int i = 10; i < 60; i++) {
+            var str* k = Main::key(i);
+            var Box* t = trie.Get(2U, k).0;
+            free(k);
+            var (int, Box*) e = queue.RemoveMin();
+            if (!Main::kept(t) || t.name != "t" + i{str} || e.0 != i || !Main::kept(e.1) || e.1.name != "q" + i{str}) {
+                bad++;
+            }
+        }
+        File::StdOut.WriteStr(bad{str} + " " + trie.Len(){str} + "\n");
+    }
+`, "0 50\n", ` cards=[1-9][^\n]* retraced=[1-9]`, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -209,13 +302,19 @@ func TestRemarkFindsWhatChangedWhileTracing(t *testing.T) {
 			stdout, stderr, status := runWith(t, []string{"ZAM_GC_STATS=1", "ZAM_GC_VERIFY=1"}, binary)
 			require.Zero(t, status, stderr)
 			assert.Equal(t, test.want, stdout)
-			var remark string
+			var remark, minor string
 			for line := range strings.SplitSeq(stderr, "\n") {
 				if strings.Contains(line, " concurrent ") {
 					remark = line
 				}
+				if strings.Contains(line, " minor ") && strings.Contains(line, " alongside=") {
+					minor = line
+				}
 			}
 			assert.Regexp(t, test.remarked, remark)
+			if test.minor != "" {
+				assert.Regexp(t, test.minor, minor)
+			}
 		})
 	}
 }

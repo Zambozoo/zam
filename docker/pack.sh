@@ -353,7 +353,6 @@ buildRuntime() {
     done
     local pids=()
     for source in "$runtime"/src/*.c; do
-        [[ $(basename "$source") != main.c ]] || continue
         "$tools/cc" -c -std=gnu11 -O3 -fPIC -DCURL_STATICLIB -DBSON_STATIC -DLIBXML_STATIC "${includes[@]}" \
             -o "$objects/$(basename "$source" .c).o" "$source" &
         pids+=($!)

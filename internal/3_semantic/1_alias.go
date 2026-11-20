@@ -94,9 +94,7 @@ func (x *aliasExpander) errf(d syntax.Decl, tok *syntax.Token, format string, ar
 // every argument for it name one type.
 func (x *aliasExpander) checkParameters(alias *syntax.DeclAlias) {
 	used := base.Set[string]{}
-	for arg := range genericArgsIn(alias.Type) {
-		used[arg.Name] = struct{}{}
-	}
+	addGenericArgNames(used, alias.Type)
 	if alias.Generics() == nil {
 		return
 	}
@@ -107,36 +105,29 @@ func (x *aliasExpander) checkParameters(alias *syntax.DeclAlias) {
 	}
 }
 
-// genericArgsIn yields every generic argument written in t.
-func genericArgsIn(t syntax.Type) func(yield func(*syntax.TypeGenericArg) bool) {
-	return func(yield func(*syntax.TypeGenericArg) bool) {
-		var walk func(t syntax.Type) bool
-		each := func(ts []syntax.Type) bool {
-			for _, t := range ts {
-				if !walk(t) {
-					return false
-				}
-			}
-			return true
+// addGenericArgNames adds to names the name of every generic argument written in
+// t.
+func addGenericArgNames(names base.Set[string], t syntax.Type) {
+	switch t := t.(type) {
+	case *syntax.TypeArray:
+		addGenericArgNames(names, t.Type)
+	case *syntax.TypeFunction:
+		addGenericArgNames(names, t.ReturnType)
+		for _, p := range t.ParameterTypes {
+			addGenericArgNames(names, p)
 		}
-		walk = func(t syntax.Type) bool {
-			switch t := t.(type) {
-			case *syntax.TypeArray:
-				return walk(t.Type)
-			case *syntax.TypeFunction:
-				return walk(t.ReturnType) && each(t.ParameterTypes)
-			case *syntax.TypeGeneric:
-				return each(t.ParameterTypes)
-			case *syntax.TypeGenericArg:
-				return yield(t)
-			case *syntax.TypeTuple:
-				return each(t.Types)
-			case *syntax.TypeWrapped:
-				return walk(t.Type)
-			}
-			return true
+	case *syntax.TypeGeneric:
+		for _, p := range t.ParameterTypes {
+			addGenericArgNames(names, p)
 		}
-		walk(t)
+	case *syntax.TypeGenericArg:
+		names[t.Name] = struct{}{}
+	case *syntax.TypeTuple:
+		for _, element := range t.Types {
+			addGenericArgNames(names, element)
+		}
+	case *syntax.TypeWrapped:
+		addGenericArgNames(names, t.Type)
 	}
 }
 
@@ -273,8 +264,8 @@ func (x *aliasExpander) visitField(f syntax.Field) {
 		x.expandBounds(f.Generics())
 		x.expand(f.FieldType())
 		x.visitStmt(f.Body)
-	default:
-		panic(fmt.Sprintf("unknown field %T", f))
+		// default:
+		// panic(fmt.Sprintf("unknown field %T", f))
 	}
 }
 
@@ -318,8 +309,8 @@ func (x *aliasExpander) visitStmt(s syntax.Stmt) {
 	case *syntax.StmtVariable:
 		s.Type = x.expand(s.Type)
 		x.visitExpr(s.Expr)
-	default:
-		panic(fmt.Sprintf("unknown statement %T", s))
+		// default:
+		// panic(fmt.Sprintf("unknown statement %T", s))
 	}
 }
 
@@ -354,8 +345,8 @@ func (x *aliasExpander) visitExpr(e syntax.Expr) {
 	case *syntax.ExprType:
 		e.Type = x.expand(e.Type)
 		x.expandAll(e.TypeArgs)
-	default:
-		panic(fmt.Sprintf("unknown expression %T", e))
+		// default:
+		// panic(fmt.Sprintf("unknown expression %T", e))
 	}
 }
 

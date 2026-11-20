@@ -45,10 +45,10 @@ static void stdMarkOverride(ZamThread *thread) {
 }
 
 // STD_DELETE marks the receiver's allocation dead for the next sweep. It is
-// the body OpDelete used to run inline, now split out so a user's own Delete
-// can decide whether to run it, delay it, or do something else first.
+// Object's own Delete, so a user's own Delete can decide whether to run it,
+// delay it, or do something else first.
 //
-// Null is treated as a programming error even though OpDelete has already
+// Null is treated as a programming error even though delete has already
 // panicked on null before dispatching: an override could call this native with
 // a different pointer, and the invariant has to hold wherever it is reached.
 //
@@ -706,8 +706,7 @@ static void stdGcUnblock(ZamThread *thread) {
 }
 
 // stdGcMinor and stdGcMajor ask for a collection of that kind, which the
-// calling thread runs at its next safepoint, before its next instruction,
-// unless another thread reaches one first. A minor collection asked for is
+// calling thread runs at its next safepoint, unless another thread reaches one first. A minor collection asked for is
 // major all the same if the heap has already grown to its threshold.
 static void stdGcMinor(ZamThread *thread) {
     atomic_store(&thread->vm->collectionRequested, true);
@@ -733,7 +732,7 @@ static void stdGcMarkable(ZamThread *thread) {
 }
 
 // stdSystemExit ends the process with the given status, bypassing the
-// interpreter's own return path: no frames are unwound, no destructors run,
+// program's own return path: no frames are unwound, no destructors run,
 // no mark sweep runs. The caller asked for the program to stop and this is
 // what stops it. The native does not return; zam_native_return_void is
 // unreachable past exit() and omitting it does not matter.
@@ -759,13 +758,8 @@ static void stdSystemFailed(ZamThread *thread) {
 }
 
 // stdSystemPanic raises a panic saying its message, unwinding the calling
-// thread to the defers it is inside of. The interpreter does not unwind, so
-// it returns there, for the method calling it to end the program.
+// thread to the defers it is inside of.
 static void stdSystemPanic(ZamThread *thread) {
-    if (thread->vm->compiledFunctions == NULL) {
-        zam_native_return_void(thread);
-        return;
-    }
     ZamWord word = zam_native_argument(thread, 0);
     const ZamString *s = word == 0 ? NULL : zam_string_of((void *)(uintptr_t)word);
     zamrt_raise(thread, (uint8_t)-1, false, s == NULL ? "" : s->bytes, s == NULL ? 0 : s->length, 0);
@@ -793,23 +787,7 @@ static void stdSystemCaller(ZamThread *thread) {
     uint64_t skip = zam_native_argument(thread, 0) + 1;
     const char *file = NULL;
     uint32_t line = 0;
-    bool found = false;
-    if (thread->vm->compiledFunctions != NULL) {
-        found = zam_thread_compiled_caller(thread, skip, &file, &line);
-        goto answer;
-    }
-
-    ZamFrames frames;
-    zam_frames_begin(&frames, thread);
-    uint64_t offset;
-    while (zam_frames_next(&frames, &offset)) {
-        if (skip-- == 0) {
-            found = zam_image_locate(&thread->vm->image, offset - 1, &file, &line);
-            break;
-        }
-    }
-
-answer:
+    bool found = zam_thread_compiled_caller(thread, skip, &file, &line);
     if (found) {
         ZamWord string = (ZamWord)zam_native_new_string(thread, file, strlen(file));
         *(ZamWord *)zam_native_argument_pointer(thread, 1) = string;
@@ -1105,8 +1083,8 @@ static void stdSignalIsThreadBlocked(ZamThread *thread) {
 // native stores the closure in the thread's own handler table and asks the
 // OS to deliver future occurrences through the shared C handler. The C
 // handler itself only ORs a bit into the current thread's pending mask —
-// running the closure directly from signal context would re-enter the
-// interpreter from a place that cannot safely call anything that is not
+// running the closure directly from signal context would re-enter compiled
+// code from a place that cannot safely call anything that is not
 // async-signal-safe.
 static void stdSignalHandle(ZamThread *thread) {
     uint64_t sig = zam_native_argument(thread, 0);
@@ -1613,8 +1591,8 @@ extern const uint64_t zamProjectNativeTableCount;
 
 // The codec natives live beside the libraries they wrap, each file with a
 // table of its own. Which of those tables a program can call into is the
-// link's to say: a natively compiled program names only those it calls, and
-// stdtables.c names every one for a program run under the interpreter.
+// link's to say: a compiled program names only those it calls, and
+// stdtables.c names every one for the conformance harnesses.
 extern const ZamNativeTables zamStdNativeTables[];
 extern const uint64_t zamStdNativeTableCount;
 
@@ -1644,7 +1622,7 @@ void zam_natives_resolve(ZamVM *vm) {
 
     // Resolution is by name and happens once, here, rather than at each call:
     // the image names a slot, and what the slot holds is settled before the
-    // first instruction runs. A name with nothing to bind to is the end of the
+    // program starts. A name with nothing to bind to is the end of the
     // run, since the program will certainly call it and there is nothing to
     // call.
     for (uint64_t slot = 0; slot < vm->nativeCount; slot++) {
@@ -1672,9 +1650,8 @@ void zam_natives_resolve(ZamVM *vm) {
     }
 }
 
-// A native's frame begins at the function entry OpCallNative pushed. The base
-// slot holds the native address — the one word the opcode read to find this
-// function — and every slot above it is an argument. Argument indexing counts
+// A native's frame begins at the function entry zamrt_call_native pushed. The
+// base slot holds the native's address, and every slot above it is an argument. Argument indexing counts
 // from the first word above the base, so the native asks about its arguments in
 // source order with no accounting for the callee's own slot.
 uint64_t zam_native_argument_words(ZamThread *thread) {
@@ -1742,8 +1719,6 @@ void zam_native_block_begin(ZamThread *thread) { zam_vm_enter_safe(thread); }
 void zam_native_block_end(ZamThread *thread) { zam_vm_leave_safe(thread); }
 
 _Noreturn void zam_native_panic(ZamThread *thread, const char *message) {
-    if (thread->vm->compiledFunctions == NULL)
-        zam_die(ZAMEXIT_PANIC, "panic in native: %s\n", message);
     // The thread runs compiled code again once it lands, which a collection
     // has to wait for.
     if (atomic_load_explicit(&thread->state, memory_order_relaxed) == ZAMTHREAD_SAFE)

@@ -69,7 +69,7 @@ func detectGenericCycles(ast *syntax.AST) []error {
 		graph: expansionGraph{},
 	}
 	for _, entry := range ast.CodeFiles.All() {
-		entry.Value.Accept(v)
+		entry.Value.Decl.Accept(v)
 	}
 
 	var errs []error
@@ -100,15 +100,6 @@ func detectGenericCycles(ast *syntax.AST) []error {
 	}
 
 	return errs
-}
-
-func (v *genericCycleDetectorVisitor) VisitFile(f *syntax.File) error {
-	f.Decl.Accept(v)
-	return nil
-}
-
-func (v *genericCycleDetectorVisitor) VisitImport(i *syntax.Import) error {
-	return nil
 }
 
 func (v *genericCycleDetectorVisitor) VisitDeclAbstract(d *syntax.DeclAbstract) error {
@@ -201,9 +192,6 @@ func (v *genericCycleDetectorVisitor) VisitDeclInterface(d *syntax.DeclInterface
 
 func (v *genericCycleDetectorVisitor) VisitDeclNamespace(d *syntax.DeclNamespace) error {
 	for _, field := range d.StaticFields() {
-		field.Accept(v)
-	}
-	for _, field := range d.InstanceFields() {
 		field.Accept(v)
 	}
 	for child := range d.Decls() {
@@ -468,11 +456,7 @@ func (v *genericCycleDetectorVisitor) VisitTypeTailed(*syntax.TypeTailed) error 
 // formal of the head decl, then recurses into the arguments so nested
 // constructed generics emit their own edges.
 func (v *genericCycleDetectorVisitor) VisitTypeGeneric(t *syntax.TypeGeneric) error {
-	genericDecl := t.Decl().(syntax.DeclGeneric)
-	if genericDecl.Generics() == nil {
-		return nil
-	}
-
+	genericDecl := t.Type.Decl().(syntax.DeclGeneric)
 	for i, entry := range genericDecl.Generics().All() {
 		to := syntax.GenericArgKey{Owner: genericDecl, Name: entry.Key.Name}
 

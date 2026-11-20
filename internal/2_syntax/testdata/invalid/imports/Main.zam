@@ -1,0 +1,32 @@
+import std = std("lang/Strs.zam");
+import nope("X.zam");
+import dep("../escape.zam");
+import globbed = "empty/*";
+import "empty/*";
+import "Hidden.test.zam";
+import ;
+import a = ;
+import pkg "x.zam";
+import pkg(x);
+import pkg("x.zam" ;
+import "x.zam" var
+import a = "A.zam";
+import a = "A.zam";
+import b = "A.zam";
+import "A.zam";
+import {
+    "A.zam";
+    broken;
+}
+
+public namespace Main {
+    fun void() Run = () {
+        import nope("X.zam");
+        import {
+            nope("Y.zam");
+        }
+        import ;
+        import c = "A.zam";
+        import c = "A.zam";
+    }
+}

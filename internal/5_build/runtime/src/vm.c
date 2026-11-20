@@ -26,10 +26,8 @@ static void resetThreshold(ZamVM *vm) {
                  (uint64_t)((double)vm->heapByteCount * vm->gcTriggerRatio));
 }
 
-// postImageLoad is the half of VM init that is the same whether the image
-// came off disk or in off a byte array: the heap counters, the statics, the
-// native table and the main thread are all set up from what the image carries,
-// so zam_vm_init and zam_vm_init_from_bytes share them.
+// postImageLoad sets up what the image carries: the heap counters, the
+// statics, the native table and the main thread.
 static void postImageLoad(ZamVM *vm) {
     zam_heap_init(&vm->heap, vm->image.maxHeapSize, vm->image.gcReturnAge);
     vm->gcTriggerRatio = vm->image.gcTriggerRatio;
@@ -108,13 +106,7 @@ static void postImageLoad(ZamVM *vm) {
 #endif
 }
 
-void zam_vm_init(ZamVM *vm, const char *imagePath) {
-    *vm = (ZamVM){0};
-    zam_image_open(&vm->image, imagePath);
-    postImageLoad(vm);
-}
-
-void zam_vm_init_from_bytes(ZamVM *vm, const uint8_t *bytes, size_t byteCount) {
+void zam_vm_init(ZamVM *vm, const uint8_t *bytes, size_t byteCount) {
     *vm = (ZamVM){0};
     zam_image_load(&vm->image, bytes, byteCount);
     postImageLoad(vm);
@@ -164,7 +156,6 @@ void zam_vm_free(ZamVM *vm) {
     free(vm->youngSpans);
     free(vm->heldCards);
     free(vm->retrace);
-    zam_image_close(&vm->image);
     pthread_mutex_destroy(&vm->collectionLock);
     pthread_cond_destroy(&vm->collectionChanged);
     pthread_mutex_destroy(&vm->threadLock);
@@ -185,17 +176,10 @@ static bool threadsRunning(ZamVM *vm) {
     return running;
 }
 
-_Noreturn void zam_vm_exit(ZamVM *vm, ZamResult result) {
+_Noreturn void zam_vm_exit(ZamVM *vm) {
     uint8_t status = vm->main.exitStatus;
     if (!threadsRunning(vm))
         zam_vm_free(vm);
-
-    // Only a program that exited says what to end with. Anything else stopped
-    // in a way the program did not choose, and reporting its status as the
-    // program's would be claiming it ran.
-    if (result != ZAMRESULT_EXIT)
-        zam_die(ZAMEXIT_PANIC, "the program stopped: %s\n",
-                zam_result_name(result));
     exit(status);
 }
 
@@ -203,19 +187,24 @@ uint8_t *zam_vm_static(ZamVM *vm, uint64_t slot) {
     return vm->statics + zam_image_static_offset(&vm->image, slot);
 }
 
-ZamEntry zam_vm_compiled_method(const ZamVM *vm, ZamTypeShort shortID, uint64_t methodIndex) {
+const ZamCompiledClass *zam_vm_compiled_class(const ZamVM *vm, ZamTypeShort shortID) {
     const ZamCompiledClass *classes = vm->compiledClasses;
     uint64_t low = 0, high = vm->compiledClassCount;
     while (low < high) {
         uint64_t mid = low + (high - low) / 2;
         if (classes[mid].shortID == shortID)
-            return methodIndex < classes[mid].methodCount ? classes[mid].methods[methodIndex] : NULL;
+            return &classes[mid];
         if (classes[mid].shortID < shortID)
             low = mid + 1;
         else
             high = mid;
     }
     return NULL;
+}
+
+ZamEntry zam_vm_compiled_method(const ZamVM *vm, ZamTypeShort shortID, uint64_t methodIndex) {
+    const ZamCompiledClass *compiled = zam_vm_compiled_class(vm, shortID);
+    return compiled != NULL && methodIndex < compiled->methodCount ? compiled->methods[methodIndex] : NULL;
 }
 
 // flushPending adds what a thread has allocated to the VM's counts, and asks

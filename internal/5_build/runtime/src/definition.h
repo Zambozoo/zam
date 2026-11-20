@@ -92,10 +92,8 @@ bool zam_supertype_set_contains(const ZamPerfectHash *set, ZamTypeShort type);
 bool zam_dispatch_lookup(const ZamPerfectHash *table, ZamTypeShort interfaceType,
                          uint32_t interfaceMethodIndex, uint32_t *methodIndex);
 
-// A method is where its body begins and the id of the function type naming its
-// signature.
+// A method is the id of the function type naming its signature.
 typedef struct ZamMethodDefinition {
-    uint64_t instruction;
     uint64_t typeListID;
 } ZamMethodDefinition;
 
@@ -110,14 +108,14 @@ typedef struct ZamMemberDefinition {
     uint64_t tailLength;
 } ZamMemberDefinition;
 
-_Static_assert(sizeof(ZamMethodDefinition) == 2 * ZAMWORD_BYTES,
+_Static_assert(sizeof(ZamMethodDefinition) == ZAMWORD_BYTES,
                "method definition no longer matches the wire");
 _Static_assert(sizeof(ZamMemberDefinition) == ZAMWORD_BYTES +
                                                   ZAMTYPE_ID_WORDS *
                                                       ZAMWORD_BYTES,
                "member definition no longer matches the wire");
 
-#define ZAMMETHOD_WORDS 2
+#define ZAMMETHOD_WORDS 1
 #define ZAMMEMBER_WORDS (1 + ZAMTYPE_ID_WORDS)
 
 static inline ZamTypeID zam_member_type(const ZamMemberDefinition *member) {
@@ -144,19 +142,12 @@ static inline const ZamTypeList *zam_type_list_next(const ZamTypeList *list) {
                                  list->count * ZAMTYPE_ID_WORDS);
 }
 
-// Every definition below that describes an instance carries an
-// initializerInstruction: the routine that fills a fresh instance in, which is
-// entered as a method is. Zero names no routine, since offset zero is where the
-// program begins and so is never an initializer.
-
-// A struct is its methods, its members, how much room an instance takes, and the
-// routine that fills a fresh one in.
+// A struct is its methods, its members, and how much room an instance takes.
 typedef struct ZamStructDefinition {
     uint64_t methodCount;
     uint64_t memberCount;
     uint64_t instanceByteSize;
     uint64_t instanceTailByteSize;
-    uint64_t initializerInstruction;
    ZamWord body[];
 } ZamStructDefinition;
 
@@ -180,7 +171,6 @@ typedef struct ZamEnumDefinition {
     uint64_t methodCount;
     uint64_t memberCount;
     uint64_t instanceByteSize;
-    uint64_t initializerInstruction;
     uint64_t valueCount;
     uint64_t valueSlot;
     // valueType is the short type id of the primitive the values are backed
@@ -209,7 +199,6 @@ typedef struct ZamAbstractDefinition {
     uint64_t memberCount;
     uint64_t instanceByteSize;
     uint64_t instanceTailByteSize;
-    uint64_t initializerInstruction;
    ZamWord body[];
 } ZamAbstractDefinition;
 
@@ -239,7 +228,6 @@ typedef struct ZamClassDefinition {
     uint64_t memberCount;
     uint64_t instanceByteSize;
     uint64_t instanceTailByteSize;
-    uint64_t initializerInstruction;
    ZamWord body[];
 } ZamClassDefinition;
 
@@ -345,25 +333,17 @@ zam_generic_entry_dispatch(const ZamGenericMapEntry *e) {
     return zam_perfect_hash_next(zam_generic_entry_supertypes(e));
 }
 
-// A generic class or abstract holds one entry per instantiation, and above them
-// the method bodies the instantiations share: a method is compiled once however
-// many times its declaration is instantiated, because it reaches members by
-// index and an index means the same thing in every instantiation.
-//
-// The initializer is in the head rather than behind the entries. It is one word
-// whatever the instantiations are, and leaving it at the end would mean walking
-// every one of them to reach it.
+// A generic class or abstract holds one entry per instantiation, each with the
+// signatures of the methods the declaration has, methodCount of them.
 typedef struct ZamGenericAbstractDefinition {
     uint64_t methodCount;
     uint64_t concreteCount;
-    uint64_t initializerInstruction;
    ZamWord body[];
 } ZamGenericAbstractDefinition;
 
 typedef struct ZamGenericClassDefinition {
     uint64_t methodCount;
     uint64_t concreteCount;
-    uint64_t initializerInstruction;
    ZamWord body[];
 } ZamGenericClassDefinition;
 
@@ -371,24 +351,14 @@ _Static_assert(sizeof(ZamGenericClassDefinition) ==
                    sizeof(ZamGenericAbstractDefinition),
                "a generic class head is a generic abstract head");
 
-static inline const ZamWord *
-zam_generic_abstract_method_instructions(const ZamGenericAbstractDefinition *d) {
-    return d->body;
-}
-
 static inline const ZamGenericMapEntry *
 zam_generic_abstract_first_concrete(const ZamGenericAbstractDefinition *d) {
-    return (const ZamGenericMapEntry *)(d->body + d->methodCount);
-}
-
-static inline const ZamWord *
-zam_generic_class_method_instructions(const ZamGenericClassDefinition *d) {
-    return d->body;
+    return (const ZamGenericMapEntry *)d->body;
 }
 
 static inline const ZamGenericMapEntry *
 zam_generic_class_first_concrete(const ZamGenericClassDefinition *d) {
-    return (const ZamGenericMapEntry *)(d->body + d->methodCount);
+    return (const ZamGenericMapEntry *)d->body;
 }
 
 // A generic interface holds one supertype set per instantiation. I[int] and
@@ -405,8 +375,7 @@ zam_generic_interface_first_concrete(const ZamGenericInterfaceDefinition *d) {
 }
 
 // A pointer definition names what a pointer points at, and that is the whole of
-// it — so it is a written type id and nothing more, the same three words an
-// instruction is handed on the operand stack. A pointer value at runtime is one
+// it — so it is a written type id and nothing more. A pointer value at runtime is one
 // word like any address; this is the static record of the pointer *type*.
 //
 // A pointer is a type of its own rather than a depth counted alongside an array
@@ -418,13 +387,11 @@ static inline ZamTypeID zam_pointer_pointee(const ZamPointerDefinition *d) {
     return zam_type_id_read(&d->typeWord);
 }
 
-// A tuple is how much room an instance takes, the routine that fills a fresh
-// one in, and its element types as a type list, which is the same run a
+// A tuple is how much room an instance takes and its element types as a type list, which is the same run a
 // function's signature is written as. Where each element lies follows the list,
 // one word apiece, so an element is reached by arithmetic on the head.
 typedef struct ZamTupleDefinition {
     uint64_t instanceByteSize;
-    uint64_t initializerInstruction;
     uint64_t elementCount;
    ZamWord body[];
 } ZamTupleDefinition;
@@ -468,10 +435,6 @@ const ZamPointerDefinition *zam_pointer_definition(const ZamImage *image,
 const ZamTupleDefinition *zam_tuple_definition(const ZamImage *image,
                                                uint16_t declID);
 
-// A thread type's definition is the one type it yields and a function type's is
-// its signature, so neither has a definition struct of its own: the type id and
-// the type list are already what the runtime reads.
-ZamTypeID zam_thread_type_result(const ZamImage *image, uint16_t declID);
 const ZamTypeList *zam_function_type_signature(const ZamImage *image,
                                                uint16_t declID);
 
@@ -487,35 +450,27 @@ const ZamPerfectHash *
 zam_generic_interface_concrete(const ZamGenericInterfaceDefinition *definition,
                                uint16_t genericID);
 
-// zam_type_member and zam_type_method reach one field of a declared type by the
-// index the compiler numbered it with. Both are given a short id
-// rather than a bucket, because which of the seven definition kinds holds the
-// table is the id's to say and no caller of these wants to know.
+// zam_type_member reaches one member of a declared type by the index the
+// compiler numbered it with. It is given a short id rather than a bucket,
+// because which of the seven definition kinds holds the table is the id's to
+// say and no caller wants to know.
 //
 // Members and methods are numbered separately and each run is flattened over the
 // base chain, base first, so an index means the same thing in a subtype as in
-// the type it was declared on. That is what lets a method be selected by index
-// through a base-typed reference and reach the override.
-// A generic declaration holds bare instruction words rather than method
-// definitions, its signatures being the instantiation's and held on the map
-// entry, so the signature comes back as the id of no function type.
+// the type it was declared on.
 //
 // A member comes back by value because a tuple holds no member run to point
 // into: its element's offset and type lie in two runs of their own.
 ZamMemberDefinition zam_type_member(const ZamImage *image, ZamTypeShort shortID,
                                     uint64_t index);
-ZamMethodDefinition zam_type_method(const ZamImage *image, ZamTypeShort shortID,
-                                    uint64_t index);
 
 // The slots std.Object's own methods occupy in any object's flattened method
 // table. Everything that can carry a method descends from Object and its
-// methods are laid out first, so these indices are known without a lookup and
-// are what the type-directed instructions select through.
+// methods are laid out first, so these indices are known without a lookup.
 //
-// These mirror the const block in internal/0_base/base.go by hand, the way the
-// opcodes in opcode.h do, and the numbering is really the order std.Object
-// declares its methods in — which TestObjectMethodSlots in 2_decl_test.go holds
-// both sides to. Nothing here fails if the declarations are reordered: the call
+// These mirror the const block in internal/0_base/base.go by hand, and the
+// numbering is really the order std.Object declares its methods in — which
+// TestObjectMethodSlots in internal/2_syntax holds both sides to. Nothing here fails if the declarations are reordered: the call
 // would simply reach a different method, so the Go-side guard is the only guard.
 #define ZAMOBJECT_SLOT_EQ 0
 #define ZAMOBJECT_SLOT_CMP 1
@@ -537,14 +492,8 @@ ZamMethodDefinition zam_type_method(const ZamImage *image, ZamTypeShort shortID,
 // wrote.
 uint64_t zam_type_member_count(const ZamImage *image, ZamTypeShort shortID);
 
-// zam_type_method_count is how many methods zam_type_method will answer for.
+// zam_type_method_count is how many methods the type has.
 uint64_t zam_type_method_count(const ZamImage *image, ZamTypeShort shortID);
-
-// zam_type_initializer is the routine a fresh instance of the type is filled in
-// by, and zero where the type names none — offset zero being where the program
-// begins and so never a routine. A type that names none is left as it was
-// allocated, which for everything held inline means zeros.
-uint64_t zam_type_initializer(const ZamImage *image, ZamTypeShort shortID);
 
 // zam_type_generic_arg is what one of an instantiation's open types resolved to.
 // A template's body is compiled once however many times it is instantiated, so
@@ -569,9 +518,8 @@ ZamTypeID zam_type_generic_arg(const ZamImage *image, ZamTypeShort shortID,
 uint64_t zam_definition_byte_count(const ZamImage *image, uint16_t declID);
 
 // zam_type_bytes is how much room a value of the type occupies where such values
-// lie inline, which is the stride from one to the next and so what an instruction
-// told a type id has to move. It is OpSizeOf's answer, and it is what OpStore and
-// OpLoad measure a value by.
+// lie inline, which is the stride from one to the next, and what a value is
+// copied and stored by.
 //
 // Anything held as a reference is one word however wide what it refers to is: a
 // pointer, a thread and a function are addresses, and an interface is reached

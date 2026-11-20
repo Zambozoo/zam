@@ -1,0 +1,37 @@
+public namespace Main {
+    protected var int implied;
+
+    class Errors {
+        virtual var int v;
+        var int dup;
+        var int dup;
+        static var int s;
+        static var int s;
+        var int s;
+        static var int dup;
+        fun void() NoBody;
+        virtual fun void() Body = () {}
+        fun[T] void() Generic = () {}
+        virtual fun[T] void() VirtualGeneric;
+        static fun[T, T] void() Twice = () {}
+        fun int Bad = () {}
+        fun void(int) Mismatch = () {}
+        fun void() NoParen = {}
+        fun void() BadParams = (1) {}
+        fun void(int) Unseparated = (x y) {}
+        fun void() BadBody = () var;
+        var int x = ;
+        var int y = 1 1;
+        var int z
+        var int after;
+        var int w x;
+        protected static var int ps;
+        public public var int pp;
+        var int;
+        fun void() = () {}
+        fun void() Unended
+        var int pad;
+        fun ;
+        fun void(;
+    }
+}

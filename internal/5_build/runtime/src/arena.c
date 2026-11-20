@@ -68,11 +68,7 @@ static void stdArenaMake(ZamThread *thread) {
     void **out = (void **)zam_native_argument_pointer(thread, 4);
     *out = arena;
 
-   ZamResult ran = zam_thread_initialize(thread, arena, type, 1);
-    if (ran == ZAMRESULT_EXIT)
-        exit(thread->exitStatus);
-    if (ran != ZAMRESULT_CONTINUE)
-        zam_native_panic(thread, "Arena.New: an initializer did not return");
+    zam_thread_initialize(thread, arena, type, 1);
     zam_native_return_void(thread);
 }
 
@@ -137,11 +133,7 @@ static void stdArenaNew(ZamThread *thread) {
     *used += bytes;
     *out = value;
 
-   ZamResult ran = zam_thread_initialize(thread, value, element, elementCount);
-    if (ran == ZAMRESULT_EXIT)
-        exit(thread->exitStatus);
-    if (ran != ZAMRESULT_CONTINUE)
-        zam_native_panic(thread, "Arena.Alloc: an initializer did not return");
+    zam_thread_initialize(thread, value, element, elementCount);
     zam_native_return_void(thread);
 }
 
@@ -174,8 +166,7 @@ static void stdArenaMark(ZamThread *thread) {
 // deleteAll runs Delete on the front of every run of class values in the used
 // bytes of an arena's memory, as the collector does for an allocation of its
 // own.
-static void deleteAll(ZamThread *thread, const uint8_t *start, uint64_t used,
-                      const char *failure) {
+static void deleteAll(ZamThread *thread, const uint8_t *start, uint64_t used) {
     const ZamImage *image = &thread->vm->image;
     for (uint64_t at = 0; at < used;) {
         const ArenaRecord *record = (const ArenaRecord *)(start + at);
@@ -186,13 +177,8 @@ static void deleteAll(ZamThread *thread, const uint8_t *start, uint64_t used,
             void *value = (void *)(record + 1);
             const void *outer = thread->finalizing;
             thread->finalizing = value;
-           ZamResult ran = zam_thread_call_method(thread, (ZamWord)(uintptr_t)value,
-                                                   ZAMOBJECT_SLOT_DELETE);
+            zam_thread_call_method(thread, (ZamWord)(uintptr_t)value, ZAMOBJECT_SLOT_DELETE);
             thread->finalizing = outer;
-            if (ran == ZAMRESULT_EXIT)
-                exit(thread->exitStatus);
-            if (ran != ZAMRESULT_CONTINUE)
-                zam_native_panic(thread, failure);
         }
         at += bytes;
     }
@@ -205,8 +191,7 @@ static void stdArenaDelete(ZamThread *thread) {
     uint64_t capacity;
     const uint8_t *start = arenaMemory(
         &thread->vm->image, (uint8_t *)zam_native_argument_pointer(thread, 0), &capacity);
-    deleteAll(thread, start, (ZamUint)zam_native_argument(thread, 1),
-              "Arena.Delete: a Delete did not return");
+    deleteAll(thread, start, (ZamUint)zam_native_argument(thread, 1));
     zam_native_return_void(thread);
 }
 
@@ -219,7 +204,7 @@ static void stdArenaReset(ZamThread *thread) {
     uint64_t capacity;
     uint8_t *start = arenaMemory(&thread->vm->image, arena, &capacity);
     uint64_t used = *(uint64_t *)zam_native_argument_pointer(thread, 1);
-    deleteAll(thread, start, used, "Arena.Reset: a Delete did not return");
+    deleteAll(thread, start, used);
 
     // A Delete may have allocated, and may have moved the operand stack the
     // pointer was resolved against, so both are read again.

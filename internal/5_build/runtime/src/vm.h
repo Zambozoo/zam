@@ -45,12 +45,20 @@ typedef enum ZamOldList {
 // its captures; result is where it writes what it returns.
 typedef void (*ZamEntry)(ZamThread *thread, ZamClosure *self, ZamWord *args, ZamWord *result);
 
+// ZAMCLASS_MARKS_CUSTOM and ZAMCLASS_DELETES_CUSTOM flag a class whose Mark or
+// Delete is its own rather than Object's.
+#define ZAMCLASS_MARKS_CUSTOM 0x1u
+#define ZAMCLASS_DELETES_CUSTOM 0x2u
+
 // ZamCompiledClass is a class's compiled methods, in the order of its method
-// table.
+// table, the routine that initializes a fresh instance of it, NULL when it has
+// nothing to initialize, and its ZAMCLASS_* flags.
 typedef struct ZamCompiledClass {
     ZamTypeShort shortID;
     uint32_t methodCount;
     const ZamEntry *methods;
+    ZamEntry initializer;
+    uint32_t flags;
 } ZamCompiledClass;
 
 // ZamCompiledFunction names a compiled function in a trace: its name and the
@@ -69,8 +77,8 @@ typedef struct ZamVM {
     // ever loaded through it; everything after them starts zeroed.
     uint8_t *statics;
 
-    // natives is the image's slot numbering resolved to the functions this
-    // interpreter was built with, so a call is an index rather than a lookup.
+    // natives is the image's slot numbering resolved to the functions the
+    // program was linked with, so a call is an index rather than a lookup.
    ZamNativeFn *natives;
     uint64_t nativeCount;
 
@@ -87,8 +95,7 @@ typedef struct ZamVM {
     // freed, and it has to be findable to be freed.
     //
     // Only the heap is on it. A markable value laid out on the operand stack
-    // carries the same header — OpDefaultValue writes one — but is not an
-    // allocation and is never linked, its storage being the stack's to reclaim.
+    // carries the same header but is not an allocation and is never linked, its storage being the stack's to reclaim.
     // That is what makes the link a reliable answer to "did the allocator hand
     // this out", rather than only to "does this have a mark word".
     //
@@ -243,12 +250,12 @@ typedef struct ZamVM {
     double remarkPause;
 
     // collectionRequested is set by whichever thread crossed the threshold.
-    // A collection happens only at a safepoint, between instructions: a thread
-    // mid-instruction is a thread whose stacks do not yet say what they will.
+    // A collection happens only at a safepoint: a thread anywhere else is a
+    // thread whose roots do not yet say what they will.
     //
     // stopRequested is set while a collector is stopping the other threads or
     // collecting, and is what every other thread parks on at its next
-    // safepoint. Both are read without the lock on every instruction, and
+    // safepoint. Both are read without the lock at every safepoint, and
     // changed only under it.
     atomic_bool collectionRequested;
 
@@ -307,55 +314,36 @@ typedef struct ZamVM {
     atomic_uint_fast64_t nextThreadId;
 
 
-    // compiledClasses are the compiled method entries of every class a
-    // natively compiled program has, sorted by short id; NULL under the
-    // interpreter.
+    // compiledClasses are the compiled method entries of every class the
+    // program has, sorted by short id.
     const ZamCompiledClass *compiledClasses;
     uint64_t compiledClassCount;
 
-    // compiledFunctions names the functions of a natively compiled program,
-    // the first by function id 1; NULL under the interpreter.
+    // compiledFunctions names the functions of the program, the first by
+    // function id 1.
     const ZamCompiledFunction *compiledFunctions;
     uint64_t compiledFunctionCount;
 } ZamVM;
 
-void zam_vm_init(ZamVM *vm, const char *imagePath);
-
-// zam_vm_init_from_bytes is zam_vm_init over an image whose bytes already sit
-// in memory, as the compiler-generated wrapper hands over the byte array it
-// baked into the binary. The bytes are read in place and are not freed by the
-// VM; everything else about init is unchanged.
-void zam_vm_init_from_bytes(ZamVM *vm, const uint8_t *bytes, size_t byteCount);
+// zam_vm_init sets up vm over the image in bytes, as the compiler bakes it into
+// the binary. The bytes are read in place and never freed, so they must outlive
+// the VM.
+void zam_vm_init(ZamVM *vm, const uint8_t *bytes, size_t byteCount);
 
 void zam_vm_free(ZamVM *vm);
 
-// ZAMMAIN_FRAME_WORDS is how wide the frame main runs on is: the slot a frame
-// keeps for its receiver, then the two parameters main is written with. Main is
-// fallen into rather than called, so no caller lays these and zam_vm_run does —
-// which is what makes main's first local land at offset three the way the
-// compiler numbered it.
-#define ZAMMAIN_FRAME_WORDS 3
-
-// zam_vm_run drives the main thread to a stop and answers with how it stopped.
-// The status the process ends with is on the thread rather than here, since it
-// is what the program said and not what the runtime made of it.
-//
-// argC and argV are the program's own arguments, with the runner's own words
-// — the runner's binary name, the image path — already stripped by the caller.
-// They land in main's parameter slots as `(uint, str...)`: argC becomes the
-// variadic's count, and argV becomes the pointer the body reads strings off.
-// Zero arguments give argC == 0 and a null argV, matching OpNewArray's answer
-// for an empty variadic call.
-ZamResult zam_vm_run(ZamVM *vm, int argC, const char *argV[]);
-
-// zam_vm_exit ends the process as a run that stopped with result says to. A
+// zam_vm_exit ends the process with the status the program exited with. A
 // thread still running when main stops is ended with the process, so the VM
 // is torn down only where none is: the rest still read it to the last.
-_Noreturn void zam_vm_exit(ZamVM *vm, ZamResult result);
+_Noreturn void zam_vm_exit(ZamVM *vm);
 
 // zam_vm_static is the address of a static slot, which is what a push of one
 // leaves and what a load or store then reads through.
 uint8_t *zam_vm_static(ZamVM *vm, uint64_t slot);
+
+// zam_vm_compiled_class is what the program compiled of the type shortID, or
+// NULL where it compiled nothing.
+const ZamCompiledClass *zam_vm_compiled_class(const ZamVM *vm, ZamTypeShort shortID);
 
 // zam_vm_compiled_method is the compiled body of the methodIndex'th method of
 // the class shortID, or NULL where the program has none compiled.
@@ -405,8 +393,8 @@ void zam_vm_hold_remark(ZamVM *vm);
 void zam_vm_release_remark(ZamVM *vm);
 void zam_vm_await_traced(ZamVM *vm);
 
-// zam_vm_safepoint is where a thread stops for a collection, and is run
-// between every two instructions. A collection asked for is run by the first
+// zam_vm_safepoint is where a thread stops for a collection, and is run at
+// every safepoint compiled code polls. A collection asked for is run by the first
 // thread to reach one, which stops every other thread before collecting and
 // resumes them after; a thread reaching one while another collects waits there
 // until the collection is over.
@@ -432,6 +420,6 @@ void zam_vm_leave_safe(ZamThread *thread);
 void zam_vm_thread_exited(ZamThread *thread);
 
 // zam_natives_resolve binds every name the image carries to a function in the
-// table this interpreter was built with. It lives in native.c beside that
+// tables the program was linked with. It lives in native.c beside the core
 // table.
 void zam_natives_resolve(ZamVM *vm);

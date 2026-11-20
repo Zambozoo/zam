@@ -1,0 +1,72 @@
+public namespace Main {
+    fun void() Run = () {
+        break 1;
+        continue x y;
+        return 1 1;
+        defer var;
+        for (var ; ;) {}
+        for (1 1;;) {}
+        for (; 1 1;) {}
+        for (;; 1 1) {}
+        for (;;) var;
+        for (;;) {} else var;
+        if 1 {}
+        if (1 1) {}
+        if (1;
+        if (1) var;
+        if (1) {} else var;
+        switch 1 {}
+        switch (1 1) {}
+        switch (1;
+        switch (1) case;
+        switch (1) {} else var;
+        label 1: for {}
+        label x for {}
+        label x: if (1) {}
+        label x: for var;
+        label x: switch var;
+        var int a, ;
+        var int b, int c d;
+        var int e = 1 1;
+        var int f = 1
+        var int g;
+        a b { { } };
+        var 1 h;
+        var int 1;
+        delete ;
+        {
+            import nope("x.zam");
+        }
+        {
+            import {
+                nope("x.zam");
+            }
+        }
+        {
+            import ;
+        }
+    }
+
+    // Each method below has an error that leaves the closing brace of what it
+    // was reading unread, which closes the method in place of its own.
+    fun void() Default = () {
+        switch (1) { default }
+
+    fun void() Unparenthesized = () {
+        switch (1) { case 1: }
+
+    fun void() CaseValues = () {
+        switch (1) { case (1 1): }
+
+    fun void() CaseEmpty = () {
+        switch (1) { case (: }
+
+    fun void() CaseColon = () {
+        switch (1) { case (1) a }
+
+    fun void() CaseBody = () {
+        switch (1) { case (1): var }
+
+    fun void() BlockEnd = () {
+        { var }
+}

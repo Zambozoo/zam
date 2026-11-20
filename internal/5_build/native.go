@@ -83,7 +83,7 @@ func ExecutablePath(opts Options, path string) (string, error) {
 	return t.Executable(path), nil
 }
 
-// LinkObject links a natively compiled program's object into an executable at
+// LinkObject links a compiled program's object into an executable at
 // opts.OutputPath for opts.Target, the host when unset, against the runtime
 // and the libraries of the target's pack.
 func LinkObject(object []byte, opts Options) error {
@@ -142,13 +142,6 @@ func LinkObject(object []byte, opts Options) error {
 	return nil
 }
 
-// packLibraries are the libraries of a pack the runtime's natives wrap, each
-// before those it calls. A link takes from them only what the program reaches.
-var packLibraries = []string{
-	"-lcurl", "-lssl", "-lcrypto", "-larchive", "-lxml2", "-ljson-c", "-lyaml", "-lbson2", "-lcbor",
-	"-lllhttp", "-lsodium", "-lbrotlienc", "-lbrotlidec", "-lbrotlicommon", "-lzstd", "-llz4", "-lz",
-}
-
 // linkers link an executable for a target at output from inputs, the objects
 // and archives of the program, against the target's pack and links, the
 // project's own linker flags, with debug information only when debuggable.
@@ -176,7 +169,7 @@ func linkMachO(t target.Target, pack, output string, inputs, links []string, deb
 		args = append(args, "-S")
 	}
 	args = append(args, inputs...)
-	args = append(args, packLibraries...)
+	args = append(args, target.PackLibraries...)
 	args = append(args, links...)
 	args = append(args, "-lSystem", "-lcompiler_rt",
 		"-framework", "SystemConfiguration", "-framework", "CoreFoundation")
@@ -196,7 +189,7 @@ func linkELF(t target.Target, pack, output string, inputs, links []string, debug
 	}
 	args = append(args, inputs...)
 	args = append(args, "--start-group")
-	args = append(args, packLibraries...)
+	args = append(args, target.PackLibraries...)
 	args = append(args, links...)
 	args = append(args, "-lc", "-lcompiler_rt", "--end-group", filepath.Join(libc, "crtn.o"))
 	return lld.Link(lld.ELF, args)
@@ -225,7 +218,7 @@ func linkCOFF(t target.Target, pack, output string, inputs, links []string, debu
 	}
 	args = append(args, startup...)
 	args = append(args, inputs...)
-	for _, library := range packLibraries {
+	for _, library := range target.PackLibraries {
 		args = append(args, filepath.Join(lib, "lib"+strings.TrimPrefix(library, "-l")+".a"))
 	}
 	system, err := filepath.Glob(filepath.Join(lib, "*.lib"))

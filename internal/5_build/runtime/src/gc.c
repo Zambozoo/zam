@@ -1,7 +1,6 @@
 #include "gc.h"
 
 #include "definition.h"
-#include "opcode.h"
 #include "run.h"
 #include "zamrt.h"
 
@@ -60,16 +59,9 @@ void zam_gc_allocated(ZamThread *thread, void *object) {
         pushGray(thread, object);
 }
 
-// call runs one of Object's methods on the instance at a location. What a
-// collection runs has nowhere to hand a failure back to, so a body that ends
-// the program ends it here.
+// call runs one of Object's methods on the instance at a location.
 static void call(ZamThread *collector, ZamWord receiver, uint64_t slot) {
-   ZamResult result = zam_thread_call_method(collector, receiver, slot);
-    if (result == ZAMRESULT_EXIT)
-        exit(collector->exitStatus);
-    if (result != ZAMRESULT_CONTINUE)
-        zam_die(ZAMEXIT_PANIC,
-                "a Mark or Delete run by the collector did not return\n");
+    zam_thread_call_method(collector, receiver, slot);
 }
 
 // markValue says the value of the type at a location is reachable. The location
@@ -539,12 +531,7 @@ static void markStack(ZamThread *collector, ZamThread *thread) {
                 .shortID = (ZamTypeShort)entry.element,
                 .arrayLength = entry.length,
             };
-            if (!entry.indirect)
-                markValue(collector,
-                          operandLocation(collector, thread, entry.operand),
-                          run);
-            else if (thread->operands[entry.operand] != 0)
-                markValue(collector, thread->operands[entry.operand], run);
+            markValue(collector, operandLocation(collector, thread, entry.operand), run);
             break;
         }
         case ZAMMARK_VALUE: {
@@ -555,21 +542,12 @@ static void markStack(ZamThread *collector, ZamThread *thread) {
                       zam_type_id_read((const ZamWord *)&entry.type));
             break;
         }
-        case ZAMMARK_INTERIOR: {
-           ZamMarkInterior entry;
-            memcpy(&entry, thread->marks + at, sizeof entry);
-            reach(collector, thread->operands[entry.operand] - entry.distance);
-            break;
-        }
         case ZAMMARK_FUNCTION:
-        case ZAMMARK_SCOPE:
-        case ZAMMARK_PACK:
+        case ZAMMARK_COUNT:
             break;
         }
         at += zam_mark_entry_bytes(kind);
     }
-    for (uint64_t index = 0; index < thread->heldCount; index++)
-        reach(collector, thread->held[index]);
 }
 
 static int compareSpans(const void *left, const void *right) {
@@ -683,50 +661,11 @@ static void markCards(void *context, const uint8_t *start, const uint8_t *end) {
     }
 }
 
-// isDefaultBody reports whether a method body is Object's own: a call to the
-// one native it names and nothing else. A body that does anything more, or
-// anything else, is the program's own.
-static bool isDefaultBody(const ZamImage *image, uint64_t instruction,
-                          const char *name) {
-    uint64_t natives = 0;
-    for (uint64_t at = instruction; at < image->operationsByteCount;) {
-       ZamOpcode opcode = (ZamOpcode)image->operations[at];
-        if (opcode >= ZAMOPCODE_COUNT)
-            return false;
-        switch (opcode) {
-        case OpReturnVoid:
-        case OpReturn:
-            return natives == 1;
-        case OpNative: {
-            ZamWord slot;
-            memcpy(&slot, image->operations + at + 1, sizeof slot);
-            uint64_t length;
-            const char *native = zam_image_native_name(image, slot, &length);
-            if (length != strlen(name) || memcmp(native, name, length) != 0)
-                return false;
-            natives++;
-            break;
-        }
-        case OpPushScope:
-        case OpPopScope:
-        case OpPushVariable:
-        case OpPushReceiver:
-        case OpPushReceiverType:
-        case OpPushGenericArgType:
-        case OpPushI64:
-        case OpLoad:
-        case OpCallNative:
-        case OpPop:
-        case OpPopWord:
-        case OpPopMark:
-        case OpMarkAs:
-            break;
-        default:
-            return false;
-        }
-        at += 1 + (uint64_t)zam_opcode_operands(opcode) * ZAMWORD_BYTES;
-    }
-    return false;
+// compiledFlags is the ZAMCLASS_* flags the program compiled the type shortID
+// with, none where it compiled nothing of it.
+static uint32_t compiledFlags(const ZamVM *vm, ZamTypeShort shortID) {
+    const ZamCompiledClass *compiled = zam_vm_compiled_class(vm, shortID);
+    return compiled == NULL ? 0 : compiled->flags;
 }
 
 // marksCustom reports whether marking a value of the type runs a Mark of the
@@ -756,14 +695,7 @@ static bool marksCustom(ZamVM *vm, ZamTypeID type) {
     if (known != 0)
         return known == 2;
 
-    bool custom = isClass &&
-                  zam_type_method_count(image, type.shortID) >
-                      ZAMOBJECT_SLOT_MARK &&
-                  !isDefaultBody(image,
-                                 zam_type_method(image, type.shortID,
-                                                 ZAMOBJECT_SLOT_MARK)
-                                     .instruction,
-                                 "STD_MARK");
+    bool custom = isClass && (compiledFlags(vm, type.shortID) & ZAMCLASS_MARKS_CUSTOM) != 0;
     uint64_t count = zam_type_member_count(image, type.shortID);
     for (uint64_t index = 0; index < count && !custom; index++) {
         ZamMemberDefinition member = zam_type_member(image, type.shortID, index);
@@ -790,12 +722,7 @@ static bool deletesCustom(ZamVM *vm, ZamTypeShort shortID) {
                                          memory_order_relaxed);
     if (known != 0)
         return known == 2;
-    bool custom =
-        zam_type_method_count(&vm->image, shortID) > ZAMOBJECT_SLOT_DELETE &&
-        !isDefaultBody(
-        &vm->image,
-        zam_type_method(&vm->image, shortID, ZAMOBJECT_SLOT_DELETE).instruction,
-        "STD_DELETE");
+    bool custom = (compiledFlags(vm, shortID) & ZAMCLASS_DELETES_CUSTOM) != 0;
     atomic_store_explicit(&vm->customDeleteDecls[declID], custom ? 2 : 1,
                           memory_order_relaxed);
     return custom;

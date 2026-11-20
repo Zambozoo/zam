@@ -1,8 +1,6 @@
 package semantic
 
 import (
-	"iter"
-
 	syntax "github.com/zambozoo/zam/internal/2_syntax"
 )
 
@@ -70,42 +68,29 @@ type interfaceCollector struct {
 // no instantiation records it again.
 func (c *interfaceCollector) collect(d syntax.DeclInheritable) {
 	c.implementors = append(c.implementors, d)
-	generic, ok := d.(syntax.DeclGeneric)
-	if !ok {
-		return
-	}
-	for concrete := range groundConcretes(generic) {
+	for _, concrete := range groundConcretes(d.(syntax.DeclGeneric)) {
 		if inheritable, ok := concrete.(syntax.DeclInheritable); ok {
 			c.implementors = append(c.implementors, inheritable)
 		}
 	}
 }
 
-// groundConcretes iterates the instantiations of d that name one type each. An
+// groundConcretes answers the instantiations of d that name one type each. An
 // instantiation can be left open by the tree it was written in — a List[E]
 // inside ArrList[E] — and one of those is no more a single type than the
 // template is. Monomorphization has already run, so every instantiation the
 // program can reach is here.
-func groundConcretes(d syntax.DeclGeneric) iter.Seq[syntax.DeclTypeable] {
-	return func(yield func(syntax.DeclTypeable) bool) {
-		if d.Generics() == nil {
-			return
-		}
-		for _, entry := range d.Concretes().All() {
-			if !entry.Key.ContainsGenericArg() && !yield(entry.Value) {
-				return
-			}
+func groundConcretes(d syntax.DeclGeneric) []syntax.DeclTypeable {
+	if d.Generics() == nil {
+		return nil
+	}
+	var concretes []syntax.DeclTypeable
+	for _, entry := range d.Concretes().All() {
+		if !entry.Key.ContainsGenericArg() {
+			concretes = append(concretes, entry.Value)
 		}
 	}
-}
-
-func (c *interfaceCollector) VisitFile(f *syntax.File) error {
-	f.Decl.Accept(c)
-	return nil
-}
-
-func (c *interfaceCollector) VisitImport(i *syntax.Import) error {
-	return nil
+	return concretes
 }
 
 func (c *interfaceCollector) visitNested(d syntax.Decl) {
@@ -125,9 +110,7 @@ func (c *interfaceCollector) VisitDeclInterface(d *syntax.DeclInterface) error {
 	if d.Generics() == nil {
 		c.interfaces = append(c.interfaces, d)
 	} else {
-		for concrete := range groundConcretes(d) {
-			c.interfaces = append(c.interfaces, concrete)
-		}
+		c.interfaces = append(c.interfaces, groundConcretes(d)...)
 	}
 
 	c.visitNested(d)

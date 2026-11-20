@@ -1,0 +1,148 @@
+import "Types.zam";
+
+public namespace Decls {
+    var int counter = 0;
+    public static var int shared;
+    private fun void() Helper = () {}
+    fun[T, U <: Obj*, V :> [Node*, Obj*]] T(T, U, V) Identity = (t, u, v) {
+        return t;
+    }
+
+    public static namespace Nested {
+        var int inner;
+        static class Kept {}
+    }
+
+    struct Point {
+        var int x;
+        var int y = 1;
+        static var Point origin;
+        fun str() Str = () {
+            return "point";
+        }
+        struct Inner {}
+    }
+
+    struct Buffer~ {
+        var int length;
+        var byte[~] data;
+    }
+
+    struct ConstStr {
+        fun str$() Str = () {
+            return "";
+        }
+    }
+
+    struct Unsized~ {
+        var Point[~] points;
+    }
+
+    struct Wrapped~ {
+        var Point~ tail;
+    }
+
+    struct Pair[A, B] {
+        var A first;
+        var B second;
+    }
+
+    class Node {
+        var int value;
+        var Point point;
+        var Pair[int, int] pair;
+        var (int, int) tuple;
+        static var int count;
+        fun int() Get = () {
+            return this.value;
+        }
+        static fun[T] T(T) Same = (t) {
+            return t;
+        }
+        class Inner {}
+    }
+
+    class Leaf <: Node* {
+        var int extra;
+    }
+
+    class Chars~ {
+        var char[~] chars;
+    }
+
+    class MoreChars~ <: Chars~* {
+        fun int() Length = () {
+            return 0;
+        }
+    }
+
+    class Box[T] <: Node* {
+        var T item;
+    }
+
+    abstract Animal {
+        var str name;
+        virtual fun str() Sound;
+        fun str() Name = () {
+            return this.name;
+        }
+        static var int animals;
+        class Inner {}
+    }
+
+    abstract Items~ {
+        var int[~] items;
+    }
+
+    abstract MoreItems~ <: Items~* {
+    }
+
+    abstract Kind[T] <: Animal* {
+        var T kind;
+    }
+
+    interface Speaker {
+        fun str() Speak;
+        public fun int() Hash;
+        static fun bool(Obj*) Eq = (o) {
+            return false;
+        }
+        static var int speakers;
+        class Inner {}
+    }
+
+    interface Container[T] {
+        fun T() Get;
+    }
+
+    enum Color {
+        Red, Green, Blue;
+        fun str() Str = () {
+            return "color";
+        }
+        static fun Color() Default = () {
+            return Color.Red;
+        }
+        var int shade;
+        class Inner {}
+    }
+
+    enum Code: int {
+        Ok(0), Fail(1);
+    }
+
+    enum Built {
+        First.Make(1, 2), Second.Make(), Third;
+        static fun Built(int, int) Make = (a, b) {
+            return Built.Third;
+        }
+    }
+
+    enum Empty {
+        ;
+    }
+
+    alias Number = int;
+    alias Twin[T] = Pair[T, T]*;
+    alias Bounded[T <: Obj*] = Box[T]*;
+}

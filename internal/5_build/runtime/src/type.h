@@ -27,8 +27,7 @@ typedef struct ZamTypeID {
     uint64_t tailLength;
 } ZamTypeID;
 
-// ZAMTYPE_ID_WORDS is how much of the operand stack a type id occupies, which
-// is what every instruction that pops one has to step back over.
+// ZAMTYPE_ID_WORDS is how many words a type id occupies.
 #define ZAMTYPE_ID_WORDS 3
 
 //ZamTypeIDWords is the same three words as they are written, rather than as

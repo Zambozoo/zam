@@ -66,19 +66,12 @@ const (
 	flagGCReturnAgeLong = "gc-return-age"
 	usageGCReturnAge    = "collections a run of free pages waits before it is given back to the system"
 
-	flagEmitImage     = "E"
-	flagEmitImageLong = "emit-image"
-	usageEmitImage    = "write the raw bytecode image instead of linking a binary"
-
-	flagNativeLong = "native"
-	usageNative    = "compile to native code through LLVM (experimental: code it cannot compile yet ends the program when reached)"
+	flagOptimize     = "O"
+	flagOptimizeLong = "optimize"
+	usageOptimize    = "how far to optimize the program: 0, 1, 2, 3, or s for size"
 
 	flagTargetLong = "target"
-	usageTarget    = "the platform to compile native code for, the host when unset: one of "
-
-	flagKeepBuild     = "k"
-	flagKeepBuildLong = "keep-build"
-	usageKeepBuild    = "keep the temporary build directory and print its path on failure or success"
+	usageTarget    = "the platform to compile for, the host when unset: one of "
 
 	flagRunPatternLong = "run"
 	usageRunPattern    = "run only the tests whose names this regular expression matches"
@@ -243,24 +236,13 @@ type (
 		// Uses the --gc-return-age flag with a default of `3`, must be positive.
 		GCReturnAge int
 
-		// EmitImage skips the build driver and writes the raw bytecode image to
-		// OutputPath instead of linking a native binary. Uses the -E flag with a
-		// default of `false`.
-		EmitImage bool
+		// Optimization is how far the program is optimized.
+		// Uses the -O flag with a default of `2`.
+		Optimization Optimization
 
-		// Native compiles the program to native code through LLVM instead of
-		// embedding its bytecode image. Uses the --native flag with a default
-		// of `false`.
-		Native bool
-
-		// Target is the platform native code is compiled for, the host when
-		// unset. Uses the --target flag, which needs --native.
+		// Target is the platform the program is compiled for, the host when
+		// unset. Uses the --target flag.
 		Target target.Target
-
-		// KeepBuild leaves the build driver's temporary directory in place and
-		// prints its path, so the generated wrapper and extracted runtime can be
-		// inspected. Uses the -k flag with a default of `false`.
-		KeepBuild bool
 
 		// RunArgs are the arguments after the input file, passed to the program
 		// it runs.
@@ -461,6 +443,25 @@ func newBare(verb Verb, name string, args []string) (*Command, error) {
 	return &Command{Verb: verb}, nil
 }
 
+// Optimization is how far native compilation optimizes a program.
+type Optimization string
+
+const (
+	// OptimizeNone compiles without optimizing.
+	OptimizeNone Optimization = "0"
+	// OptimizeLess optimizes what is quick to.
+	OptimizeLess Optimization = "1"
+	// OptimizeDefault optimizes as release builds do.
+	OptimizeDefault Optimization = "2"
+	// OptimizeAggressive optimizes as far as it can, at the cost of size.
+	OptimizeAggressive Optimization = "3"
+	// OptimizeSize optimizes as OptimizeDefault does, favoring size.
+	OptimizeSize Optimization = "s"
+)
+
+// optimizations are the optimizations -O takes.
+var optimizations = []Optimization{OptimizeNone, OptimizeLess, OptimizeDefault, OptimizeAggressive, OptimizeSize}
+
 // newCompile builds the command for build or run.
 func newCompile(verb Verb, name string, args []string, fileProvider fileProvider) (*Command, error) {
 	fs := newFlagSet(name)
@@ -469,10 +470,8 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 	var verbose bool
 	var threads int
 	var gcRatio float64
-	var emitImage bool
-	var keepBuild bool
-	var native bool
 	var targetName string
+	var optimization string
 	var noProject bool
 	var gcMarkers, gcPrecleanPasses, gcReturnAge int
 	var gcConcurrent bool
@@ -484,7 +483,6 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 
 	if verb == VerbBuild {
 		fs.StringVarP(&out, flagOutputLong, flagOutput, defaultOutput, usageOutput)
-		fs.BoolVarP(&emitImage, flagEmitImageLong, flagEmitImage, false, usageEmitImage)
 	}
 	fs.BoolVarP(&verbose, flagVerboseLong, flagVerbose, defaultVerbose, usageVerbose)
 	fs.IntVarP(&threads, flagThreadsLong, flagThreads, defaultThreads, usageThreads)
@@ -498,10 +496,7 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 	fs.Float64Var(&gcRemarkGrowth, flagGCRemarkGrowthLong, defaultGCRemarkGrowth, usageGCRemarkGrowth)
 	fs.IntVar(&gcPrecleanPasses, flagGCPrecleanPassesLong, defaultGCPrecleanPasses, usageGCPrecleanPasses)
 	fs.IntVar(&gcReturnAge, flagGCReturnAgeLong, defaultGCReturnAge, usageGCReturnAge)
-	fs.BoolVarP(&keepBuild, flagKeepBuildLong, flagKeepBuild, false, usageKeepBuild)
-	if verb == VerbBuild || verb == VerbRun || verb == VerbTest {
-		fs.BoolVar(&native, flagNativeLong, false, usageNative)
-	}
+	fs.StringVarP(&optimization, flagOptimizeLong, flagOptimize, string(OptimizeDefault), usageOptimize)
 	if verb == VerbBuild {
 		fs.StringVar(&targetName, flagTargetLong, "", usageTarget+strings.Join(target.Names(), ", "))
 	}
@@ -544,7 +539,7 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 
 		// The entry file is named on the command line but is otherwise an
 		// ordinary file, and every other path reaches the parser normalized.
-		// Taken as typed, the bytecode would depend on how the compiler was
+		// Taken as typed, the program would depend on how the compiler was
 		// invoked, and a file importing the entry by another spelling would
 		// parse it a second time under a second name.
 		var err error
@@ -561,9 +556,6 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 
 	var platform target.Target
 	if targetName != "" {
-		if !native {
-			return nil, fmt.Errorf("--%s needs --%s", flagTargetLong, flagNativeLong)
-		}
 		var err error
 		if platform, err = target.Parse(targetName); err != nil {
 			return nil, err
@@ -572,6 +564,10 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 
 	if threads < 1 {
 		threads = defaultThreads
+	}
+
+	if !slices.Contains(optimizations, Optimization(optimization)) {
+		return nil, fmt.Errorf("optimization must be one of 0, 1, 2, 3 or s: %s", optimization)
 	}
 
 	// The fraction is of a heap that is already there, so past one names a
@@ -623,9 +619,7 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 		GCRemarkGrowth:   gcRemarkGrowth,
 		GCPrecleanPasses: gcPrecleanPasses,
 		GCReturnAge:      gcReturnAge,
-		EmitImage:        emitImage,
-		KeepBuild:        keepBuild,
-		Native:           native,
+		Optimization:     Optimization(optimization),
 		Target:           platform,
 		RunArgs:          runArgs,
 		TestTargets:      testTargets,

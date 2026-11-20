@@ -44,7 +44,7 @@ typedef struct ZamFrameRoot {
 
 // ZamFrameInfo is what the compiler knows of every frame of one function.
 typedef struct ZamFrameInfo {
-    // functionID names the function in the debug section.
+    // functionID names the function in the compiled function table, from 1.
     uint64_t functionID;
     // slotCount is how many words the frame's slots span.
     uint64_t slotCount;
@@ -57,7 +57,7 @@ typedef struct ZamFrameInfo {
 typedef struct ZamFrame {
     struct ZamFrame *caller;
     const ZamFrameInfo *info;
-    // line is the source line the function last reached a call or a check at.
+    // line is the source line of the statement the function is in.
     uint64_t line;
     ZamWord slots[];
 } ZamFrame;
@@ -79,12 +79,8 @@ typedef struct ZamHandler {
     uint64_t operandCount;
     uint64_t markByteCount;
     uint64_t functionEntry;
-    uint64_t scopeEntry;
-    uint64_t packEntry;
-    uint64_t heldCount;
     uint64_t visitedCount;
     uint64_t dirtiedCount;
-    uint64_t instructionOffset;
 } ZamHandler;
 
 // ZamPanicking is a panic unwinding a thread.
@@ -363,18 +359,6 @@ ZamEntry zamrt_virtual_entry(ZamThread *thread, const void *receiver, uint64_t m
 // it implements none.
 ZamEntry zamrt_interface_entry(ZamThread *thread, const void *receiver, ZamTypeShort interfaceType,
                                uint32_t methodIndex);
-
-// zamrt_method allocates a closure over the methodIndex'th method of the value
-// of receiverType laid out at receiver, bound to it, and zamrt_interface_method
-// one over the methodIndex'th method of the interface receiverType points at.
-ZamClosure *zamrt_method(ZamThread *thread, ZamTypeID receiverType, const void *receiver,
-                         uint32_t methodIndex);
-ZamClosure *zamrt_interface_method(ZamThread *thread, ZamTypeID receiverType, const void *receiver,
-                                   uint32_t methodIndex);
-
-// zamrt_generic_static is the closure instantiating the generic static method
-// registered at registryIndex for the type-id words at args.
-ZamClosure *zamrt_generic_static(ZamThread *thread, uint64_t registryIndex, const ZamWord *args);
 
 // zamrt_any_box allocates an any holding a copy of the value of type at value,
 // zamrt_any_type is the type an any holds, and zamrt_any_unbox copies what an

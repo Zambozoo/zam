@@ -1,0 +1,12 @@
+public class Fields {
+    public var int a;
+    private var int b;
+    protected var int c;
+    public static var int d = 1;
+    private static fun void() E = () {}
+    protected fun void() F = () {}
+    fun void(int, int) G = (x, _) {}
+    fun void() H = () return;
+    var int i = 1;
+    public class Inner {}
+}

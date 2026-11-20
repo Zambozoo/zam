@@ -12,12 +12,8 @@ import (
 // A pass this far from the parse has no lexer to ask, so it says where it is
 // looking with the two things it always has: the node it is complaining about,
 // which carries the token it starts at, and the declaration being validated,
-// which is what says the file that token's offset is an offset into. A node
-// with neither is reported without a position rather than not reported.
+// which is what says the file that token's offset is an offset into.
 func errAt(d syntax.Decl, tok *syntax.Token, err error) error {
-	if d == nil || tok == nil {
-		return err
-	}
 	return base.NewError(err, d.File().Location(tok))
 }
 

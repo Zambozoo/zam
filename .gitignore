@@ -3,7 +3,6 @@
 .scratch
 .vscode
 out
-internal/5_build/runtime/bin
 internal/5_build/runtime/build
 bin
 vendor

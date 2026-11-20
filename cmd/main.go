@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,7 +23,6 @@ const (
 	stepSyntax   step = "syntax"
 	stepSemantic step = "semantic"
 	stepCodegen  step = "codegen"
-	stepExport   step = "export"
 	stepBuild    step = "build"
 	stepRun      step = "run"
 	stepLSP      step = "lsp"
@@ -121,60 +119,23 @@ func main() {
 	errs = semantic.ValidateAST(syntaxAST)
 	handleErrors(&logger, stepSemantic, errs...)
 
-	if cmd.Native {
-		buildNative(&logger, cmd, syntaxAST)
+	object, err := codegen.GenerateObject(cmd, syntaxAST, codegen.ObjectOptions{Triple: cmd.Target.Triple, Optimization: cmd.Optimization})
+	handleErrors(&logger, stepCodegen, err)
+	for _, unsupported := range object.Unsupported {
+		logger.Print(base.LogLevelWarn, "compiled as a trap: %s\n", unsupported)
 	}
 
-	result, err := codegen.GenerateCode(cmd, syntaxAST)
-	handleErrors(&logger, stepCodegen, err)
-
+	opts := build.Options{Project: syntaxAST.MainCodeDecl.File().Project, Target: cmd.Target}
 	if cmd.Verb == command.VerbRun {
-		code, err := build.Run(result.Image, result.NativeNames, build.Options{
-			Project:      syntaxAST.MainCodeDecl.File().Project,
-			KeepBuildDir: cmd.KeepBuild,
-		}, cmd.RunArgs)
+		code, err := build.Run(object.Bytes, opts, cmd.RunArgs)
 		handleErrors(&logger, stepRun, err)
 		logger.Flush()
 		base.Exit(base.ExitCode(code))
 	}
 
-	if cmd.EmitImage {
-		err = fileProvider.WriteFile(cmd.OutputPath.String(), bytes.NewReader(result.Image))
-		handleErrors(&logger, stepExport, err)
-	} else {
-		err = build.Build(result.Image, result.NativeNames, build.Options{
-			OutputPath:   cmd.OutputPath.String(),
-			Project:      syntaxAST.MainCodeDecl.File().Project,
-			KeepBuildDir: cmd.KeepBuild,
-		})
-		handleErrors(&logger, stepBuild, err)
-	}
-
-	logger.Print(base.LogLevelInfo, "successfully generated code \n")
-	logger.Flush()
-	base.Exit(base.ExitCodeSuccess)
-}
-
-// buildNative compiles the program to native code and builds or runs it,
-// saying which methods it could not compile yet.
-func buildNative(logger *base.Logger, cmd *command.Command, syntaxAST *syntax.AST) {
-	object, err := codegen.GenerateObject(cmd, syntaxAST, codegen.ObjectOptions{Triple: cmd.Target.Triple})
-	handleErrors(logger, stepCodegen, err)
-	for _, unsupported := range object.Unsupported {
-		logger.Print(base.LogLevelWarn, "native: compiled as a trap: %s\n", unsupported)
-	}
-
-	opts := build.Options{Project: syntaxAST.MainCodeDecl.File().Project, Target: cmd.Target}
-	if cmd.Verb == command.VerbRun {
-		code, err := build.RunNative(object.Bytes, opts, cmd.RunArgs)
-		handleErrors(logger, stepRun, err)
-		logger.Flush()
-		base.Exit(base.ExitCode(code))
-	}
-
 	opts.OutputPath, err = build.ExecutablePath(opts, cmd.OutputPath.String())
-	handleErrors(logger, stepBuild, err)
-	handleErrors(logger, stepBuild, build.LinkObject(object.Bytes, opts))
+	handleErrors(&logger, stepBuild, err)
+	handleErrors(&logger, stepBuild, build.LinkObject(object.Bytes, opts))
 	logger.Print(base.LogLevelInfo, "successfully generated code \n")
 	logger.Flush()
 	base.Exit(base.ExitCodeSuccess)

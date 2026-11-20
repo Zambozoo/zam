@@ -1,0 +1,5 @@
+name: rootless
+dependencies:
+  rootless:
+    repo: example.com/rootless@v1
+    hash: h1

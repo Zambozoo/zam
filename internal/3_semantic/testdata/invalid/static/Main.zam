@@ -1,0 +1,235 @@
+import std("lang/Obj.zam");
+import "sub/Far.zam";
+
+public namespace Main {
+    interface Named {
+        fun str() Name;
+    }
+    abstract Shape {
+        virtual fun int() Area;
+        fun int() Sides = () {
+            return 0;
+        }
+    }
+    class Square <: Shape* {
+        public fun int() Area = () {
+            return 1;
+        }
+    }
+    class FromInterface <: Named* {
+    }
+    abstract FromClass <: Square* {
+    }
+    class FromFromInterface <: FromInterface* {
+    }
+    class ArgumentHead[T] {
+        fun void() M = () {
+            T::[int]F();
+        }
+    }
+    abstract FromStruct <: Plain* {
+    }
+    class Unoverridden <: Shape* {
+    }
+    class Narrowed <: Square* {
+        fun str() Sides = () {
+            return "";
+        }
+    }
+    class Generic[T <: Obj*] {
+        static var T shared;
+        var T item;
+    }
+    class Bound <: Generic[int]* {
+    }
+    struct Plain {
+        var int x;
+    }
+    struct Tail~ {
+        var int length;
+        var int[~] items;
+    }
+    enum Code: int {
+        Bad("s");
+    }
+    enum Inits {
+        Missing.Nope(), Count.Init(), Kind.Init("s");
+        fun void(int) Init = (i) {
+        }
+    }
+
+    var int number = "s";
+    var Shape bare;
+    var Shape[2] bareArray;
+    var (int, Shape) bareTuple;
+    var Generic[Shape]* bareArgument;
+    var void(Shape) bareParameter;
+    var Shape() bareReturn;
+    var thread[Shape] bareThread;
+    var Shape$* constPointer;
+    var Far.Hidden* hidden;
+    var Main notType;
+
+    fun int() Unfinished = () {
+    }
+    fun void() Void = () {
+    }
+    fun void(int...) Many = (xs) {
+    }
+    fun void(int, int...) Some = (x, xs) {
+    }
+    fun int[2]() Array = () {
+        var int[2] a;
+        return a;
+    }
+
+    fun void() S1 = () { delete Main::Void(); }
+    fun void() S2 = () { free 1; }
+    fun void() S3 = () { mark Main::Void(); }
+    fun void() S4 = () { defer { return; } }
+    fun int() S5 = () { return; }
+    fun int() S6 = () { return "s"; }
+    fun void() S7 = () { for (; 1;) {} }
+    fun void() S8 = () { if (1) {} }
+    fun void() S9 = () { switch (1) { case ("s"): {} } }
+    fun void() S10 = () { defer var int x; }
+    fun void() S11 = () { defer defer Main::Void(); }
+    fun void() S12 = () { switch (1) { case (1): continue; } }
+    fun void() S13 = () { for { defer break; } }
+    fun void() S14 = () { for { defer continue; } }
+    fun void() S15 = () { break; }
+    fun void() S16 = () { continue nowhere; }
+    fun void() S17 = () { var int x; var int x; }
+    fun void() S18 = () { var int x; var int x, int y = 1, 2; }
+    fun void() S19 = () { var int x = "s"; }
+    fun void() S20 = () { var int a, str b = 1, 2; }
+    fun void() S21 = () { var int a, int b = 1; }
+    fun void() S22 = () { var (int, int) t = 1, 2; var int a, str b = t; }
+    fun void() S23 = () { var int* p = "s"{int*}; }
+    fun void() S24 = () { var (int, int) t = 1, 2; var int x = t.5; }
+    fun void() S25 = () { var int i; var int x = i.field; }
+    fun void() S26 = () { var Square* s; var int x = s.missing; }
+    fun void() S27 = () { var Far.Local* l; var int x = l.secret; }
+    fun void() S28 = () { var int x = true ? "s" : 1; }
+    fun void() S29 = () { var int x = 1 ? 1 : 2; }
+    fun void() S30 = () { var int x = wait(1); }
+    fun void() S31 = () { 1 = 2; }
+    fun void() S32 = () { var int$ c = 1; c = 2; }
+    fun void() S33 = () { var int x; x = "s"; }
+    fun void() S34 = () { var int x = 1 ?? 2; }
+    fun void() S35 = () { var int* p; var int* q = p ?? "s"; }
+    fun void() S36 = () { var int x = *1; }
+    fun void() S37 = () { var Named* n; var int x = *n; }
+    fun void() S38 = () { var int x = 1(); }
+    fun void() S39 = () { Main::Void(1); }
+    fun void() S40 = () { var bool b = 1 == "s"; }
+    fun void() S41 = () { var int b = 1 <=> "s"; }
+    fun void() S42 = () { var bool b = 1 <: 2; }
+    fun void() S43 = () { var bool b = @{int} <: @{int} <: @{int}; }
+    fun void() S44 = () { var bool b = 1 == 1 == true; }
+    fun void() S45 = () { 1++; }
+    fun void() S46 = () { var int$ c = 1; c++; }
+    fun void() S47 = () { var bool b; b++; }
+    fun void() S48 = () { var bool b = 1 && true; }
+    fun void() S49 = () { var flt f = 1.5 & 1.5; }
+    fun void() S50 = () { var bool b = !1.5; }
+    fun void() S51 = () { var flt f = 1.5 << 1; }
+    fun void() S52 = () { var str s = "a" - "b"; }
+    fun void() S53 = () { var str s = "a" + 1; }
+    fun void() S54 = () { var int* p; p = p + 1.5; }
+    fun void() S55 = () { var int[2] a; var int* p = a + 1.5; }
+    fun void() S56 = () { var int* p = Main::Array() + 1; }
+    fun void() S57 = () { var bool b = true * true; }
+    fun void() S58 = () { var int x = 1 * 1.5; }
+    fun void() S59 = () { var bool b = -true; }
+    fun void() S60 = () { var int* p = &1; }
+    fun void() S61 = () { var int* p; Main::Many(p..., 1); }
+    fun void() S62 = () { Main::Some(); }
+    fun void() S63 = () { var int* p; Main::Some(p...); }
+    fun void() S64 = () { Main::Some("s"); }
+    fun void() S65 = () { Main::Many("s"); }
+    fun void() S66 = () { var int* p; Main::Some(1, 2, p...); }
+    fun void() S67 = () { var int i; Main::Many(i...); }
+    fun void() S68 = () { Main::Many(Main::Array()...); }
+    fun void() S69 = () { var str* p; Main::Many(p...); }
+    fun void() S70 = () { var Shape* s = new(Shape); }
+    fun void() S71 = () { var int* p = new(int, "s"); }
+    fun void() S72 = () { var int* p = new(int, 1, 2); }
+    fun void() S73 = () { var Tail~4* p = new(Tail~4, 1, 2); }
+    fun void() S74 = () { var Tail~* p = new(Tail~, 1, "s"); }
+    fun void() S75 = () { var int x = missing; }
+    fun void() S76 = () { var Main* m = this; }
+    fun void() S77 = () { var int x = Main::Missing; }
+    fun void() S78 = () { var int x = Far::secret; }
+    fun void() S79 = () { var int x = Main::[int]number; }
+    fun void() S80 = () { Main::[int]Void(); }
+    fun void() S81 = () { Main::[int, int]Same(1); }
+    fun void() S82 = () { Main::[int]Boxed(1); }
+    fun void() S83 = () { var int x = Main::Same(1); }
+    fun void() S84 = () { var int[2] a; Main::Many(a...); }
+
+    class Lower[T :> Square*] {
+    }
+    var Lower[int]* lower;
+    enum Errs: int {
+        A(missing);
+    }
+    enum MoreInits {
+        Broken.Init(missing);
+        fun void(int) Init = (i) {
+        }
+    }
+    var int bad = missing;
+    fun Named() Get = () {
+        return null;
+    }
+    fun (int, int)() Pair = () {
+        return 1, 2;
+    }
+    alias Instantiated = Generic[Square*];
+    alias Number = int;
+
+    fun int(int) NoElse = (n) { switch (n) { case (1): return 1; } }
+    fun int(int) Breaks = (n) { switch (n) { case (1): break; } else { return 1; } }
+    fun int(int) EmptyCase = (n) { switch (n) { case (1): {} } else { return 1; } }
+    fun int(int) LabelBreak = (n) { label outer: for { switch (n) { case (1): break outer; } } }
+    fun void() T1 = () { var (int, str) t = 1, 2; }
+    fun void() T2 = () { var int x = missing{int}; }
+    fun void() T3 = () { var int x = Main::Get(){int}; }
+    fun void() T4 = () { var void* p = true{void*}; }
+    fun void() T5 = () { var (int, int) t = 1{(int, int)}; }
+    fun void() T6 = () { var int* p; var bool* q = p{bool*}; }
+    fun void() T7 = () { var int* p; var flt f = p{flt}; }
+    fun void() T8 = () { var int x = (1, 2){int}; }
+    fun void() T9 = () { var int x = missing().x; }
+    fun void() T10 = () { var int x = missing.x.y; }
+    fun void() T11 = () { Main::Many(missing...); }
+    fun void() T12 = () { Main::Pair().0 = 1; }
+    fun void() T13 = () { var Square* s; s.Area = null; }
+    fun void() T14 = () { var Far.Guarded* g; var int x = g.inner; }
+    fun void() T15 = () { var int() f = lambda int(): () {}; }
+    fun void() T16 = () { var Square* s = Instantiated::shared; }
+    fun void() T17 = () { var int x = Number::X; }
+    fun void() T18 = () { var int x = "s"{int}; }
+
+    fun[T] T(T) Same = (t) {
+        return t;
+    }
+    fun[T <: Obj*] T(T) Boxed = (t) {
+        return t;
+    }
+
+    struct Selves {
+        var int x;
+        fun Selves*() Up = () {
+            return super;
+        }
+    }
+
+    class Members {
+        var int field;
+        static fun int() Reads = () {
+            return field;
+        }
+    }
+}

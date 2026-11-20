@@ -1,24 +1,31 @@
-BIN := bin/zam
 SRC := $(wildcard src/*.c)
 OBJ := $(SRC:src/%.c=build/%.o)
 
-CODEC_PACKAGES := json-c yaml-0.1 libxml-2.0 bson2 libcbor zlib liblz4 libzstd libbrotlienc libbrotlidec openssl libcurl libllhttp libsodium
-CODEC_KEGS := $(subst $(eval) ,:,$(wildcard /opt/homebrew/opt/curl/lib/pkgconfig /usr/local/opt/curl/lib/pkgconfig))
-PKG_CONFIG := PKG_CONFIG_PATH=$(CODEC_KEGS):$$PKG_CONFIG_PATH pkg-config
+# The runtime is compiled with Zig for the host, against the host's target pack
+# from $ZAM_PACKS or the packs built into bin/packs, as a native build does.
+OS := $(subst Darwin,macos,$(subst Linux,linux-musl,$(shell uname -s)))
+ARCH := $(subst arm64,aarch64,$(shell uname -m))
+TARGET ?= $(ARCH)-$(OS)
+ZIG_TARGET := $(if $(filter macos,$(OS)),$(TARGET).13.0,$(TARGET))
+PACKS ?= $(or $(ZAM_PACKS),$(abspath ../../../bin/packs))
+PACK := $(PACKS)/$(TARGET)
+ifeq ($(filter clean,$(MAKECMDGOALS)),)
+ifeq ($(wildcard $(PACK)/sources.txt),)
+$(error no $(TARGET) pack in $(PACKS); run task packs or set ZAM_PACKS)
+endif
+endif
 
-CFLAGS ?= -std=gnu11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc $(shell $(PKG_CONFIG) --cflags $(CODEC_PACKAGES))
-LDFLAGS ?= -lpthread -lm $(shell $(PKG_CONFIG) --libs $(CODEC_PACKAGES)) -larchive
+CC := zig cc
+CFLAGS ?= -target $(ZIG_TARGET) -std=gnu11 -Wall -Wextra -Wpedantic -Werror -Iinclude -Isrc \
+	-DCURL_STATICLIB -DBSON_STATIC -DLIBXML_STATIC \
+	-I$(PACK)/include -I$(PACK)/include/libxml2 $(addprefix -I,$(wildcard $(PACK)/include/bson-*))
 
 # The default build is a debug build. Nothing here is fast yet and everything
 # here is half-built, so a run that trips an assertion is worth more than a run
 # that is quick about it.
 CFLAGS += -g -O0
 
-all: $(BIN)
-
-$(BIN): $(OBJ)
-	@mkdir -p $(dir $@)
-	$(CC) $(OBJ) $(LDFLAGS) -o $@
+all: $(OBJ)
 
 build/%.o: src/%.c
 	@mkdir -p $(dir $@)
@@ -27,6 +34,6 @@ build/%.o: src/%.c
 -include $(OBJ:.o=.d)
 
 clean:
-	rm -rf build $(BIN)
+	rm -rf build
 
 .PHONY: all clean

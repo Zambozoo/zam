@@ -1,0 +1,8 @@
+import "TopEnum.zam";
+import "TopAlias.zam";
+import "TopAbstract.zam";
+import "TopInterface.zam";
+
+public struct Top {
+    var int x;
+}

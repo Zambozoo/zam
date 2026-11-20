@@ -56,12 +56,8 @@ void zamrt_handler_push(ZamThread *thread, ZamHandler *handler, ZamFrame *frame)
     handler->operandCount = thread->operandCount;
     handler->markByteCount = thread->markByteCount;
     handler->functionEntry = thread->functionEntry;
-    handler->scopeEntry = thread->scopeEntry;
-    handler->packEntry = thread->packEntry;
-    handler->heldCount = thread->heldCount;
     handler->visitedCount = thread->visitedCount;
     handler->dirtiedCount = thread->dirtiedCount;
-    handler->instructionOffset = thread->instructionOffset;
     thread->handlers = handler;
 }
 
@@ -110,11 +106,7 @@ static _Noreturn void land(ZamThread *thread, ZamHandler *handler) {
     thread->operandCount = handler->operandCount;
     thread->markByteCount = handler->markByteCount;
     thread->functionEntry = handler->functionEntry;
-    thread->scopeEntry = handler->scopeEntry;
-    thread->packEntry = handler->packEntry;
-    thread->heldCount = handler->heldCount;
     thread->visitedCount = handler->visitedCount;
-    thread->instructionOffset = handler->instructionOffset;
     thread->handlers = handler;
     atomic_store_explicit((_Atomic(ZamFrame *) *)&thread->frames, handler->frame, memory_order_release);
     longJump(handler->jump);
@@ -194,12 +186,12 @@ void zamrt_poll_slow(ZamThread *thread) {
     zam_vm_safepoint(thread->vm, thread);
 
     // A signal the C handler flagged runs its handler here, between
-    // statements, as the interpreter runs it between instructions.
+    // statements.
     for (int sig; (sig = zam_thread_take_pending_signal(thread)) >= 0;) {
         ZamClosure *handler = thread->signalHandlers[sig];
         if (handler != NULL) {
             ZamHandler *handlers = zamrt_handlers_hide(thread);
-            ((ZamEntry)(uintptr_t)handler->instruction)(thread, handler, NULL, NULL);
+            ((ZamEntry)(uintptr_t)handler->entry)(thread, handler, NULL, NULL);
             zamrt_handlers_show(thread, handlers);
         }
     }
@@ -222,7 +214,7 @@ _Noreturn void zamrt_exit(ZamThread *thread, int64_t status) {
     // The thread runs nothing more, so a remark under way need not wait for
     // it to stop; the teardown below waits for the remark.
     zam_vm_thread_exited(thread);
-    zam_vm_exit(thread->vm, ZAMRESULT_EXIT);
+    zam_vm_exit(thread->vm);
 }
 
 // startVM is the VM a compiled program runs on.
@@ -232,7 +224,7 @@ _Noreturn void zamrt_start(int argc, const char *argv[], const uint8_t *image, s
                            ZamEntry main, const ZamCompiledClass *classes, uint64_t classCount,
                            const ZamCompiledFunction *functions, uint64_t functionCount) {
     ZamVM *vm = &startVM;
-    zam_vm_init_from_bytes(vm, image, imageBytes);
+    zam_vm_init(vm, image, imageBytes);
     vm->compiledClasses = classes;
     vm->compiledClassCount = classCount;
     vm->compiledFunctions = functions;
@@ -406,33 +398,17 @@ ZamTypeID zamrt_generic_arg(const ZamImage *image, ZamTypeShort shortID, uint64_
     return zam_type_generic_arg(image, shortID, index);
 }
 
-// ran ends the program when an override it called ended it, and answers
-// otherwise.
-static void ran(ZamThread *thread, ZamResult result) {
-    if (result == ZAMRESULT_CONTINUE)
-        return;
-    if (result == ZAMRESULT_EXIT)
-        exit(thread->exitStatus);
-    zam_die(ZAMEXIT_PANIC, "an override did not return: %s\n", zam_result_name(result));
-}
-
 bool zamrt_eq(ZamThread *thread, const ZamWord *aType, const void *a, const ZamWord *bType, const void *b) {
-    bool equal = false;
-    ran(thread, zam_value_eq(thread, zam_type_id_read(aType), a, zam_type_id_read(bType), b, &equal));
-    return equal;
+    return zam_value_eq(thread, zam_type_id_read(aType), a, zam_type_id_read(bType), b);
 }
 
 int64_t zamrt_cmp(ZamThread *thread, const ZamWord *aType, const void *a, const ZamWord *bType,
                   const void *b) {
-    ZamInt order = 0;
-    ran(thread, zam_value_cmp(thread, zam_type_id_read(aType), a, zam_type_id_read(bType), b, &order));
-    return order;
+    return zam_value_cmp(thread, zam_type_id_read(aType), a, zam_type_id_read(bType), b);
 }
 
 uint64_t zamrt_hash(ZamThread *thread, const ZamWord *type, const void *value) {
-    ZamWord hash = 0;
-    ran(thread, zam_value_hash(thread, zam_type_id_read(type), value, &hash));
-    return hash;
+    return zam_value_hash(thread, zam_type_id_read(type), value);
 }
 
 void zamrt_stamp(ZamThread *thread, const ZamWord *type, void *value) {
@@ -444,13 +420,11 @@ void zamrt_mark(ZamThread *thread, const ZamWord *type, const void *value) {
 }
 
 void zamrt_delete(ZamThread *thread, const ZamWord *type, const void *value) {
-    ran(thread, zam_value_delete(thread, zam_type_id_read(type), value));
+    zam_value_delete(thread, zam_type_id_read(type), value);
 }
 
 ZamString *zamrt_str(ZamThread *thread, const ZamWord *type, const void *value) {
-    ZamString *string = NULL;
-    ran(thread, zam_value_str(thread, zam_type_id_read(type), value, &string));
-    return string;
+    return zam_value_str(thread, zam_type_id_read(type), value);
 }
 
 ZamString *zamrt_concat(ZamThread *thread, const ZamString *left, const ZamString *right) {
@@ -482,24 +456,6 @@ ZamTypeID zamrt_type_of(ZamThread *thread, const void *instance) {
     if (instance == NULL)
         zamrt_panic(thread, ZAMPANIC_NULL_RECEIVER);
     return zam_instance_type(instance);
-}
-
-ZamClosure *zamrt_method(ZamThread *thread, ZamTypeID receiverType, const void *receiver,
-                         uint32_t methodIndex) {
-    ZamMethodDefinition method = zam_virtual_method(thread, receiverType, receiver, methodIndex);
-    return zam_closure_of(zam_method_closure(thread, receiverType, receiver, method));
-}
-
-ZamClosure *zamrt_interface_method(ZamThread *thread, ZamTypeID receiverType, const void *receiver,
-                                   uint32_t methodIndex) {
-    ZamMethodDefinition method = zam_interface_method(thread, receiverType, receiver, methodIndex);
-    return zam_closure_of(zam_method_closure(thread, receiverType, receiver, method));
-}
-
-ZamClosure *zamrt_generic_static(ZamThread *thread, uint64_t registryIndex, const ZamWord *args) {
-    const ZamWord *fnType;
-    uint8_t *slot = zam_generic_static_slot(thread->vm, registryIndex, args, &fnType);
-    return zam_closure_of((void *)(uintptr_t) * (const ZamWord *)(const void *)slot);
 }
 
 void *zamrt_any_box(ZamThread *thread, const ZamWord *type, const void *value) {
@@ -535,7 +491,7 @@ void zamrt_call_native(ZamThread *thread, uint64_t index, ZamWord *args, uint64_
 
     uint64_t enclosingEntry = thread->functionEntry;
     uint64_t dirtied = thread->dirtiedCount;
-    zam_thread_push_function(thread, thread->instructionOffset, base);
+    zam_thread_push_function(thread, base);
     fn(thread);
     for (uint64_t at = dirtied; at < thread->dirtiedCount; at++)
         zam_heap_dirty(&vm->heap, thread->dirtied[at], ZAMHEAP_CARD_BYTES);
@@ -552,8 +508,7 @@ void zamrt_call_native(ZamThread *thread, uint64_t index, ZamWord *args, uint64_
                 (unsigned long long)(thread->operandCount - base + resultWords),
                 (unsigned long long)resultWords);
 
-    // A native may ask for a collection before the caller's next instruction,
-    // as the interpreter's step after it would run one.
+    // A native may ask for a collection, which its caller answers here.
     zamrt_poll(thread);
 }
 
@@ -561,7 +516,7 @@ ZamClosure *zamrt_new_closure(ZamThread *thread, ZamObjectKind kind, ZamTypeShor
                               ZamEntry entry, uint64_t bodyBytes) {
     void *object = zam_vm_alloc(thread->vm, thread, kind, functionType, 1, sizeof(ZamClosure) + bodyBytes);
     ZamClosure *closure = zam_closure_of(object);
-    closure->instruction = (uint64_t)(uintptr_t)entry;
+    closure->entry = (uint64_t)(uintptr_t)entry;
     closure->captureCount = 0;
     return closure;
 }
@@ -617,7 +572,7 @@ ZamWord *zamrt_closure_captures(ZamClosure *closure) {
 ZamEntry zamrt_closure_entry(ZamThread *thread, ZamClosure *closure) {
     if (closure == NULL)
         zamrt_panic(thread, ZAMPANIC_NULL_CALL);
-    return (ZamEntry)(uintptr_t)closure->instruction;
+    return (ZamEntry)(uintptr_t)closure->entry;
 }
 
 // compiledMethod is the methodIndex'th compiled method of the class shortID.

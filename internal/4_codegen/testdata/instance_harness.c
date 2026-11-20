@@ -12,6 +12,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+#if defined(_WIN32)
+#include <fcntl.h>
+#include <io.h>
+#endif
+
 #include "instance.h"
 
 static void put(const char *name, uint64_t value) {
@@ -191,7 +196,7 @@ static void closureDump(void) {
     // nothing and the words counted below count it.
    ZamClosure *closure = zam_closure_of(buffer);
     put("closureOffset", (uint64_t)((ZamWord *)closure - buffer));
-    closure->instruction = 64;
+    closure->entry = 64;
     closure->captureCount = 2;
 
     // A pointer receiver of some class, then an int capture and a string
@@ -207,7 +212,7 @@ static void closureDump(void) {
                     1);
     put("closureWords", (uint64_t)(at - (ZamWord *)closure));
 
-    put("instruction", closure->instruction);
+    put("entry", closure->entry);
     put("captureCount", closure->captureCount);
 
     const ZamWord *entry = zam_closure_first(closure);
@@ -225,6 +230,12 @@ static void closureDump(void) {
 }
 
 int main(int argc, char **argv) {
+#if defined(_WIN32)
+    // Windows opens the standard streams translating line endings, which would
+    // corrupt the bytes read in and the lines written out.
+    _setmode(_fileno(stdin), _O_BINARY);
+    _setmode(_fileno(stdout), _O_BINARY);
+#endif
     if (argc != 2) {
         fprintf(stderr, "usage: %s <what>\n", argv[0]);
         return 2;

@@ -1,0 +1,8 @@
+name: unhashed
+version: 1.0.0
+dependencies:
+  dep:
+    repo: example.com/dep@v1
+  again:
+    repo: example.com/dep@v1
+    hash: ""

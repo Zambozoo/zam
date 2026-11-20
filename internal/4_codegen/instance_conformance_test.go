@@ -297,7 +297,7 @@ func TestClosureWalkInvariant(t *testing.T) {
 		// The two header words, two head words, then three entries of a type id
 		// and one word each.
 		"closureWords=16",
-		"instruction=64",
+		"entry=64",
 		"captureCount=2",
 		// The receiver, read by the same accessors as the captures below it.
 		"entry[0].shortID=589827",

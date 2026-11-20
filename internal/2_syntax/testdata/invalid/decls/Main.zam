@@ -1,0 +1,156 @@
+public namespace Main {
+    class Errors {
+        virtual class A {}
+        virtual abstract B {}
+        virtual enum C {}
+        virtual interface D {}
+        virtual namespace E {}
+        virtual struct F {}
+        virtual alias G = int;
+        static class H {}
+        class I {}
+        class I {}
+        class {}
+        abstract {}
+        enum {}
+        interface {}
+        namespace {}
+        struct {}
+        alias = int;
+        class Tailless~ {}
+        var int pad0;
+        abstract TaillessAbstract~ {}
+        var int pad1;
+        struct TaillessStruct~ {}
+        var int pad2;
+        class NotLast~ {
+            var int[~] a;
+            var int b;
+        }
+        abstract NotLastAbstract~ {
+            var int[~] a;
+            var int b;
+        }
+        struct NotLastStruct~ {
+            var int[~] a;
+            var int b;
+        }
+        class Untailed <: Chars~* {}
+        var int pad3;
+        abstract UntailedAbstract <: Chars~* {}
+        var int pad4;
+        class Member~ <: Chars~* {
+            var int m;
+        }
+        var int pad5;
+        abstract MemberAbstract~ <: Chars~* {
+            var int m;
+        }
+        var int pad6;
+        class NotPointer <: int {}
+        abstract NotPointerAbstract <: Chars {}
+        class Unresolvable <: int* {}
+        abstract UnresolvableAbstract <: int* {}
+        class VirtualField {
+            virtual fun void() V;
+        }
+        struct VirtualStruct {
+            virtual fun void() V;
+        }
+        enum VirtualEnum {
+            A;
+            virtual fun void() V;
+        }
+        interface Members {
+            var int x;
+            protected fun void() P;
+        }
+        class Twice[T, T] {}
+        class BoundList[T <: [int, ] {}
+        class Bound[T <: ] {}
+        class Unclosed[T {}
+        abstract Generic[] {}
+        interface GenericInterface[] {}
+        struct GenericStruct[] {}
+        class ThreadBase <: thread[int] {}
+        class FunctionBase <: int(int...) {}
+        class SizedBase <: B~4 {}
+        class ArrayBase <: int[2] {}
+        class GenericBase <: B[int] {}
+        class TupleBase <: (int, int) {}
+        class ArgumentBase[T] <: T {}
+        enum ReferenceBacked: B {
+            A;
+        }
+        enum GenericBacked: B[int] {
+            A;
+        }
+        enum TupleBacked: (int, int) {
+            A;
+        }
+        enum Backed: void* {
+            A;
+        }
+        enum Valued: int {
+            A;
+        }
+        enum Unclosed: int {
+            A(1;
+        }
+        enum BadValue: int {
+            A(;
+        }
+        enum Unvalued {
+            A(1);
+        }
+        enum Duplicate {
+            A, A;
+        }
+        enum Init {
+            A.;
+        }
+        enum InitParen {
+            A.Make;
+        }
+        enum InitArgument {
+            A.Make(;
+        }
+        enum InitSeparator {
+            A.Make(1 2);
+        }
+        enum Unseparated {
+            A B;
+        }
+        enum Unnamed {
+            1;
+        }
+        enum Unbraced A;
+        class Unbraced A;
+        abstract UnbracedAbstract A;
+        interface UnbracedInterface A;
+        namespace UnbracedNamespace A;
+        struct UnbracedStruct A;
+        alias Subtype <: int;
+        alias Supertype :> int;
+        alias Twice[T, T] = int;
+        alias Unequal int;
+        alias Untyped = ;
+        alias Unended = int
+        var int pad7;
+        alias Unopened[;
+        struct StaticStr {
+            static fun str() Str = () {
+                return "";
+            }
+        }
+        struct WrongStr {
+            fun int() Str = () {
+                return 0;
+            }
+        }
+        enum MemberStr {
+            ;
+            var str Str;
+        }
+    }
+}

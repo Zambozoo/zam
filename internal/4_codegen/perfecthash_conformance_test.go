@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/zambozoo/zam/internal/target"
 )
 
 // buildCReference compiles the reference lookup in testdata and answers where
@@ -20,13 +22,12 @@ import (
 func buildCReference(t *testing.T) string {
 	t.Helper()
 
-	compiler, err := exec.LookPath("cc")
-	require.NoError(t, err,
-		"the reference lookup cannot be held to the compiler without a C compiler")
-
-	harness := filepath.Join(t.TempDir(), "fks")
-	build := exec.Command(compiler, "-std=c99", "-O2", "-Wall", "-Wextra", "-Werror",
+	host, err := target.Host()
+	require.NoError(t, err)
+	harness := filepath.Join(t.TempDir(), host.Executable("fks"))
+	build, err := zigCC("-target", host.Zig, "-std=c99", "-O2", "-Wall", "-Wextra", "-Werror",
 		"-o", harness, filepath.Join("testdata", "fks_harness.c"))
+	require.NoError(t, err)
 	out, err := build.CombinedOutput()
 	require.NoError(t, err, "building the reference lookup: %s", out)
 

@@ -52,6 +52,19 @@ func generateObject(t *testing.T, source string) (*codegen.Object, error) {
 // generateObjectFor compiles a one-file program to native code for triple.
 func generateObjectFor(t *testing.T, source, triple string) (*codegen.Object, error) {
 	t.Helper()
+	return generateObjectWith(t, source, codegen.ObjectOptions{Triple: triple})
+}
+
+// generateDebugObject compiles a one-file program to native code for
+// testTarget as zam debug does, unoptimized.
+func generateDebugObject(t *testing.T, source string) (*codegen.Object, error) {
+	t.Helper()
+	return generateObjectWith(t, source, codegen.ObjectOptions{Triple: testTarget().Triple, Debug: true})
+}
+
+// generateObjectWith compiles a one-file program to native code as opts says.
+func generateObjectWith(t *testing.T, source string, opts codegen.ObjectOptions) (*codegen.Object, error) {
+	t.Helper()
 
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "zam.yml"), []byte("name: \"native\"\nversion: \"0.0.0\"\ndependencies:\n"), 0o600))
@@ -64,7 +77,7 @@ func generateObjectFor(t *testing.T, source, triple string) (*codegen.Object, er
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
-	return codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: triple})
+	return codegen.GenerateObject(cmd, ast, opts)
 }
 
 // runNative compiles a one-file program to native code, links it and runs it
@@ -1199,7 +1212,7 @@ namespace Main {
 
 // TestNativeCollectsBeforeTheNextStatement asks for a major collection and
 // expects what became unreachable, the statement before, deleted by the next
-// statement, as the interpreter does.
+// statement.
 func TestNativeCollectsBeforeTheNextStatement(t *testing.T) {
 	t.Parallel()
 	output, status := runNative(t, `import std("lang/*");
@@ -1510,7 +1523,7 @@ func objectDWARF(object []byte) (*dwarf.Data, error) {
 // zam types.
 func TestNativeDWARF(t *testing.T) {
 	t.Parallel()
-	object, err := generateObject(t, `namespace Main {
+	object, err := generateDebugObject(t, `namespace Main {
     fun int(int) twice = (n) {
         var int doubled = n * 2;
         return doubled;
@@ -1592,7 +1605,7 @@ func TestNativeDWARF(t *testing.T) {
 // pointers, so a debugger expands them itself.
 func TestNativeDWARFTypes(t *testing.T) {
 	t.Parallel()
-	object, err := generateObject(t, `namespace Main {
+	object, err := generateDebugObject(t, `namespace Main {
     struct Point {
         var int x;
         var byte tag;
@@ -1657,8 +1670,7 @@ func TestNativeDWARFTypes(t *testing.T) {
 }
 
 // TestNativeEnumStrs writes enum values out by their backing values and
-// pointers to them through their Str, in tuples and anys too, as the
-// interpreter does.
+// pointers to them through their Str, in tuples and anys too.
 func TestNativeEnumStrs(t *testing.T) {
 	t.Parallel()
 	output, status := runNative(t, `import std("lang/*");
@@ -1753,7 +1765,7 @@ namespace Main {
 // out the table zam's lldb formatters find the type of what an any holds by.
 func TestNativeDWARFEnumsAndTypeNames(t *testing.T) {
 	t.Parallel()
-	object, err := generateObject(t, `namespace Main {
+	object, err := generateDebugObject(t, `namespace Main {
     enum Color {
         Red,
         Blue;
@@ -1871,7 +1883,7 @@ func TestNativeDebugBundle(t *testing.T) {
 // TestNativeEnumsWithMembers lays out enum values that carry members, set by
 // the method each names: read through the value and a pointer to it, copied,
 // compared, switched on, passed, held by an object and kept through a
-// collection, as the interpreter does.
+// collection.
 func TestNativeEnumsWithMembers(t *testing.T) {
 	t.Parallel()
 	output, status := runNative(t, `import std("lang/*");

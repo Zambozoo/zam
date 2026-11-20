@@ -1,0 +1,129 @@
+import std("lang/Obj.zam");
+import "Shapes.zam";
+
+public namespace Extras {
+    abstract Kind[T <: Obj*, U] <: Shapes.Shape* {
+        static var int count;
+        var U k;
+        class Inner {}
+        alias Mine = int;
+    }
+
+    enum Tagged {
+        A;
+        class Inner {}
+    }
+
+    interface Source[T <: Obj*, U] {
+        fun T() Next;
+        static var int sources;
+        class Inner {}
+    }
+
+    struct Bounded[T <: Obj*] {
+        var T t;
+    }
+
+    struct Members {
+        var Shapes.Tail~4 tail;
+        var (int, Shapes.Pair[int, int]) tuple;
+        var Shapes.Pair[int, int]$ fixed;
+    }
+
+    class Expanding[T] {
+        var Shapes.Pair[T[2], int(T)]* p;
+        var Shapes.Pair[Shapes.Tail~4, T*]* q;
+    }
+
+    fun[T] void() Method = () {
+        var Shapes.Pair[T*, int] p;
+    }
+
+    var Source[Shapes.Square*, int]* source;
+    var (int, int) pair = 1, 2;
+
+    fun void(int) Ignore = (_) {
+    }
+
+    fun void() More = () {
+        var any a = 1;
+        var any b = 2;
+        var bool same = a == b;
+        same = 1 == a;
+        var int[2]* arrays = new(int[2]);
+        Extras::pair.0 = 1;
+    }
+
+    class Boxing <: Shapes.Box[Shapes.Square*]* {
+    }
+
+    alias Boxed[T <: Obj*] = Shapes.Box[T]*;
+    var Boxed[Shapes.Square*] boxed;
+
+    fun int() Labelled = () {
+        label forever: for {
+            continue forever;
+        }
+    }
+
+    fun int(int) Ends = (n) {
+        switch (n) {
+            case (0): {
+                if (n == 0) {
+                    continue;
+                } else {
+                    return 1;
+                }
+            }
+        } else {
+            return 2;
+        }
+    }
+
+    fun int(int) Loops = (n) {
+        for (; n < 1;) {
+            switch (n) {
+                case (1): break;
+            }
+            label inner: for {
+                break inner;
+            }
+        } else {
+            return 1;
+        }
+    }
+
+    fun void() Scoped = () {
+        {
+            import "Shapes.zam";
+            var Shapes.Square* square = null;
+        }
+    }
+
+    fun void() Casts = () {
+        var bool b = true;
+        var int i = b{int};
+        var char c = i{char};
+        i = c{int};
+        b = c{bool};
+        var byte by = c{byte};
+        i = by{int};
+        var flt f = i{flt};
+        i = f{int};
+        var pst p = f{pst};
+        i = p{int};
+        var void* vp = i{void*};
+        b = "s"{bool};
+        var byte* bp = "s"{byte*};
+        vp = "s"{void*};
+        i = vp{int};
+        b = vp{bool};
+        var Shapes.Square* sq = vp{Shapes.Square*};
+        var void() fn = vp{void()};
+        vp = fn{void*};
+        var Shapes.Shape* sh = sq{Shapes.Shape*};
+        sq = sh{Shapes.Square*};
+        var int$ ci = 1;
+        i = ci{int};
+    }
+}

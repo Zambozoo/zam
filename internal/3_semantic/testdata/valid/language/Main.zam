@@ -1,0 +1,14 @@
+import "Shapes.zam";
+import "Flow.zam";
+import "Values.zam";
+import "Aliases.zam";
+import "Extras.zam";
+import shapes = "Shapes.zam";
+
+public namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        Flow::Run();
+        Values::Run();
+        var shapes.Shapes.Square* square = null;
+    }
+}

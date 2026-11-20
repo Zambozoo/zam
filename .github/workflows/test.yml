@@ -1,10 +1,8 @@
 name: Test
 
-# Runs the tests on every platform zam is released for, the end-to-end tests
-# against both the interpreter and native code, then builds zam as a release
-# does and checks the binary itself. Windows runs native code only, as the
-# interpreter's build is not ported there, and without the race detector,
-# whose runtime needs an import library Zig's mingw lacks.
+# Runs the tests on every platform zam is released for, then builds zam as a
+# release does and checks the binary itself. Windows runs without the race
+# detector, whose runtime needs an import library Zig's mingw lacks.
 on:
   push:
     branches:
@@ -27,9 +25,9 @@ jobs:
     with:
       version: v0.0.0-ci
 
-  # Linux tests in the image zam is developed in, which has LLVM, the C
-  # libraries and the compiler both backends need; macOS links the LLVM the
-  # release links and takes the interpreter's C libraries from Homebrew.
+  # Linux tests in the image zam is developed in, which has LLVM; macOS and
+  # Windows link the LLVM the release links. The runtime's conformance
+  # harnesses are built with Zig against the packs.
   test:
     needs: [llvm, packs]
     strategy:
@@ -97,22 +95,17 @@ jobs:
       - if: runner.os == 'Linux'
         run: |
           docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache -e ZAM_PACKS=/src/packs zam-linux go test ./... -count=1 -timeout 45m --race
-          docker run --rm -v "$PWD":/src -v zam-linux-cache:/root/.cache -e ZAM_PACKS=/src/packs -e ZAM_TEST_NATIVE=1 zam-linux go test ./internal/5_build -count=1 -timeout 45m --race
-
-      - if: runner.os == 'macOS'
-        run: brew install pkgconf json-c libyaml libxml2 mongo-c-driver libcbor lz4 zstd brotli openssl@3 curl llhttp libsodium
 
       - if: runner.os == 'macOS'
         run: |
           source release/cgo.sh "$PWD/llvm"
-          export ZAM_PACKS=$PWD/packs PKG_CONFIG_PATH="$(brew --prefix openssl@3)/lib/pkgconfig:$(brew --prefix libxml2)/lib/pkgconfig"
+          export ZAM_PACKS=$PWD/packs
           go test -tags zam_static ./... -count=1 -timeout 45m --race
-          ZAM_TEST_NATIVE=1 go test -tags zam_static ./internal/5_build -count=1 -timeout 45m --race
 
       - if: runner.os == 'Windows'
         run: |
           source release/cgo.sh "$PWD/llvm"
-          export ZAM_PACKS=$(cygpath -m "$PWD/packs") ZAM_TEST_NATIVE=1
+          export ZAM_PACKS=$(cygpath -m "$PWD/packs")
           go test -tags zam_static ./... -count=1 -timeout 45m
 
       # The binary as a release builds it, checked whether or not the tests

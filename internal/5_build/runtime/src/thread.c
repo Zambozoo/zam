@@ -46,46 +46,6 @@ void zam_thread_bind_current(ZamThread *thread) { currentZamThread = thread; }
 
 ZamThread *zam_thread_current(void) { return currentZamThread; }
 
-void zam_frames_begin(ZamFrames *frames, const ZamThread *thread) {
-    *frames = (ZamFrames){
-        .thread = thread,
-        .entry = thread->functionEntry,
-        .next = thread->instructionOffset,
-        .last = UINT64_MAX,
-        .more = true,
-    };
-}
-
-bool zam_frames_next(ZamFrames *frames, uint64_t *offset) {
-    const ZamThread *thread = frames->thread;
-    while (frames->more) {
-        uint64_t candidate = frames->next;
-
-        // The walk is asked for on the way out of a failure, so an entry that
-        // cannot be read ends it rather than failing a second time.
-        ZamMarkFunction entry;
-        if (frames->entry == ZAMMARK_NONE ||
-            frames->entry + sizeof entry > thread->markByteCount) {
-            frames->more = false;
-        } else {
-            memcpy(&entry, thread->marks + frames->entry, sizeof entry);
-            // A spawned thread's outermost frame was laid by the spawn rather
-            // than a call, and so names nowhere to come back to.
-            if (entry.previous == ZAMMARK_NONE && thread != &thread->vm->main)
-                frames->more = false;
-            frames->next = entry.returnInstruction;
-            frames->entry = entry.previous;
-        }
-
-        if (candidate == frames->last || candidate == 0)
-            continue;
-        frames->last = candidate;
-        *offset = candidate;
-        return true;
-    }
-    return false;
-}
-
 // TraceWriter gathers a trace a line at a time and writes it to fd, using
 // nothing a signal handler may not.
 typedef struct TraceWriter {
@@ -197,54 +157,9 @@ void zam_trace_write(const ZamTrace *trace, int fd) {
 }
 
 void zam_thread_trace(const ZamThread *thread, uint64_t skip, int fd) {
-    if (thread->vm->compiledFunctions != NULL) {
-        ZamTrace trace;
-        zam_thread_capture(thread, skip, &trace);
-        zam_trace_write(&trace, fd);
-        return;
-    }
-    const ZamImage *image = &thread->vm->image;
-    if (image->debugFunctionCount == 0)
-        return;
-
-    TraceWriter w = {.fd = fd};
-    ZamFrames frames;
-    zam_frames_begin(&frames, thread);
-    uint64_t offset, written = 0, elided = 0;
-    while (zam_frames_next(&frames, &offset)) {
-        if (skip > 0) {
-            skip--;
-            continue;
-        }
-        if (written == ZAMTRACE_FRAMES) {
-            elided++;
-            continue;
-        }
-        written++;
-
-        // The offset is just past the instruction, so the one before it is in
-        // the instruction itself.
-        const char *function = zam_image_function(image, offset - 1);
-        const char *file;
-        uint32_t line;
-        traceText(&w, "\tat ");
-        traceText(&w, function != NULL ? function : "?");
-        if (zam_image_locate(image, offset - 1, &file, &line)) {
-            traceText(&w, " (");
-            traceText(&w, file);
-            traceText(&w, ":");
-            traceNumber(&w, line, 10);
-            traceText(&w, ")");
-        }
-        traceText(&w, "\n");
-        traceFlush(&w);
-    }
-    if (elided > 0) {
-        traceText(&w, "\t... ");
-        traceNumber(&w, elided, 10);
-        traceText(&w, " more frames\n");
-        traceFlush(&w);
-    }
+    ZamTrace trace;
+    zam_thread_capture(thread, skip, &trace);
+    zam_trace_write(&trace, fd);
 }
 
 void zam_thread_trace_current(int fd) {
@@ -420,17 +335,6 @@ int zam_thread_take_pending_signal(ZamThread *thread) {
     return -1;
 }
 
-static const char *const resultNames[] = {
-    "CONTINUE",
-    "EXIT",
-    "RETURNED",
-    "PANIC",
-};
-
-const char *zam_result_name(ZamResult result) {
-    return result <= ZAMRESULT_PANIC ? resultNames[result] : "<unknown result>";
-}
-
 // The header is left alone. Main lives embedded in the ZamVM and has no header
 // to care about; a spawned thread lives in an allocation whose first word is
 // the mark word the collector finds it through, written by the allocator
@@ -442,12 +346,9 @@ void zam_thread_init(ZamThread *thread, ZamVM *vm, uint64_t initialStackSize) {
     thread->vm = vm;
     thread->frames = NULL;
     thread->id = atomic_fetch_add(&vm->nextThreadId, 1) + 1;
-    thread->result = ZAMRESULT_CONTINUE;
     thread->operandCapacity = initialStackSize;
     thread->markByteCapacity = initialStackSize * ZAMWORD_BYTES;
     thread->functionEntry = ZAMMARK_NONE;
-    thread->scopeEntry = ZAMMARK_NONE;
-    thread->packEntry = ZAMMARK_NONE;
     thread->operands = zam_alloc(thread->operandCapacity * sizeof(ZamWord));
     thread->marks = zam_alloc(thread->markByteCapacity);
 }
@@ -457,7 +358,6 @@ void zam_thread_free(ZamThread *thread) {
     free(thread->operands);
     free(thread->marks);
     free(thread->dirtied);
-    free(thread->held);
     free(thread->gray);
 
     // Every set the thread ever opened, not only the ones still open: a popped
@@ -538,14 +438,11 @@ static const uint64_t markEntryBytes[] = {
     [ZAMMARK_FUNCTION] = sizeof(ZamMarkFunction),
     [ZAMMARK_OBJECT] = sizeof(ZamMarkObject),
     [ZAMMARK_ARRAY] = sizeof(ZamMarkArray),
-    [ZAMMARK_SCOPE] = sizeof(ZamMarkScope),
     [ZAMMARK_VALUE] = sizeof(ZamMarkValue),
-    [ZAMMARK_INTERIOR] = sizeof(ZamMarkInterior),
-    [ZAMMARK_PACK] = sizeof(ZamMarkPack),
 };
 
 uint64_t zam_mark_entry_bytes(ZamMarkKind kind) {
-    if (kind > ZAMMARK_PACK)
+    if (kind >= ZAMMARK_COUNT)
         zam_die(ZAMEXIT_PANIC, "mark stack holds no kind %d\n", (int)kind);
     return markEntryBytes[kind];
 }
@@ -595,18 +492,6 @@ void zam_thread_push_array_mark(ZamThread *thread, ZamTypeID type,
     pushEntry(thread, &entry, sizeof entry);
 }
 
-void zam_thread_push_indirect_array_mark(ZamThread *thread, ZamTypeID type,
-                                         uint64_t operand) {
-   ZamMarkArray entry = {
-        .kind = ZAMMARK_ARRAY,
-        .operand = operand,
-        .element = type.shortID,
-        .indirect = 1,
-        .length = type.arrayLength,
-    };
-    pushEntry(thread, &entry, sizeof entry);
-}
-
 void zam_thread_push_value_mark(ZamThread *thread, ZamTypeID type,
                                 uint64_t operand) {
    ZamMarkValue entry = {.kind = ZAMMARK_VALUE, .operand = operand};
@@ -614,34 +499,17 @@ void zam_thread_push_value_mark(ZamThread *thread, ZamTypeID type,
     pushEntry(thread, &entry, sizeof entry);
 }
 
-void zam_thread_push_interior_mark(ZamThread *thread, uint64_t operand,
-                                   uint64_t distance) {
-   ZamMarkInterior entry = {
-        .kind = ZAMMARK_INTERIOR,
-        .operand = operand,
-        .distance = distance,
-    };
-    pushEntry(thread, &entry, sizeof entry);
-}
-
 // Where a search for the topmost entry may begin. Everything below the innermost
-// open scope or call belongs to an enclosing one, and an enclosing scope's
-// entries are never the top while this one is open, so the walk starts at
-// whichever of the two heads lies higher.
+// open call belongs to an enclosing one, so the walk starts above its entry.
 static uint64_t markSearchFloor(const ZamThread *thread) {
-    uint64_t floor = 0;
-    if (thread->functionEntry != ZAMMARK_NONE)
-        floor = thread->functionEntry + sizeof(ZamMarkFunction);
-    if (thread->scopeEntry != ZAMMARK_NONE &&
-        thread->scopeEntry + sizeof(ZamMarkScope) > floor)
-        floor = thread->scopeEntry + sizeof(ZamMarkScope);
-    return floor;
+    return thread->functionEntry == ZAMMARK_NONE
+               ? 0
+               : thread->functionEntry + sizeof(ZamMarkFunction);
 }
 
 // popMark takes the topmost entry off if it names the operand word, and
 // answers its kind, or ZAMMARK_FUNCTION where it took nothing.
-static ZamMarkKind popMark(ZamThread *thread, uint64_t operand,
-                           uint64_t *distance) {
+static ZamMarkKind popMark(ZamThread *thread, uint64_t operand) {
     uint64_t last = thread->markByteCount;
     for (uint64_t at = markSearchFloor(thread); at < thread->markByteCount;) {
         last = at;
@@ -654,8 +522,7 @@ static ZamMarkKind popMark(ZamThread *thread, uint64_t operand,
     // so which one it is does not have to be told apart to ask whether it
     // names this word.
    ZamMarkKind kind = zam_mark_kind_at(thread, last);
-    if (kind != ZAMMARK_OBJECT && kind != ZAMMARK_ARRAY &&
-        kind != ZAMMARK_VALUE && kind != ZAMMARK_INTERIOR)
+    if (kind == ZAMMARK_FUNCTION)
         return ZAMMARK_FUNCTION;
 
    ZamMarkObject entry;
@@ -663,25 +530,12 @@ static ZamMarkKind popMark(ZamThread *thread, uint64_t operand,
     if (entry.operand != operand)
         return ZAMMARK_FUNCTION;
 
-    *distance = 0;
-    if (kind == ZAMMARK_INTERIOR) {
-       ZamMarkInterior interior;
-        readEntry(thread, last, &interior, sizeof interior);
-        *distance = interior.distance;
-    }
     thread->markByteCount = last;
     return kind;
 }
 
 bool zam_thread_pop_mark(ZamThread *thread, uint64_t operand) {
-    uint64_t distance;
-    return popMark(thread, operand, &distance) != ZAMMARK_FUNCTION;
-}
-
-bool zam_thread_pop_object_mark(ZamThread *thread, uint64_t operand,
-                                uint64_t *distance) {
-   ZamMarkKind kind = popMark(thread, operand, distance);
-    return kind == ZAMMARK_OBJECT || kind == ZAMMARK_INTERIOR;
+    return popMark(thread, operand) != ZAMMARK_FUNCTION;
 }
 
 void *zam_thread_location_address(const ZamThread *thread, ZamWord location) {
@@ -706,88 +560,13 @@ uint64_t zam_thread_frame_base(const ZamThread *thread) {
     return entry.operandPop;
 }
 
-// heldBase is what a call made now records as the values held before it.
-static uint64_t heldBase(const ZamThread *thread) {
-    if (thread->heldCount >= ((uint64_t)1 << 31))
-        zam_die(ZAMEXIT_PANIC, "held %llu values across one call\n",
-                (unsigned long long)thread->heldCount);
-    return thread->heldCount;
-}
-
-void zam_thread_hold(ZamThread *thread, ZamWord value) {
-    if (thread->heldCount == thread->heldCapacity) {
-        thread->heldCapacity =
-            thread->heldCapacity == 0 ? 16 : thread->heldCapacity * 2;
-        thread->held =
-            zam_realloc(thread->held, thread->heldCapacity * sizeof *thread->held);
-    }
-    thread->held[thread->heldCount++] = value;
-}
-
-void zam_thread_release(ZamThread *thread) {
-    uint64_t base = 0;
-    if (thread->functionEntry != ZAMMARK_NONE) {
-       ZamMarkFunction entry;
-        readEntry(thread, thread->functionEntry, &entry, sizeof entry);
-        base = entry.heldBase;
-    }
-    thread->heldCount = base;
-}
-
-void zam_thread_push_function(ZamThread *thread, uint64_t returnInstruction,
-                              uint64_t operandPop) {
+void zam_thread_push_function(ZamThread *thread, uint64_t operandPop) {
    ZamMarkFunction entry = {
         .kind = ZAMMARK_FUNCTION,
         .previous = thread->functionEntry,
-        .returnInstruction = returnInstruction,
         .operandPop = operandPop,
-        .heldBase = heldBase(thread),
     };
     thread->functionEntry = pushEntry(thread, &entry, sizeof entry);
-}
-
-void zam_thread_push_direct_function(ZamThread *thread, uint64_t returnInstruction,
-                                     uint64_t operandPop, ZamTypeShort receiverType) {
-   ZamMarkFunction entry = {
-        .kind = ZAMMARK_FUNCTION,
-        .previous = thread->functionEntry,
-        .returnInstruction = returnInstruction,
-        .operandPop = operandPop,
-        .receiverType = receiverType,
-        .direct = 1,
-        .heldBase = heldBase(thread),
-    };
-    thread->functionEntry = pushEntry(thread, &entry, sizeof entry);
-}
-
-bool zam_thread_function_entry(const ZamThread *thread, uint64_t offset,
-                               ZamMarkFunction *entry) {
-    if (offset == ZAMMARK_NONE || offset > thread->markByteCount ||
-        thread->markByteCount - offset < sizeof *entry)
-        return false;
-    memcpy(entry, thread->marks + offset, sizeof *entry);
-    return true;
-}
-
-bool zam_thread_frame_direct(const ZamThread *thread, ZamTypeID *receiverType) {
-    if (thread->functionEntry == ZAMMARK_NONE)
-        return false;
-   ZamMarkFunction entry;
-    readEntry(thread, thread->functionEntry, &entry, sizeof entry);
-    if (!entry.direct)
-        return false;
-    *receiverType = (ZamTypeID){.shortID = (ZamTypeShort)entry.receiverType};
-    return true;
-}
-
-// dropPacksAbove closes every pack opened above a mark offset that a rewind
-// to it takes away.
-static void dropPacksAbove(ZamThread *thread, uint64_t offset) {
-    while (thread->packEntry != ZAMMARK_NONE && thread->packEntry > offset) {
-       ZamMarkPack pack;
-        readEntry(thread, thread->packEntry, &pack, sizeof pack);
-        thread->packEntry = pack.previous;
-    }
 }
 
 ZamMarkFunction zam_thread_pop_function(ZamThread *thread) {
@@ -798,21 +577,9 @@ ZamMarkFunction zam_thread_pop_function(ZamThread *thread) {
    ZamMarkFunction entry;
     readEntry(thread, offset, &entry, sizeof entry);
 
-    // Every scope opened inside the call goes with it. The chain is walked
-    // rather than saved on the entry because a scope entry can only be found
-    // from the one after it, and the walk is bounded by the scopes this call
-    // opened.
-    while (thread->scopeEntry != ZAMMARK_NONE && thread->scopeEntry > offset) {
-       ZamMarkScope scope;
-        readEntry(thread, thread->scopeEntry, &scope, sizeof scope);
-        thread->scopeEntry = scope.previous;
-    }
-    dropPacksAbove(thread, offset);
-
     thread->markByteCount = offset;
     thread->operandCount = entry.operandPop;
     thread->functionEntry = entry.previous;
-    thread->heldCount = entry.heldBase;
 
     // The closure and the arguments were pushed by the caller, so their entries
     // lie beneath this call's and survive the rewind above — but the words are
@@ -823,8 +590,7 @@ ZamMarkFunction zam_thread_pop_function(ZamThread *thread) {
     // and everything from there up went with it.
     for (uint64_t at = markSearchFloor(thread); at < thread->markByteCount;) {
        ZamMarkKind kind = zam_mark_kind_at(thread, at);
-        if (kind == ZAMMARK_OBJECT || kind == ZAMMARK_ARRAY ||
-            kind == ZAMMARK_VALUE || kind == ZAMMARK_INTERIOR) {
+        if (kind != ZAMMARK_FUNCTION) {
             // Every kind that names a word names it in the same place, so which
             // one it is does not have to be told apart to read the offset.
            ZamMarkObject named;
@@ -837,160 +603,6 @@ ZamMarkFunction zam_thread_pop_function(ZamThread *thread) {
         at += zam_mark_entry_bytes(kind);
     }
     return entry;
-}
-
-void zam_thread_push_scope(ZamThread *thread) {
-   ZamMarkScope entry = {
-        .kind = ZAMMARK_SCOPE,
-        .previous = thread->scopeEntry,
-        .frame = thread->operandCount,
-    };
-    thread->scopeEntry = pushEntry(thread, &entry, sizeof entry);
-}
-
-void zam_thread_pop_scope(ZamThread *thread) {
-    uint64_t offset = thread->scopeEntry;
-    if (offset == ZAMMARK_NONE)
-        zam_die(ZAMEXIT_PANIC, "left a scope with none open\n");
-
-   ZamMarkScope entry;
-    readEntry(thread, offset, &entry, sizeof entry);
-    thread->scopeEntry = entry.previous;
-    dropPacksAbove(thread, offset);
-    thread->operandCount = entry.frame;
-    thread->markByteCount = offset;
-}
-
-void zam_thread_push_pack(ZamThread *thread) {
-   ZamMarkPack entry = {
-        .kind = ZAMMARK_PACK,
-        .previous = thread->packEntry,
-        .frame = thread->operandCount,
-    };
-    thread->packEntry = pushEntry(thread, &entry, sizeof entry);
-}
-
-static void reverseWords(ZamWord *words, uint64_t count) {
-    for (uint64_t i = 0, j = count; i + 1 < j; i++, j--) {
-       ZamWord word = words[i];
-        words[i] = words[j - 1];
-        words[j - 1] = word;
-    }
-}
-
-static void reverseBytes(uint8_t *bytes, uint64_t count) {
-    for (uint64_t i = 0, j = count; i + 1 < j; i++, j--) {
-        uint8_t byte = bytes[i];
-        bytes[i] = bytes[j - 1];
-        bytes[j - 1] = byte;
-    }
-}
-
-// packedEntryOperand reads the operand an entry above a pack names. Only
-// entries naming a word lie there, since a pack opens and closes within one
-// expression.
-static uint64_t packedEntryOperand(const ZamThread *thread, uint64_t at) {
-   ZamMarkKind kind = zam_mark_kind_at(thread, at);
-    if (kind != ZAMMARK_OBJECT && kind != ZAMMARK_ARRAY &&
-        kind != ZAMMARK_VALUE && kind != ZAMMARK_INTERIOR)
-        zam_die(ZAMEXIT_PANIC, "a %u-kind entry inside a pack\n",
-                (unsigned)kind);
-   ZamMarkObject head;
-    readEntry(thread, at, &head, sizeof head);
-    return head.operand;
-}
-
-static void moveEntryOperand(ZamThread *thread, uint64_t at, uint64_t operand) {
-   ZamMarkObject head;
-    readEntry(thread, at, &head, sizeof head);
-    head.operand = operand;
-    memcpy(thread->marks + at, &head, sizeof head);
-}
-
-// packedEntriesFrom is the mark offset of the first entry above the innermost
-// pack naming an operand at or above the given one, or the top of the stack.
-static uint64_t packedEntriesFrom(const ZamThread *thread, uint64_t operand) {
-    uint64_t at = thread->packEntry + sizeof(ZamMarkPack);
-    for (; at < thread->markByteCount;
-         at += zam_mark_entry_bytes(zam_mark_kind_at(thread, at)))
-        if (packedEntryOperand(thread, at) >= operand)
-            break;
-    return at;
-}
-
-static ZamMarkPack innermostPack(const ZamThread *thread) {
-    if (thread->packEntry == ZAMMARK_NONE)
-        zam_die(ZAMEXIT_PANIC, "packed with no pack open\n");
-   ZamMarkPack pack;
-    readEntry(thread, thread->packEntry, &pack, sizeof pack);
-    return pack;
-}
-
-// Rotating each part and then the whole leaves the two parts swapped, each in
-// its own order, which is what moves the frame above the values without a
-// buffer for either.
-void zam_thread_sink_pack(ZamThread *thread, uint64_t valueWords) {
-   ZamMarkPack pack = innermostPack(thread);
-    if (valueWords > thread->operandCount - pack.frame)
-        zam_die(ZAMEXIT_PANIC, "packed %llu words over a %llu word frame\n",
-                (unsigned long long)valueWords,
-                (unsigned long long)(thread->operandCount - pack.frame));
-    uint64_t frameWords = thread->operandCount - valueWords - pack.frame;
-    uint64_t valuesAt = pack.frame + frameWords;
-   ZamWord *operands = thread->operands + pack.frame;
-    reverseWords(operands, frameWords);
-    reverseWords(operands + frameWords, valueWords);
-    reverseWords(operands, frameWords + valueWords);
-
-    uint64_t from = thread->packEntry + sizeof pack;
-    uint64_t split = packedEntriesFrom(thread, valuesAt);
-    uint64_t end = thread->markByteCount;
-    reverseBytes(thread->marks + from, split - from);
-    reverseBytes(thread->marks + split, end - split);
-    reverseBytes(thread->marks + from, end - from);
-
-    uint64_t valuesEnd = from + (end - split);
-    for (uint64_t at = from; at < end;
-         at += zam_mark_entry_bytes(zam_mark_kind_at(thread, at))) {
-        uint64_t operand = packedEntryOperand(thread, at);
-        moveEntryOperand(thread, at,
-                         at < valuesEnd ? operand - frameWords
-                                        : operand + valueWords);
-    }
-
-    pack.values = valueWords;
-    memcpy(thread->marks + thread->packEntry, &pack, sizeof pack);
-}
-
-void zam_thread_pop_pack(ZamThread *thread) {
-   ZamMarkPack pack = innermostPack(thread);
-    uint64_t above = pack.frame + pack.values;
-    if (above > thread->operandCount)
-        zam_die(ZAMEXIT_PANIC, "a pack's values are past the stack\n");
-    uint64_t resultWords = thread->operandCount - above;
-    memmove(thread->operands + pack.frame, thread->operands + above,
-            resultWords * ZAMWORD_BYTES);
-    thread->operandCount = pack.frame + resultWords;
-
-    uint64_t split = packedEntriesFrom(thread, above);
-    uint64_t kept = thread->markByteCount - split;
-    uint64_t at = thread->packEntry;
-    memmove(thread->marks + at, thread->marks + split, kept);
-    thread->markByteCount = at + kept;
-    thread->packEntry = pack.previous;
-    for (; at < thread->markByteCount;
-         at += zam_mark_entry_bytes(zam_mark_kind_at(thread, at))) {
-        uint64_t operand = packedEntryOperand(thread, at);
-        moveEntryOperand(thread, at, operand - pack.values);
-    }
-}
-
-bool zam_thread_pack_of(const ZamThread *thread, uint64_t base,
-                        ZamMarkPack *pack) {
-    if (thread->packEntry == ZAMMARK_NONE)
-        return false;
-    readEntry(thread, thread->packEntry, pack, sizeof *pack);
-    return pack->values != 0 && pack->frame + pack->values == base;
 }
 
 // ZAMVISITED_INITIAL_SLOTS is what a set is given the first time it is opened.

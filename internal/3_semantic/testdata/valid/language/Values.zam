@@ -1,0 +1,95 @@
+import "Shapes.zam";
+
+public namespace Values {
+    enum Color {
+        Red, Green;
+    }
+
+    enum Code: int {
+        Ok(0), Fail(1);
+    }
+
+    enum Made {
+        First.Init(1);
+        var int value;
+        fun void(int) Init = (v) {
+            this.value = v;
+        }
+    }
+
+    var int counter = 1;
+    var str title = "x";
+    var (int, int) pair = 1, 2;
+
+    fun void(int...) Many = (xs) {
+        Values::Many(xs...);
+        Values::Many(1, 2);
+    }
+
+    fun int() Work = () {
+        return 1;
+    }
+
+    fun void() Run = () {
+        var int i = 1 + 2 - 3 * 4 / 5 % 6;
+        var uint u = 1u + 2u;
+        var flt f = 1.5 * 2.0;
+        var pst p = 1p + 2p;
+        var char c = 'a' + 'b';
+        var byte by = 1{byte};
+        var bool b = i < 2 && i > 0 || !true;
+        b = i <= 2 == true;
+        i = i << 1 >> 1 >>> 1;
+        i = i & 1 | 2 ^ 3;
+        i = ~i;
+        i = -i;
+        i = i <=> 2;
+        b = @{int} <: @{int};
+        var type t = type(int);
+        t = @i;
+        var int h = #title;
+        var str s = title + "y" + 'c';
+        s = i{str};
+        var Shapes.Square* sq = new(Shapes.Square);
+        var Shapes.Shape* sh = sq;
+        i = sh.Area();
+        i = sq.side;
+        var Shapes.Named* named = sq;
+        var Shapes.Box[Shapes.Square*]* box = new(Shapes.Box[Shapes.Square*]);
+        var Shapes.Holder[Shapes.Shape*]* holder = null;
+        var Shapes.Pair[int, str] pr;
+        pr.first = 1;
+        var Shapes.Tail~* tail = new(Shapes.Tail~, 1, 4);
+        var int* arr = new(int, 4);
+        i = arr[0];
+        arr = arr + 1;
+        var int[3] fixed;
+        var int* fp = fixed + 1;
+        var any a = i;
+        b = a == i;
+        i = a{int};
+        var int* np = null;
+        np = np ?? arr;
+        var thread[int] th = async(Values::Work());
+        i = wait(th);
+        i = b ? 1 : 2;
+        var (int, str) tup = 1, "a";
+        i = tup.0;
+        tup.0 = 2;
+        i = Values::counter;
+        Values::counter = 3;
+        var Color col = Color::Red;
+        i = Code::Ok{int};
+        var void* vp = native(STD_NOTHING);
+        i = Shapes::[int]Same(1);
+        var int$ ci = 1;
+        i = ci + 1;
+        var void(int...) m = Values::Many;
+        ++i;
+        i--;
+        mark sq;
+        delete sq;
+        free arr;
+        free &i;
+    }
+}

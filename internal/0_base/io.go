@@ -170,7 +170,7 @@ func (fp *FileProvider) NewPath(p string) (Path, error) {
 // parsing, and the order those keys sort in decides the order type ids are
 // assigned and static initializers run. Left as written, `./Main.zam` and its
 // absolute form would be two different files holding one file's contents, and
-// would compile to different bytecode.
+// would compile to a different program.
 //
 // It sits here rather than only on [FileProvider] so that a path can be
 // normalized before any file provider is in hand.

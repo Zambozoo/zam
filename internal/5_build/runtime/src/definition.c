@@ -213,11 +213,6 @@ const ZamTupleDefinition *zam_tuple_definition(const ZamImage *image,
     return definitionAt(image, declID, ZAMBUCKET_TUPLE, "a tuple");
 }
 
-ZamTypeID zam_thread_type_result(const ZamImage *image, uint16_t declID) {
-    return zam_type_id_read(
-        definitionAt(image, declID, ZAMBUCKET_THREAD_TYPE, "a thread type"));
-}
-
 const ZamTypeList *zam_function_type_signature(const ZamImage *image,
                                                uint16_t declID) {
     return definitionAt(image, declID, ZAMBUCKET_FUNCTION_TYPE,
@@ -258,30 +253,12 @@ zam_generic_interface_concrete(const ZamGenericInterfaceDefinition *definition,
 // how long each is. Everything below reads a definition for its tables and
 // nothing else, so the two are found once here rather than in each caller.
 //
-// A generic declaration is the one kind where the two runs come from different
-// places. The members are the instantiation's, since List[int] and List[string]
-// share a declaration and not a layout; the method bodies are the declaration's,
-// because a method is compiled once however many times it is instantiated —
-// which is exactly why the instructions are held above the entries rather than
-// on each of them.
+// A generic declaration's members are the instantiation's, since List[int] and
+// List[string] share a declaration and not a layout.
 typedef struct ZamFieldTables {
     const ZamMemberDefinition *members;
     uint64_t memberCount;
-    // methods is the run of definitions, or NULL where the kind holds bare
-    // instruction words instead. Exactly one of the two is ever set.
-    const ZamMethodDefinition *methods;
-    const ZamWord *methodInstructions;
-    // methodTypeIDs goes with methodInstructions and is set only alongside it,
-    // the two being the halves a generic keeps apart: a body is compiled once
-    // for the declaration and a signature is one per instantiation, so the run
-    // they are read from is not the same run.
-    const ZamWord *methodTypeIDs;
     uint64_t methodCount;
-    // initializer is the routine a fresh instance is filled in by, or zero
-    // where the type names none. It comes off the same read as the tables
-    // because it lies in the same definition and is asked about a type by the
-    // same short id.
-    uint64_t initializer;
 } ZamFieldTables;
 
 static ZamFieldTables fieldTables(const ZamImage *image, ZamTypeShort shortID) {
@@ -299,9 +276,7 @@ static ZamFieldTables fieldTables(const ZamImage *image, ZamTypeShort shortID) {
         return (ZamFieldTables){
             .members = zam_struct_members(d),
             .memberCount = d->memberCount,
-            .methods = zam_struct_methods(d),
             .methodCount = d->methodCount,
-            .initializer = d->initializerInstruction,
         };
     }
 
@@ -310,9 +285,7 @@ static ZamFieldTables fieldTables(const ZamImage *image, ZamTypeShort shortID) {
         return (ZamFieldTables){
             .members = zam_enum_members(d),
             .memberCount = d->memberCount,
-            .methods = zam_enum_methods(d),
             .methodCount = d->methodCount,
-            .initializer = d->initializerInstruction,
         };
     }
 
@@ -321,9 +294,7 @@ static ZamFieldTables fieldTables(const ZamImage *image, ZamTypeShort shortID) {
         return (ZamFieldTables){
             .members = zam_abstract_members(d),
             .memberCount = d->memberCount,
-            .methods = zam_abstract_methods(d),
             .methodCount = d->methodCount,
-            .initializer = d->initializerInstruction,
         };
     }
 
@@ -332,9 +303,7 @@ static ZamFieldTables fieldTables(const ZamImage *image, ZamTypeShort shortID) {
         return (ZamFieldTables){
             .members = zam_class_members(d),
             .memberCount = d->memberCount,
-            .methods = zam_class_methods(d),
             .methodCount = d->methodCount,
-            .initializer = d->initializerInstruction,
         };
     }
 
@@ -345,11 +314,7 @@ static ZamFieldTables fieldTables(const ZamImage *image, ZamTypeShort shortID) {
         return (ZamFieldTables){
             .members = zam_generic_entry_members(e),
             .memberCount = e->memberCount,
-            .methodInstructions =
-                zam_generic_abstract_method_instructions(d),
-            .methodTypeIDs = zam_generic_entry_method_type_ids(e),
             .methodCount = d->methodCount,
-            .initializer = d->initializerInstruction,
         };
     }
 
@@ -360,10 +325,7 @@ static ZamFieldTables fieldTables(const ZamImage *image, ZamTypeShort shortID) {
         return (ZamFieldTables){
             .members = zam_generic_entry_members(e),
             .memberCount = e->memberCount,
-            .methodInstructions = zam_generic_class_method_instructions(d),
-            .methodTypeIDs = zam_generic_entry_method_type_ids(e),
             .methodCount = d->methodCount,
-            .initializer = d->initializerInstruction,
         };
     }
 
@@ -373,7 +335,6 @@ static ZamFieldTables fieldTables(const ZamImage *image, ZamTypeShort shortID) {
         const ZamTupleDefinition *d = zam_tuple_definition(image, declID);
         return (ZamFieldTables){
             .memberCount = d->elementCount,
-            .initializer = d->initializerInstruction,
         };
     }
 
@@ -422,34 +383,6 @@ uint64_t zam_type_method_count(const ZamImage *image, ZamTypeShort shortID) {
     return fieldTables(image, shortID).methodCount;
 }
 
-ZamMethodDefinition zam_type_method(const ZamImage *image, ZamTypeShort shortID,
-                                    uint64_t index) {
-   ZamFieldTables tables = fieldTables(image, shortID);
-    if (index >= tables.methodCount)
-        zam_die(ZAMEXIT_IMAGE, "method %llu of a type holding %llu\n",
-                (unsigned long long)index,
-                (unsigned long long)tables.methodCount);
-
-   ZamMethodDefinition method =
-        tables.methods != NULL
-            ? tables.methods[index]
-            : (ZamMethodDefinition){
-                  .instruction = tables.methodInstructions[index],
-                  .typeListID = tables.methodTypeIDs[index]};
-
-    // Offset zero is where the program begins, so it is never a body and is
-    // what a method declared without one is left naming. Reaching one means an
-    // abstract or interface method was selected against the record that
-    // declared it rather than against the class the instance actually is.
-    if (method.instruction == 0)
-        zam_die(ZAMEXIT_PANIC, "method %llu of type %u has no body\n",
-                (unsigned long long)index, shortID);
-    return method;
-}
-
-uint64_t zam_type_initializer(const ZamImage *image, ZamTypeShort shortID) {
-    return fieldTables(image, shortID).initializer;
-}
 
 ZamTypeID zam_type_generic_arg(const ZamImage *image, ZamTypeShort shortID,
                                uint64_t index) {

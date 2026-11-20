@@ -10,45 +10,10 @@ import (
 	"syscall"
 )
 
-// Prepare builds the image into a binary in a temporary directory, answering
-// its path and a function that removes it. opts.OutputPath is ignored.
-func Prepare(image []byte, nativeNames []string, opts Options) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "zam-run-*")
-	if err != nil {
-		return "", nil, fmt.Errorf("cannot create run directory: %w", err)
-	}
-	remove := func() { _ = os.RemoveAll(dir) }
-
-	if opts.OutputPath, err = ExecutablePath(opts, filepath.Join(dir, "main")); err != nil {
-		remove()
-		return "", nil, err
-	}
-	if err := Build(image, nativeNames, opts); err != nil {
-		remove()
-		return "", nil, err
-	}
-	return opts.OutputPath, remove, nil
-}
-
-// Run builds the image into a temporary binary, runs it with args and the
-// current process's standard streams, and removes it. opts.OutputPath is
-// ignored. The returned code is the program's exit status; the error is
-// non-nil only when the program could not be built or started.
-//
-// Interrupts and terminations are forwarded to the program rather than ending
-// the caller, so the binary is removed however the program exits.
-func Run(image []byte, nativeNames []string, opts Options, args []string) (int, error) {
-	path, remove, err := Prepare(image, nativeNames, opts)
-	if err != nil {
-		return 0, err
-	}
-	defer remove()
-	return runBinary(path, args)
-}
-
-// PrepareNative links a natively compiled program's object into a temporary
-// binary, answering its path and how to remove it.
-func PrepareNative(object []byte, opts Options) (string, func(), error) {
+// Prepare links a compiled program's object into a binary in a temporary
+// directory, answering its path and a function that removes it.
+// opts.OutputPath is ignored.
+func Prepare(object []byte, opts Options) (string, func(), error) {
 	dir, err := os.MkdirTemp("", "zam-run-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("cannot create run directory: %w", err)
@@ -66,9 +31,15 @@ func PrepareNative(object []byte, opts Options) (string, func(), error) {
 	return opts.OutputPath, remove, nil
 }
 
-// RunNative is Run for a natively compiled program's object.
-func RunNative(object []byte, opts Options, args []string) (int, error) {
-	path, remove, err := PrepareNative(object, opts)
+// Run links a compiled program's object into a temporary binary, runs it with
+// args and the current process's standard streams, and removes it. The
+// returned code is the program's exit status; the error is non-nil only when
+// the program could not be linked or started.
+//
+// Interrupts and terminations are forwarded to the program rather than ending
+// the caller, so the binary is removed however the program exits.
+func Run(object []byte, opts Options, args []string) (int, error) {
+	path, remove, err := Prepare(object, opts)
 	if err != nil {
 		return 0, err
 	}
