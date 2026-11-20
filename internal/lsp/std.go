@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	base "github.com/zambozoo/zam/internal/0_base"
+	"github.com/zambozoo/zam/internal/base"
 	"github.com/zambozoo/zam/internal/std"
 )
 

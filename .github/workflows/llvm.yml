@@ -8,7 +8,7 @@ on:
   push:
     branches: [main]
     paths:
-      - release/llvm.sh
+      - build/release/llvm.sh
       - .github/workflows/llvm.yml
 
 env:
@@ -40,7 +40,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: llvm
-          key: llvm-${{ env.LLVM_VERSION }}-${{ matrix.platform }}-${{ hashFiles('release/llvm.sh') }}
+          key: llvm-${{ env.LLVM_VERSION }}-${{ matrix.platform }}-${{ hashFiles('build/release/llvm.sh') }}
 
       - if: steps.cache.outputs.cache-hit != 'true' && runner.os != 'macOS'
         uses: mlugg/setup-zig@v2
@@ -57,7 +57,7 @@ jobs:
         run: choco install ninja -y
 
       - if: steps.cache.outputs.cache-hit != 'true'
-        run: release/llvm.sh "$LLVM_VERSION" "$PWD/llvm"
+        run: build/release/llvm.sh "$LLVM_VERSION" "$PWD/llvm"
 
       - run: tar -czf llvm.tar.gz llvm
 

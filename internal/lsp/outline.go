@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	syntax "github.com/zambozoo/zam/internal/2_syntax"
+	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 )
 
 // declAt returns the declaration in a file whose name is written at a token.

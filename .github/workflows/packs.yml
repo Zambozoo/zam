@@ -26,7 +26,7 @@ jobs:
 
       - uses: docker/build-push-action@v6
         with:
-          context: docker
+          context: build/docker
           tags: zam-linux
           load: true
           cache-from: type=gha,scope=zam-linux-${{ runner.arch }}
@@ -35,9 +35,9 @@ jobs:
       - uses: actions/cache@v5
         with:
           path: bin/packs/${{ matrix.target }}
-          key: pack-${{ matrix.target }}-${{ hashFiles('docker/pack.sh', 'docker/sources.lock', 'docker/Dockerfile') }}
+          key: pack-${{ matrix.target }}-${{ hashFiles('build/docker/pack.sh', 'build/docker/sources.lock', 'build/docker/Dockerfile') }}
 
-      - run: docker run --rm -v "$PWD":/src zam-linux docker/pack.sh ${{ matrix.target }}
+      - run: docker run --rm -v "$PWD":/src zam-linux build/docker/pack.sh ${{ matrix.target }}
 
       - run: tar -czf pack-${{ matrix.target }}.tar.gz -C bin packs/${{ matrix.target }}
 
@@ -62,7 +62,7 @@ jobs:
 
       - run: mkdir -p bin && for pack in pack-*.tar.gz; do tar -xzf "$pack" -C bin; done
 
-      - run: release/packs.sh "$VERSION" dist
+      - run: build/release/packs.sh "$VERSION" dist
 
       - uses: actions/upload-artifact@v6
         with:

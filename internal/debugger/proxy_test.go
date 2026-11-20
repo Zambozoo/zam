@@ -13,8 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	base "github.com/zambozoo/zam/internal/0_base"
-	build "github.com/zambozoo/zam/internal/5_build"
+	"github.com/zambozoo/zam/internal/base"
+	build "github.com/zambozoo/zam/internal/compiler/3_build"
 )
 
 // fakeAdapterVariable names, when set, the file the test binary run as a fake

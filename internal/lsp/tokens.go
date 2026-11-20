@@ -6,7 +6,7 @@ import (
 	"unicode"
 
 	protocol "github.com/tliron/glsp/protocol_3_16"
-	syntax "github.com/zambozoo/zam/internal/2_syntax"
+	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 )
 
 // The semantic token types the server reports, in the order of the legend

@@ -16,8 +16,8 @@ import (
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	glspserver "github.com/tliron/glsp/server"
-	base "github.com/zambozoo/zam/internal/0_base"
-	syntax "github.com/zambozoo/zam/internal/2_syntax"
+	"github.com/zambozoo/zam/internal/base"
+	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 )
 
 // debounce is how long the server waits after the last edit before checking

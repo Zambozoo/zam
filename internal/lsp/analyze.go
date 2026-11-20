@@ -8,10 +8,9 @@ import (
 	"strings"
 
 	protocol "github.com/tliron/glsp/protocol_3_16"
-	base "github.com/zambozoo/zam/internal/0_base"
-	command "github.com/zambozoo/zam/internal/1_command"
-	syntax "github.com/zambozoo/zam/internal/2_syntax"
-	semantic "github.com/zambozoo/zam/internal/3_semantic"
+	"github.com/zambozoo/zam/internal/base"
+	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
+	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 )
 
 // packageProvider fetches a project's dependencies.
@@ -53,7 +52,7 @@ func analyze(files *overlay, packages packageProvider, entry base.Path, threads 
 		}
 	}()
 
-	ast, errs := syntax.NewAST(&command.Command{InputPath: entry, MaxThreads: threads}, files, packages)
+	ast, errs := syntax.NewAST(&base.Command{InputPath: entry, MaxThreads: threads}, files, packages)
 	if ast != nil {
 		broken := map[string]bool{}
 		for _, file := range ast.CodeFiles.All() {

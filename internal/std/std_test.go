@@ -5,10 +5,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	base "github.com/zambozoo/zam/internal/0_base"
-	command "github.com/zambozoo/zam/internal/1_command"
-	syntax "github.com/zambozoo/zam/internal/2_syntax"
-	semantic "github.com/zambozoo/zam/internal/3_semantic"
+	"github.com/zambozoo/zam/internal/base"
+	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
+	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 	"github.com/zambozoo/zam/internal/std"
 )
 
@@ -36,7 +35,7 @@ func TestStdFSHasExpectedFiles(t *testing.T) {
 func TestStdFilesValidate(t *testing.T) {
 	for _, name := range []string{"lang/Err", "lang/StrErr", "lang/Strs", "lang/Objs", "lang/System", "io/local/File", "test/Test", "test/Assert"} {
 		t.Run(name, func(t *testing.T) {
-			cmd := &command.Command{
+			cmd := &base.Command{
 				InputPath:  base.StdPath(name + base.CodeFileExtension),
 				MaxThreads: 1,
 			}

@@ -8,7 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	protocol "github.com/tliron/glsp/protocol_3_16"
-	base "github.com/zambozoo/zam/internal/0_base"
+	"github.com/zambozoo/zam/internal/base"
 	"github.com/zambozoo/zam/internal/std"
 )
 

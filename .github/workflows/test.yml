@@ -86,7 +86,7 @@ jobs:
       - if: runner.os == 'Linux'
         uses: docker/build-push-action@v6
         with:
-          context: docker
+          context: build/docker
           tags: zam-linux
           load: true
           cache-from: type=gha,scope=zam-linux-${{ runner.arch }}
@@ -98,17 +98,17 @@ jobs:
 
       - if: runner.os == 'macOS'
         run: |
-          source release/cgo.sh "$PWD/llvm"
+          source build/release/cgo.sh "$PWD/llvm"
           export ZAM_PACKS=$PWD/packs
           go test -tags zam_static ./... -count=1 -timeout 45m --race
 
       - if: runner.os == 'Windows'
         run: |
-          source release/cgo.sh "$PWD/llvm"
+          source build/release/cgo.sh "$PWD/llvm"
           export ZAM_PACKS=$(cygpath -m "$PWD/packs")
           go test -tags zam_static ./... -count=1 -timeout 45m
 
       # The binary as a release builds it, checked whether or not the tests
       # passed.
       - if: ${{ !cancelled() }}
-        run: release/check.sh --all "$VERSION" "$(release/dist.sh "$PWD/llvm" "$VERSION" ${{ matrix.platform }})" release-packs
+        run: build/release/check.sh --all "$VERSION" "$(build/release/dist.sh "$PWD/llvm" "$VERSION" ${{ matrix.platform }})" release-packs

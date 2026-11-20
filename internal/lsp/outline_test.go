@@ -5,7 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	syntax "github.com/zambozoo/zam/internal/2_syntax"
+	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 )
 
 // outlineOf checks a project and returns how its entry's file outlines the

@@ -1,0 +1,637 @@
+// Package command provides command line interface functionality.
+package base
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"math"
+	"regexp"
+	"runtime"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/spf13/pflag"
+
+	"github.com/zambozoo/zam/internal/base/target"
+)
+
+const (
+	flagOutput     = "o"
+	flagOutputLong = "output"
+	usageOutput    = "output file"
+
+	flagVerbose     = "v"
+	flagVerboseLong = "verbose"
+	usageVerbose    = "verbose"
+
+	flagThreads     = "t"
+	flagThreadsLong = "threads"
+	usageThreads    = "max threads"
+
+	flagGCRatio     = "g"
+	flagGCRatioLong = "gc-ratio"
+	usageGCRatio    = "fraction of the heap that must be in use to trigger a collection"
+
+	flagStackSize     = "s"
+	flagStackSizeLong = "stack-size"
+	usageStackSize    = "initial stack size"
+
+	flagHeapSize     = "m"
+	flagHeapSizeLong = "heap-size"
+	usageHeapSize    = "initial heap size"
+
+	flagNurserySize     = "N"
+	flagNurserySizeLong = "nursery-size"
+	usageNurserySize    = "bytes allocated since the last collection that trigger a minor collection"
+
+	flagMaxHeapSize     = "M"
+	flagMaxHeapSizeLong = "max-heap-size"
+	usageMaxHeapSize    = "most memory the heap may ever hold"
+
+	flagGCMarkersLong = "gc-markers"
+	usageGCMarkers    = "threads that mark during a major collection, 0 for half the processors up to 8"
+
+	flagGCConcurrentLong = "gc-concurrent"
+	usageGCConcurrent    = "mark major collections the heap's growth asks for alongside the program"
+
+	flagGCRemarkGrowthLong = "gc-remark-growth"
+	usageGCRemarkGrowth    = "fraction of its size the heap may grow by while marking alongside the program before the remark is forced"
+
+	flagGCPrecleanPassesLong = "gc-preclean-passes"
+	usageGCPrecleanPasses    = "passes over the cards dirtied while marking alongside the program, before the remark"
+
+	flagGCReturnAgeLong = "gc-return-age"
+	usageGCReturnAge    = "collections a run of free pages waits before it is given back to the system"
+
+	flagOptimize     = "O"
+	flagOptimizeLong = "optimize"
+	usageOptimize    = "how far to optimize the program: 0, 1, 2, 3, or s for size"
+
+	flagTargetLong = "target"
+	usageTarget    = "the platform to compile for, the host when unset: one of "
+
+	flagRunPatternLong = "run"
+	usageRunPattern    = "run only the tests whose names this regular expression matches"
+
+	flagParallelLong = "parallel"
+	usageParallel    = "test files run at once"
+
+	flagAsLong = "as"
+	usageAs    = "package name to add the dependency under, the last element of its repository by default"
+
+	flagNoProject     = "n"
+	flagNoProjectLong = "no-project"
+	usageNoProject    = "ignore project files and compile local files as one project depending only on std"
+
+	defaultOutput    = "out"
+	defaultThreads   = 1
+	defaultVerbose   = false
+	defaultGCRatio   = 0.75
+	defaultStackSize = byteSize(512 << 10)
+	defaultHeapSize  = byteSize(16 << 20)
+	defaultNursery   = byteSize(8 << 20)
+	defaultMaxHeap   = byteSize(64 << 30)
+
+	defaultGCMarkers        = 0
+	defaultGCConcurrent     = true
+	defaultGCRemarkGrowth   = 1.0
+	defaultGCPrecleanPasses = 2
+	defaultGCReturnAge      = 3
+
+	maxGCMarkers        = 64
+	maxGCPrecleanPasses = 16
+)
+
+// Verbs are what the command line can ask the compiler to do.
+const (
+	// VerbBuild compiles a program to a binary or image.
+	VerbBuild Verb = iota
+	// VerbRun compiles a program to a temporary binary and runs it.
+	VerbRun
+	// VerbGet adds dependencies to the nearest project file and fetches every
+	// dependency it has.
+	VerbGet
+	// VerbTest compiles the tests in test files and runs each file's tests in
+	// a process of its own.
+	VerbTest
+	// VerbClean removes every fetched dependency, and the target packs and
+	// runtimes zam keeps in its cache.
+	VerbClean
+	// VerbLSP serves the language server protocol over stdin and stdout.
+	VerbLSP
+	// VerbDebug serves the debug adapter protocol over stdin and stdout.
+	VerbDebug
+	// VerbVersion prints the version of zam.
+	VerbVersion
+)
+
+// verbs are the names of the verbs, in the order usage lists them.
+var verbs = []struct {
+	name  string
+	verb  Verb
+	usage string
+}{
+	{"build", VerbBuild, "compile a program to a binary"},
+	{"run", VerbRun, "compile a program and run it, passing on the arguments after its file"},
+	{"test", VerbTest, "compile and run the tests in test files, passing on the arguments after --"},
+	{"get", VerbGet, "add dependencies to the project file and fetch every dependency"},
+	{"clean", VerbClean, "remove every fetched dependency and cached target pack and runtime"},
+	{"lsp", VerbLSP, "serve the language server protocol over stdin and stdout"},
+	{"debug", VerbDebug, "serve the debug adapter protocol over stdin and stdout"},
+	{"version", VerbVersion, "print the version of zam"},
+}
+
+// byteSizeUnits are the suffixes a size may be written with, longest first so
+// that the search below cannot match the "B" inside "KB" and read the rest as a
+// count.
+var byteSizeUnits = []struct {
+	suffix     string
+	multiplier int
+}{
+	{"GB", 1 << 30},
+	{"MB", 1 << 20},
+	{"KB", 1 << 10},
+	{"B", 1},
+}
+
+type (
+	// byteSize is a count of bytes written on the command line as a number with
+	// an optional unit suffix.
+	byteSize int
+
+	// Verb is what the command line asks the compiler to do.
+	Verb int
+
+	Command struct {
+		// Verb is what the command asks for, and decides which other fields
+		// are set.
+		Verb Verb
+
+		// InputPath is the file to read from
+		// This is the last argument to the command
+		// Required, must not be empty, must be a valid non-directory file path.
+		InputPath Path
+
+		// OutputFile is the file to write to
+		// Uses the -o flag with a default of `out`
+		// Must be a valid file path.
+		OutputPath Path
+
+		// Verbose is the verbose mode
+		// Uses the -v flag with a default of `false`
+		Verbose bool
+
+		// MaxThreads is the maximum number of threads to use
+		// Uses the -t flag with a default of `1`
+		MaxThreads int
+
+		// GCTriggerRatio is how full the heap must be for a collection to be
+		// triggered, as a fraction of its size.
+		// Uses the -g flag with a default of `0.75`, must be within (0, 1].
+		GCTriggerRatio float64
+
+		// InitialStackSize is the number of bytes of stack a thread starts with.
+		// Uses the -s flag with a default of `512KB`
+		InitialStackSize int
+
+		// InitialHeapSize is the number of bytes of heap the program starts with.
+		// Uses the -m flag with a default of `16MB`
+		InitialHeapSize int
+
+		// NurserySize is how many bytes may be allocated since the last
+		// collection before a minor collection is triggered.
+		// Uses the -N flag with a default of `8MB`
+		NurserySize int
+
+		// MaxHeapSize is the most memory the heap may ever hold, and is reserved
+		// up front as address space.
+		// Uses the -M flag with a default of `64GB`
+		MaxHeapSize int
+
+		// GCMarkers is how many threads mark during a major collection, zero
+		// leaving it to the runtime: half the processors, up to 8.
+		// Uses the --gc-markers flag with a default of `0`, must be within [0, 64].
+		GCMarkers int
+
+		// GCConcurrent has a major collection the heap's growth asks for mark
+		// alongside the program.
+		// Uses the --gc-concurrent flag with a default of `true`.
+		GCConcurrent bool
+
+		// GCRemarkGrowth is how far the heap may grow while marking alongside
+		// the program, as a fraction of its size, before the remark is forced.
+		// Uses the --gc-remark-growth flag with a default of `1`, must be positive.
+		GCRemarkGrowth float64
+
+		// GCPrecleanPasses is how many times the cards dirtied while marking
+		// alongside the program are scanned before the remark.
+		// Uses the --gc-preclean-passes flag with a default of `2`, must be within [0, 16].
+		GCPrecleanPasses int
+
+		// GCReturnAge is how many collections a run of free pages waits before
+		// it is given back to the system.
+		// Uses the --gc-return-age flag with a default of `3`, must be positive.
+		GCReturnAge int
+
+		// Optimization is how far the program is optimized.
+		// Uses the -O flag with a default of `2`.
+		Optimization Optimization
+
+		// Target is the platform the program is compiled for, the host when
+		// unset. Uses the --target flag.
+		Target target.Target
+
+		// RunArgs are the arguments after the input file, passed to the program
+		// it runs.
+		RunArgs []string
+
+		// TestTargets are what test was asked to test, as written: test files,
+		// directories, or directories followed by /... for every directory
+		// beneath them.
+		TestTargets []string
+
+		// TestPaths are test files parsed as roots beside InputPath.
+		TestPaths []Path
+
+		// RunPattern picks the tests test runs by name.
+		// Uses the --run flag, and must be a regular expression.
+		RunPattern string
+
+		// Parallel is how many test files test runs at once.
+		// Uses the --parallel flag with a default of the number of processors.
+		Parallel int
+
+		// Refs are the dependencies get adds, each spelled repo@version.
+		Refs []string
+
+		// As is the package name get adds its one dependency under.
+		As string
+
+		// NoProject skips the search for project files, so every local file
+		// belongs to an implicit project that depends only on std. Uses the -n
+		// flag with a default of `false`.
+		NoProject bool
+
+		// WriteProject lets the compiler record the hash of a dependency the
+		// project file lacks one for. It is set for the command line, and not
+		// for tools that only read a project.
+		WriteProject bool
+	}
+
+	fileProvider interface {
+		FileExists(path Path) (bool, error)
+	}
+
+	usageError struct {
+		name  string
+		flags string
+		err   error
+	}
+)
+
+var (
+	_ error       = (*usageError)(nil)
+	_ pflag.Value = (*byteSize)(nil)
+)
+
+// String implements the [pflag.Value] interface, writing the size back with the
+// largest unit that divides it so that what is echoed reads like what was typed.
+func (b byteSize) String() string {
+	for _, unit := range byteSizeUnits {
+		if int(b) >= unit.multiplier && int(b)%unit.multiplier == 0 {
+			return strconv.Itoa(int(b)/unit.multiplier) + unit.suffix
+		}
+	}
+	return strconv.Itoa(int(b)) + "B"
+}
+
+// Set implements the [pflag.Value] interface. A bare number is a count of bytes.
+func (b *byteSize) Set(s string) error {
+	digits := strings.ToUpper(strings.TrimSpace(s))
+	multiplier := 1
+	for _, unit := range byteSizeUnits {
+		if rest, found := strings.CutSuffix(digits, unit.suffix); found {
+			digits, multiplier = rest, unit.multiplier
+			break
+		}
+	}
+
+	count, err := strconv.Atoi(strings.TrimSpace(digits))
+	if err != nil {
+		return fmt.Errorf("invalid size %q", s)
+	}
+	if count <= 0 {
+		return fmt.Errorf("size must be positive: %q", s)
+	}
+	if count > math.MaxInt/multiplier {
+		return fmt.Errorf("size out of range: %q", s)
+	}
+
+	*b = byteSize(count * multiplier)
+	return nil
+}
+
+// Type implements the [pflag.Value] interface.
+func (*byteSize) Type() string {
+	return "size"
+}
+
+// Error implements the [error] interface.
+func (ue *usageError) Error() string {
+	var errorLine string
+	if ue.err != nil {
+		errorLine = fmt.Sprintf("Error: %s\n", ue.err.Error())
+	}
+	return fmt.Sprintf("%sUsage of %s:\n%s", errorLine, ue.name, ue.flags)
+}
+
+// New builds a Command from the given argument list and file provider. The
+// first argument after the program's name is the verb, and the rest are its
+// flags and arguments.
+func NewCommand(argv []string, fileProvider fileProvider) (*Command, error) {
+	if len(argv) == 0 {
+		return nil, errors.New("missing program name")
+	}
+	if len(argv) == 1 {
+		return nil, &usageError{name: argv[0], flags: verbUsages(), err: errors.New("missing command")}
+	}
+
+	name := argv[1]
+	switch name {
+	case "-h", "--help", "help":
+		return nil, &usageError{name: argv[0], flags: verbUsages()}
+	case "--version":
+		name = "version"
+	}
+	for _, v := range verbs {
+		if v.name != name {
+			continue
+		}
+		name := argv[0] + " " + name
+		switch v.verb {
+		case VerbBuild, VerbRun, VerbTest:
+			return newCompile(v.verb, name, argv[2:], fileProvider)
+		case VerbGet:
+			return newGet(name, argv[2:])
+		default:
+			return newBare(v.verb, name, argv[2:])
+		}
+	}
+	return nil, &usageError{name: argv[0], flags: verbUsages(), err: fmt.Errorf("unknown command %q", name)}
+}
+
+// verbUsages lists the verbs and what each does.
+func verbUsages() string {
+	var b strings.Builder
+	for _, v := range verbs {
+		fmt.Fprintf(&b, "  %-7s %s\n", v.name, v.usage)
+	}
+	return b.String()
+}
+
+// newFlagSet returns an empty flag set for the verb called name.
+func newFlagSet(name string) *pflag.FlagSet {
+	fs := pflag.NewFlagSet(name, pflag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.SetInterspersed(false)
+	fs.SortFlags = false
+	return fs
+}
+
+// parse parses args into fs, answering a failure or a request for help with
+// the verb's usage.
+func parse(fs *pflag.FlagSet, name string, args []string) error {
+	if err := fs.Parse(args); err != nil {
+		usageErr := &usageError{name: name, flags: fs.FlagUsages()}
+		if !errors.Is(err, pflag.ErrHelp) {
+			usageErr.err = err
+		}
+		return usageErr
+	}
+	return nil
+}
+
+// newGet builds the command for get, whose arguments are the dependencies to
+// add.
+func newGet(name string, args []string) (*Command, error) {
+	fs := newFlagSet(name)
+	var as string
+	fs.StringVar(&as, flagAsLong, "", usageAs)
+	if err := parse(fs, name, args); err != nil {
+		return nil, err
+	}
+
+	refs := fs.Args()
+	if as != "" && len(refs) != 1 {
+		return nil, fmt.Errorf("--%s names one dependency, but %d were given", flagAsLong, len(refs))
+	}
+	return &Command{Verb: VerbGet, Refs: refs, As: as, WriteProject: true}, nil
+}
+
+// newBare builds the command for a verb that takes no flags or arguments.
+func newBare(verb Verb, name string, args []string) (*Command, error) {
+	fs := newFlagSet(name)
+	if err := parse(fs, name, args); err != nil {
+		return nil, err
+	}
+	if len(fs.Args()) > 0 {
+		return nil, fmt.Errorf("too many arguments: %v", fs.Args())
+	}
+	return &Command{Verb: verb}, nil
+}
+
+// Optimization is how far native compilation optimizes a program.
+type Optimization string
+
+const (
+	// OptimizeNone compiles without optimizing.
+	OptimizeNone Optimization = "0"
+	// OptimizeLess optimizes what is quick to.
+	OptimizeLess Optimization = "1"
+	// OptimizeDefault optimizes as release builds do.
+	OptimizeDefault Optimization = "2"
+	// OptimizeAggressive optimizes as far as it can, at the cost of size.
+	OptimizeAggressive Optimization = "3"
+	// OptimizeSize optimizes as OptimizeDefault does, favoring size.
+	OptimizeSize Optimization = "s"
+)
+
+// optimizations are the optimizations -O takes.
+var optimizations = []Optimization{OptimizeNone, OptimizeLess, OptimizeDefault, OptimizeAggressive, OptimizeSize}
+
+// newCompile builds the command for build or run.
+func newCompile(verb Verb, name string, args []string, fileProvider fileProvider) (*Command, error) {
+	fs := newFlagSet(name)
+
+	var out string
+	var verbose bool
+	var threads int
+	var gcRatio float64
+	var targetName string
+	var optimization string
+	var noProject bool
+	var gcMarkers, gcPrecleanPasses, gcReturnAge int
+	var gcConcurrent bool
+	var gcRemarkGrowth float64
+	var runPattern string
+	var parallel int
+	stackSize, heapSize := defaultStackSize, defaultHeapSize
+	nurserySize, maxHeapSize := defaultNursery, defaultMaxHeap
+
+	if verb == VerbBuild {
+		fs.StringVarP(&out, flagOutputLong, flagOutput, defaultOutput, usageOutput)
+	}
+	fs.BoolVarP(&verbose, flagVerboseLong, flagVerbose, defaultVerbose, usageVerbose)
+	fs.IntVarP(&threads, flagThreadsLong, flagThreads, defaultThreads, usageThreads)
+	fs.Float64VarP(&gcRatio, flagGCRatioLong, flagGCRatio, defaultGCRatio, usageGCRatio)
+	fs.VarP(&stackSize, flagStackSizeLong, flagStackSize, usageStackSize)
+	fs.VarP(&heapSize, flagHeapSizeLong, flagHeapSize, usageHeapSize)
+	fs.VarP(&nurserySize, flagNurserySizeLong, flagNurserySize, usageNurserySize)
+	fs.VarP(&maxHeapSize, flagMaxHeapSizeLong, flagMaxHeapSize, usageMaxHeapSize)
+	fs.IntVar(&gcMarkers, flagGCMarkersLong, defaultGCMarkers, usageGCMarkers)
+	fs.BoolVar(&gcConcurrent, flagGCConcurrentLong, defaultGCConcurrent, usageGCConcurrent)
+	fs.Float64Var(&gcRemarkGrowth, flagGCRemarkGrowthLong, defaultGCRemarkGrowth, usageGCRemarkGrowth)
+	fs.IntVar(&gcPrecleanPasses, flagGCPrecleanPassesLong, defaultGCPrecleanPasses, usageGCPrecleanPasses)
+	fs.IntVar(&gcReturnAge, flagGCReturnAgeLong, defaultGCReturnAge, usageGCReturnAge)
+	fs.StringVarP(&optimization, flagOptimizeLong, flagOptimize, string(OptimizeDefault), usageOptimize)
+	if verb == VerbBuild {
+		fs.StringVar(&targetName, flagTargetLong, "", usageTarget+strings.Join(target.Names(), ", "))
+	}
+	fs.BoolVarP(&noProject, flagNoProjectLong, flagNoProject, false, usageNoProject)
+	if verb == VerbTest {
+		fs.StringVar(&runPattern, flagRunPatternLong, "", usageRunPattern)
+		fs.IntVar(&parallel, flagParallelLong, runtime.NumCPU(), usageParallel)
+	}
+
+	if err := parse(fs, name, args); err != nil {
+		return nil, err
+	}
+
+	args = fs.Args()
+	var inputPath Path
+	var runArgs, testTargets []string
+	if verb == VerbTest {
+		testTargets = args
+		if dash := fs.ArgsLenAtDash(); dash >= 0 {
+			testTargets, runArgs = args[:dash], args[dash:]
+		} else if dash := slices.Index(args, "--"); dash >= 0 {
+			testTargets, runArgs = args[:dash], args[dash+1:]
+		}
+		if len(testTargets) == 0 {
+			testTargets = []string{"."}
+		}
+		if _, err := regexp.Compile(runPattern); err != nil {
+			return nil, fmt.Errorf("invalid --%s pattern: %w", flagRunPatternLong, err)
+		}
+		if parallel < 1 {
+			return nil, fmt.Errorf("parallel must be positive: %d", parallel)
+		}
+	} else {
+		switch {
+		case len(args) == 0:
+			return nil, errors.New("missing input file argument")
+		case len(args) > 1 && verb == VerbBuild:
+			return nil, fmt.Errorf("too many arguments: %v", args)
+		}
+
+		// The entry file is named on the command line but is otherwise an
+		// ordinary file, and every other path reaches the parser normalized.
+		// Taken as typed, the program would depend on how the compiler was
+		// invoked, and a file importing the entry by another spelling would
+		// parse it a second time under a second name.
+		var err error
+		if inputPath, err = ParsePath(args[0]); err != nil {
+			return nil, err
+		}
+
+		if verb == VerbRun {
+			runArgs = args[1:]
+		} else if _, err := fileProvider.FileExists(Path(out)); err != nil {
+			return nil, err
+		}
+	}
+
+	var platform target.Target
+	if targetName != "" {
+		var err error
+		if platform, err = target.Parse(targetName); err != nil {
+			return nil, err
+		}
+	}
+
+	if threads < 1 {
+		threads = defaultThreads
+	}
+
+	if !slices.Contains(optimizations, Optimization(optimization)) {
+		return nil, fmt.Errorf("optimization must be one of 0, 1, 2, 3 or s: %s", optimization)
+	}
+
+	// The fraction is of a heap that is already there, so past one names a
+	// threshold the heap can never reach, and at or below zero asks for a
+	// collection before anything has been allocated.
+	if gcRatio <= 0 || gcRatio > 1 {
+		return nil, fmt.Errorf("gc trigger ratio must be within (0, 1]: %g", gcRatio)
+	}
+
+	if gcMarkers < 0 || gcMarkers > maxGCMarkers {
+		return nil, fmt.Errorf("gc markers must be within [0, %d]: %d", maxGCMarkers, gcMarkers)
+	}
+	if gcRemarkGrowth <= 0 {
+		return nil, fmt.Errorf("gc remark growth must be positive: %g", gcRemarkGrowth)
+	}
+	if gcPrecleanPasses < 0 || gcPrecleanPasses > maxGCPrecleanPasses {
+		return nil, fmt.Errorf("gc preclean passes must be within [0, %d]: %d", maxGCPrecleanPasses, gcPrecleanPasses)
+	}
+	if gcReturnAge < 1 {
+		return nil, fmt.Errorf("gc return age must be positive: %d", gcReturnAge)
+	}
+
+	if heapSize > maxHeapSize || nurserySize > maxHeapSize {
+		return nil, fmt.Errorf("heap size %s and nursery size %s must not exceed max heap size %s",
+			heapSize, nurserySize, maxHeapSize)
+	}
+
+	if verb != VerbTest {
+		if exists, err := fileProvider.FileExists(inputPath); err != nil {
+			return nil, err
+		} else if !exists {
+			return nil, fmt.Errorf("input file not found: %s", inputPath)
+		}
+	}
+
+	return &Command{
+		Verb:             verb,
+		InputPath:        inputPath,
+		OutputPath:       Path(out),
+		Verbose:          verbose,
+		MaxThreads:       threads,
+		GCTriggerRatio:   gcRatio,
+		InitialStackSize: int(stackSize),
+		InitialHeapSize:  int(heapSize),
+		NurserySize:      int(nurserySize),
+		MaxHeapSize:      int(maxHeapSize),
+		GCMarkers:        gcMarkers,
+		GCConcurrent:     gcConcurrent,
+		GCRemarkGrowth:   gcRemarkGrowth,
+		GCPrecleanPasses: gcPrecleanPasses,
+		GCReturnAge:      gcReturnAge,
+		Optimization:     Optimization(optimization),
+		Target:           platform,
+		RunArgs:          runArgs,
+		TestTargets:      testTargets,
+		RunPattern:       runPattern,
+		Parallel:         parallel,
+		NoProject:        noProject,
+		WriteProject:     true,
+	}, nil
+}
+
+// String implements the [fmt.Stringer] interface.
+func (c *Command) String() string {
+	json, _ := json.Marshal(c) //nolint:errcheck
+	return string(json)
+}

@@ -13,13 +13,12 @@ import (
 	"strings"
 	"sync"
 
-	base "github.com/zambozoo/zam/internal/0_base"
-	command "github.com/zambozoo/zam/internal/1_command"
-	syntax "github.com/zambozoo/zam/internal/2_syntax"
-	semantic "github.com/zambozoo/zam/internal/3_semantic"
-	codegen "github.com/zambozoo/zam/internal/4_codegen"
-	build "github.com/zambozoo/zam/internal/5_build"
-	"github.com/zambozoo/zam/internal/testrunner"
+	"github.com/zambozoo/zam/internal/base"
+	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
+	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
+	codegen "github.com/zambozoo/zam/internal/compiler/2_codegen"
+	build "github.com/zambozoo/zam/internal/compiler/3_build"
+	"github.com/zambozoo/zam/internal/test"
 )
 
 // adapterVariable names the lldb-dap to debug through, in place of the one
@@ -302,18 +301,18 @@ func (p *proxy) compile(args launchArguments) (*codegen.Object, *syntax.Project,
 		if len(args.Args) > 0 {
 			argv = append(append(argv, "--"), args.Args...)
 		}
-		cmd, err := command.New(argv, p.files)
+		cmd, err := base.NewCommand(argv, p.files)
 		if err != nil {
 			return nil, nil, nil, "", err
 		}
-		object, project, _, mainName, err := testrunner.Object(cmd, p.files, p.packages, debug)
+		object, project, _, mainName, err := test.Object(cmd, p.files, p.packages, debug)
 		if err != nil {
 			return nil, nil, nil, "", err
 		}
 		return object, project, append([]string{"0"}, cmd.RunArgs...), mainName, nil
 	}
 
-	cmd, err := command.New(append([]string{"zam", "run", args.Program}, args.Args...), p.files)
+	cmd, err := base.NewCommand(append([]string{"zam", "run", args.Program}, args.Args...), p.files)
 	if err != nil {
 		return nil, nil, nil, "", err
 	}

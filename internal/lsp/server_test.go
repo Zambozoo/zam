@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
-	base "github.com/zambozoo/zam/internal/0_base"
+	"github.com/zambozoo/zam/internal/base"
 )
 
 // client drives a server through its handler the way the transport would, and

@@ -34,4 +34,4 @@ task build
 
 The tests link against the target packs in `bin/packs`, which `task packs` builds, or those `$ZAM_PACKS` names.
 
-The Linux image in `docker/` has all of these. `task linux:image` builds it, and `task test:linux` runs the tests in it.
+The Linux image in `build/docker/` has all of these. `task linux:image` builds it, and `task test:linux` runs the tests in it.

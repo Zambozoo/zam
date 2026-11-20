@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	base "github.com/zambozoo/zam/internal/0_base"
+	"github.com/zambozoo/zam/internal/base"
 )
 
 // overlay is a file provider that answers for open documents from the editor's

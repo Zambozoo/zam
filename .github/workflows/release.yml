@@ -93,7 +93,7 @@ jobs:
 
       - run: tar -xzf llvm.tar.gz
 
-      - run: release/dist.sh "$PWD/llvm" "$VERSION" ${{ matrix.platform }}
+      - run: build/release/dist.sh "$PWD/llvm" "$VERSION" ${{ matrix.platform }}
 
       - uses: actions/upload-artifact@v6
         with:
@@ -131,7 +131,7 @@ jobs:
           name: release-packs
           path: release-packs
 
-      - run: release/check.sh "$VERSION" dist/zam-"$VERSION"-${{ matrix.platform }}.* release-packs
+      - run: build/release/check.sh "$VERSION" dist/zam-"$VERSION"-${{ matrix.platform }}.* release-packs
 
   # Tags the commit built as it publishes, so a failed build leaves no tag.
   release:
@@ -180,7 +180,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
 
-      - run: release/taps.sh "$VERSION" checksums.txt tap/Formula/zam.rb bucket/bucket/zam.json
+      - run: build/release/taps.sh "$VERSION" checksums.txt tap/Formula/zam.rb bucket/bucket/zam.json
 
       - run: |
           for repo in tap bucket; do

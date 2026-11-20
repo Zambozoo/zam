@@ -5,8 +5,8 @@ import (
 
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
-	base "github.com/zambozoo/zam/internal/0_base"
-	"github.com/zambozoo/zam/internal/testrunner"
+	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/test"
 )
 
 const (
@@ -32,7 +32,7 @@ func (s *server) codeLens(_ *glsp.Context, params *protocol.CodeLensParams) ([]p
 		return nil, nil
 	}
 
-	files, err := testrunner.Discover(ast, []base.Path{doc.path}, everyTest)
+	files, err := test.Discover(ast, []base.Path{doc.path}, everyTest)
 	if err != nil || len(files) == 0 {
 		return nil, nil
 	}

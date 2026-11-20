@@ -7,8 +7,8 @@ import (
 
 	"github.com/tliron/glsp"
 	protocol "github.com/tliron/glsp/protocol_3_16"
-	base "github.com/zambozoo/zam/internal/0_base"
-	syntax "github.com/zambozoo/zam/internal/2_syntax"
+	"github.com/zambozoo/zam/internal/base"
+	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 )
 
 // referenceAt returns the reference written under an editor position in an open

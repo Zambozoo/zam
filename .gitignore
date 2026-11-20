@@ -3,7 +3,7 @@
 .scratch
 .vscode
 out
-internal/5_build/runtime/build
+internal/compiler/3_build/runtime/build
 bin
 vendor
 zam

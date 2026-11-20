@@ -8,36 +8,36 @@ mockname: "{{lower .Mock}}_{{camelcase .InterfaceName}}"
 filename: "{{lower .Mock}}_{{lower .InterfaceName}}_test.go"
 
 packages:
-  github.com/zambozoo/zam/internal/1_command:
+  github.com/zambozoo/zam/internal/base:
     interfaces:
       fileProvider:
         config:
-          dir: "internal/1_command"
+          dir: "internal/base"
       logger:
         config:
-          dir: "internal/1_command"
-  github.com/zambozoo/zam/internal/2_syntax:
+          dir: "internal/base"
+  github.com/zambozoo/zam/internal/compiler/0_syntax:
     interfaces:
       fileProvider:
         config:
-          dir: "internal/2_syntax"
+          dir: "internal/compiler/0_syntax"
       runeReader:
         config:
-          dir: "internal/2_syntax"
+          dir: "internal/compiler/0_syntax"
       packageProvider:
         config:
-          dir: "internal/2_syntax"
+          dir: "internal/compiler/0_syntax"
       syntaxParser:
         config:
-          dir: "internal/2_syntax"
+          dir: "internal/compiler/0_syntax"
       lexer:
         config:
-          dir: "internal/2_syntax"
+          dir: "internal/compiler/0_syntax"
   io:
     interfaces:
       ReadCloser:
         config:
-          dir: "internal/2_syntax"
+          dir: "internal/compiler/0_syntax"
           outpkg: syntax
           inpackage: false
-  github.com/zambozoo/zam/internal/3_semantic:
+  github.com/zambozoo/zam/internal/compiler/1_semantic:
