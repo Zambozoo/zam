@@ -1,5 +1,5 @@
 # Zam Programming Language
-![Zam Logo](assets/logo_banner.png)
+![Zam Logo](docs/assets/logo_banner.png)
 Zam is an imperative, multi-pass language featuring imperative interfaces, advanced generics, user-defined GC hooks, and inline struct-hack types.
 
 ```cpp
