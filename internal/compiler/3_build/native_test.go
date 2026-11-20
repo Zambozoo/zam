@@ -21,6 +21,7 @@ import (
 
 	"github.com/zambozoo/zam/internal/base"
 	"github.com/zambozoo/zam/internal/base/target"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 	codegen "github.com/zambozoo/zam/internal/compiler/2_codegen"
@@ -71,7 +72,7 @@ func generateObjectWith(t *testing.T, source string, opts codegen.ObjectOptions)
 	require.NoError(t, os.WriteFile(entry, []byte(source), 0o600))
 
 	files := &base.FileProvider{}
-	cmd, err := base.NewCommand([]string{"zam", "build", entry}, files)
+	cmd, err := cli.New([]string{"zam", "build", entry}, files)
 	require.NoError(t, err)
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
@@ -1401,7 +1402,7 @@ void ADD(ZamThread *thread) {
 `), 0o600))
 
 	files := &base.FileProvider{}
-	cmd, err := base.NewCommand([]string{"zam", "build", entry}, files)
+	cmd, err := cli.New([]string{"zam", "build", entry}, files)
 	require.NoError(t, err)
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)

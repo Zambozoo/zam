@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 )
@@ -42,7 +43,7 @@ func compileTypes(t *testing.T, body string) (
 	require.NoError(t, os.WriteFile(entry, []byte(body), 0o600))
 
 	ast, errs := syntax.NewAST(
-		&base.Command{InputPath: base.Path(entry), MaxThreads: 2},
+		&cli.Command{InputPath: base.Path(entry), MaxThreads: 2},
 		&base.FileProvider{}, nil)
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))

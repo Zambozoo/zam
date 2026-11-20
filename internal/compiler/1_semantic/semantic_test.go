@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 )
 
@@ -48,7 +49,7 @@ func parse(t *testing.T, dir string) (*syntax.AST, []error) {
 	entry, err := base.ParsePath(filepath.Join(caseDir, "Main.zam"))
 	require.NoError(t, err)
 
-	return syntax.NewAST(&base.Command{InputPath: entry, MaxThreads: 4}, &base.FileProvider{}, nil)
+	return syntax.NewAST(&cli.Command{InputPath: entry, MaxThreads: 4}, &base.FileProvider{}, nil)
 }
 
 // validate answers what validating the program of the case dir found. The

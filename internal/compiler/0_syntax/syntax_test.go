@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 )
 
 //go:embed testdata
@@ -153,7 +154,7 @@ func newPackages(t *testing.T, root base.Path) *mock_PackageProvider {
 }
 
 // parse parses the program whose entry is dir's Main.zam under root.
-func parse(t *testing.T, cmd *base.Command, root base.Path, dir string, files fileProvider, packages packageProvider) (*AST, []error) {
+func parse(t *testing.T, cmd *cli.Command, root base.Path, dir string, files fileProvider, packages packageProvider) (*AST, []error) {
 	t.Helper()
 	cmd.InputPath = base.Path(filepath.Join(string(root), filepath.FromSlash(dir), entryName))
 	if cmd.MaxThreads == 0 {
@@ -169,7 +170,7 @@ func TestNewASTValid(t *testing.T) {
 	for _, name := range cases(t, "valid") {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			ast, errs := parse(t, &base.Command{}, root, path.Join("valid", name), newFiles(t, root, fsys, nil), newPackages(t, root))
+			ast, errs := parse(t, &cli.Command{}, root, path.Join("valid", name), newFiles(t, root, fsys, nil), newPackages(t, root))
 			require.Empty(t, errs)
 			assert.NotNil(t, ast)
 		})
@@ -183,7 +184,7 @@ func TestNewASTInvalid(t *testing.T) {
 	for _, name := range cases(t, "invalid") {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			_, errs := parse(t, &base.Command{}, root, path.Join("invalid", name), newFiles(t, root, fsys, nil), newPackages(t, root))
+			_, errs := parse(t, &cli.Command{}, root, path.Join("invalid", name), newFiles(t, root, fsys, nil), newPackages(t, root))
 			assert.NotEmpty(t, errs)
 		})
 	}
@@ -194,17 +195,17 @@ func TestNewASTCommand(t *testing.T) {
 	t.Parallel()
 	root, fsys := testdataRoot(t)
 	for name, tc := range map[string]struct {
-		cmd     *base.Command
+		cmd     *cli.Command
 		dir     string
 		invalid bool
 	}{
-		"without a project file": {cmd: &base.Command{NoProject: true}, dir: "valid/long"},
+		"without a project file": {cmd: &cli.Command{NoProject: true}, dir: "valid/long"},
 		"with test files": {
-			cmd: &base.Command{TestPaths: []base.Path{base.Path(filepath.Join(string(root), "tests", "Case.test.zam"))}},
+			cmd: &cli.Command{TestPaths: []base.Path{base.Path(filepath.Join(string(root), "tests", "Case.test.zam"))}},
 			dir: "tests",
 		},
-		"one thread":                       {cmd: &base.Command{MaxThreads: 1}, dir: "valid/project"},
-		"recording hashes it cannot write": {cmd: &base.Command{WriteProject: true}, dir: "unhashed", invalid: true},
+		"one thread":                       {cmd: &cli.Command{MaxThreads: 1}, dir: "valid/project"},
+		"recording hashes it cannot write": {cmd: &cli.Command{WriteProject: true}, dir: "unhashed", invalid: true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -228,7 +229,7 @@ func TestNewASTWritesHashes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, os.CopyFS(dir, fsys))
 
-	_, errs := parse(t, &base.Command{WriteProject: true}, root, "unhashed",
+	_, errs := parse(t, &cli.Command{WriteProject: true}, root, "unhashed",
 		newFiles(t, root, os.DirFS(dir), nil), newPackages(t, root))
 	assert.Empty(t, errs)
 }
@@ -308,7 +309,7 @@ func TestNewASTProviders(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			files := newFiles(t, root, fsys, func(files *mock_FileProvider) { tc.override(t, files) })
-			_, errs := parse(t, &base.Command{}, root, "valid/project", files, newPackages(t, root))
+			_, errs := parse(t, &cli.Command{}, root, "valid/project", files, newPackages(t, root))
 			if tc.valid {
 				assert.Empty(t, errs)
 			} else {
@@ -501,7 +502,7 @@ func TestNewASTUnreadable(t *testing.T) {
 				"zam.yml": {Data: []byte("name: unreadable\nversion: 0.0.0\n")},
 				entryName: {Data: []byte(source)},
 			}
-			_, errs := parse(t, &base.Command{}, root, ".", newFiles(t, root, fsys, nil), newPackages(t, root))
+			_, errs := parse(t, &cli.Command{}, root, ".", newFiles(t, root, fsys, nil), newPackages(t, root))
 			assert.NotEmpty(t, errs)
 		})
 	}

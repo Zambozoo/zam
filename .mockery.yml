@@ -8,14 +8,14 @@ mockname: "{{lower .Mock}}_{{camelcase .InterfaceName}}"
 filename: "{{lower .Mock}}_{{lower .InterfaceName}}_test.go"
 
 packages:
-  github.com/zambozoo/zam/internal/base:
+  github.com/zambozoo/zam/internal/cli:
     interfaces:
       fileProvider:
         config:
-          dir: "internal/base"
+          dir: "internal/cli"
       logger:
         config:
-          dir: "internal/base"
+          dir: "internal/cli"
   github.com/zambozoo/zam/internal/compiler/0_syntax:
     interfaces:
       fileProvider:

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 	codegen "github.com/zambozoo/zam/internal/compiler/2_codegen"
@@ -43,7 +44,7 @@ func compileWithNativesAndFlags(t *testing.T, flags []string, source string, nat
 
 	files := &base.FileProvider{}
 	argv := append(append([]string{"zam", "build"}, flags...), "-o", out, entry)
-	cmd, err := base.NewCommand(argv, files)
+	cmd, err := cli.New(argv, files)
 	require.NoError(t, err)
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)

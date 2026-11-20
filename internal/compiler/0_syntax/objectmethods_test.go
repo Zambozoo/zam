@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 )
 
 // TestObjectMethodSlots holds the slot constants to the one thing that actually
@@ -30,7 +31,7 @@ func TestObjectMethodSlots(t *testing.T) {
 			"zam.yml": {Data: []byte("name: object\nversion: 0.0.0\n")},
 			entryName: {Data: []byte("import std(\"lang/Obj.zam\");\n\npublic namespace Main {\n}\n")},
 		}
-		ast, errs := parse(t, &base.Command{}, root, ".", newFiles(t, root, fsys, nil), newPackages(t, root))
+		ast, errs := parse(t, &cli.Command{}, root, ".", newFiles(t, root, fsys, nil), newPackages(t, root))
 		require.Empty(t, errs)
 		object, at := ast.CodeFiles.Get(base.StdPath("lang/Obj" + base.CodeFileExtension))
 		require.GreaterOrEqual(t, at, 0)

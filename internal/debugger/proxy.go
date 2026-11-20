@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 	codegen "github.com/zambozoo/zam/internal/compiler/2_codegen"
@@ -301,7 +302,7 @@ func (p *proxy) compile(args launchArguments) (*codegen.Object, *syntax.Project,
 		if len(args.Args) > 0 {
 			argv = append(append(argv, "--"), args.Args...)
 		}
-		cmd, err := base.NewCommand(argv, p.files)
+		cmd, err := cli.New(argv, p.files)
 		if err != nil {
 			return nil, nil, nil, "", err
 		}
@@ -312,7 +313,7 @@ func (p *proxy) compile(args launchArguments) (*codegen.Object, *syntax.Project,
 		return object, project, append([]string{"0"}, cmd.RunArgs...), mainName, nil
 	}
 
-	cmd, err := base.NewCommand(append([]string{"zam", "run", args.Program}, args.Args...), p.files)
+	cmd, err := cli.New(append([]string{"zam", "run", args.Program}, args.Args...), p.files)
 	if err != nil {
 		return nil, nil, nil, "", err
 	}

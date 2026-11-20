@@ -8,6 +8,7 @@ import (
 	"math"
 
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 )
 
@@ -650,7 +651,7 @@ func validateMainMethod(ast *syntax.AST) error {
 	return nil
 }
 
-func GenerateCode(cmd *base.Command, ast *syntax.AST) (*Result, error) {
+func GenerateCode(cmd *cli.Command, ast *syntax.AST) (*Result, error) {
 	if err := validateMainMethod(ast); err != nil {
 		return nil, err
 	}

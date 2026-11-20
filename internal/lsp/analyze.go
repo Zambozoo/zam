@@ -9,6 +9,7 @@ import (
 
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 )
@@ -52,7 +53,7 @@ func analyze(files *overlay, packages packageProvider, entry base.Path, threads 
 		}
 	}()
 
-	ast, errs := syntax.NewAST(&base.Command{InputPath: entry, MaxThreads: threads}, files, packages)
+	ast, errs := syntax.NewAST(&cli.Command{InputPath: entry, MaxThreads: threads}, files, packages)
 	if ast != nil {
 		broken := map[string]bool{}
 		for _, file := range ast.CodeFiles.All() {

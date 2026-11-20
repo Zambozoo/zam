@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 )
@@ -26,7 +27,7 @@ func gcImage(t *testing.T, source string) string {
 	require.NoError(t, os.WriteFile(entry, []byte(source), 0o600))
 
 	files := &base.FileProvider{}
-	cmd, err := base.NewCommand([]string{"zam", "build", "-m", "16KB", "-N", "4KB", "--gc-concurrent=true", entry}, files)
+	cmd, err := cli.New([]string{"zam", "build", "-m", "16KB", "-N", "4KB", "--gc-concurrent=true", entry}, files)
 	require.NoError(t, err)
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)

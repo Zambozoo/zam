@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 )
 
 type (
@@ -86,7 +87,7 @@ type (
 	// projectParser is the parser for an entire project.
 	projectParser struct {
 		// command is the parsed command line arguments
-		command *base.Command
+		command *cli.Command
 		// fileProvider provides access to the file system
 		fileProvider fileProvider
 		// packageProvider fetches dependencies
@@ -421,7 +422,7 @@ func (p *syntaxParser) Imports() **ImportScope {
 	return &p.currentImports
 }
 
-func newProjectParser(cmd *base.Command, fileProvider fileProvider, packageProvider packageProvider) *projectParser {
+func newProjectParser(cmd *cli.Command, fileProvider fileProvider, packageProvider packageProvider) *projectParser {
 	p := &projectParser{
 		command:         cmd,
 		fileProvider:    fileProvider,
@@ -648,7 +649,7 @@ func (p *projectParser) Wait() {
 // file is in it, but a file with [File.HasSyntaxErrors] is missing what failed
 // to parse, so such an AST is only fit to be checked, never compiled. A file
 // that could not be parsed at all leaves no AST to hand back.
-func NewAST(cmd *base.Command, fileProvider fileProvider, packageProvider packageProvider) (*AST, []error) {
+func NewAST(cmd *cli.Command, fileProvider fileProvider, packageProvider packageProvider) (*AST, []error) {
 	parser := newProjectParser(cmd, fileProvider, packageProvider)
 	parser.Run()
 	parser.Wait()

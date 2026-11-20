@@ -1,10 +1,11 @@
 // Package command provides command line interface functionality.
-package base
+package cli
 
 import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/zambozoo/zam/internal/base"
 	"io"
 	"math"
 	"regexp"
@@ -173,12 +174,12 @@ type (
 		// InputPath is the file to read from
 		// This is the last argument to the command
 		// Required, must not be empty, must be a valid non-directory file path.
-		InputPath Path
+		InputPath base.Path
 
 		// OutputFile is the file to write to
 		// Uses the -o flag with a default of `out`
 		// Must be a valid file path.
-		OutputPath Path
+		OutputPath base.Path
 
 		// Verbose is the verbose mode
 		// Uses the -v flag with a default of `false`
@@ -254,7 +255,7 @@ type (
 		TestTargets []string
 
 		// TestPaths are test files parsed as roots beside InputPath.
-		TestPaths []Path
+		TestPaths []base.Path
 
 		// RunPattern picks the tests test runs by name.
 		// Uses the --run flag, and must be a regular expression.
@@ -282,7 +283,7 @@ type (
 	}
 
 	fileProvider interface {
-		FileExists(path Path) (bool, error)
+		FileExists(path base.Path) (bool, error)
 	}
 
 	usageError struct {
@@ -351,7 +352,7 @@ func (ue *usageError) Error() string {
 // New builds a Command from the given argument list and file provider. The
 // first argument after the program's name is the verb, and the rest are its
 // flags and arguments.
-func NewCommand(argv []string, fileProvider fileProvider) (*Command, error) {
+func New(argv []string, fileProvider fileProvider) (*Command, error) {
 	if len(argv) == 0 {
 		return nil, errors.New("missing program name")
 	}
@@ -511,7 +512,7 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 	}
 
 	args = fs.Args()
-	var inputPath Path
+	var inputPath base.Path
 	var runArgs, testTargets []string
 	if verb == VerbTest {
 		testTargets = args
@@ -543,13 +544,13 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 		// invoked, and a file importing the entry by another spelling would
 		// parse it a second time under a second name.
 		var err error
-		if inputPath, err = ParsePath(args[0]); err != nil {
+		if inputPath, err = base.ParsePath(args[0]); err != nil {
 			return nil, err
 		}
 
 		if verb == VerbRun {
 			runArgs = args[1:]
-		} else if _, err := fileProvider.FileExists(Path(out)); err != nil {
+		} else if _, err := fileProvider.FileExists(base.Path(out)); err != nil {
 			return nil, err
 		}
 	}
@@ -606,7 +607,7 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 	return &Command{
 		Verb:             verb,
 		InputPath:        inputPath,
-		OutputPath:       Path(out),
+		OutputPath:       base.Path(out),
 		Verbose:          verbose,
 		MaxThreads:       threads,
 		GCTriggerRatio:   gcRatio,

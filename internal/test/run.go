@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 	codegen "github.com/zambozoo/zam/internal/compiler/2_codegen"
@@ -41,7 +42,7 @@ type result struct {
 // the tests of each file in a process of its own, and writes what each wrote
 // and how it went to out, a file at a time. It reports whether every test
 // passed.
-func Run(cmd *base.Command, files *base.FileProvider, packages packageProvider, out io.Writer) (bool, error) {
+func Run(cmd *cli.Command, files *base.FileProvider, packages packageProvider, out io.Writer) (bool, error) {
 	runner, tests, err := prepare(cmd, files, packages)
 	switch {
 	case errors.Is(err, ErrNoTestFiles):
@@ -79,7 +80,7 @@ func Run(cmd *base.Command, files *base.FileProvider, packages packageProvider, 
 // program is the validated runner of a set of tests, and the command it is
 // compiled under.
 type program struct {
-	cmd *base.Command
+	cmd *cli.Command
 	ast *syntax.AST
 }
 
@@ -96,7 +97,7 @@ var (
 // file whose tests it runs, and whose other arguments it passes on to each
 // test. It answers the program, its project, the files and the name its main is
 // compiled as.
-func Object(cmd *base.Command, files *base.FileProvider, packages packageProvider, opts codegen.ObjectOptions) (*codegen.Object, *syntax.Project, []File, string, error) {
+func Object(cmd *cli.Command, files *base.FileProvider, packages packageProvider, opts codegen.ObjectOptions) (*codegen.Object, *syntax.Project, []File, string, error) {
 	runner, tests, err := prepare(cmd, files, packages)
 	if err != nil {
 		return nil, nil, nil, "", err
@@ -110,7 +111,7 @@ func Object(cmd *base.Command, files *base.FileProvider, packages packageProvide
 
 // prepare writes the runner of the tests in the test files cmd targets and
 // validates it, answering it and the files.
-func prepare(cmd *base.Command, files *base.FileProvider, packages packageProvider) (program, []File, error) {
+func prepare(cmd *cli.Command, files *base.FileProvider, packages packageProvider) (program, []File, error) {
 	paths, err := Resolve(files, cmd.TestTargets)
 	if err != nil {
 		return program{}, nil, err
@@ -135,7 +136,7 @@ func prepare(cmd *base.Command, files *base.FileProvider, packages packageProvid
 }
 
 // discover parses paths, with what they import, and finds their tests.
-func discover(cmd *base.Command, files *base.FileProvider, packages packageProvider, paths []base.Path) ([]File, error) {
+func discover(cmd *cli.Command, files *base.FileProvider, packages packageProvider, paths []base.Path) ([]File, error) {
 	pattern, err := regexp.Compile(cmd.RunPattern)
 	if err != nil {
 		return nil, err
@@ -151,7 +152,7 @@ func discover(cmd *base.Command, files *base.FileProvider, packages packageProvi
 }
 
 // validate writes the runner of tests and validates it.
-func validate(cmd *base.Command, files *base.FileProvider, packages packageProvider, tests []File) (program, error) {
+func validate(cmd *cli.Command, files *base.FileProvider, packages packageProvider, tests []File) (program, error) {
 	runner := RunnerPath(tests[0].Path)
 	if _, err := os.Stat(string(runner)); !errors.Is(err, fs.ErrNotExist) {
 		return program{}, fmt.Errorf("%s is the test runner's own path and must not exist", runner)
@@ -177,7 +178,7 @@ func validate(cmd *base.Command, files *base.FileProvider, packages packageProvi
 
 // runFiles runs binary once for each of tests, at most cmd.Parallel at once,
 // and writes each one's output and outcome to out in the order of tests.
-func runFiles(cmd *base.Command, tests []File, binary string, out io.Writer) (bool, error) {
+func runFiles(cmd *cli.Command, tests []File, binary string, out io.Writer) (bool, error) {
 	results := make([]chan result, len(tests))
 	slots := make(chan struct{}, cmd.Parallel)
 	var wg sync.WaitGroup

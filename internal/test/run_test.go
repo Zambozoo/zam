@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 )
 
 // run runs zam test with args after the verb, returning what it wrote and
@@ -17,7 +18,7 @@ import (
 func run(t *testing.T, args ...string) (string, bool) {
 	t.Helper()
 	files := &base.FileProvider{}
-	cmd, err := base.NewCommand(append([]string{"zam", "test", "-m", "16KB"}, args...), files)
+	cmd, err := cli.New(append([]string{"zam", "test", "-m", "16KB"}, args...), files)
 	require.NoError(t, err)
 
 	var out bytes.Buffer

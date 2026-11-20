@@ -13,6 +13,7 @@ import (
 
 	"github.com/zambozoo/zam/internal/base"
 
+	"github.com/zambozoo/zam/internal/cli"
 	"go.yaml.in/yaml/v3"
 	"golang.org/x/sync/errgroup"
 )
@@ -187,7 +188,7 @@ func (p *projectParser) newProject(path base.Path) (*Project, error) {
 // project file lacks.
 func Get(projectFile base.Path, refs []string, as string, fileProvider fileProvider, packages packageProvider) error {
 	p := &projectParser{
-		command:         &base.Command{WriteProject: true},
+		command:         &cli.Command{WriteProject: true},
 		fileProvider:    fileProvider,
 		packageProvider: packages,
 		fetched:         &base.SyncMap[base.Path, string]{},

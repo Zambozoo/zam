@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 	codegen "github.com/zambozoo/zam/internal/compiler/2_codegen"
@@ -35,7 +36,7 @@ namespace Main {
 `), 0o600))
 
 	files := &base.FileProvider{}
-	cmd, err := base.NewCommand([]string{"zam", "run", entry, "a", "b"}, files)
+	cmd, err := cli.New([]string{"zam", "run", entry, "a", "b"}, files)
 	require.NoError(t, err)
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)

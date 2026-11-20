@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/zambozoo/zam/internal/base"
 	"github.com/zambozoo/zam/internal/base/target"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 	codegen "github.com/zambozoo/zam/internal/compiler/2_codegen"
@@ -39,7 +40,7 @@ func compileWith(t testing.TB, flags []string, source string) string {
 
 	files := &base.FileProvider{}
 	argv := append([]string{"zam", "build", "-m", "16KB", "-N", "4KB", "-o", out}, flags...)
-	cmd, err := base.NewCommand(append(argv, entry), files)
+	cmd, err := cli.New(append(argv, entry), files)
 	require.NoError(t, err)
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)

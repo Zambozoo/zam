@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 )
 
@@ -66,7 +67,7 @@ func TestResolve(t *testing.T) {
 // parse parses the test files at paths under dir.
 func parse(t *testing.T, paths ...base.Path) *syntax.AST {
 	t.Helper()
-	ast, errs := syntax.NewAST(&base.Command{InputPath: paths[0], TestPaths: paths[1:], MaxThreads: 1},
+	ast, errs := syntax.NewAST(&cli.Command{InputPath: paths[0], TestPaths: paths[1:], MaxThreads: 1},
 		&base.FileProvider{}, nil)
 	require.Empty(t, errs)
 	return ast

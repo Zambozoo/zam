@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/zambozoo/zam/internal/base"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
 	codegen "github.com/zambozoo/zam/internal/compiler/2_codegen"
@@ -60,15 +61,15 @@ func main() {
 
 	fileProvider := base.FileProvider{}
 
-	cmd, err := base.NewCommand(os.Args, &fileProvider)
+	cmd, err := cli.New(os.Args, &fileProvider)
 	handleErrors(&logger, stepCommand, err)
 
-	if cmd.Verb == base.VerbVersion {
+	if cmd.Verb == cli.VerbVersion {
 		fmt.Println("zam", build.Version)
 		return
 	}
 
-	if cmd.Verb == base.VerbLSP {
+	if cmd.Verb == cli.VerbLSP {
 		handleErrors(&logger, stepLSP, lsp.Run())
 		return
 	}
@@ -77,13 +78,13 @@ func main() {
 	handleErrors(&logger, stepCommand, err)
 	packageProvider := base.NewPackageProvider(filepath.Join(zamPath, "pkg"))
 
-	if cmd.Verb == base.VerbDebug {
+	if cmd.Verb == cli.VerbDebug {
 		handleErrors(&logger, stepDebug, debugger.Run(&fileProvider, packageProvider))
 		return
 	}
 
 	switch cmd.Verb {
-	case base.VerbClean:
+	case cli.VerbClean:
 		handleErrors(&logger, stepClean, packageProvider.Clean())
 		logger.Print(base.LogLevelInfo, "removed %s\n", packageProvider.Root())
 		cached, err := build.CleanCache()
@@ -93,7 +94,7 @@ func main() {
 		}
 		logger.Flush()
 		base.Exit(base.ExitCodeSuccess)
-	case base.VerbTest:
+	case cli.VerbTest:
 		passed, err := test.Run(cmd, &fileProvider, packageProvider, os.Stdout)
 		handleErrors(&logger, stepTest, err)
 		logger.Flush()
@@ -101,7 +102,7 @@ func main() {
 			base.Exit(base.ExitCodeError)
 		}
 		base.Exit(base.ExitCodeSuccess)
-	case base.VerbGet:
+	case cli.VerbGet:
 		cwd, err := base.ParsePath(".")
 		handleErrors(&logger, stepGet, err)
 		projectFile, err := fileProvider.ProjectFileIn(cwd)
@@ -125,7 +126,7 @@ func main() {
 	}
 
 	opts := build.Options{Project: syntaxAST.MainCodeDecl.File().Project, Target: cmd.Target}
-	if cmd.Verb == base.VerbRun {
+	if cmd.Verb == cli.VerbRun {
 		code, err := build.Run(object.Bytes, opts, cmd.RunArgs)
 		handleErrors(&logger, stepRun, err)
 		logger.Flush()

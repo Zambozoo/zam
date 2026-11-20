@@ -10,6 +10,7 @@ import (
 
 	"github.com/zambozoo/zam/internal/base"
 	"github.com/zambozoo/zam/internal/base/target"
+	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	"github.com/zambozoo/zam/internal/compiler/2_codegen/llvm"
 	zamruntime "github.com/zambozoo/zam/internal/compiler/3_build/runtime"
@@ -36,12 +37,12 @@ type llvmOptimization struct {
 
 // llvmOptimizations are how a module is compiled at each optimization. LLVM 23
 // has no size pipeline, so size is O2 over functions marked optsize.
-var llvmOptimizations = map[base.Optimization]llvmOptimization{
-	base.OptimizeNone:       {level: llvm.CodeGenLevelNone},
-	base.OptimizeLess:       {level: llvm.CodeGenLevelLess, passes: "default<O1>"},
-	base.OptimizeDefault:    {level: llvm.CodeGenLevelDefault, passes: "default<O2>"},
-	base.OptimizeAggressive: {level: llvm.CodeGenLevelAggressive, passes: "default<O3>"},
-	base.OptimizeSize:       {level: llvm.CodeGenLevelDefault, passes: "default<O2>", optsize: true},
+var llvmOptimizations = map[cli.Optimization]llvmOptimization{
+	cli.OptimizeNone:       {level: llvm.CodeGenLevelNone},
+	cli.OptimizeLess:       {level: llvm.CodeGenLevelLess, passes: "default<O1>"},
+	cli.OptimizeDefault:    {level: llvm.CodeGenLevelDefault, passes: "default<O2>"},
+	cli.OptimizeAggressive: {level: llvm.CodeGenLevelAggressive, passes: "default<O3>"},
+	cli.OptimizeSize:       {level: llvm.CodeGenLevelDefault, passes: "default<O2>", optsize: true},
 }
 
 // stdNativePrefix starts the name of every native the runtime itself answers
@@ -72,14 +73,14 @@ type ObjectOptions struct {
 	Triple string
 	// Optimization is how far the program is optimized, OptimizeDefault when
 	// empty.
-	Optimization base.Optimization
+	Optimization cli.Optimization
 	// Debug compiles without optimizing, whatever Optimization says, so that a
 	// debugger stepping the program sees each line's effects by the next.
 	Debug bool
 }
 
 // GenerateObject compiles the program into an object file as opts says.
-func GenerateObject(cmd *base.Command, ast *syntax.AST, opts ObjectOptions) (object *Object, err error) {
+func GenerateObject(cmd *cli.Command, ast *syntax.AST, opts ObjectOptions) (object *Object, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			unsupported, ok := r.(unsupportedPanic)
@@ -122,10 +123,10 @@ func GenerateObject(cmd *base.Command, ast *syntax.AST, opts ObjectOptions) (obj
 	}
 	optimization := opts.Optimization
 	if optimization == "" {
-		optimization = base.OptimizeDefault
+		optimization = cli.OptimizeDefault
 	}
 	if opts.Debug {
-		optimization = base.OptimizeNone
+		optimization = cli.OptimizeNone
 	}
 	optimize, ok := llvmOptimizations[optimization]
 	if !ok {
