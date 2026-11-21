@@ -75,6 +75,13 @@ type llvmProgram struct {
 	// initializers is the instance initializer compiled for each class that
 	// has one.
 	initializers map[syntax.Decl]llvm.Value
+	// live is each declaration an instance of may exist, whose methods are
+	// all compiled.
+	live map[syntax.Decl]bool
+	// staticValues is each static method named as a value, in the order first
+	// named, whose closure the static initializer stores.
+	staticValues     []*syntax.FieldMethod
+	staticValuesSeen map[*syntax.FieldMethod]bool
 	// stubs says what each function compiled as a trap could not compile.
 	stubs []string
 }
@@ -88,22 +95,24 @@ type llvmRuntimeFunc struct {
 func newLLVMProgram(ctx llvm.Context, mod llvm.Module, result *Result) *llvmProgram {
 	nativeNames := result.NativeNames
 	p := &llvmProgram{
-		ctx:          ctx,
-		mod:          mod,
-		types:        result.types,
-		reader:       result.reader,
-		typeIDs:      map[[3]uint64]llvm.Value{},
-		functions:    map[*syntax.FieldMethod]llvm.Value{},
-		concretes:    map[*syntax.MethodConcrete]llvm.Value{},
-		owned:        map[llvmOwnedMethod]llvm.Value{},
-		initializers: map[syntax.Decl]llvm.Value{},
-		natives:      make(map[string]uint64, len(nativeNames)),
-		i1:           ctx.Int1Type(),
-		i32:          ctx.Int32Type(),
-		i64:          ctx.Int64Type(),
-		f64:          ctx.DoubleType(),
-		ptr:          llvm.PointerType(ctx.Int8Type(), 0),
-		runtime:      map[string]llvmRuntimeFunc{},
+		ctx:              ctx,
+		mod:              mod,
+		types:            result.types,
+		reader:           result.reader,
+		typeIDs:          map[[3]uint64]llvm.Value{},
+		functions:        map[*syntax.FieldMethod]llvm.Value{},
+		concretes:        map[*syntax.MethodConcrete]llvm.Value{},
+		owned:            map[llvmOwnedMethod]llvm.Value{},
+		initializers:     map[syntax.Decl]llvm.Value{},
+		live:             map[syntax.Decl]bool{},
+		staticValuesSeen: map[*syntax.FieldMethod]bool{},
+		natives:          make(map[string]uint64, len(nativeNames)),
+		i1:               ctx.Int1Type(),
+		i32:              ctx.Int32Type(),
+		i64:              ctx.Int64Type(),
+		f64:              ctx.DoubleType(),
+		ptr:              llvm.PointerType(ctx.Int8Type(), 0),
+		runtime:          map[string]llvmRuntimeFunc{},
 	}
 	for index, name := range nativeNames {
 		p.natives[name] = uint64(index)
@@ -955,32 +964,39 @@ func (e *funcEmitter) emitBody(ft *syntax.TypeFunction, receiver syntax.Type, pa
 	return e.emitStmt(body)
 }
 
-// emitStaticInitializer compiles what every static is initialized to, in the
-// order the program runs it in: file by file, declaration by declaration.
-func (p *llvmProgram) emitStaticInitializer(ast *syntax.AST) (llvm.Value, error) {
-	e := p.newFunc(p.newFunction("zam_static_init"), ast.MainCodeDecl)
-	e.named("<static init>", nil)
-	e.call("zamrt_safepoint", e.thread)
-	// Every static method's closure is stored before any member's
-	// initializer runs, so one initializer may name a method declared after
-	// it. Within a file, the other statics are initialized in the order they
-	// are written, whichever declaration holds them.
-	for _, entry := range ast.CodeFiles.All() {
-		if err := e.emitDeclStaticMethods(entry.Value.Decl); err != nil {
-			e.b.Dispose()
-			return llvm.Value{}, err
-		}
-	}
+// emitStaticInitializers compiles what every static member and enum value is
+// initialized to, in the order the program runs them in: file by file, and
+// within a file in the order they are written, whichever declaration holds
+// them.
+func (p *llvmProgram) emitStaticInitializers(ast *syntax.AST) ([]llvm.Value, error) {
+	var fns []llvm.Value
 	for _, entry := range ast.CodeFiles.All() {
 		for _, f := range staticInitializers(entry.Value.Decl) {
 			fn, err := p.emitStaticInitializerOf(f)
 			if err != nil {
-				e.b.Dispose()
-				return llvm.Value{}, err
+				return nil, err
 			}
-			null := llvm.ConstNull(p.ptr)
-			e.b.CreateCall(p.entryType, fn, []llvm.Value{e.thread, null, null, null}, "")
+			fns = append(fns, fn)
 		}
+	}
+	return fns, nil
+}
+
+// emitStaticInitializer compiles what runs before main: storing the closure
+// of every static method named as a value, so that an initializer may name
+// one declared after it, then calling each of initializers.
+func (p *llvmProgram) emitStaticInitializer(ast *syntax.AST, initializers []llvm.Value) (llvm.Value, error) {
+	e := p.newFunc(p.newFunction("zam_static_init"), ast.MainCodeDecl)
+	e.named("<static init>", nil)
+	e.call("zamrt_safepoint", e.thread)
+	for _, method := range p.staticValues {
+		closure := e.call("zamrt_new_function_closure", e.thread, e.p.typeID(method.FieldType()), p.functions[method],
+			e.const64(0), e.const64(0))
+		e.b.CreateStore(e.b.CreatePtrToInt(closure, e.p.i64, ""), e.staticAddress(*method.Index()))
+	}
+	null := llvm.ConstNull(p.ptr)
+	for _, fn := range initializers {
+		e.b.CreateCall(p.entryType, fn, []llvm.Value{e.thread, null, null, null}, "")
 	}
 	if err := e.end(); err != nil {
 		e.b.Dispose()
@@ -1007,28 +1023,18 @@ func (p *llvmProgram) emitStaticInitializerOf(f syntax.Field) (llvm.Value, error
 	})
 }
 
-// emitDeclStaticMethods stores a closure over every static method of d and
-// of the declarations nested in it into its static.
-func (e *funcEmitter) emitDeclStaticMethods(d syntax.Decl) error {
-	for _, f := range d.StaticFields() {
-		method, ok := f.(*syntax.FieldMethod)
-		if !ok || method.Generics() != nil || method.Body == nil {
-			continue
-		}
-		ft, ok := method.FieldType().(*syntax.TypeFunction)
-		if !ok {
-			continue
-		}
-		closure := e.call("zamrt_new_function_closure", e.thread, e.p.typeID(ft), e.p.functionFor(method),
-			e.const64(0), e.const64(0))
-		e.b.CreateStore(e.b.CreatePtrToInt(closure, e.p.i64, ""), e.staticAddress(*method.Index()))
+// staticValue records that the static method is named as a value, so the
+// static initializer stores its closure.
+func (p *llvmProgram) staticValue(method *syntax.FieldMethod) {
+	if p.staticValuesSeen[method] {
+		return
 	}
-	for child := range d.Decls() {
-		if err := e.emitDeclStaticMethods(child); err != nil {
-			return err
-		}
+	p.staticValuesSeen[method] = true
+	if _, ok := method.FieldType().(*syntax.TypeFunction); !ok || method.Body == nil {
+		return
 	}
-	return nil
+	p.functionFor(method)
+	p.staticValues = append(p.staticValues, method)
 }
 
 // emitStaticMember stores the initial value of a static member.
@@ -1060,11 +1066,117 @@ const (
 	classDeletesCustom = 1 << 1
 )
 
+// eachClass calls f on every class, struct and enum the class table has an
+// entry for, and on every closed instantiation of a generic one, saying
+// whether the runtime calls only its Str, which an enum or struct is given as
+// its first method.
+func eachClass(ast *syntax.AST, f func(c syntax.DeclTypeable, strOnly bool) error) error {
+	add := func(c syntax.DeclTypeable, strOnly bool) error {
+		if supportedObject(c) != nil {
+			return nil
+		}
+		return f(c, strOnly)
+	}
+	addGeneric := func(g syntax.DeclGeneric, strOnly bool) error {
+		if g.Generics() == nil {
+			return add(g, strOnly)
+		}
+		for _, entry := range g.Concretes().All() {
+			if entry.Key.ContainsGenericArg() {
+				continue
+			}
+			if err := add(entry.Value, strOnly); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	var visit func(d syntax.Decl) error
+	visit = func(d syntax.Decl) error {
+		var err error
+		switch d := d.(type) {
+		case *syntax.DeclClass:
+			err = addGeneric(d, false)
+		case *syntax.DeclStruct:
+			err = addGeneric(d, true)
+		case *syntax.DeclEnum:
+			err = add(d, true)
+		}
+		if err != nil {
+			return err
+		}
+		for child := range d.Decls() {
+			if err := visit(child); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	for _, entry := range ast.CodeFiles.All() {
+		if err := visit(entry.Value.Decl); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// classMethods is the class table's methods for c, by slot, declaring each
+// function it names. A class whose instance may exist has all its methods;
+// any other only Object's, which the runtime calls on whatever instance it is
+// handed, so that one made where codegen does not see it is marked and
+// deleted all the same. A null slot is one no method fills.
+func (p *llvmProgram) classMethods(c syntax.DeclTypeable, strOnly bool) []llvm.Value {
+	methods := make([]llvm.Value, instanceFieldCount[*syntax.FieldMethod](c))
+	if strOnly {
+		methods = methods[:min(len(methods), 1)]
+	}
+	for i := range methods {
+		methods[i] = llvm.ConstNull(p.ptr)
+	}
+	for name, method := range instanceFields[*syntax.FieldMethod](c) {
+		if strOnly && name != syntax.StrMethodName {
+			continue
+		}
+		origin, ok := originMethod(c, name)
+		if !ok || method.Body == nil || method.Generics() != nil || *origin.Index() >= len(methods) {
+			continue
+		}
+		if p.live[c] || strOnly || *origin.Index() <= base.DeleteMethodSlot {
+			methods[*origin.Index()] = p.methodFunction(origin, c)
+		}
+	}
+	return methods
+}
+
+// emitReachable compiles every function the program can reach: those pending,
+// and the methods of every class table entry, until nothing more is.
+func (p *llvmProgram) emitReachable(ast *syntax.AST) error {
+	for {
+		if err := p.emitPending(); err != nil {
+			return err
+		}
+		live := len(p.live)
+		err := eachClass(ast, func(c syntax.DeclTypeable, strOnly bool) error {
+			p.classMethods(c, strOnly)
+			if p.live[c] {
+				_, err := p.initializerFor(c)
+				return err
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+		if len(p.pending) == 0 && len(p.live) == live {
+			return nil
+		}
+	}
+}
+
 // emitClassTable lays out the compiled methods of every class, sorted by short
 // id, as the runtime looks them up for dispatch, with the routine that
-// initializes a fresh instance and whether its Mark and Delete are its own. An
-// enum or struct is given only its Str, the one method the runtime calls on
-// one, which is its first.
+// initializes a fresh instance and whether its Mark and Delete are its own. It
+// runs once emitReachable has compiled every function it names.
 func (p *llvmProgram) emitClassTable(ast *syntax.AST) (llvm.Value, int, error) {
 	type class struct {
 		short       uint64
@@ -1074,18 +1186,16 @@ func (p *llvmProgram) emitClassTable(ast *syntax.AST) (llvm.Value, int, error) {
 		flags       uint64
 	}
 	var classes []class
-	var failed error
-	add := func(c syntax.DeclTypeable, strOnly bool) {
-		if supportedObject(c) != nil {
-			return
-		}
-		initializer, err := p.initializerFor(c)
-		if err != nil {
-			failed = err
-			return
-		}
-		if initializer.IsNil() {
-			initializer = llvm.ConstNull(p.ptr)
+	err := eachClass(ast, func(c syntax.DeclTypeable, strOnly bool) error {
+		initializer := llvm.ConstNull(p.ptr)
+		if p.live[c] {
+			fn, err := p.initializerFor(c)
+			if err != nil {
+				return err
+			}
+			if !fn.IsNil() {
+				initializer = fn
+			}
 		}
 		var flags uint64
 		if !strOnly {
@@ -1096,22 +1206,7 @@ func (p *llvmProgram) emitClassTable(ast *syntax.AST) (llvm.Value, int, error) {
 				flags |= classDeletesCustom
 			}
 		}
-		methods := make([]llvm.Value, instanceFieldCount[*syntax.FieldMethod](c))
-		if strOnly {
-			methods = methods[:min(len(methods), 1)]
-		}
-		for i := range methods {
-			methods[i] = llvm.ConstNull(p.ptr)
-		}
-		for name, method := range instanceFields[*syntax.FieldMethod](c) {
-			if strOnly && name != syntax.StrMethodName {
-				continue
-			}
-			origin, ok := originMethod(c, name)
-			if ok && method.Body != nil && method.Generics() == nil && *origin.Index() < len(methods) {
-				methods[*origin.Index()] = p.methodFunction(origin, c)
-			}
-		}
+		methods := p.classMethods(c, strOnly)
 		table := llvm.AddGlobal(p.mod, llvm.ArrayType(p.ptr, max(len(methods), 1)), c.DeclType().String()+".methods")
 		if len(methods) == 0 {
 			methods = []llvm.Value{llvm.ConstNull(p.ptr)}
@@ -1121,37 +1216,13 @@ func (p *llvmProgram) emitClassTable(ast *syntax.AST) (llvm.Value, int, error) {
 		table.SetLinkage(llvm.PrivateLinkage)
 		a, _, _ := p.typeInstance(c.DeclType()).packed()
 		classes = append(classes, class{short: a >> 32, methods: table, count: len(methods), initializer: initializer, flags: flags})
+		return nil
+	})
+	if err != nil {
+		return llvm.Value{}, 0, err
 	}
-	addGeneric := func(g syntax.DeclGeneric, strOnly bool) {
-		if g.Generics() == nil {
-			add(g, strOnly)
-			return
-		}
-		for _, entry := range g.Concretes().All() {
-			if !entry.Key.ContainsGenericArg() {
-				add(entry.Value, strOnly)
-			}
-		}
-	}
-	var visit func(d syntax.Decl)
-	visit = func(d syntax.Decl) {
-		switch d := d.(type) {
-		case *syntax.DeclClass:
-			addGeneric(d, false)
-		case *syntax.DeclStruct:
-			addGeneric(d, true)
-		case *syntax.DeclEnum:
-			add(d, true)
-		}
-		for child := range d.Decls() {
-			visit(child)
-		}
-	}
-	for _, entry := range ast.CodeFiles.All() {
-		visit(entry.Value.Decl)
-	}
-	if failed != nil {
-		return llvm.Value{}, 0, failed
+	if len(p.pending) > 0 {
+		return llvm.Value{}, 0, errors.New("class table names a function not compiled")
 	}
 	if len(classes) == 0 {
 		return llvm.ConstNull(p.ptr), 0, nil
@@ -2414,6 +2485,7 @@ func (e *funcEmitter) store(pl llvmPlace, v llvm.Value) {
 			e.copyBytes(at(pl.address), at(v), pl.width-header)
 		} else {
 			e.copyMemory(pl.address, v, pl.width, volatile)
+			e.p.live[d] = true
 			e.call("zamrt_stamp", e.thread, e.p.typeID(pl.typ), pl.address)
 		}
 	} else if isAggregate(pl.typ) {
@@ -2513,6 +2585,7 @@ func (e *funcEmitter) place(expr syntax.Expr) (llvmPlace, error) {
 			continue
 		}
 		if method, ok := f.(*syntax.FieldMethod); ok && method.Generics() == nil {
+			e.p.staticValue(method)
 			return llvmPlace{address: e.staticAddress(*method.Index()), typ: method.FieldType(), width: 8}, nil
 		}
 		member, ok := f.(*syntax.FieldMember)
@@ -3802,6 +3875,7 @@ func (e *funcEmitter) emitNewRun(x *syntax.ExprNew, pointer syntax.Type) (llvm.V
 // instance of d that have initializers, compiling it the first time; nil
 // when no member has one.
 func (p *llvmProgram) initializerFor(d syntax.Decl) (llvm.Value, error) {
+	p.live[d] = true
 	if fn, ok := p.initializers[d]; ok {
 		return fn, nil
 	}
@@ -3952,7 +4026,12 @@ func (e *funcEmitter) emitGenericStaticMethodValue(x *syntax.ExprType) (llvm.Val
 // type: a member's value, or the closure a static method is stored as.
 func (e *funcEmitter) emitStaticValue(x *syntax.ExprType) (llvm.Value, error) {
 	if x.Field == "" && len(x.TypeArgs) == 0 {
-		return e.p.typeID(e.ground(x.Type)), nil
+		// The runtime may make an instance of a type it is handed.
+		t := e.ground(x.Type)
+		if r, ok := syntax.StripConst(t).(syntax.TypeResolvable); ok && r.Decl() != nil {
+			e.p.live[r.Decl()] = true
+		}
+		return e.p.typeID(t), nil
 	}
 	if x.Field != "" && len(x.TypeArgs) > 0 {
 		return e.emitGenericStaticMethodValue(x)
@@ -3978,6 +4057,7 @@ func (e *funcEmitter) emitStaticValue(x *syntax.ExprType) (llvm.Value, error) {
 		if f.Generics() != nil {
 			return llvm.Value{}, unsupported("generic methods as values")
 		}
+		e.p.staticValue(f)
 	case *syntax.FieldEnum:
 		if stackWords(f.OuterDecl().(*syntax.DeclEnum).DeclType()) != 1 {
 			return e.staticAddress(*f.Index()), nil

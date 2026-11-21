@@ -313,20 +313,24 @@ func emitModule(ctx llvm.Context, mod llvm.Module, ast *syntax.AST, result *Resu
 		a, arrayLength, tailLength := program.typeInstance(t).packed()
 		return a >> 32, arrayLength == 0 && tailLength == 0
 	}
-	staticInit, err := program.emitStaticInitializer(ast)
+	initializers, err := program.emitStaticInitializers(ast)
 	if err != nil {
 		return nil, err
 	}
-	zamMainBody := program.functionFor(main)
+	program.functionFor(main)
+	if err := program.emitReachable(ast); err != nil {
+		return nil, err
+	}
+	staticInit, err := program.emitStaticInitializer(ast, initializers)
+	if err != nil {
+		return nil, err
+	}
 	classes, classCount, err := program.emitClassTable(ast)
 	if err != nil {
 		return nil, err
 	}
-	if err := program.emitPending(); err != nil {
-		return nil, err
-	}
 	// A main compiled as a trap is a different function from the one declared.
-	zamMainBody = program.functions[main]
+	zamMainBody := program.functions[main]
 	zamMain := program.emitProgramEntry(staticInit, zamMainBody)
 	functions, functionCount := program.emitFunctionNames()
 	program.debug.finish()

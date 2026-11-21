@@ -1029,7 +1029,8 @@ func TestStaticsInitializeInLineOrder(t *testing.T) {
 
 // TestNativeTrapsWhatItCannotCompile compiles a method native compilation
 // cannot compile yet as a trap, says so in the object, and ends the program
-// saying why only once the method is called.
+// saying why only once the method is called. One the program cannot reach is
+// not compiled at all.
 func TestNativeTrapsWhatItCannotCompile(t *testing.T) {
 	t.Parallel()
 	source := `import std("lang/Obj.zam");
@@ -1055,8 +1056,8 @@ namespace Main {
 `
 	object, err := generateObject(t, source)
 	require.NoError(t, err)
-	require.Len(t, object.Unsupported, 2, object.Unsupported)
-	assert.Contains(t, strings.Join(object.Unsupported, "\n"), "Main.unused")
+	require.Len(t, object.Unsupported, 1, object.Unsupported)
+	assert.Contains(t, object.Unsupported[0], "Main.used")
 
 	output, status := runNative(t, source)
 	assert.Equal(t, 9, status, "nothing traps that is not called")
@@ -1472,6 +1473,58 @@ namespace Main {
 `)
 	assert.Zero(t, status, output)
 	assert.Equal(t, "42 t:x\n", output)
+}
+
+// TestNativeCompilesWhatOnlyTheRuntimeReaches calls, through an interface and
+// an abstract, a class only an arena makes, and static methods named only as
+// values, none of which a direct call reaches.
+func TestNativeCompilesWhatOnlyTheRuntimeReaches(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    interface Named {
+        virtual fun str() Name;
+    }
+
+    abstract Base {
+        virtual fun int(int) Scale;
+    }
+
+    class Thrice <: Base* {
+        var str tag = "arena";
+
+        fun int(int) Scale = (x) {
+            return x * 3;
+        }
+
+        fun str() Name = () {
+            return this.tag;
+        }
+    }
+
+    static fun int(int) double = (x) {
+        return x * 2;
+    }
+
+    static fun int(int) negate = (x) {
+        return -x;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Arena~* a = Arena::New(1024U);
+        var Thrice* t = Arena::[Thrice]Alloc(a, 1U);
+        var Base* b = t;
+        var Named* n = t;
+        var int(int) d = Main::double;
+        var int(int) m = negate;
+        File::StdOut.WriteStr(n.Name() + " " + b.Scale(d(m(7))){str} + "\n");
+    }
+}
+`)
+	assert.Zero(t, status, output)
+	assert.Equal(t, "arena -42\n", output)
 }
 
 // TestNativeSignals raises a signal the program handles, through an enum value
