@@ -1,4 +1,8 @@
 import {
+    "../../codec/text/Base64.zam";
+    "../../crypto/Rand.zam";
+    "../../crypto/hash/SHA1.zam";
+    "../../lang/Arr.zam";
     "../../lang/Arrs.zam";
     "../../lang/Err.zam";
     "../../lang/StrErr.zam";
@@ -26,16 +30,16 @@ public class WebSocket {
     }
 
     // The largest message Receive takes, joined from its fragments
-    public static var int MaxMessage = 67108864;
+    public static var uint MaxMessage = 67108864U;
 
     var Stream* stream;
     var Socket* sock;
     var bool client;
     var Mutex* lock;
     var byte* buf;
-    var int bufCap;
-    var int bufStart;
-    var int bufEnd;
+    var uint bufCap;
+    var uint bufStart;
+    var uint bufEnd;
     var bool closeSent;
     var bool ended;
     var bool receiving;
@@ -47,14 +51,14 @@ public class WebSocket {
         ws.sock = sock;
         ws.client = client;
         ws.lock = Mutex::New();
-        ws.bufCap = 16384;
+        ws.bufCap = 16384U;
         ws.buf = new(byte, 16384U);
-        ws.bufStart = 0;
-        ws.bufEnd = 0;
-        var (byte*, int) r = Strs::ToBytes(rest);
-        if(r.1 > 0) {
+        ws.bufStart = 0U;
+        ws.bufEnd = 0U;
+        var (byte*, uint) r = Strs::ToBytes(rest);
+        if(r.1 > 0U) {
             ws.reserve(r.1);
-            Arrs::[byte]Copy(r.1{uint}, r.0, ws.buf);
+            Arrs::[byte]Copy(r.1, r.0, ws.buf);
             ws.bufEnd = r.1;
         }
         ws.closeSent = false;
@@ -124,8 +128,7 @@ public class WebSocket {
         if(u.port != 0U) {
             host = host + ":" + u.port{str};
         }
-        var str key;
-        native(STD_WS_KEY){void(str*)}(&key);
+        var str key = WebSocket::newKey();
         var str extra = "";
         if(headers != null) {
             extra = headers.Join(": ", "\r\n");
@@ -145,8 +148,7 @@ public class WebSocket {
         } else if(c.status != 101U) {
             problem = "handshake answered " + c.status{str} + " " + HTTP::StatusText(c.status);
         } else {
-            var str want;
-            native(STD_WS_ACCEPT){void(str, str*)}(key, &want);
+            var str want = WebSocket::accept(key);
             if(c.headers.Value("sec-websocket-accept").0 != want) {
                 problem = "handshake answered the wrong key";
             }
@@ -179,8 +181,7 @@ public class WebSocket {
         if(c == null) {
             return WebSocket::fail("request was not received by a server");
         }
-        var str accept;
-        native(STD_WS_ACCEPT){void(str, str*)}(key.0, &accept);
+        var str accept = WebSocket::accept(key.0);
         var Err* e = Streams::WriteStr(c.stream, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n");
         if(e != null) {
             c.stream.Close();
@@ -193,51 +194,156 @@ public class WebSocket {
     }
 
     // sendLocked sends one frame; the caller holds the lock.
-    private fun Err*(int, byte*, int) sendLocked = (opcode, b, n) {
+    private fun Err*(int, byte*, uint) sendLocked = (opcode, b, n) {
         if(this.closeSent || this.released) {
             return StrErr::New("WebSocket is closed");
         }
         if(opcode == 8) {
             this.closeSent = true;
         }
-        var byte* frame = new(byte, (n + 14){uint});
+        var byte* frame = new(byte, n + 14U);
         defer free(frame);
-        var int len;
-        native(STD_WS_FRAME){void(int, bool, byte*, int, byte*, int*)}(opcode, this.client, b, n, frame, &len);
+        var uint len = WebSocket::frame(opcode, this.client, b, n, frame);
         return Streams::WriteAll(this.stream, frame, len);
     }
 
-    private fun Err*(int, byte*, int) send = (opcode, b, n) {
+    // guid is what RFC 6455 appends to a key before hashing it for the accept.
+    private static var str$ guid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+    // newKey makes a client's Sec-WebSocket-Key: 16 random bytes, in base64.
+    private static fun str() newKey = () {
+        var byte* b = new(byte, 16U);
+        defer free(b);
+        Rand::Read(b, 16U);
+        return Base64::Encode(b, 16U);
+    }
+
+    // accept answers the Sec-WebSocket-Accept for a key: the base64 of the
+    // SHA-1 of the key and the protocol's GUID.
+    private static fun str(str) accept = (key) {
+        var str s = key + WebSocket::guid;
+        var (byte*, uint) p = Strs::ToBytes(s);
+        var Arr[byte]* sum = SHA1::Sum(p.0, p.1);
+        return Base64::Encode(sum.Arr(), sum.Len());
+    }
+
+    // frame writes one final frame of opcode carrying the n bytes at b into
+    // out, which has room for n + 14, masking it with a random key when told
+    // to, and answers the frame's length.
+    private static fun uint(int, bool, byte*, uint, byte*) frame = (opcode, mask, b, n, out) {
+        var uint size = n;
+        var uint maskBit = 0U;
+        if(mask) {
+            maskBit = 128U;
+        }
+        out[0U] = (128U | (opcode{uint} & 15U)){byte};
+        var uint at = 2U;
+        if(size < 126U) {
+            out[1U] = (maskBit | size){byte};
+        } else if(size < 65536U) {
+            out[1U] = (maskBit | 126U){byte};
+            out[2U] = ((size >> 8U) & 255U){byte};
+            out[3U] = (size & 255U){byte};
+            at = 4U;
+        } else {
+            out[1U] = (maskBit | 127U){byte};
+            for(var uint i = 0U; i < 8U; i++) {
+                out[2U + i] = ((size >> (56U - 8U * i)) & 255U){byte};
+            }
+            at = 10U;
+        }
+        if(mask) {
+            var byte* key = out + at;
+            Rand::Read(key, 4U);
+            at = at + 4U;
+            for(var uint i = 0U; i < size; i++) {
+                out[at + i] = (b[i]{uint} ^ key[i & 3U]{uint}){byte};
+            }
+        } else if(size > 0U) {
+            Arrs::[byte]Copy(size, b, out + at);
+        }
+        return at + size;
+    }
+
+    // header reads a frame's head from the n bytes at b: whether it is final,
+    // its opcode, its head's length and its payload's length, the head's
+    // length being 0 while b holds too little of it to tell.
+    private static fun (bool, int, uint, uint)(byte*, uint) header = (b, n) {
+        var (bool, int, uint, uint) h;
+        h.0 = false;
+        h.1 = 0;
+        h.2 = 0U;
+        h.3 = 0U;
+        if(n < 2U) {
+            return h;
+        }
+        h.0 = (b[0U]{uint} & 128U) != 0U;
+        h.1 = (b[0U]{uint} & 15U){int};
+        var uint len = b[1U]{uint} & 127U;
+        var uint need = 2U;
+        if(len == 126U) {
+            need = 4U;
+        } else if(len == 127U) {
+            need = 10U;
+        }
+        if((b[1U]{uint} & 128U) != 0U) {
+            need = need + 4U;
+        }
+        if(n < need) {
+            return h;
+        }
+        if(len == 126U) {
+            len = (b[2U]{uint} << 8U) | b[3U]{uint};
+        } else if(len == 127U) {
+            len = 0U;
+            for(var uint i = 0U; i < 8U; i++) {
+                len = (len << 8U) | b[2U + i]{uint};
+            }
+        }
+        h.2 = need;
+        h.3 = len;
+        return h;
+    }
+
+    // unmask unmasks the n payload bytes at b in place with the four-byte key
+    // at key.
+    private static fun void(byte*, uint, byte*) unmask = (b, n, key) {
+        for(var uint i = 0U; i < n; i++) {
+            b[i] = (b[i]{uint} ^ key[i & 3U]{uint}){byte};
+        }
+    }
+
+    private fun Err*(int, byte*, uint) send = (opcode, b, n) {
         this.lock.Lock();
         defer this.lock.Unlock();
         return this.sendLocked(opcode, b, n);
     }
 
     public fun Err*(str) SendText = (s) {
-        var (byte*, int) p = Strs::ToBytes(s);
+        var (byte*, uint) p = Strs::ToBytes(s);
         return this.send(1, p.0, p.1);
     }
 
     public fun Err*(byte*, uint) SendBinary = (b, n) {
-        return this.send(2, b, n{int});
+        return this.send(2, b, n);
     }
 
     // reserve makes room for n unread bytes in buf.
-    private fun void(int) reserve = (n) {
-        var int len = this.bufEnd - this.bufStart;
-        if(this.bufStart > 0) {
-            if(len > 0) {
-                Arrs::[byte]Copy(len{uint}, this.buf + this.bufStart{uint}, this.buf);
+    private fun void(uint) reserve = (n) {
+        var uint len = this.bufEnd - this.bufStart;
+        if(this.bufStart > 0U) {
+            if(len > 0U) {
+                Arrs::[byte]Copy(len, this.buf + this.bufStart, this.buf);
             }
-            this.bufStart = 0;
+            this.bufStart = 0U;
             this.bufEnd = len;
         }
         if(n <= this.bufCap) {
             return;
         }
-        var byte* grown = new(byte, n{uint});
-        if(len > 0) {
-            Arrs::[byte]Copy(len{uint}, this.buf, grown);
+        var byte* grown = new(byte, n);
+        if(len > 0U) {
+            Arrs::[byte]Copy(len, this.buf, grown);
         }
         free(this.buf);
         this.buf = grown;
@@ -246,7 +352,7 @@ public class WebSocket {
 
     // fill reads until n bytes are unread, answering false at the end of the
     // stream.
-    private fun (bool, Err*)(int) fill = (n) {
+    private fun (bool, Err*)(uint) fill = (n) {
         var (bool, Err*) out;
         out.0 = true;
         out.1 = null;
@@ -254,20 +360,20 @@ public class WebSocket {
             return out;
         }
         if(this.bufStart + n > this.bufCap) {
-            var int want = n;
-            if(want < 16384) {
-                want = 16384;
+            var uint want = n;
+            if(want < 16384U) {
+                want = 16384U;
             }
             this.reserve(want);
         }
         for(; this.bufEnd - this.bufStart < n;) {
-            var (int, Err*) p = this.stream.Read(this.buf + this.bufEnd{uint}, this.bufCap - this.bufEnd);
+            var (uint, Err*) p = this.stream.Read(this.buf + this.bufEnd, this.bufCap - this.bufEnd);
             if(p.1 != null) {
                 out.0 = false;
                 out.1 = p.1;
                 return out;
             }
-            if(p.0 == 0) {
+            if(p.0 == 0U) {
                 out.0 = false;
                 return out;
             }
@@ -307,16 +413,20 @@ public class WebSocket {
         for(;;) {
             var bool fin;
             var int opcode;
-            var int head = 0;
-            var int length;
-            var (bool, Err*) got = this.fill(2);
-            for(; got.0 && head == 0;) {
-                native(STD_WS_HEADER){void(byte*, int, bool*, int*, int*, int*)}(this.buf + this.bufStart{uint}, this.bufEnd - this.bufStart, &fin, &opcode, &head, &length);
-                if(head == 0) {
-                    got = this.fill(this.bufEnd - this.bufStart + 1);
+            var uint head = 0U;
+            var uint length;
+            var (bool, Err*) got = this.fill(2U);
+            for(; got.0 && head == 0U;) {
+                var (bool, int, uint, uint) h = WebSocket::header(this.buf + this.bufStart, this.bufEnd - this.bufStart);
+                fin = h.0;
+                opcode = h.1;
+                head = h.2;
+                length = h.3;
+                if(head == 0U) {
+                    got = this.fill(this.bufEnd - this.bufStart + 1U);
                 }
             }
-            if(got.0 && (length > WebSocket::MaxMessage || (message != null && message.Len(){int} + length > WebSocket::MaxMessage))) {
+            if(got.0 && (length > WebSocket::MaxMessage || (message != null && message.Len() + length > WebSocket::MaxMessage))) {
                 got.0 = false;
                 got.1 = StrErr::New("WebSocket message too large");
             }
@@ -331,15 +441,15 @@ public class WebSocket {
                 }
                 break;
             }
-            var byte* payload = this.buf + (this.bufStart + head){uint};
-            if((this.buf[this.bufStart + 1]{int} & 128) != 0) {
-                native(STD_WS_UNMASK){void(byte*, int, byte*)}(payload, length, payload - 4U);
+            var byte* payload = this.buf + this.bufStart + head;
+            if((this.buf[this.bufStart + 1U]{int} & 128) != 0) {
+                WebSocket::unmask(payload, length, payload - 4U);
             }
             this.bufStart = this.bufStart + head + length;
             if(opcode == 8) {
-                var int echo = length;
-                if(echo > 2) {
-                    echo = 2;
+                var uint echo = length;
+                if(echo > 2U) {
+                    echo = 2U;
                 }
                 this.lock.Lock();
                 defer this.lock.Unlock();
@@ -398,7 +508,7 @@ public class WebSocket {
         this.lock.Lock();
         defer this.lock.Unlock();
         if(!this.closeSent && !this.released) {
-            this.sendLocked(8, null, 0);
+            this.sendLocked(8, null, 0U);
         }
         this.ended = true;
         if(this.receiving) {

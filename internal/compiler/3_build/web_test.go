@@ -139,14 +139,14 @@ namespace Main {
         var int reads = 0;
         var str streamed = "";
         for(;;) {
-            var (int, Err*) p = r.body.Read(chunk, 4);
-            if(p.1 != null || p.0 == 0) {
+            var (uint, Err*) p = r.body.Read(chunk, 4U);
+            if(p.1 != null || p.0 == 0U) {
                 break;
             }
             reads++;
             streamed = streamed + Strs::FromBytes(chunk, p.0);
         }
-        s = s + r.status{str} + " " + streamed + " " + (reads >= 4){str} + " " + r.body.Read(chunk, 4).0{str} + "\n";
+        s = s + r.status{str} + " " + streamed + " " + (reads >= 4){str} + " " + r.body.Read(chunk, 4U).0{str} + "\n";
         free(chunk);
 
         var Buffer* big = Buffer::New();
@@ -205,11 +205,11 @@ namespace Main {
         }
         if(path == "/upload") {
             var byte* b = new(byte, 1000U);
-            var int total = 0;
+            var uint total = 0U;
             var int reads = 0;
             for(;;) {
-                var (int, Err*) p = r.body.Read(b, 1000);
-                if(p.1 != null || p.0 == 0) {
+                var (uint, Err*) p = r.body.Read(b, 1000U);
+                if(p.1 != null || p.0 == 0U) {
                     break;
                 }
                 total = total + p.0;
@@ -239,8 +239,8 @@ namespace Main {
                 if(m.text) {
                     ws.SendText("echo " + m.data);
                 } else {
-                    var (byte*, int) bytes = Strs::ToBytes(m.data);
-                    ws.SendBinary(bytes.0, bytes.1{uint});
+                    var (byte*, uint) bytes = Strs::ToBytes(m.data);
+                    ws.SendBinary(bytes.0, bytes.1);
                 }
             }
             return null;
@@ -490,7 +490,7 @@ namespace Main {
         ws.SendBinary(raw, 70000U);
         free(raw);
         var WebSocket.Message* big = ws.Receive().0;
-        var (byte*, int) bytes = Strs::ToBytes(big.data);
+        var (byte*, uint) bytes = Strs::ToBytes(big.data);
         s = s + " " + Main::show(big) + " " + bytes.0[69999]{int}{str};
         ws.SendText("frag");
         s = s + " " + Main::show(ws.Receive().0);
@@ -541,8 +541,8 @@ namespace Main {
                 if(m.text) {
                     ws.SendText("echo " + m.data);
                 } else {
-                    var (byte*, int) bytes = Strs::ToBytes(m.data);
-                    ws.SendBinary(bytes.0, bytes.1{uint});
+                    var (byte*, uint) bytes = Strs::ToBytes(m.data);
+                    ws.SendBinary(bytes.0, bytes.1);
                 }
             }
             return null;
@@ -575,7 +575,7 @@ namespace Main {
         ws.SendBinary(raw, 70000U);
         free(raw);
         var WebSocket.Message* big = ws.Receive().0;
-        var (byte*, int) bytes = Strs::ToBytes(big.data);
+        var (byte*, uint) bytes = Strs::ToBytes(big.data);
         s = s + " " + big.text{str} + " " + bytes.1{str} + " " + bytes.0[69999]{int}{str};
         ws.Close();
         s = s + " " + ws.Receive().0.closed{str} + " " + (ws.SendText("late") != null){str};

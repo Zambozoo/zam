@@ -27,8 +27,6 @@ extern const ZamNativeEntry zamCurlNativeTable[];
 extern const uint64_t zamCurlNativeTableCount;
 extern const ZamNativeEntry zamHttpNativeTable[];
 extern const uint64_t zamHttpNativeTableCount;
-extern const ZamNativeEntry zamWsNativeTable[];
-extern const uint64_t zamWsNativeTableCount;
 extern const ZamNativeEntry zamCryptoNativeTable[];
 extern const uint64_t zamCryptoNativeTableCount;
 extern const ZamNativeEntry zamPkiNativeTable[];
@@ -50,7 +48,6 @@ const ZamNativeTables zamStdNativeTables[] = {
     {zamTlsNativeTable, &zamTlsNativeTableCount},
     {zamCurlNativeTable, &zamCurlNativeTableCount},
     {zamHttpNativeTable, &zamHttpNativeTableCount},
-    {zamWsNativeTable, &zamWsNativeTableCount},
     {zamCryptoNativeTable, &zamCryptoNativeTableCount},
     {zamPkiNativeTable, &zamPkiNativeTableCount},
     {zamTimeNativeTable, &zamTimeNativeTableCount},

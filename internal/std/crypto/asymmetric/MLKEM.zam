@@ -35,11 +35,11 @@ public namespace MLKEM {
             return out;
         }
         var uint ctH = 0U;
-        var int ctN = 0;
+        var uint ctN = 0U;
         var uint secretH = 0U;
-        var int secretN = 0;
+        var uint secretN = 0U;
         var str errStr;
-        native(STD_PKEY_ENCAPSULATE){void(uint, uint*, int*, uint*, int*, str*)}(key.handle, &ctH, &ctN, &secretH, &secretN, &errStr);
+        native(STD_PKEY_ENCAPSULATE){void(uint, uint*, uint*, uint*, uint*, str*)}(key.handle, &ctH, &ctN, &secretH, &secretN, &errStr);
         if(errStr != null) {
             out.1 = StrErr::New(errStr);
             return out;
@@ -61,9 +61,9 @@ public namespace MLKEM {
             return out;
         }
         var uint h = 0U;
-        var int len = 0;
+        var uint len = 0U;
         var str errStr;
-        native(STD_PKEY_DECAPSULATE){void(uint, byte*, int, uint*, int*, str*)}(key.handle, b, n{int}, &h, &len, &errStr);
+        native(STD_PKEY_DECAPSULATE){void(uint, byte*, uint, uint*, uint*, str*)}(key.handle, b, n, &h, &len, &errStr);
         return Key::take(h, len, errStr);
     }
 }

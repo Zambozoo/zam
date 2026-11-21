@@ -16,19 +16,19 @@ public namespace Poly1305 {
         out.0 = null;
         out.1 = null;
         var uint h = 0U;
-        var int size = 0;
-        var int block = 0;
+        var uint size = 0U;
+        var uint block = 0U;
         var str errStr;
-        native(STD_POLY1305_NEW){void(byte*, int, uint*, int*, int*, str*)}(key, keyLen{int}, &h, &size, &block, &errStr);
+        native(STD_POLY1305_NEW){void(byte*, uint, uint*, uint*, uint*, str*)}(key, keyLen, &h, &size, &block, &errStr);
         if(errStr != null) {
             out.1 = StrErr::New(errStr);
             return out;
         }
-        native(STD_MAC_WRITE){void(uint, byte*, int)}(h, b, n{int});
-        var byte* tag = new(byte, size{uint});
+        native(STD_MAC_WRITE){void(uint, byte*, uint)}(h, b, n);
+        var byte* tag = new(byte, size);
         native(STD_MAC_SUM){void(uint, byte*)}(h, tag);
         native(STD_MAC_FREE){void(uint)}(h);
-        out.0 = Arr::[byte]New(size{uint}, tag...);
+        out.0 = Arr::[byte]New(size, tag...);
         return out;
     }
 

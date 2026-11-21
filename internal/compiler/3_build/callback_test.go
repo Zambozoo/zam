@@ -160,7 +160,7 @@ namespace Main {
 
     static fun void(int) churn = (i) {
         var str s = i{str} + "-churn";
-        Main::total = Main::total + Strs::ByteLen(s);
+        Main::total = Main::total + Strs::ByteLen(s){int};
     }
 
     static fun str(str) hello = (name) {

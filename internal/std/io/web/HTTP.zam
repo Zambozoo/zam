@@ -34,7 +34,7 @@ public class HTTP {
         // natives hand them over.
         public static fun HTTP.Headers*(str) FromJoined = (joined) {
             var HTTP.Headers* h = HTTP.Headers::New();
-            if(Strs::ByteLen(joined) == 0) {
+            if(Strs::ByteLen(joined) == 0U) {
                 return h;
             }
             var Arr[str]* parts = Strs::Split(joined, 0{byte});
@@ -46,10 +46,10 @@ public class HTTP {
 
         // Fold folds ASCII letters to lower case, as names are compared.
         public static fun str(str) Fold = (name) {
-            var (byte*, int) p = Strs::ToBytes(name);
-            var byte* lower = new(byte, p.1{uint} + 1U);
+            var (byte*, uint) p = Strs::ToBytes(name);
+            var byte* lower = new(byte, p.1 + 1U);
             defer free(lower);
-            for(var int i = 0; i < p.1; i++) {
+            for(var uint i = 0U; i < p.1; i++) {
                 var int c = p.0[i]{int};
                 if(c >= 'A'{int} && c <= 'Z'{int}) {
                     c = c + 32;
@@ -135,7 +135,7 @@ public class HTTP {
             var byte* zero = new(byte, 1U);
             defer free(zero);
             zero[0] = 0{byte};
-            return this.Join(": ", Strs::FromBytes(zero, 1));
+            return this.Join(": ", Strs::FromBytes(zero, 1U));
         }
     }
 
@@ -186,14 +186,14 @@ public class HTTP {
         }
 
         private fun Err*() fill = () {
-            var (int, Err*) p = this.stream.Read(this.chunk, 16384);
+            var (uint, Err*) p = this.stream.Read(this.chunk, 16384U);
             if(p.1 != null) {
                 return p.1;
             }
-            if(p.0 == 0) {
+            if(p.0 == 0U) {
                 return this.feed(-1);
             }
-            return this.feed(p.0);
+            return this.feed(p.0{int});
         }
 
         // Next reads the head of the next message, once the last is done,
@@ -220,12 +220,12 @@ public class HTTP {
 
         // ReadBody reads up to count bytes of the message's body into
         // buffer, returning zero at its end.
-        public fun (int, Err*)(byte*, int) ReadBody = (buffer, count) {
-            var (int, Err*) out;
+        public fun (uint, Err*)(byte*, uint) ReadBody = (buffer, count) {
+            var (uint, Err*) out;
             out.1 = null;
             for(;;) {
-                native(STD_HTTP_BODY){void(uint, byte*, int, int*)}(this.parser, buffer, count, &(out.0));
-                if(out.0 > 0 || (this.state & 2) != 0) {
+                native(STD_HTTP_BODY){void(uint, byte*, uint, uint*)}(this.parser, buffer, count, &(out.0));
+                if(out.0 > 0U || (this.state & 2) != 0) {
                     return out;
                 }
                 out.1 = this.fill();
@@ -243,12 +243,12 @@ public class HTTP {
 
         // Drain reads and drops the rest of the body, at most limit bytes of
         // it, reporting whether it reached the end.
-        public fun bool(int) Drain = (limit) {
+        public fun bool(uint) Drain = (limit) {
             var byte* b = new(byte, 16384U);
             defer free(b);
-            var int seen = 0;
+            var uint seen = 0U;
             for(; !this.Done() && seen <= limit;) {
-                var (int, Err*) p = this.ReadBody(b, 16384);
+                var (uint, Err*) p = this.ReadBody(b, 16384U);
                 if(p.1 != null) {
                     break;
                 }
@@ -299,9 +299,9 @@ public class HTTP {
             return b;
         }
 
-        public fun (int, Err*)(byte*, int) Read = (buffer, count) {
-            var (int, Err*) out;
-            out.0 = 0;
+        public fun (uint, Err*)(byte*, uint) Read = (buffer, count) {
+            var (uint, Err*) out;
+            out.0 = 0U;
             out.1 = null;
             if(this.closed) {
                 out.1 = StrErr::New("request body is closed");
@@ -317,9 +317,9 @@ public class HTTP {
             return this.conn.ReadBody(buffer, count);
         }
 
-        public fun (int, Err*)(byte*, int) Write = (buffer, count) {
-            var (int, Err*) out;
-            out.0 = 0;
+        public fun (uint, Err*)(byte*, uint) Write = (buffer, count) {
+            var (uint, Err*) out;
+            out.0 = 0U;
             out.1 = StrErr::New("request body is read-only");
             return out;
         }
@@ -400,9 +400,9 @@ public class HTTP {
                 if((state & 1) == 0) {
                     return state;
                 }
-                var int n = 0;
+                var uint n = 0U;
                 if(this.upload != null) {
-                    var (int, Err*) p = this.upload.Read(this.chunk, 16384);
+                    var (uint, Err*) p = this.upload.Read(this.chunk, 16384U);
                     if(p.1 != null) {
                         this.err = p.1;
                         this.done = true;
@@ -410,22 +410,22 @@ public class HTTP {
                     }
                     n = p.0;
                 }
-                native(STD_HTTP_UPLOAD){void(uint, byte*, int)}(this.handle, this.chunk, n);
+                native(STD_HTTP_UPLOAD){void(uint, byte*, uint)}(this.handle, this.chunk, n);
             }
             return 0;
         }
 
-        public fun (int, Err*)(byte*, int) Read = (buffer, count) {
-            var (int, Err*) out;
-            out.0 = 0;
+        public fun (uint, Err*)(byte*, uint) Read = (buffer, count) {
+            var (uint, Err*) out;
+            out.0 = 0U;
             out.1 = null;
             if(this.handle == 0U) {
                 out.1 = StrErr::New("response body is closed");
                 return out;
             }
             for(;;) {
-                native(STD_HTTP_TAKE){void(uint, byte*, int, int*)}(this.handle, buffer, count, &(out.0));
-                if(out.0 > 0) {
+                native(STD_HTTP_TAKE){void(uint, byte*, uint, uint*)}(this.handle, buffer, count, &(out.0));
+                if(out.0 > 0U) {
                     return out;
                 }
                 if(this.done) {
@@ -437,9 +437,9 @@ public class HTTP {
             return out;
         }
 
-        public fun (int, Err*)(byte*, int) Write = (buffer, count) {
-            var (int, Err*) out;
-            out.0 = 0;
+        public fun (uint, Err*)(byte*, uint) Write = (buffer, count) {
+            var (uint, Err*) out;
+            out.0 = 0U;
             out.1 = StrErr::New("response body is read-only");
             return out;
         }
@@ -508,7 +508,7 @@ public class HTTP {
             var Buffer* b = Buffer::New();
             b.WriteStr(s);
             this.body = b;
-            this.length = Strs::ByteLen(s);
+            this.length = Strs::ByteLen(s){int};
         }
 
         // ReadBody reads the body to its end.
@@ -530,7 +530,7 @@ public class HTTP {
             if(this.conn == null) {
                 return null;
             }
-            this.conn.Drain(1048576);
+            this.conn.Drain(1048576U);
             this.conn.Hijack();
             return this.conn;
         }
@@ -567,7 +567,7 @@ public class HTTP {
         public static fun HTTP.Response*(uint, str) New = (status, body) {
             var Buffer* b = Buffer::New();
             b.WriteStr(body);
-            return HTTP.Response::Of(status, b, Strs::ByteLen(body));
+            return HTTP.Response::Of(status, b, Strs::ByteLen(body){int});
         }
 
         // Of makes a response whose body, length bytes long or -1 when
@@ -627,7 +627,7 @@ public class HTTP {
         var Buffer* b = Buffer::New();
         b.WriteStr(body.0);
         out.0.body = b;
-        out.0.length = Strs::ByteLen(body.0);
+        out.0.length = Strs::ByteLen(body.0){int};
         return out;
     }
 
@@ -727,21 +727,21 @@ public class HTTP {
             return this.listener.Close();
         }
 
-        private static fun str(int) hex = (n) {
+        private static fun str(uint) hex = (n) {
             var str digits = "0123456789abcdef";
-            var (byte*, int) d = Strs::ToBytes(digits);
+            var (byte*, uint) d = Strs::ToBytes(digits);
             var byte* b = new(byte, 16U);
             defer free(b);
-            var int i = 16;
+            var uint i = 16U;
             for(;;) {
                 i--;
-                b[i] = d.0[n % 16];
-                n = n / 16;
-                if(n == 0) {
+                b[i] = d.0[n % 16U];
+                n = n / 16U;
+                if(n == 0U) {
                     break;
                 }
             }
-            return Strs::FromBytes(b + i{uint}, 16 - i);
+            return Strs::FromBytes(b + i, 16U - i);
         }
 
         private static fun bool(Stream*, Buffer*) flush = (s, out) {
@@ -801,8 +801,8 @@ public class HTTP {
                             want = left;
                         }
                     }
-                    var (int, Err*) p = body.Read(chunk, want);
-                    if(p.1 != null || p.0 == 0) {
+                    var (uint, Err*) p = body.Read(chunk, want{uint});
+                    if(p.1 != null || p.0 == 0U) {
                         ok = p.1 == null && left <= 0;
                         break;
                     }
@@ -813,7 +813,7 @@ public class HTTP {
                     if(chunked) {
                         out.WriteStr("\r\n");
                     }
-                    left = left - p.0;
+                    left = left - p.0{int};
                     if(chunked || out.Len() >= 16384U) {
                         ok = HTTP.Server::flush(s, out);
                     }
@@ -868,7 +868,7 @@ public class HTTP {
                     resp = HTTP.Response::New(500U, "");
                 }
                 var bool keepAlive = c.keepAlive && !c.upgrade;
-                if(!c.Done() && (body.Waiting() || !c.Drain(1048576))) {
+                if(!c.Done() && (body.Waiting() || !c.Drain(1048576U))) {
                     keepAlive = false;
                 }
                 body.Close();

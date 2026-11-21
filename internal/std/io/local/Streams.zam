@@ -17,12 +17,12 @@ public namespace Streams {
         defer free(chunk);
         out.1 = null;
         for(;;) {
-            var (int, Err*) p = s.Read(chunk, 16384);
+            var (uint, Err*) p = s.Read(chunk, 16384U);
             if(p.1 != null) {
                 out.1 = p.1;
                 break;
             }
-            if(p.0 == 0) {
+            if(p.0 == 0U) {
                 break;
             }
             b.Write(chunk, p.0);
@@ -32,14 +32,14 @@ public namespace Streams {
     }
 
     // WriteAll writes all n bytes at b, writing again after a short write.
-    public static fun Err*(Stream*, byte*, int) WriteAll = (s, b, n) {
-        var int done = 0;
+    public static fun Err*(Stream*, byte*, uint) WriteAll = (s, b, n) {
+        var uint done = 0U;
         for(; done < n;) {
-            var (int, Err*) p = s.Write(b + done{uint}, n - done);
+            var (uint, Err*) p = s.Write(b + done, n - done);
             if(p.1 != null) {
                 return p.1;
             }
-            if(p.0 <= 0) {
+            if(p.0 == 0U) {
                 return StrErr::New("stream accepted no bytes");
             }
             done = done + p.0;
@@ -48,25 +48,25 @@ public namespace Streams {
     }
 
     public static fun Err*(Stream*, str) WriteStr = (s, text) {
-        var (byte*, int) p = Strs::ToBytes(text);
+        var (byte*, uint) p = Strs::ToBytes(text);
         return Streams::WriteAll(s, p.0, p.1);
     }
 
     // Copy writes what it reads from src to dst until src ends, returning how
     // many bytes it copied.
-    public static fun (int, Err*)(Stream*, Stream*) Copy = (dst, src) {
-        var (int, Err*) out;
-        out.0 = 0;
+    public static fun (uint, Err*)(Stream*, Stream*) Copy = (dst, src) {
+        var (uint, Err*) out;
+        out.0 = 0U;
         out.1 = null;
         var byte* chunk = new(byte, 16384U);
         defer free(chunk);
         for(;;) {
-            var (int, Err*) p = src.Read(chunk, 16384);
+            var (uint, Err*) p = src.Read(chunk, 16384U);
             if(p.1 != null) {
                 out.1 = p.1;
                 break;
             }
-            if(p.0 == 0) {
+            if(p.0 == 0U) {
                 break;
             }
             var Err* e = Streams::WriteAll(dst, chunk, p.0);

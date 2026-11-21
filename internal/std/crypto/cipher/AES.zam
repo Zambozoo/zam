@@ -33,15 +33,15 @@ public namespace AES {
             return r;
         }
         var byte* out = new(byte, n + AES::BlockSize);
-        var int written = 0;
+        var uint written = 0U;
         var str errStr;
-        native(STD_AES){void(byte, bool, byte*, int, byte*, byte*, int, byte*, int*, str*)}(mode{byte}, encrypt, key, keyLen{int}, iv, b, n{int}, out, &written, &errStr);
+        native(STD_AES){void(byte, bool, byte*, uint, byte*, byte*, uint, byte*, uint*, str*)}(mode{byte}, encrypt, key, keyLen, iv, b, n, out, &written, &errStr);
         if(errStr != null) {
             free(out);
             r.1 = StrErr::New(errStr);
             return r;
         }
-        r.0 = Arr::[byte]New(written{uint}, out...);
+        r.0 = Arr::[byte]New(written, out...);
         return r;
     }
 

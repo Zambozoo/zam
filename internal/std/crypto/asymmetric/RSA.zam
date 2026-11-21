@@ -57,9 +57,9 @@ public namespace RSA {
             return out;
         }
         var uint h = 0U;
-        var int len = 0;
+        var uint len = 0U;
         var str errStr;
-        native(STD_PKEY_OAEP){void(uint, byte, bool, byte*, int, uint*, int*, str*)}(key.handle, digest{byte}, decrypt, b, n{int}, &h, &len, &errStr);
+        native(STD_PKEY_OAEP){void(uint, byte, bool, byte*, uint, uint*, uint*, str*)}(key.handle, digest{byte}, decrypt, b, n, &h, &len, &errStr);
         return Key::take(h, len, errStr);
     }
 

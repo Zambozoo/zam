@@ -52,12 +52,12 @@ namespace Main {
     }
 
     static fun bool(Arr[byte]*, str) is = (a, s) {
-        return Strs::FromBytes(a.Arr(), a.Len(){int}) == s;
+        return Strs::FromBytes(a.Arr(), a.Len()) == s;
     }
 
     fun void(uint, str...) main = (argC, argV) {
         var str abcStr = "abc";
-        var (byte*, int) abc = Strs::ToBytes(abcStr);
+        var (byte*, uint) abc = Strs::ToBytes(abcStr);
         var byte* m = abc.0;
         var uint n = 3U;
         Main::put("md5", MD5::Sum(m, n));
@@ -93,68 +93,68 @@ namespace Main {
         Main::check("hash", Main::hex(h.Sum()) == Main::hex(SHA3::Sum256(m, n)) && h.Size() == 32U);
 
         var str keyStr = "key";
-        var (byte*, int) key = Strs::ToBytes(keyStr);
+        var (byte*, uint) key = Strs::ToBytes(keyStr);
         var str foxStr = "The quick brown fox jumps over the lazy dog";
-        var (byte*, int) fox = Strs::ToBytes(foxStr);
-        var Arr[byte]* tag = HMAC::Of(Digest.Kind::SHA256, key.0, 3U, fox.0, fox.1{uint}).0;
+        var (byte*, uint) fox = Strs::ToBytes(foxStr);
+        var Arr[byte]* tag = HMAC::Of(Digest.Kind::SHA256, key.0, 3U, fox.0, fox.1).0;
         Main::put("hmac256", tag);
         var HMAC* mac = HMAC::New(Digest.Kind::SHA512, key.0, 3U).0;
         mac.WriteStr(foxStr);
         var str macFirst = Main::hex(mac.Sum());
         File::StdOut.WriteStr("hmac512 " + macFirst + "\n");
         mac.Reset();
-        mac.Write(fox.0, fox.1{uint});
+        mac.Write(fox.0, fox.1);
         Main::check("hmacReset", Main::hex(mac.Sum()) == macFirst && mac.Size() == 64U && mac.BlockSize() == 128U);
         Main::check("hmacVerify",
-            HMAC::Verify(Digest.Kind::SHA256, key.0, 3U, fox.0, fox.1{uint}, tag.Arr(), tag.Len()) &&
-            !HMAC::Verify(Digest.Kind::SHA256, key.0, 3U, fox.0, fox.1{uint} - 1U, tag.Arr(), tag.Len()) &&
-            !HMAC::Verify(Digest.Kind::SHA256, key.0, 3U, fox.0, fox.1{uint}, tag.Arr(), 31U));
+            HMAC::Verify(Digest.Kind::SHA256, key.0, 3U, fox.0, fox.1, tag.Arr(), tag.Len()) &&
+            !HMAC::Verify(Digest.Kind::SHA256, key.0, 3U, fox.0, fox.1 - 1U, tag.Arr(), tag.Len()) &&
+            !HMAC::Verify(Digest.Kind::SHA256, key.0, 3U, fox.0, fox.1, tag.Arr(), 31U));
 
         var Arr[byte]* polyKey = Main::unhex("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b");
         var str polyStr = "Cryptographic Forum Research Group";
-        var (byte*, int) polyMsg = Strs::ToBytes(polyStr);
-        var Arr[byte]* polyTag = Poly1305::Sum(polyKey.Arr(), 32U, polyMsg.0, polyMsg.1{uint}).0;
+        var (byte*, uint) polyMsg = Strs::ToBytes(polyStr);
+        var Arr[byte]* polyTag = Poly1305::Sum(polyKey.Arr(), 32U, polyMsg.0, polyMsg.1).0;
         Main::put("poly1305", polyTag);
         Main::check("poly1305Verify",
-            Poly1305::Verify(polyKey.Arr(), 32U, polyMsg.0, polyMsg.1{uint}, polyTag.Arr(), 16U) &&
+            Poly1305::Verify(polyKey.Arr(), 32U, polyMsg.0, polyMsg.1, polyTag.Arr(), 16U) &&
             !Poly1305::Verify(polyKey.Arr(), 32U, polyMsg.0, 3U, polyTag.Arr(), 16U) &&
             Poly1305::Sum(polyKey.Arr(), 16U, polyMsg.0, 3U).1 != null);
 
         var str secretStr = "secret";
-        var (byte*, int) secret = Strs::ToBytes(secretStr);
+        var (byte*, uint) secret = Strs::ToBytes(secretStr);
         var str saltStr = "salt";
-        var (byte*, int) salt = Strs::ToBytes(saltStr);
+        var (byte*, uint) salt = Strs::ToBytes(saltStr);
         var str infoStr = "info";
-        var (byte*, int) info = Strs::ToBytes(infoStr);
+        var (byte*, uint) info = Strs::ToBytes(infoStr);
         var Arr[byte]* okm = HKDF::Key(Digest.Kind::SHA256, secret.0, 6U, salt.0, 4U, info.0, 4U, 42U).0;
         Main::put("hkdf", okm);
         var Arr[byte]* prk = HKDF::Extract(Digest.Kind::SHA256, secret.0, 6U, salt.0, 4U).0;
         var Arr[byte]* expanded = HKDF::Expand(Digest.Kind::SHA256, prk.Arr(), prk.Len(), info.0, 4U, 42U).0;
         Main::check("hkdfParts", Main::hex(expanded) == Main::hex(okm));
         var str passwordStr = "password";
-        var (byte*, int) password = Strs::ToBytes(passwordStr);
+        var (byte*, uint) password = Strs::ToBytes(passwordStr);
         Main::put("pbkdf2", PBKDF2::Key(Digest.Kind::SHA256, password.0, 8U, salt.0, 4U, 4096U, 32U).0);
         var str naclStr = "NaCl";
-        var (byte*, int) nacl = Strs::ToBytes(naclStr);
+        var (byte*, uint) nacl = Strs::ToBytes(naclStr);
         Main::put("scrypt", Scrypt::Key(password.0, 8U, nacl.0, 4U, 1024U, 8U, 16U, 64U).0);
         Main::check("scryptBad", Scrypt::Key(password.0, 8U, nacl.0, 4U, 1000U, 8U, 16U, 64U).1 != null);
         var str someSaltStr = "somesalt0";
-        var (byte*, int) someSalt = Strs::ToBytes(someSaltStr);
+        var (byte*, uint) someSalt = Strs::ToBytes(someSaltStr);
         Main::put("argon2", Argon2::Key(password.0, 8U, someSalt.0, 9U, 2U, 1024U, 2U, 32U).0);
 
         var str hunterStr = "hunter2";
-        var (byte*, int) hunter = Strs::ToBytes(hunterStr);
+        var (byte*, uint) hunter = Strs::ToBytes(hunterStr);
         var str wrongStr = "hunter3";
-        var (byte*, int) wrong = Strs::ToBytes(wrongStr);
+        var (byte*, uint) wrong = Strs::ToBytes(wrongStr);
         var str argonHash = Argon2::Hash(hunter.0, 7U, 2U, 1024U).0;
         Main::check("argon2Hash", Strs::Split(argonHash, '$'{byte}).Get(1U) == "argon2id" &&
             Argon2::Verify(argonHash, hunter.0, 7U) && !Argon2::Verify(argonHash, wrong.0, 7U) &&
             !Argon2::Verify("nonsense", hunter.0, 7U));
         var str bcryptHash = BCrypt::Hash(hunter.0, 7U, 4).0;
         var str horseStr = "correct horse";
-        var (byte*, int) horse = Strs::ToBytes(horseStr);
+        var (byte*, uint) horse = Strs::ToBytes(horseStr);
         var str longStr = "0123456789012345678901234567890123456789012345678901234567890123456789012";
-        var (byte*, int) long = Strs::ToBytes(longStr);
+        var (byte*, uint) long = Strs::ToBytes(longStr);
         Main::check("bcrypt", BCrypt::Verify(bcryptHash, hunter.0, 7U) &&
             !BCrypt::Verify(bcryptHash, wrong.0, 7U) &&
             BCrypt::Verify("$2y$05$MvkiluqVjxioMVZkrMGUiOS/ewMzshqFuQ6Oua33CZXDRyz9W6FJO", horse.0, 13U) &&
@@ -166,9 +166,9 @@ namespace Main {
         var Arr[byte]* iv = Main::unhex("101112131415161718191a1b1c1d1e1f");
         var Arr[byte]* nonce12 = Main::unhex("202122232425262728292a2b");
         var str aadStr = "header";
-        var (byte*, int) aad = Strs::ToBytes(aadStr);
+        var (byte*, uint) aad = Strs::ToBytes(aadStr);
         var AEAD* gcm = AES::GCM(key16.Arr(), 16U).0;
-        var Arr[byte]* sealed = gcm.Seal(nonce12.Arr(), fox.0, fox.1{uint}, aad.0, 6U);
+        var Arr[byte]* sealed = gcm.Seal(nonce12.Arr(), fox.0, fox.1, aad.0, 6U);
         Main::put("gcm", sealed);
         var Arr[byte]* opened = gcm.Open(nonce12.Arr(), sealed.Arr(), sealed.Len(), aad.0, 6U).0;
         var bool aadWrong = gcm.Open(nonce12.Arr(), sealed.Arr(), sealed.Len(), aad.0, 5U).1 != null;
@@ -177,12 +177,12 @@ namespace Main {
             gcm.Open(nonce12.Arr(), sealed.Arr(), sealed.Len(), aad.0, 6U).1 != null &&
             gcm.Open(nonce12.Arr(), sealed.Arr(), 15U, aad.0, 6U).1 != null &&
             AES::GCM(key16.Arr(), 15U).1 != null && gcm.NonceSize() == 12U && gcm.Overhead() == 16U);
-        var Arr[byte]* cbc = AES::EncryptCBC(key16.Arr(), 16U, iv.Arr(), fox.0, fox.1{uint}).0;
+        var Arr[byte]* cbc = AES::EncryptCBC(key16.Arr(), 16U, iv.Arr(), fox.0, fox.1).0;
         Main::put("cbc", cbc);
         Main::check("cbcOpen", Main::is(AES::DecryptCBC(key16.Arr(), 16U, iv.Arr(), cbc.Arr(), cbc.Len()).0, foxStr) &&
             AES::DecryptCBC(key16.Arr(), 16U, iv.Arr(), cbc.Arr(), 20U).1 != null &&
             AES::EncryptCBC(key16.Arr(), 12U, iv.Arr(), fox.0, 3U).1 != null);
-        var Arr[byte]* ctr = AES::CTR(key16.Arr(), 16U, iv.Arr(), fox.0, fox.1{uint}).0;
+        var Arr[byte]* ctr = AES::CTR(key16.Arr(), 16U, iv.Arr(), fox.0, fox.1).0;
         Main::put("ctr", ctr);
         Main::check("ctrOpen", Main::is(AES::CTR(key16.Arr(), 16U, iv.Arr(), ctr.Arr(), ctr.Len()).0, foxStr));
 
@@ -190,22 +190,22 @@ namespace Main {
         var Arr[byte]* chachaNonce = Main::unhex("070000004041424344454647");
         var Arr[byte]* chachaAad = Main::unhex("50515253c0c1c2c3c4c5c6c7");
         var str sunStr = "Ladies and Gentlemen of the class of '99: If I could offer you only one tip for the future, sunscreen would be it.";
-        var (byte*, int) sun = Strs::ToBytes(sunStr);
+        var (byte*, uint) sun = Strs::ToBytes(sunStr);
         var AEAD* chacha = ChaCha20Poly1305::New(chachaKey.Arr(), 32U).0;
-        var Arr[byte]* chachaSealed = chacha.Seal(chachaNonce.Arr(), sun.0, sun.1{uint}, chachaAad.Arr(), 12U);
+        var Arr[byte]* chachaSealed = chacha.Seal(chachaNonce.Arr(), sun.0, sun.1, chachaAad.Arr(), 12U);
         Main::put("chacha", chachaSealed);
         Main::check("chachaOpen", Main::is(chacha.Open(chachaNonce.Arr(), chachaSealed.Arr(), chachaSealed.Len(), chachaAad.Arr(), 12U).0, sunStr) &&
             chacha.Open(chachaNonce.Arr(), chachaSealed.Arr(), chachaSealed.Len(), chachaAad.Arr(), 11U).1 != null &&
             ChaCha20Poly1305::New(chachaKey.Arr(), 16U).1 != null);
         var AEAD* xchacha = ChaCha20Poly1305::NewX(chachaKey.Arr(), 32U).0;
         var Arr[byte]* nonce24 = Rand::Bytes(24U);
-        var Arr[byte]* xSealed = xchacha.Seal(nonce24.Arr(), sun.0, sun.1{uint}, chachaAad.Arr(), 12U);
-        Main::check("xchacha", xSealed.Len() == sun.1{uint} + 16U && xchacha.NonceSize() == 24U &&
+        var Arr[byte]* xSealed = xchacha.Seal(nonce24.Arr(), sun.0, sun.1, chachaAad.Arr(), 12U);
+        Main::check("xchacha", xSealed.Len() == sun.1 + 16U && xchacha.NonceSize() == 24U &&
             Main::is(xchacha.Open(nonce24.Arr(), xSealed.Arr(), xSealed.Len(), chachaAad.Arr(), 12U).0, sunStr) &&
             xchacha.Open(nonce24.Arr(), xSealed.Arr(), xSealed.Len(), null, 0U).1 != null);
 
         var AEAD* box = Salsa20::SecretBox(chachaKey.Arr(), 32U).0;
-        var uint foxLen = fox.1{uint};
+        var uint foxLen = fox.1;
         var Arr[byte]* boxed = box.Seal(nonce24.Arr(), fox.0, foxLen, null, 0U);
         var byte* padded = new(byte, 32U + foxLen);
         Arrs::[byte]Copy(foxLen, fox.0, padded + 32U);

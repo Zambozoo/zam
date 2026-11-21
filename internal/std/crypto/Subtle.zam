@@ -5,17 +5,17 @@ public namespace Subtle {
     // Equal reports whether the n bytes at a and b are equal.
     public static fun bool(byte*, byte*, uint) Equal = (a, b, n) {
         var bool out = false;
-        native(STD_CRYPTO_EQUAL){void(byte*, byte*, int, bool*)}(a, b, n{int}, &out);
+        native(STD_CRYPTO_EQUAL){void(byte*, byte*, uint, bool*)}(a, b, n, &out);
         return out;
     }
 
     // EqualStr reports whether a and b are equal, leaking only their lengths.
     public static fun bool(str, str) EqualStr = (a, b) {
-        var (byte*, int) x = Strs::ToBytes(a);
-        var (byte*, int) y = Strs::ToBytes(b);
+        var (byte*, uint) x = Strs::ToBytes(a);
+        var (byte*, uint) y = Strs::ToBytes(b);
         if(x.1 != y.1) {
             return false;
         }
-        return Subtle::Equal(x.0, y.0, x.1{uint});
+        return Subtle::Equal(x.0, y.0, x.1);
     }
 }

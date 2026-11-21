@@ -23,12 +23,12 @@ public namespace PKCS12 {
         out.0 = null;
         out.1 = null;
         var uint keyH = 0U;
-        var int keyN = 0;
+        var uint keyN = 0U;
         var uint cert = 0U;
         var uint list = 0U;
-        var int count = 0;
+        var uint count = 0U;
         var str errStr;
-        native(STD_PKCS12_PARSE){void(byte*, int, str, uint*, int*, uint*, uint*, int*, str*)}(b, n{int}, password, &keyH, &keyN, &cert, &list, &count, &errStr);
+        native(STD_PKCS12_PARSE){void(byte*, uint, str, uint*, uint*, uint*, uint*, uint*, str*)}(b, n, password, &keyH, &keyN, &cert, &list, &count, &errStr);
         if(errStr != null) {
             out.1 = StrErr::New(errStr);
             return out;
@@ -68,9 +68,9 @@ public namespace PKCS12 {
         var uint* handles = X509::handles(chain);
         defer free(handles);
         var uint h = 0U;
-        var int n = 0;
+        var uint n = 0U;
         var str errStr;
-        native(STD_PKCS12_CREATE){void(byte*, int, uint, uint*, int, str, str, uint*, int*, str*)}(der.0.Arr(), der.0.Len(){int}, cert.handle, handles, X509::count(chain){int}, password, name, &h, &n, &errStr);
+        native(STD_PKCS12_CREATE){void(byte*, uint, uint, uint*, uint, str, str, uint*, uint*, str*)}(der.0.Arr(), der.0.Len(), cert.handle, handles, X509::count(chain), password, name, &h, &n, &errStr);
         return X509::take(h, n, errStr);
     }
 }

@@ -223,18 +223,16 @@ static void stdHttpHead(ZamThread *thread) {
 // stdHttpBody moves up to max body bytes parsed so far into out.
 static void stdHttpBody(ZamThread *thread) {
     HttpConn *c = codec_handle(thread, 0);
-    ZamInt max = (ZamInt)zam_native_argument(thread, 2);
+    size_t max = (size_t)zam_native_argument(thread, 2);
     size_t n = c->body.length;
-    if (max < 0)
-        max = 0;
-    if (n > (size_t)max)
-        n = (size_t)max;
+    if (n > max)
+        n = max;
     if (n > 0) {
         memcpy(zam_native_argument_pointer(thread, 1), c->body.bytes, n);
         memmove(c->body.bytes, c->body.bytes + n, c->body.length - n);
         c->body.length -= n;
     }
-    *(ZamInt *)zam_native_argument_pointer(thread, 3) = (ZamInt)n;
+    *(ZamUint *)zam_native_argument_pointer(thread, 3) = (ZamUint)n;
     zam_native_return_void(thread);
 }
 

@@ -217,7 +217,7 @@ public struct Time {
 
     static fun str(int, uint) pad = (n, width) {
         var str s = n{str};
-        for(; Strs::ByteLen(s){uint} < width;) {
+        for(; Strs::ByteLen(s) < width;) {
             s = "0" + s;
         }
         return s;
@@ -232,12 +232,12 @@ public struct Time {
         var int ns = this.Nanosecond();
         if(ns != 0) {
             var str frac = Time::pad(ns, 9U);
-            var (byte*, int) b = Strs::ToBytes(frac);
+            var (byte*, uint) b = Strs::ToBytes(frac);
             var int n = 9;
             for(; b.0[(n - 1){uint}] == '0'{byte};) {
                 n--;
             }
-            s = s + "." + Strs::FromBytes(b.0, n);
+            s = s + "." + Strs::FromBytes(b.0, n{uint});
         }
         return s + "Z";
     }
@@ -273,9 +273,9 @@ public struct Time {
         var (Time, Err*) out;
         out.0 = Time::at(0);
         out.1 = StrErr::New("not an RFC 3339 time: " + s);
-        var (byte*, int) p = Strs::ToBytes(s);
+        var (byte*, uint) p = Strs::ToBytes(s);
         var byte* b = p.0;
-        var int n = p.1;
+        var int n = p.1{int};
         if(n < 20 || b[4] != '-'{byte} || b[7] != '-'{byte} || b[13] != ':'{byte} || b[16] != ':'{byte}) {
             return out;
         }

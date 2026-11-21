@@ -151,14 +151,14 @@ static void transfer(ZamThread *thread, bool write) {
     if (ssl == NULL)
         zam_native_panic(thread, "TLS connection was closed");
     void *buffer = zam_native_argument_pointer(thread, 1);
-    ZamInt n = (ZamInt)zam_native_argument(thread, 2);
+    ZamUint n = (ZamUint)zam_native_argument(thread, 2);
     size_t done = 0;
     zam_native_block_begin(thread);
     int result = write ? SSL_write_ex(ssl, buffer, (size_t)n, &done)
                        : SSL_read_ex(ssl, buffer, (size_t)n, &done);
     int reason = result == 1 ? SSL_ERROR_NONE : SSL_get_error(ssl, result);
     zam_native_block_end(thread);
-    *(ZamInt *)zam_native_argument_pointer(thread, 3) = (ZamInt)done;
+    *(ZamUint *)zam_native_argument_pointer(thread, 3) = (ZamUint)done;
     if (reason == SSL_ERROR_NONE || (!write && reason == SSL_ERROR_ZERO_RETURN))
         codec_write_error(thread, 4, NULL);
     else

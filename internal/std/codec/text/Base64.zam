@@ -12,7 +12,7 @@ public namespace Base64 {
     var str$ url = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
     private static fun str(byte*, uint, str, bool) encode = (b, n, alphabet, pad) {
-        var (byte*, int) a = Strs::ToBytes(alphabet);
+        var (byte*, uint) a = Strs::ToBytes(alphabet);
         var uint cap = (n + 2U) / 3U * 4U;
         var byte* out = new(byte, cap + 1U);
         defer free(out);
@@ -43,7 +43,7 @@ public namespace Base64 {
                 o++;
             }
         }
-        return Strs::FromBytes(out, o{int});
+        return Strs::FromBytes(out, o);
     }
 
     // value returns the six bits c stands for in the alphabet, or -1.
@@ -70,12 +70,12 @@ public namespace Base64 {
     private static fun (Arr[byte]*, Err*)(str, bool) decode = (s, urlSafe) {
         var (Arr[byte]*, Err*) out;
         out.0 = null;
-        var (byte*, int) p = Strs::ToBytes(s);
-        var uint n = p.1{uint};
+        var (byte*, uint) p = Strs::ToBytes(s);
+        var uint n = p.1;
         for(; n > 0U && p.0[n - 1U]{int} == '='{int};) {
             n--;
         }
-        if(n % 4U == 1U || p.1{uint} - n > 2U) {
+        if(n % 4U == 1U || p.1 - n > 2U) {
             out.1 = StrErr::New("invalid base64 length");
             return out;
         }
@@ -112,8 +112,8 @@ public namespace Base64 {
     }
 
     public static fun str(str) EncodeStr = (s) {
-        var (byte*, int) p = Strs::ToBytes(s);
-        return Base64::encode(p.0, p.1{uint}, Base64::std, true);
+        var (byte*, uint) p = Strs::ToBytes(s);
+        return Base64::encode(p.0, p.1, Base64::std, true);
     }
 
     // EncodeURL encodes in the URL-safe alphabet, without padding.
@@ -135,7 +135,7 @@ public namespace Base64 {
         out.1 = d.1;
         out.0 = "";
         if(d.1 == null) {
-            out.0 = Strs::FromBytes(d.0.Arr(), d.0.Len(){int});
+            out.0 = Strs::FromBytes(d.0.Arr(), d.0.Len());
         }
         return out;
     }

@@ -98,6 +98,9 @@ func (c *collector) expr(e syntax.Expr) {
 	case *syntax.ExprNAry:
 		c.exprs(e.Exprs)
 	case *syntax.ExprNative:
+		if _, intrinsic := nativeIntrinsics[e.ID]; intrinsic {
+			break
+		}
 		if _, at := c.reader.natives.Get(e.ID); at < 0 {
 			c.reader.natives.Set(e.ID, uint64(c.reader.natives.Len()))
 		}

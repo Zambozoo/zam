@@ -71,8 +71,8 @@ public class ACME {
     }
 
     static fun str(str) b64 = (s) {
-        var (byte*, int) p = Strs::ToBytes(s);
-        return Base64::EncodeURL(p.0, p.1{uint});
+        var (byte*, uint) p = Strs::ToBytes(s);
+        return Base64::EncodeURL(p.0, p.1);
     }
 
     static fun str(str) quote = (s) {
@@ -124,8 +124,8 @@ public class ACME {
         var Arr[byte]* der = accountKey.Public().DER().0;
         var byte* point = der.Arr() + (der.Len() - 64U);
         a.jwk = "{\"crv\":\"P-256\",\"kty\":\"EC\",\"x\":\"" + Base64::EncodeURL(point, 32U) + "\",\"y\":\"" + Base64::EncodeURL(point + 32U, 32U) + "\"}";
-        var (byte*, int) j = Strs::ToBytes(a.jwk);
-        var Arr[byte]* sum = SHA256::Sum(j.0, j.1{uint});
+        var (byte*, uint) j = Strs::ToBytes(a.jwk);
+        var Arr[byte]* sum = SHA256::Sum(j.0, j.1);
         a.thumbprint = Base64::EncodeURL(sum.Arr(), sum.Len());
         if(a.newNonce == "" || a.newAccount == "" || a.newOrder == "") {
             out.1 = ACME::fail("the directory at " + directoryURL + " is incomplete");
@@ -192,8 +192,8 @@ public class ACME {
             if(payload != "") {
                 body = ACME::b64(payload);
             }
-            var (byte*, int) input = Strs::ToBytes(header + "." + body);
-            var (Arr[byte]*, Err*) sig = ECDSA::Sign(this.key, Digest.Kind::SHA256, input.0, input.1{uint});
+            var (byte*, uint) input = Strs::ToBytes(header + "." + body);
+            var (Arr[byte]*, Err*) sig = ECDSA::Sign(this.key, Digest.Kind::SHA256, input.0, input.1);
             if(sig.1 != null) {
                 out.1 = sig.1;
                 return out;
@@ -359,8 +359,8 @@ public class ACME {
                     found.token = ACME::field(c, "token");
                     found.url = ACME::field(c, "url");
                     found.keyAuthorization = found.token + "." + this.thumbprint;
-                    var (byte*, int) ka = Strs::ToBytes(found.keyAuthorization);
-                    var Arr[byte]* sum = SHA256::Sum(ka.0, ka.1{uint});
+                    var (byte*, uint) ka = Strs::ToBytes(found.keyAuthorization);
+                    var Arr[byte]* sum = SHA256::Sum(ka.0, ka.1);
                     found.dnsValue = Base64::EncodeURL(sum.Arr(), sum.Len());
                 }
             }

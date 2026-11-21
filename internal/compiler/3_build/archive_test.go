@@ -99,7 +99,7 @@ namespace Main {
             var Archive.Entry* e = entries.Get(i);
             var str body = "-";
             if(e.data != null) {
-                body = Strs::FromBytes(e.data.Arr(), e.data.Len(){int});
+                body = Strs::FromBytes(e.data.Arr(), e.data.Len());
             }
             s = s + "[" + e.name + " " + e.isDir{str} + " " + e.mode{str} + " " + e.modTime.Unix(){str} + " " + body + "]";
         }
@@ -107,17 +107,17 @@ namespace Main {
     }
 
     static fun Arr[byte]*(str) bytesOf = (s) {
-        var (byte*, int) p = Strs::ToBytes(s);
-        var byte* b = new(byte, p.1{uint});
-        for(var int i = 0; i < p.1; i++) {
+        var (byte*, uint) p = Strs::ToBytes(s);
+        var byte* b = new(byte, p.1);
+        for(var uint i = 0U; i < p.1; i++) {
             b[i] = p.0[i];
         }
-        return Arr::[byte]New(p.1{uint}, b...);
+        return Arr::[byte]New(p.1, b...);
     }
 
     static fun void(str, Arr[byte]*) save = (path, b) {
         var File* f = File::Create(path).0;
-        f.Write(b.Arr(), b.Len(){int});
+        f.Write(b.Arr(), b.Len());
         f.Close();
     }
 
@@ -126,12 +126,12 @@ namespace Main {
         var str tar = FS::ReadFile(FS::Join(dir, "in.tar")).0;
         var str tgz = FS::ReadFile(FS::Join(dir, "in.tgz")).0;
         var str zip = FS::ReadFile(FS::Join(dir, "in.zip")).0;
-        var (byte*, int) tb = Strs::ToBytes(tar);
-        var (byte*, int) gb = Strs::ToBytes(tgz);
-        var (byte*, int) zb = Strs::ToBytes(zip);
-        var str s = Main::describe(TAR::Read(tb.0, tb.1{uint}).0) + "\n";
-        s = s + Main::describe(TAR::Read(gb.0, gb.1{uint}).0) + "\n";
-        s = s + Main::describe(ZIP::Read(zb.0, zb.1{uint}).0) + "\n";
+        var (byte*, uint) tb = Strs::ToBytes(tar);
+        var (byte*, uint) gb = Strs::ToBytes(tgz);
+        var (byte*, uint) zb = Strs::ToBytes(zip);
+        var str s = Main::describe(TAR::Read(tb.0, tb.1).0) + "\n";
+        s = s + Main::describe(TAR::Read(gb.0, gb.1).0) + "\n";
+        s = s + Main::describe(ZIP::Read(zb.0, zb.1).0) + "\n";
 
         var Arr[Archive.Entry*]* out = Arr::[Archive.Entry*]New(3U, new(Archive.Entry*, 3U)...);
         out.Set(0U, Archive.Entry::Dir("d/"));

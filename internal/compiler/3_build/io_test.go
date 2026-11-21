@@ -31,7 +31,7 @@ namespace Main {
         var File* f = File::Open(x).0;
         var byte* chunk = new(byte, 16U);
         s = s + f.Seek(7, File.Whence::Start).0{str} + " ";
-        var (int, Err*) n = f.Read(chunk, 5);
+        var (uint, Err*) n = f.Read(chunk, 5U);
         s = s + Strs::FromBytes(chunk, n.0) + " " + f.Size().0{str} + " " + f.Seek(-2, File.Whence::End).0{str};
         s = s + " " + (f.Close() == null){str} + " " + f.Close().Err() + "\n";
 

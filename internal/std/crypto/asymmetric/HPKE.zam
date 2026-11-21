@@ -59,11 +59,11 @@ public namespace HPKE {
         out.0 = null;
         out.1 = null;
         var uint encH = 0U;
-        var int encN = 0;
+        var uint encN = 0U;
         var uint ctH = 0U;
-        var int ctN = 0;
+        var uint ctN = 0U;
         var str errStr;
-        native(STD_HPKE_SEAL){void(int, int, int, uint, byte*, int, byte*, int, byte*, int, uint*, int*, uint*, int*, str*)}(suite.kem{int}, suite.kdf{int}, suite.cipher{int}, key.handle, info, infoLen{int}, aad, aadLen{int}, b, n{int}, &encH, &encN, &ctH, &ctN, &errStr);
+        native(STD_HPKE_SEAL){void(int, int, int, uint, byte*, uint, byte*, uint, byte*, uint, uint*, uint*, uint*, uint*, str*)}(suite.kem{int}, suite.kdf{int}, suite.cipher{int}, key.handle, info, infoLen, aad, aadLen, b, n, &encH, &encN, &ctH, &ctN, &errStr);
         if(errStr != null) {
             out.1 = StrErr::New(errStr);
             return out;
@@ -85,9 +85,9 @@ public namespace HPKE {
             return out;
         }
         var uint h = 0U;
-        var int len = 0;
+        var uint len = 0U;
         var str errStr;
-        native(STD_HPKE_OPEN){void(int, int, int, uint, byte*, int, byte*, int, byte*, int, byte*, int, uint*, int*, str*)}(suite.kem{int}, suite.kdf{int}, suite.cipher{int}, key.handle, sealed.enc.Arr(), sealed.enc.Len(){int}, info, infoLen{int}, aad, aadLen{int}, sealed.ciphertext.Arr(), sealed.ciphertext.Len(){int}, &h, &len, &errStr);
+        native(STD_HPKE_OPEN){void(int, int, int, uint, byte*, uint, byte*, uint, byte*, uint, byte*, uint, uint*, uint*, str*)}(suite.kem{int}, suite.kdf{int}, suite.cipher{int}, key.handle, sealed.enc.Arr(), sealed.enc.Len(), info, infoLen, aad, aadLen, sealed.ciphertext.Arr(), sealed.ciphertext.Len(), &h, &len, &errStr);
         return Key::take(h, len, errStr);
     }
 }

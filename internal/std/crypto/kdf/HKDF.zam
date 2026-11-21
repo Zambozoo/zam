@@ -11,7 +11,7 @@ public namespace HKDF {
     private static fun (Arr[byte]*, Err*)(Digest.Kind, int, byte*, uint, byte*, uint, byte*, uint, uint) derive = (kind, mode, key, keyLen, salt, saltLen, info, infoLen, length) {
         var byte* out = new(byte, length);
         var str errStr;
-        native(STD_HKDF){void(byte, int, byte*, int, byte*, int, byte*, int, byte*, int, str*)}(kind{byte}, mode, key, keyLen{int}, salt, saltLen{int}, info, infoLen{int}, out, length{int}, &errStr);
+        native(STD_HKDF){void(byte, int, byte*, uint, byte*, uint, byte*, uint, byte*, uint, str*)}(kind{byte}, mode, key, keyLen, salt, saltLen, info, infoLen, out, length, &errStr);
         var (Arr[byte]*, Err*) r;
         r.0 = null;
         r.1 = null;

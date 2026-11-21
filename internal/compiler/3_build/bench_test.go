@@ -115,7 +115,7 @@ namespace Main {
         var int total = 0;
         for (var int i = 0; i < 200000; i++) {
             var str s = i{str} + ":" + (i * 7){str};
-            total = total + Strs::CharLen(s);
+            total = total + Strs::CharLen(s){int};
             if (s == "12345:86415") {
                 total++;
             }

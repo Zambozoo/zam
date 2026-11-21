@@ -8,12 +8,12 @@
 
 #include "codec.h"
 
-// cryptoLength reads the length at wordIndex, a negative one as zero.
-ZamInt cryptoLength(ZamThread *thread, uint64_t wordIndex);
+// cryptoLength reads the length at wordIndex.
+ZamUint cryptoLength(ZamThread *thread, uint64_t wordIndex);
 
 // cryptoBytes resolves the byte pointer at wordIndex, n bytes long, to
 // something a library will read even when n is zero.
-const unsigned char *cryptoBytes(ZamThread *thread, uint64_t wordIndex, ZamInt n);
+const unsigned char *cryptoBytes(ZamThread *thread, uint64_t wordIndex, ZamUint n);
 
 // cryptoFail writes what failed, with OpenSSL's reason when it has one, to the
 // error slot at wordIndex.

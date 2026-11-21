@@ -11,7 +11,7 @@ public namespace Scrypt {
     public static fun (Arr[byte]*, Err*)(byte*, uint, byte*, uint, uint, uint, uint, uint) Key = (password, passwordLen, salt, saltLen, n, r, p, length) {
         var byte* out = new(byte, length);
         var str errStr;
-        native(STD_SCRYPT){void(byte*, int, byte*, int, uint, uint, uint, byte*, int, str*)}(password, passwordLen{int}, salt, saltLen{int}, n, r, p, out, length{int}, &errStr);
+        native(STD_SCRYPT){void(byte*, uint, byte*, uint, uint, uint, uint, byte*, uint, str*)}(password, passwordLen, salt, saltLen, n, r, p, out, length, &errStr);
         var (Arr[byte]*, Err*) r;
         r.0 = null;
         r.1 = null;

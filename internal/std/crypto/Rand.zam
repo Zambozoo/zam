@@ -7,7 +7,7 @@ import {
 public namespace Rand {
     // Read fills n bytes at b.
     public static fun void(byte*, uint) Read = (b, n) {
-        native(STD_CRYPTO_RAND){void(byte*, int)}(b, n{int});
+        native(STD_CRYPTO_RAND){void(byte*, uint)}(b, n);
     }
 
     // Bytes returns n random bytes.

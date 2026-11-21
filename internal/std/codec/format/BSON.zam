@@ -59,7 +59,7 @@ public class BSON {
     public static fun (BSON*, Err*)(byte*, uint) FromBytes = (b, n) {
         var uint h = 0U;
         var str errStr;
-        native(STD_BSON_FROM_BYTES){void(byte*, int, uint*, str*)}(b, n{int}, &h, &errStr);
+        native(STD_BSON_FROM_BYTES){void(byte*, uint, uint*, str*)}(b, n, &h, &errStr);
         return BSON::result(h, errStr);
     }
 
@@ -87,17 +87,17 @@ public class BSON {
 
     // Bytes returns the document in BSON's binary form.
     public fun Arr[byte]*() Bytes = () {
-        var int n;
-        native(STD_BSON_BYTE_LEN){void(uint, int*)}(this.handle, &n);
-        var byte* b = new(byte, n{uint});
+        var uint n;
+        native(STD_BSON_BYTE_LEN){void(uint, uint*)}(this.handle, &n);
+        var byte* b = new(byte, n);
         native(STD_BSON_COPY_BYTES){void(uint, byte*)}(this.handle, b);
-        return Arr::[byte]New(n{uint}, b...);
+        return Arr::[byte]New(n, b...);
     }
 
     public fun uint() Len = () {
-        var int n;
-        native(STD_BSON_COUNT){void(uint, int*)}(this.handle, &n);
-        return n{uint};
+        var uint n;
+        native(STD_BSON_COUNT){void(uint, uint*)}(this.handle, &n);
+        return n;
     }
 
     // Keys returns the keys in document order.
@@ -215,11 +215,11 @@ public class BSON {
     }
 
     public fun Arr[byte]*(str) GetBinary = (key) {
-        var int n;
-        native(STD_BSON_BINARY_LEN){void(uint, str, int*)}(this.handle, key, &n);
-        var byte* b = new(byte, n{uint});
+        var uint n;
+        native(STD_BSON_BINARY_LEN){void(uint, str, uint*)}(this.handle, key, &n);
+        var byte* b = new(byte, n);
         native(STD_BSON_BINARY_COPY){void(uint, str, byte*)}(this.handle, key, b);
-        return Arr::[byte]New(n{uint}, b...);
+        return Arr::[byte]New(n, b...);
     }
 
     public fun void(str, str) AppendStr = (key, s) {
@@ -270,7 +270,7 @@ public class BSON {
     }
 
     public fun void(str, byte*, uint) AppendBinary = (key, b, n) {
-        native(STD_BSON_APPEND_BINARY){void(uint, str, byte*, int)}(this.handle, key, b, n{int});
+        native(STD_BSON_APPEND_BINARY){void(uint, str, byte*, uint)}(this.handle, key, b, n);
     }
 
     public fun bool(Obj*) Eq = (o) {

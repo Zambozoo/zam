@@ -75,12 +75,12 @@ public namespace Test {
 
     // internal reports whether path is a file of this package.
     private fun bool(str) internal = (path) {
-        var (byte*, int) p = Strs::ToBytes(path);
-        var (byte*, int) q = Strs::ToBytes("std://test/");
+        var (byte*, uint) p = Strs::ToBytes(path);
+        var (byte*, uint) q = Strs::ToBytes("std://test/");
         if (p.1 < q.1) {
             return false;
         }
-        for (var int i = 0; i < q.1; i = i + 1) {
+        for (var uint i = 0U; i < q.1; i = i + 1U) {
             if (p.0[i]{int} != q.0[i]{int}) {
                 return false;
             }
@@ -90,11 +90,11 @@ public namespace Test {
 
     // base answers the last element of path.
     private fun str(str) base = (path) {
-        var (byte*, int) p = Strs::ToBytes(path);
-        var int start = 0;
-        for (var int i = 0; i < p.1; i = i + 1) {
+        var (byte*, uint) p = Strs::ToBytes(path);
+        var uint start = 0U;
+        for (var uint i = 0U; i < p.1; i = i + 1U) {
             if (p.0[i]{int} == '/'{int} || p.0[i]{int} == '\\'{int}) {
-                start = i + 1;
+                start = i + 1U;
             }
         }
         return Strs::FromBytes(p.0 + start, p.1 - start);

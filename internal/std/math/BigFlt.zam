@@ -105,9 +105,9 @@ public class BigFlt {
         var (BigFlt*, bool) out;
         out.0 = null;
         out.1 = false;
-        var (byte*, int) p = Strs::ToBytes(s);
+        var (byte*, uint) p = Strs::ToBytes(s);
         var byte* b = p.0;
-        var uint n = p.1{uint};
+        var uint n = p.1;
         var uint i = 0U;
         var bool neg = false;
         if(i < n && (b[i]{int} == '-'{int} || b[i]{int} == '+'{int})) {
@@ -163,7 +163,7 @@ public class BigFlt {
             free(digits);
             return out;
         }
-        var BigInt* d = BigInt::Parse(Strs::FromBytes(digits, count{int})).0;
+        var BigInt* d = BigInt::Parse(Strs::FromBytes(digits, count)).0;
         free(digits);
         e10 = e10 - fracDigits;
         var BigInt* ten = BigInt::FromUint(10U);
@@ -791,7 +791,7 @@ public class BigFlt {
         for(var uint i = from; i < to; i++) {
             out[i - from] = b[i];
         }
-        var str s = Strs::FromBytes(out, (to - from){int});
+        var str s = Strs::FromBytes(out, (to - from));
         free(out);
         return s;
     }
@@ -853,7 +853,7 @@ public class BigFlt {
         }
 
         var str text = q.Str();
-        var (byte*, int) p = Strs::ToBytes(text);
+        var (byte*, uint) p = Strs::ToBytes(text);
         var byte* b = p.0;
         var uint len = digits;
         for(; len > 1U && b[len - 1U]{int} == '0'{int};) {

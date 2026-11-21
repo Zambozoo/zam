@@ -4145,6 +4145,9 @@ func (e *funcEmitter) emitNativeCall(x *syntax.ExprNAry) (llvm.Value, error) {
 	if !ok {
 		return llvm.Value{}, unsupported("a native called as %s", cast.Type)
 	}
+	if intrinsic, ok := nativeIntrinsics[native.ID]; ok {
+		return e.emitNativeIntrinsic(x, ft, intrinsic)
+	}
 	index, ok := e.p.natives[native.ID]
 	if !ok {
 		return llvm.Value{}, fmt.Errorf("native %q is not in the native table", native.ID)

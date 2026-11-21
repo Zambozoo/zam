@@ -26,7 +26,7 @@
 // pkiKey reads the key whose n bytes of DER start at wordIndex, private if
 // they hold one and public otherwise.
 static EVP_PKEY *pkiKey(ZamThread *thread, uint64_t wordIndex) {
-    ZamInt n = cryptoLength(thread, wordIndex + 1);
+    ZamUint n = cryptoLength(thread, wordIndex + 1);
     const unsigned char *b = cryptoBytes(thread, wordIndex, n);
     EVP_PKEY *k = cryptoDecode(b, (size_t)n, false, OSSL_KEYMGMT_SELECT_PRIVATE_KEY);
     return k != NULL ? k : cryptoDecode(b, (size_t)n, false, EVP_PKEY_PUBLIC_KEY);
@@ -59,7 +59,7 @@ static void pkiHandles(ZamThread *thread, uint64_t wordIndex, STACK_OF(X509) *ce
 // stdPkiTake copies a handle array into zam memory and frees it.
 static void stdPkiTake(ZamThread *thread) {
     ZamWord *list = codec_handle(thread, 0);
-    ZamInt n = cryptoLength(thread, 2);
+    ZamUint n = cryptoLength(thread, 2);
     if (n > 0)
         memcpy(zam_native_argument_pointer(thread, 1), list, sizeof *list * (size_t)n);
     free(list);
@@ -69,12 +69,12 @@ static void stdPkiTake(ZamThread *thread) {
 // pkiCerts reads the n handles at wordIndex into a stack the caller frees
 // with sk_X509_free, leaving the certificates with zam.
 static STACK_OF(X509) *pkiCerts(ZamThread *thread, uint64_t wordIndex) {
-    ZamInt n = cryptoLength(thread, wordIndex + 1);
+    ZamUint n = cryptoLength(thread, wordIndex + 1);
     STACK_OF(X509) *certs = sk_X509_new_null();
     if (certs == NULL)
         zam_native_panic(thread, "out of memory for certificates");
     const ZamWord *handles = n > 0 ? zam_native_argument_pointer(thread, wordIndex) : NULL;
-    for (ZamInt i = 0; i < n; i++)
+    for (ZamUint i = 0; i < n; i++)
         sk_X509_push(certs, (X509 *)(uintptr_t)handles[i]);
     return certs;
 }
@@ -82,7 +82,7 @@ static STACK_OF(X509) *pkiCerts(ZamThread *thread, uint64_t wordIndex) {
 // stdX509Decode reads every certificate in n bytes of PEM, or the one in n
 // bytes of DER, answering (list, count, err).
 static void stdX509Decode(ZamThread *thread) {
-    ZamInt n = cryptoLength(thread, 1);
+    ZamUint n = cryptoLength(thread, 1);
     const unsigned char *b = cryptoBytes(thread, 0, n);
     bool pem = zam_native_argument(thread, 2) != 0;
     STACK_OF(X509) *certs = sk_X509_new_null();
@@ -392,7 +392,7 @@ static void stdX509Request(ZamThread *thread) {
 // (key buffer, key length, certificate, chain list, chain count, err), the
 // key being PKCS #8 DER.
 static void stdPkcs12Parse(ZamThread *thread) {
-    ZamInt n = cryptoLength(thread, 1);
+    ZamUint n = cryptoLength(thread, 1);
     const unsigned char *b = cryptoBytes(thread, 0, n);
     char *password = codec_c_string(thread, 2);
     PKCS12 *p12 = d2i_PKCS12(NULL, &b, (long)n);
@@ -467,7 +467,7 @@ static void stdOcspRequest(ZamThread *thread) {
 static void stdOcspCheck(ZamThread *thread) {
     X509 *cert = codec_handle(thread, 0);
     X509 *issuer = codec_handle(thread, 1);
-    ZamInt n = cryptoLength(thread, 3);
+    ZamUint n = cryptoLength(thread, 3);
     const unsigned char *b = cryptoBytes(thread, 2, n);
     OCSP_RESPONSE *resp = d2i_OCSP_RESPONSE(NULL, &b, (long)n);
     OCSP_BASICRESP *basic = NULL;
@@ -511,7 +511,7 @@ static void stdOcspCheck(ZamThread *thread) {
 // issuer key, key length, status, revokedAt, validFor seconds), answering
 // (buffer, length, err) in DER.
 static void stdOcspRespond(ZamThread *thread) {
-    ZamInt n = cryptoLength(thread, 1);
+    ZamUint n = cryptoLength(thread, 1);
     const unsigned char *b = cryptoBytes(thread, 0, n);
     X509 *issuer = codec_handle(thread, 2);
     EVP_PKEY *k = pkiKey(thread, 3);

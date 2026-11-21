@@ -46,7 +46,7 @@ public class Key {
     }
 
     // take copies n bytes out of the buffer a native left them in.
-    static fun (Arr[byte]*, Err*)(uint, int, str) take = (h, n, errStr) {
+    static fun (Arr[byte]*, Err*)(uint, uint, str) take = (h, n, errStr) {
         var (Arr[byte]*, Err*) out;
         out.0 = null;
         out.1 = null;
@@ -54,9 +54,9 @@ public class Key {
             out.1 = StrErr::New(errStr);
             return out;
         }
-        var byte* b = new(byte, n{uint} + 1U);
+        var byte* b = new(byte, n + 1U);
         native(STD_CODEC_TAKE){void(uint, byte*)}(h, b);
-        out.0 = Arr::[byte]New(n{uint}, b...);
+        out.0 = Arr::[byte]New(n, b...);
         return out;
     }
 
@@ -80,7 +80,7 @@ public class Key {
     static fun (Key*, Err*)(Key.Kind, uint) generate = (kind, bits) {
         var uint h = 0U;
         var str errStr;
-        native(STD_PKEY_GENERATE){void(byte, int, uint*, str*)}(kind{byte}, bits{int}, &h, &errStr);
+        native(STD_PKEY_GENERATE){void(byte, uint, uint*, str*)}(kind{byte}, bits, &h, &errStr);
         return Key::of(h, kind, true, errStr);
     }
 
@@ -137,15 +137,15 @@ public class Key {
         var int kind = 0;
         var bool isPrivate = false;
         var str errStr;
-        native(STD_PKEY_DECODE){void(byte*, int, bool, uint*, int*, bool*, str*)}(b, n{int}, pem, &h, &kind, &isPrivate, &errStr);
+        native(STD_PKEY_DECODE){void(byte*, uint, bool, uint*, int*, bool*, str*)}(b, n, pem, &h, &kind, &isPrivate, &errStr);
         return Key::of(h, Key::kindOf(kind), isPrivate, errStr);
     }
 
     // ParsePEM reads a PEM private key (PKCS #8) or public key
     // (SubjectPublicKeyInfo).
     public static fun (Key*, Err*)(str) ParsePEM = (s) {
-        var (byte*, int) p = Strs::ToBytes(s);
-        return Key::decode(p.0, p.1{uint}, true);
+        var (byte*, uint) p = Strs::ToBytes(s);
+        return Key::decode(p.0, p.1, true);
     }
 
     // ParseDER reads n bytes at b as a DER private key (PKCS #8) or public key
@@ -159,7 +159,7 @@ public class Key {
     public static fun (Key*, Err*)(Key.Kind, byte*, uint, bool) FromRaw = (kind, b, n, isPrivate) {
         var uint h = 0U;
         var str errStr;
-        native(STD_PKEY_FROM_RAW){void(byte, byte*, int, bool, uint*, str*)}(kind{byte}, b, n{int}, isPrivate, &h, &errStr);
+        native(STD_PKEY_FROM_RAW){void(byte, byte*, uint, bool, uint*, str*)}(kind{byte}, b, n, isPrivate, &h, &errStr);
         return Key::of(h, kind, isPrivate, errStr);
     }
 
@@ -181,9 +181,9 @@ public class Key {
 
     fun (Arr[byte]*, Err*)(bool) encode = (pem) {
         var uint h = 0U;
-        var int n = 0;
+        var uint n = 0U;
         var str errStr;
-        native(STD_PKEY_ENCODE){void(uint, bool, bool, uint*, int*, str*)}(this.handle, this.isPrivate, pem, &h, &n, &errStr);
+        native(STD_PKEY_ENCODE){void(uint, bool, bool, uint*, uint*, str*)}(this.handle, this.isPrivate, pem, &h, &n, &errStr);
         return Key::take(h, n, errStr);
     }
 
@@ -195,7 +195,7 @@ public class Key {
         out.0 = "";
         out.1 = b.1;
         if(b.1 == null) {
-            out.0 = Strs::FromBytes(b.0.Arr(), b.0.Len(){int});
+            out.0 = Strs::FromBytes(b.0.Arr(), b.0.Len());
         }
         return out;
     }
@@ -209,18 +209,18 @@ public class Key {
     // Raw returns the key's raw bytes, private if it is private.
     public fun (Arr[byte]*, Err*)() Raw = () {
         var uint h = 0U;
-        var int n = 0;
+        var uint n = 0U;
         var str errStr;
-        native(STD_PKEY_RAW){void(uint, bool, uint*, int*, str*)}(this.handle, this.isPrivate, &h, &n, &errStr);
+        native(STD_PKEY_RAW){void(uint, bool, uint*, uint*, str*)}(this.handle, this.isPrivate, &h, &n, &errStr);
         return Key::take(h, n, errStr);
     }
 
     // derive agrees a shared secret with a peer's public key.
     fun (Arr[byte]*, Err*)(Key*) derive = (peer) {
         var uint h = 0U;
-        var int n = 0;
+        var uint n = 0U;
         var str errStr;
-        native(STD_PKEY_DERIVE){void(uint, uint, uint*, int*, str*)}(this.handle, peer.handle, &h, &n, &errStr);
+        native(STD_PKEY_DERIVE){void(uint, uint, uint*, uint*, str*)}(this.handle, peer.handle, &h, &n, &errStr);
         return Key::take(h, n, errStr);
     }
 
@@ -228,9 +228,9 @@ public class Key {
     // for -1, with PSS padding for RSA when told to.
     fun (Arr[byte]*, Err*)(int, bool, byte*, uint) sign = (digest, pss, b, n) {
         var uint h = 0U;
-        var int len = 0;
+        var uint len = 0U;
         var str errStr;
-        native(STD_PKEY_SIGN){void(uint, int, bool, byte*, int, uint*, int*, str*)}(this.handle, digest, pss, b, n{int}, &h, &len, &errStr);
+        native(STD_PKEY_SIGN){void(uint, int, bool, byte*, uint, uint*, uint*, str*)}(this.handle, digest, pss, b, n, &h, &len, &errStr);
         return Key::take(h, len, errStr);
     }
 
@@ -238,7 +238,7 @@ public class Key {
     // would have signed them.
     fun bool(int, bool, byte*, uint, byte*, uint) verify = (digest, pss, b, n, sig, sigLen) {
         var bool ok = false;
-        native(STD_PKEY_VERIFY){void(uint, int, bool, byte*, int, byte*, int, bool*)}(this.handle, digest, pss, b, n{int}, sig, sigLen{int}, &ok);
+        native(STD_PKEY_VERIFY){void(uint, int, bool, byte*, uint, byte*, uint, bool*)}(this.handle, digest, pss, b, n, sig, sigLen, &ok);
         return ok;
     }
 

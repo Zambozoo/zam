@@ -131,8 +131,8 @@ public namespace Hash {
 
     // Str returns the XXHash64 of the bytes of s.
     public static fun uint(str) Str = (s) {
-        var (byte*, int) p = Strs::ToBytes(s);
-        return Hash::XXHash64(p.0, p.1{uint}, 0U);
+        var (byte*, uint) p = Strs::ToBytes(s);
+        return Hash::XXHash64(p.0, p.1, 0U);
     }
 
     // Mix scrambles the bits of x so that every input bit affects every

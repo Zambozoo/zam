@@ -53,9 +53,9 @@ namespace Main {
 
     fun void(uint, str...) main = (argC, argV) {
         var str msgStr = "attack at dawn";
-        var (byte*, int) msg = Strs::ToBytes(msgStr);
+        var (byte*, uint) msg = Strs::ToBytes(msgStr);
         var byte* m = msg.0;
-        var uint n = msg.1{uint};
+        var uint n = msg.1;
 
         var Key* ed = Ed25519::Generate();
         var Arr[byte]* edSig = Ed25519::Sign(ed, m, n).0;
@@ -99,7 +99,7 @@ namespace Main {
         Main::put("rsaV15", Main::hex(v15));
         Main::put("rsaOAEP", Main::hex(sealed));
         var Arr[byte]* opened = RSA::Decrypt(rsa, Digest.Kind::SHA256, sealed.Arr(), sealed.Len()).0;
-        Main::check("rsa", Strs::FromBytes(opened.Arr(), opened.Len(){int}) == msgStr &&
+        Main::check("rsa", Strs::FromBytes(opened.Arr(), opened.Len()) == msgStr &&
             RSA::Verify(rsa.Public(), Digest.Kind::SHA256, RSA.Padding::PSS, m, n, pss.Arr(), pss.Len()) &&
             !RSA::Verify(rsa.Public(), Digest.Kind::SHA256, RSA.Padding::PKCS1V15, m, n, pss.Arr(), pss.Len()) &&
             RSA::Decrypt(rsa.Public(), Digest.Kind::SHA256, sealed.Arr(), sealed.Len()).1 != null &&
@@ -135,9 +135,9 @@ namespace Main {
             dsaRead.Kind() == Key.Kind::ML_DSA_65);
 
         var str infoStr = "zam hpke";
-        var (byte*, int) info = Strs::ToBytes(infoStr);
+        var (byte*, uint) info = Strs::ToBytes(infoStr);
         var str aadStr = "header";
-        var (byte*, int) aad = Strs::ToBytes(aadStr);
+        var (byte*, uint) aad = Strs::ToBytes(aadStr);
         var Arr[byte]* goHpke = Main::unhex(argV[2]);
         var Key* recipient = X25519::PublicKey(goHpke.Arr(), goHpke.Len()).0;
         var HPKE.Suite suite = HPKE::Of(HPKE.KEM::X25519_SHA256, HPKE.KDF::SHA256, HPKE.Cipher::AES_128_GCM);
@@ -147,7 +147,7 @@ namespace Main {
         var HPKE.Suite p256 = HPKE::Of(HPKE.KEM::P256_SHA256, HPKE.KDF::SHA384, HPKE.Cipher::CHACHA20_POLY1305);
         var HPKE.Sealed* local = HPKE::Seal(p256, ec.Public(), info.0, 8U, aad.0, 6U, m, n).0;
         var Arr[byte]* hpkeOpened = HPKE::Open(p256, ec, local, info.0, 8U, aad.0, 6U).0;
-        Main::check("hpke", Strs::FromBytes(hpkeOpened.Arr(), hpkeOpened.Len(){int}) == msgStr &&
+        Main::check("hpke", Strs::FromBytes(hpkeOpened.Arr(), hpkeOpened.Len()) == msgStr &&
             HPKE::Open(p256, ec, local, info.0, 8U, aad.0, 5U).1 != null &&
             HPKE::Open(p256, ec.Public(), local, info.0, 8U, aad.0, 6U).1 != null &&
             HPKE::Seal(suite, ec.Public(), info.0, 8U, aad.0, 6U, m, n).1 != null);

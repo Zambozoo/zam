@@ -400,9 +400,9 @@ static void stdHttpStep(ZamThread *thread) {
 // of it for n of zero.
 static void stdHttpUpload(ZamThread *thread) {
     Transfer *t = codec_handle(thread, 0);
-    ZamInt n = (ZamInt)zam_native_argument(thread, 2);
+    size_t n = (size_t)zam_native_argument(thread, 2);
     if (n > 0)
-        codec_buffer_append(&t->upload, zam_native_argument_pointer(thread, 1), (size_t)n);
+        codec_buffer_append(&t->upload, zam_native_argument_pointer(thread, 1), n);
     else
         t->uploadEnded = true;
     if (t->wantsUpload) {
@@ -427,12 +427,10 @@ static void stdHttpResponseHead(ZamThread *thread) {
 // transfer paused on a full body go on.
 static void stdHttpTake(ZamThread *thread) {
     Transfer *t = codec_handle(thread, 0);
-    ZamInt max = (ZamInt)zam_native_argument(thread, 2);
+    size_t max = (size_t)zam_native_argument(thread, 2);
     size_t n = t->body.length;
-    if (max < 0)
-        max = 0;
-    if (n > (size_t)max)
-        n = (size_t)max;
+    if (n > max)
+        n = max;
     if (n > 0) {
         memcpy(zam_native_argument_pointer(thread, 1), t->body.bytes, n);
         memmove(t->body.bytes, t->body.bytes + n, t->body.length - n);
@@ -442,7 +440,7 @@ static void stdHttpTake(ZamThread *thread) {
         t->bodyPaused = false;
         curl_easy_pause(t->curl, t->wantsUpload ? CURLPAUSE_SEND : CURLPAUSE_CONT);
     }
-    *(ZamInt *)zam_native_argument_pointer(thread, 3) = (ZamInt)n;
+    *(ZamUint *)zam_native_argument_pointer(thread, 3) = (ZamUint)n;
     zam_native_return_void(thread);
 }
 

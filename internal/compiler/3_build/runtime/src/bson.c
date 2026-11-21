@@ -37,7 +37,7 @@ static void stdBsonNew(ZamThread *thread) {
 
 static void stdBsonFromBytes(ZamThread *thread) {
     const uint8_t *data = zam_native_argument_pointer(thread, 0);
-    ZamInt length = (ZamInt)zam_native_argument(thread, 1);
+    ZamUint length = (ZamUint)zam_native_argument(thread, 1);
     bson_t *b = length < 5 ? NULL : bson_new_from_data(data, (size_t)length);
     bson_error_t error;
     if (b != NULL && !bson_validate_with_error(b, BSON_VALIDATE_UTF8, &error)) {
@@ -78,7 +78,7 @@ static void stdBsonToJSON(ZamThread *thread) {
 }
 
 static void stdBsonByteLen(ZamThread *thread) {
-    *(ZamInt *)zam_native_argument_pointer(thread, 1) = docArgument(thread, 0)->len;
+    *(ZamUint *)zam_native_argument_pointer(thread, 1) = docArgument(thread, 0)->len;
     zam_native_return_void(thread);
 }
 
@@ -89,7 +89,7 @@ static void stdBsonCopyBytes(ZamThread *thread) {
 }
 
 static void stdBsonCount(ZamThread *thread) {
-    *(ZamInt *)zam_native_argument_pointer(thread, 1) = bson_count_keys(docArgument(thread, 0));
+    *(ZamUint *)zam_native_argument_pointer(thread, 1) = bson_count_keys(docArgument(thread, 0));
     zam_native_return_void(thread);
 }
 
@@ -213,7 +213,7 @@ static const uint8_t *binaryOf(ZamThread *thread, uint32_t *length) {
 static void stdBsonBinaryLen(ZamThread *thread) {
     uint32_t length;
     binaryOf(thread, &length);
-    *(ZamInt *)zam_native_argument_pointer(thread, 2) = length;
+    *(ZamUint *)zam_native_argument_pointer(thread, 2) = length;
     zam_native_return_void(thread);
 }
 
@@ -300,7 +300,7 @@ static void stdBsonAppendObjectId(ZamThread *thread) {
 static void stdBsonAppendBinary(ZamThread *thread) {
     const ZamString *key = appendKey(thread);
     const uint8_t *data = zam_native_argument_pointer(thread, 2);
-    ZamInt length = (ZamInt)zam_native_argument(thread, 3);
+    ZamUint length = (ZamUint)zam_native_argument(thread, 3);
     appended(thread, bson_append_binary(docArgument(thread, 0), key->bytes, (int)key->length,
                                         BSON_SUBTYPE_BINARY, data, (uint32_t)length));
 }

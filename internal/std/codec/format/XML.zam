@@ -78,7 +78,7 @@ public class XML {
     public fun Arr[str]*() Attrs = () {
         var str joined;
         native(STD_XML_ATTRS){void(uint, str*)}(this.node, &joined);
-        if(Strs::ByteLen(joined) == 0) {
+        if(Strs::ByteLen(joined) == 0U) {
             return Arr::[str]New(0U, new(str, 0U)...);
         }
         return Strs::Split(joined, 0{byte});

@@ -29,7 +29,7 @@ namespace Main {
         var int total = 0;
         for(var int i = 0; i < n; i++) {
             var str s = i{str} + "-churn";
-            total = total + Strs::ByteLen(s);
+            total = total + Strs::ByteLen(s){int};
         }
         return total;
     }

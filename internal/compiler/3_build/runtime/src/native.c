@@ -4,7 +4,6 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <math.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -479,7 +478,7 @@ static void stdFileWrite(ZamThread *thread) {
    ZamInt *fdPtr = (ZamInt *)zam_native_argument_pointer(thread, 0);
     const void *buffer = zam_native_argument_pointer(thread, 1);
     size_t count = (size_t)zam_native_argument(thread, 2);
-   ZamInt *nOut = (ZamInt *)zam_native_argument_pointer(thread, 3);
+   ZamUint *nOut = (ZamUint *)zam_native_argument_pointer(thread, 3);
    ZamWord *errOut = (ZamWord *)zam_native_argument_pointer(thread, 4);
 
     int fd = (int)*fdPtr;
@@ -498,7 +497,7 @@ static void stdFileWrite(ZamThread *thread) {
         *nOut = 0;
         *errOut = zam_fd_is_socket(fd) ? socketErrorMessage(thread, writeErrno) : errorMessage(thread, writeErrno);
     } else {
-        *nOut = (ZamInt)written;
+        *nOut = (ZamUint)written;
         *errOut = 0;
     }
 
@@ -532,7 +531,7 @@ static void stdFileRead(ZamThread *thread) {
    ZamInt *fdPtr = (ZamInt *)zam_native_argument_pointer(thread, 0);
     void *buffer = zam_native_argument_pointer(thread, 1);
     size_t count = (size_t)zam_native_argument(thread, 2);
-   ZamInt *nOut = (ZamInt *)zam_native_argument_pointer(thread, 3);
+   ZamUint *nOut = (ZamUint *)zam_native_argument_pointer(thread, 3);
    ZamWord *errOut = (ZamWord *)zam_native_argument_pointer(thread, 4);
 
     int fd = (int)*fdPtr;
@@ -551,7 +550,7 @@ static void stdFileRead(ZamThread *thread) {
         *nOut = 0;
         *errOut = zam_fd_is_socket(fd) ? socketErrorMessage(thread, readErrno) : errorMessage(thread, readErrno);
     } else {
-        *nOut = (ZamInt)bytesRead;
+        *nOut = (ZamUint)bytesRead;
         *errOut = 0;
     }
 
@@ -559,83 +558,22 @@ static void stdFileRead(ZamThread *thread) {
 }
 
 // The std.Strs natives. FromBytes allocates a fresh string and copies, and
-// ByteLen just reads the length word. ToBytes and Chars have no native: both
-// are a plain pointer cast on the zam side (s{byte*} / s{char*}) over the
-// string's own bytes, so no code has to run per call. The UTF-8-aware
-// natives (Chars's companion ToChars, and CharLen) are stubs — the shape is
-// in Strs.zam so programs can be written against them, but reaching one
-// panics loudly.
+// ByteLen just reads the length word; the rest of Strs is zam.
 static void stdStrsFromBytes(ZamThread *thread) {
     const char *bytes =
         (const char *)zam_native_argument_pointer(thread, 0);
-    ZamInt length = (ZamInt)zam_native_argument(thread, 1);
+    ZamUint length = (ZamUint)zam_native_argument(thread, 1);
    ZamWord *strOut = (ZamWord *)zam_native_argument_pointer(thread, 2);
-    if (length < 0)
-        zam_native_panic(thread, "Strs.FromBytes: negative length");
     if (bytes == NULL && length > 0)
         zam_native_panic(thread, "Strs.FromBytes: null bytes");
-    *strOut = zam_native_new_string(thread, bytes, (uint64_t)length);
+    *strOut = zam_native_new_string(thread, bytes, length);
     zam_native_return_void(thread);
 }
 
 static void stdStrsByteLen(ZamThread *thread) {
     const ZamString *s = stringArgument(thread, 0);
-   ZamInt *nOut = (ZamInt *)zam_native_argument_pointer(thread, 1);
-    *nOut = (ZamInt)s->length;
-    zam_native_return_void(thread);
-}
-
-// stdStrsToChars encodes a run of code points as a fresh UTF-8 str. A code
-// point past U+10FFFF or in the surrogate range has no encoding and panics.
-static void stdStrsToChars(ZamThread *thread) {
-    const uint32_t *chars =
-        (const uint32_t *)zam_native_argument_pointer(thread, 0);
-    ZamInt count = (ZamInt)zam_native_argument(thread, 1);
-   ZamWord *strOut = (ZamWord *)zam_native_argument_pointer(thread, 2);
-    if (count < 0)
-        zam_native_panic(thread, "Strs.ToChars: negative length");
-    if (chars == NULL && count > 0)
-        zam_native_panic(thread, "Strs.ToChars: null code points");
-
-    char *bytes = zam_alloc(count == 0 ? 1 : (size_t)count * 4);
-    uint64_t length = 0;
-    for (ZamInt i = 0; i < count; i++) {
-        uint32_t c = chars[i];
-        if (c > 0x10FFFF || (c >= 0xD800 && c <= 0xDFFF)) {
-            free(bytes);
-            zam_native_panic(thread, "Strs.ToChars: invalid code point");
-        }
-        if (c < 0x80) {
-            bytes[length++] = (char)c;
-        } else if (c < 0x800) {
-            bytes[length++] = (char)(0xC0 | (c >> 6));
-            bytes[length++] = (char)(0x80 | (c & 0x3F));
-        } else if (c < 0x10000) {
-            bytes[length++] = (char)(0xE0 | (c >> 12));
-            bytes[length++] = (char)(0x80 | ((c >> 6) & 0x3F));
-            bytes[length++] = (char)(0x80 | (c & 0x3F));
-        } else {
-            bytes[length++] = (char)(0xF0 | (c >> 18));
-            bytes[length++] = (char)(0x80 | ((c >> 12) & 0x3F));
-            bytes[length++] = (char)(0x80 | ((c >> 6) & 0x3F));
-            bytes[length++] = (char)(0x80 | (c & 0x3F));
-        }
-    }
-    *strOut = zam_native_new_string(thread, bytes, length);
-    free(bytes);
-    zam_native_return_void(thread);
-}
-
-// stdStrsCharLen counts the code points of a str by its lead bytes, every byte
-// that is not a continuation byte beginning one.
-static void stdStrsCharLen(ZamThread *thread) {
-    const ZamString *s = stringArgument(thread, 0);
-   ZamInt *nOut = (ZamInt *)zam_native_argument_pointer(thread, 1);
-    ZamInt n = 0;
-    for (uint64_t i = 0; i < s->length; i++)
-        if (((unsigned char)s->bytes[i] & 0xC0) != 0x80)
-            n++;
-    *nOut = n;
+   ZamUint *nOut = (ZamUint *)zam_native_argument_pointer(thread, 1);
+    *nOut = s->length;
     zam_native_return_void(thread);
 }
 
@@ -1281,68 +1219,8 @@ static void stdCondDelete(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
-// The math natives. A flt crosses the ABI as the bits of a double in one word,
-// and each result is written through the out pointer that follows the
-// arguments.
-
-static double fltArgument(ZamThread *thread, uint64_t wordIndex) {
-    uint64_t word = zam_native_argument(thread, wordIndex);
-    double value;
-    memcpy(&value, &word, sizeof value);
-    return value;
-}
-
-#define MATH_UNARY(name, fn)                                                  \
-    static void name(ZamThread *thread) {                                     \
-        double *out = (double *)zam_native_argument_pointer(thread, 1);       \
-        *out = fn(fltArgument(thread, 0));                                    \
-        zam_native_return_void(thread);                                       \
-    }
-
-#define MATH_BINARY(name, fn)                                                 \
-    static void name(ZamThread *thread) {                                     \
-        double *out = (double *)zam_native_argument_pointer(thread, 2);       \
-        *out = fn(fltArgument(thread, 0), fltArgument(thread, 1));            \
-        zam_native_return_void(thread);                                       \
-    }
-
-MATH_UNARY(stdMathSqrt, sqrt)
-MATH_UNARY(stdMathCbrt, cbrt)
-MATH_UNARY(stdMathExp, exp)
-MATH_UNARY(stdMathExp2, exp2)
-MATH_UNARY(stdMathExpm1, expm1)
-MATH_UNARY(stdMathLog, log)
-MATH_UNARY(stdMathLog2, log2)
-MATH_UNARY(stdMathLog10, log10)
-MATH_UNARY(stdMathLog1p, log1p)
-MATH_UNARY(stdMathFloor, floor)
-MATH_UNARY(stdMathCeil, ceil)
-MATH_UNARY(stdMathRound, round)
-MATH_UNARY(stdMathTrunc, trunc)
-MATH_UNARY(stdMathSin, sin)
-MATH_UNARY(stdMathCos, cos)
-MATH_UNARY(stdMathTan, tan)
-MATH_UNARY(stdMathAsin, asin)
-MATH_UNARY(stdMathAcos, acos)
-MATH_UNARY(stdMathAtan, atan)
-MATH_UNARY(stdMathSinh, sinh)
-MATH_UNARY(stdMathCosh, cosh)
-MATH_UNARY(stdMathTanh, tanh)
-MATH_UNARY(stdMathAsinh, asinh)
-MATH_UNARY(stdMathAcosh, acosh)
-MATH_UNARY(stdMathAtanh, atanh)
-MATH_BINARY(stdMathPow, pow)
-MATH_BINARY(stdMathMod, fmod)
-MATH_BINARY(stdMathRemainder, remainder)
-MATH_BINARY(stdMathHypot, hypot)
-MATH_BINARY(stdMathAtan2, atan2)
-
-static void stdMathFma(ZamThread *thread) {
-    double *out = (double *)zam_native_argument_pointer(thread, 3);
-    *out = fma(fltArgument(thread, 0), fltArgument(thread, 1),
-               fltArgument(thread, 2));
-    zam_native_return_void(thread);
-}
+// The posit math natives, each writing its result through the out pointer
+// that follows the arguments.
 
 #define POSIT_UNARY(name, fn)                                                 \
     static void name(ZamThread *thread) {                                     \
@@ -1398,41 +1276,6 @@ static void stdPstFma(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
-// stdBitsCopy writes its argument word through the out pointer unchanged,
-// which reinterprets a flt as its bits or bits as a flt depending on the
-// signature it was called under.
-static void stdBitsCopy(ZamThread *thread) {
-    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
-    *out = zam_native_argument(thread, 0);
-    zam_native_return_void(thread);
-}
-
-static void stdBitsOnes(ZamThread *thread) {
-    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
-    *out = (ZamWord)__builtin_popcountll(zam_native_argument(thread, 0));
-    zam_native_return_void(thread);
-}
-
-static void stdBitsLeadingZeros(ZamThread *thread) {
-    uint64_t x = zam_native_argument(thread, 0);
-    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
-    *out = x == 0 ? 64 : (ZamWord)__builtin_clzll(x);
-    zam_native_return_void(thread);
-}
-
-static void stdBitsTrailingZeros(ZamThread *thread) {
-    uint64_t x = zam_native_argument(thread, 0);
-    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
-    *out = x == 0 ? 64 : (ZamWord)__builtin_ctzll(x);
-    zam_native_return_void(thread);
-}
-
-static void stdBitsReverseBytes(ZamThread *thread) {
-    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 1);
-    *out = (ZamWord)__builtin_bswap64(zam_native_argument(thread, 0));
-    zam_native_return_void(thread);
-}
-
 const ZamNativeEntry zamNativeTable[] = {
     {"STD_MARK", stdMark},
     {"STD_MARK_OVERRIDE", stdMarkOverride},
@@ -1458,8 +1301,6 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_FS_TEMP_DIR", stdFsTempDir},
     {"STD_PIPE_INIT", stdPipeInit},
     {"STD_STRS_FROM_BYTES", stdStrsFromBytes},
-    {"STD_STRS_TO_CHARS", stdStrsToChars},
-    {"STD_STRS_CHAR_LEN", stdStrsCharLen},
     {"STD_STRS_BYTE_LEN", stdStrsByteLen},
     {"STD_ARRS_COPY", stdArrsCopy},
     {"STD_ARRS_MARK_ALL", stdArrsMarkAll},
@@ -1505,37 +1346,6 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_COND_SIGNAL", stdCondSignal},
     {"STD_COND_BROADCAST", stdCondBroadcast},
     {"STD_COND_DELETE", stdCondDelete},
-    {"STD_MATH_SQRT", stdMathSqrt},
-    {"STD_MATH_CBRT", stdMathCbrt},
-    {"STD_MATH_EXP", stdMathExp},
-    {"STD_MATH_EXP2", stdMathExp2},
-    {"STD_MATH_EXPM1", stdMathExpm1},
-    {"STD_MATH_LOG", stdMathLog},
-    {"STD_MATH_LOG2", stdMathLog2},
-    {"STD_MATH_LOG10", stdMathLog10},
-    {"STD_MATH_LOG1P", stdMathLog1p},
-    {"STD_MATH_FLOOR", stdMathFloor},
-    {"STD_MATH_CEIL", stdMathCeil},
-    {"STD_MATH_ROUND", stdMathRound},
-    {"STD_MATH_TRUNC", stdMathTrunc},
-    {"STD_MATH_SIN", stdMathSin},
-    {"STD_MATH_COS", stdMathCos},
-    {"STD_MATH_TAN", stdMathTan},
-    {"STD_MATH_ASIN", stdMathAsin},
-    {"STD_MATH_ACOS", stdMathAcos},
-    {"STD_MATH_ATAN", stdMathAtan},
-    {"STD_MATH_SINH", stdMathSinh},
-    {"STD_MATH_COSH", stdMathCosh},
-    {"STD_MATH_TANH", stdMathTanh},
-    {"STD_MATH_ASINH", stdMathAsinh},
-    {"STD_MATH_ACOSH", stdMathAcosh},
-    {"STD_MATH_ATANH", stdMathAtanh},
-    {"STD_MATH_POW", stdMathPow},
-    {"STD_MATH_MOD", stdMathMod},
-    {"STD_MATH_REMAINDER", stdMathRemainder},
-    {"STD_MATH_HYPOT", stdMathHypot},
-    {"STD_MATH_ATAN2", stdMathAtan2},
-    {"STD_MATH_FMA", stdMathFma},
     {"STD_PST_SQRT", stdPstSqrt},
     {"STD_PST_CBRT", stdPstCbrt},
     {"STD_PST_EXP", stdPstExp},
@@ -1567,14 +1377,6 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_PST_HYPOT", stdPstHypot},
     {"STD_PST_ATAN2", stdPstAtan2},
     {"STD_PST_FMA", stdPstFma},
-    {"STD_BITS_FROM_FLT", stdBitsCopy},
-    {"STD_BITS_TO_FLT", stdBitsCopy},
-    {"STD_BITS_FROM_PST", stdBitsCopy},
-    {"STD_BITS_TO_PST", stdBitsCopy},
-    {"STD_BITS_ONES", stdBitsOnes},
-    {"STD_BITS_LEADING_ZEROS", stdBitsLeadingZeros},
-    {"STD_BITS_TRAILING_ZEROS", stdBitsTrailingZeros},
-    {"STD_BITS_REVERSE_BYTES", stdBitsReverseBytes},
 };
 
 const uint64_t zamNativeTableCount =

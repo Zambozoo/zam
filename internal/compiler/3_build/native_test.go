@@ -2194,3 +2194,65 @@ func systemOnly(libraries []string) bool {
 			!strings.HasPrefix(name, "api-ms-win-crt-") && !slices.Contains(windowsSystemLibraries, name)
 	})
 }
+
+// TestNativeStrsCodePoints encodes code points of every UTF-8 length and
+// decodes, iterates and counts them back, against a literal holding the same
+// text, and decodes each malformed byte as U+FFFD.
+func TestNativeStrsCodePoints(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    interface Iter[A] {
+        virtual fun (A, bool)() Next;
+        virtual fun (A, bool)() Prev;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var char* cs = new(char, 4);
+        cs[0] = 65{char};
+        cs[1] = 233{char};
+        cs[2] = 8364{char};
+        cs[3] = 128512{char};
+        var str s = Strs::ToChars(cs, 4U);
+        File::StdOut.WriteStr(s + " " + (s == "Aé€😀"){str} + " " + Strs::CharLen(s){str} + " " + Strs::ByteLen(s){str} + " " + Strs::CharLen(Strs::ToChars(cs, 0U)){str} + "\n");
+
+        var Arr[char]* back = Strs::Chars(s);
+        var str out = back.Len(){str};
+        for(var uint i = 0U; i < back.Len(); i++) {
+            out = out + " " + back.Get(i){int}{str};
+        }
+        var byte* bad = new(byte, 7);
+        bad[0] = 65{byte};
+        bad[1] = 195{byte};
+        bad[2] = 40{byte};
+        bad[3] = 255{byte};
+        bad[4] = 192{byte};
+        bad[5] = 128{byte};
+        bad[6] = 237{byte};
+        var str malformed = Strs::FromBytes(bad, 7U);
+        var Arr[char]* odd = Strs::Chars(malformed);
+        out = out + " |";
+        for(var uint i = 0U; i < odd.Len(); i++) {
+            out = out + " " + odd.Get(i){int}{str};
+        }
+        File::StdOut.WriteStr(out + " " + Strs::CharLen(malformed){str} + " " + Strs::Chars("").Len(){str} + "\n");
+
+        var str walked = "";
+        var Iter[char]* it = Strs::Iter(s + malformed);
+        for(var (char, bool) c = it.Next(); c.1; c = it.Next()) {
+            walked = walked + c.0{int}{str} + " ";
+        }
+        walked = walked + it.Next().1{str} + " " + Strs::Iter("").Next().1{str} + " |";
+        for(var (char, bool) c = it.Prev(); c.1; c = it.Prev()) {
+            walked = walked + " " + c.0{int}{str};
+        }
+        File::StdOut.WriteStr(walked + " " + it.Prev().1{str} + "\n");
+    }
+}
+`)
+	assert.Zero(t, status, output)
+	assert.Equal(t, "Aé€😀 true 4 10 0\n4 65 233 8364 128512 | 65 65533 40 65533 65533 65533 65533 7 0\n"+
+		"65 233 8364 128512 65 65533 40 65533 65533 65533 65533 false false | 65533 65533 65533 65533 40 65533 65 128512 8364 233 65 false\n", output)
+}

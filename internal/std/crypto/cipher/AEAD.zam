@@ -69,7 +69,7 @@ public class AEAD {
         var uint length = n + this.overhead;
         var byte* out = new(byte, length);
         var bool ok = false;
-        native(STD_AEAD){void(byte, bool, byte*, int, byte*, int, byte*, int, byte*, int, byte*, bool*)}(this.kind{byte}, true, this.key, this.keyLen{int}, nonce, this.nonceSize{int}, b, n{int}, aad, aadLen{int}, out, &ok);
+        native(STD_AEAD){void(byte, bool, byte*, uint, byte*, uint, byte*, uint, byte*, uint, byte*, bool*)}(this.kind{byte}, true, this.key, this.keyLen, nonce, this.nonceSize, b, n, aad, aadLen, out, &ok);
         if(!ok) {
             free(out);
             System::Panic(AEAD::nameOf(this.kind) + " cannot seal this message");
@@ -89,7 +89,7 @@ public class AEAD {
         if(n >= this.overhead) {
             length = n - this.overhead;
             out = new(byte, length + 1U);
-            native(STD_AEAD){void(byte, bool, byte*, int, byte*, int, byte*, int, byte*, int, byte*, bool*)}(this.kind{byte}, false, this.key, this.keyLen{int}, nonce, this.nonceSize{int}, b, n{int}, aad, aadLen{int}, out, &ok);
+            native(STD_AEAD){void(byte, bool, byte*, uint, byte*, uint, byte*, uint, byte*, uint, byte*, bool*)}(this.kind{byte}, false, this.key, this.keyLen, nonce, this.nonceSize, b, n, aad, aadLen, out, &ok);
         }
         if(!ok) {
             free(out);

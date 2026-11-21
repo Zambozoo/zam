@@ -39,18 +39,18 @@ public class Digest {
         out.0 = null;
         out.1 = null;
         var uint h = 0U;
-        var int n = 0;
-        var int block = 0;
+        var uint n = 0U;
+        var uint block = 0U;
         var str errStr;
-        native(STD_HASH_NEW){void(byte, int, uint*, int*, int*, str*)}(kind{byte}, size{int}, &h, &n, &block, &errStr);
+        native(STD_HASH_NEW){void(byte, uint, uint*, uint*, uint*, str*)}(kind{byte}, size, &h, &n, &block, &errStr);
         if(errStr != null) {
             out.1 = StrErr::New(errStr);
             return out;
         }
         out.0 = new(Digest);
         out.0.handle = h;
-        out.0.size = n{uint};
-        out.0.block = block{uint};
+        out.0.size = n;
+        out.0.block = block;
         return out;
     }
 
@@ -73,12 +73,12 @@ public class Digest {
     }
 
     public fun void(byte*, uint) Write = (b, n) {
-        native(STD_HASH_WRITE){void(uint, byte*, int)}(this.handle, b, n{int});
+        native(STD_HASH_WRITE){void(uint, byte*, uint)}(this.handle, b, n);
     }
 
     public fun void(str) WriteStr = (s) {
-        var (byte*, int) p = Strs::ToBytes(s);
-        this.Write(p.0, p.1{uint});
+        var (byte*, uint) p = Strs::ToBytes(s);
+        this.Write(p.0, p.1);
     }
 
     public fun Arr[byte]*() Sum = () {

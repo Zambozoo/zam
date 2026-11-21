@@ -25,7 +25,7 @@ public namespace Salsa20 {
             return r;
         }
         var byte* out = new(byte, n + 1U);
-        native(STD_SALSA20){void(byte*, byte*, int, uint, byte*, int, byte*)}(key, nonce, nonceLen{int}, counter, b, n{int}, out);
+        native(STD_SALSA20){void(byte*, byte*, uint, uint, byte*, uint, byte*)}(key, nonce, nonceLen, counter, b, n, out);
         r.0 = Arr::[byte]New(n, out...);
         return r;
     }

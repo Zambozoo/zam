@@ -30,7 +30,7 @@ namespace Main {
     }
 
     static fun str(Arr[char]*) text = (a) {
-        return Strs::ToChars(a.Arr(), a.Len(){int});
+        return Strs::ToChars(a.Arr(), a.Len());
     }
 
     static fun bool(TrieMap[char, int]*, bool) run = (t, ordered) {
@@ -45,7 +45,7 @@ namespace Main {
             for(var uint j = 0U; j < n; j++) {
                 k[j] = (97 + ((r >> (3U + 2U * j)) % 3U){int}){char};
             }
-            var str s = Strs::ToChars(k, n{int});
+            var str s = Strs::ToChars(k, n);
             var uint op = (r >> 27U) % 3U;
             if(op == 0U) {
                 ok = ok && t.Put(n, k, i) == ref.Put(s, i);
@@ -105,7 +105,7 @@ namespace Main {
             for(var uint j = 0U; j < n; j++) {
                 k[j] = (97 + ((r >> (3U + 2U * j)) % 3U){int}){char};
             }
-            var str s = Strs::ToChars(k, n{int});
+            var str s = Strs::ToChars(k, n);
             var uint op = (r >> 27U) % 3U;
             if(op == 0U) {
                 ok = ok && t.Add(n, k) == ref.Add(s);

@@ -702,7 +702,7 @@ namespace Main {
             Main::shared.AddLast(s);
             Main::lock.Unlock();
             for (var int j = 0; j < 50; j++) {
-                total = total + Strs::ByteLen(j{str} + "-churn");
+                total = total + Strs::ByteLen(j{str} + "-churn"){int};
             }
         }
         return total;
@@ -717,7 +717,7 @@ namespace Main {
         var int total = wait(a) + wait(b) + wait(c);
         var int bytes = 0;
         for (var uint i = 0U; i < Main::shared.Len(); i++) {
-            bytes = bytes + Strs::ByteLen(Main::shared.Get(i));
+            bytes = bytes + Strs::ByteLen(Main::shared.Get(i)){int};
         }
         File::StdOut.WriteStr(Main::shared.Len(){str} + " " + bytes{str} + "\n");
     }
@@ -758,7 +758,7 @@ namespace Main {
         b.name = s;
         b.payload = s{any};
         b.f = lambda int(int):(x) {
-            return x + Strs::ByteLen(s);
+            return x + Strs::ByteLen(s){int};
         };
         return b;
     }
@@ -802,7 +802,7 @@ namespace Main {
         var int total = 0;
         for (var int i = 0; i < n; i++) {
             var str s = i{str} + "-churn";
-            total = total + Strs::ByteLen(s);
+            total = total + Strs::ByteLen(s){int};
         }
         return total;
     }
@@ -812,7 +812,7 @@ namespace Main {
         for (var int i = 0; i < n; i++) {
             System.GC::Block();
             var str s = i{str} + "-frozen";
-            total = total + Strs::ByteLen(s);
+            total = total + Strs::ByteLen(s){int};
             System.GC::Unblock();
         }
         return total;
@@ -918,7 +918,7 @@ namespace Main {
         var int total = 0;
         for (var int i = 0; i < n; i++) {
             var str s = i{str} + "-churn";
-            total = total + Strs::ByteLen(s);
+            total = total + Strs::ByteLen(s){int};
         }
         return total;
     }

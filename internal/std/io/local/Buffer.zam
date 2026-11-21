@@ -68,22 +68,21 @@ public class Buffer {
     }
 
     // Write appends n bytes from b, all of them.
-    public fun (int, Err*)(byte*, int) Write = (b, n) {
-        var (int, Err*) p;
+    public fun (uint, Err*)(byte*, uint) Write = (b, n) {
+        var (uint, Err*) p;
         p.0 = n;
         p.1 = null;
-        if(n <= 0) {
-            p.0 = 0;
+        if(n == 0U) {
             return p;
         }
-        this.Reserve(n{uint});
-        Arrs::[byte]Copy(n{uint}, b, this.buf + this.end);
-        this.end = this.end + n{uint};
+        this.Reserve(n);
+        Arrs::[byte]Copy(n, b, this.buf + this.end);
+        this.end = this.end + n;
         return p;
     }
 
     public fun void(str) WriteStr = (s) {
-        var (byte*, int) p = Strs::ToBytes(s);
+        var (byte*, uint) p = Strs::ToBytes(s);
         this.Write(p.0, p.1);
     }
 
@@ -94,13 +93,10 @@ public class Buffer {
     }
 
     // Read moves up to n unread bytes into b, returning how many it moved.
-    public fun (int, Err*)(byte*, int) Read = (b, n) {
-        var (int, Err*) p;
+    public fun (uint, Err*)(byte*, uint) Read = (b, n) {
+        var (uint, Err*) p;
         p.1 = null;
-        var uint m = 0U;
-        if(n > 0) {
-            m = n{uint};
-        }
+        var uint m = n;
         if(m > this.Len()) {
             m = this.Len();
         }
@@ -108,7 +104,7 @@ public class Buffer {
             Arrs::[byte]Copy(m, this.buf + this.start, b);
         }
         this.start = this.start + m;
-        p.0 = m{int};
+        p.0 = m;
         return p;
     }
 
@@ -131,7 +127,7 @@ public class Buffer {
         if(n == 0U) {
             return "";
         }
-        var str s = Strs::FromBytes(&(this.buf[this.start]), n{int});
+        var str s = Strs::FromBytes(&(this.buf[this.start]), n);
         this.start = this.start + n;
         return s;
     }
@@ -168,7 +164,7 @@ public class Buffer {
         if(this.Len() == 0U) {
             return "";
         }
-        return Strs::FromBytes(&(this.buf[this.start]), this.Len(){int});
+        return Strs::FromBytes(&(this.buf[this.start]), this.Len());
     }
 
     // Reset drops every unread byte, keeping the room they took.

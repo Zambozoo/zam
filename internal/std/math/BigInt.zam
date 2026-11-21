@@ -64,9 +64,9 @@ public class BigInt {
         var (BigInt*, bool) out;
         out.0 = null;
         out.1 = false;
-        var (byte*, int) p = Strs::ToBytes(s);
+        var (byte*, uint) p = Strs::ToBytes(s);
         var byte* b = p.0;
-        var uint n = p.1{uint};
+        var uint n = p.1;
         var uint i = 0U;
         var bool neg = false;
         if(n > 0U && b[0]{int} == '-'{int}) {
@@ -533,7 +533,7 @@ public class BigInt {
         s = s + chunks[count - 1U]{str};
         for(var uint i = count - 1U; i > 0U; i--) {
             var str digits = chunks[i - 1U]{str};
-            for(var int pad = 9 - Strs::ByteLen(digits); pad > 0; pad--) {
+            for(var int pad = 9 - Strs::ByteLen(digits){int}; pad > 0; pad--) {
                 s = s + "0";
             }
             s = s + digits;

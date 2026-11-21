@@ -55,13 +55,13 @@ public class URL {
     // as a space. A pair with no = has an empty value.
     public static fun Arr[(str, str)]*(str) ParseQuery = (q) {
         var ArrList[(str, str)]* pairs = ArrList::[(str, str)]New(0U);
-        if(Strs::ByteLen(q) == 0) {
+        if(Strs::ByteLen(q) == 0U) {
             return pairs.Arr();
         }
         var Arr[str]* parts = Strs::Split(q, '&'{int}{byte});
         for(var uint i = 0U; i < parts.Len(); i++) {
             var str part = parts.Get(i);
-            if(Strs::ByteLen(part) == 0) {
+            if(Strs::ByteLen(part) == 0U) {
                 continue;
             }
             var Arr[str]* kv = Strs::Split(part, '='{int}{byte});

@@ -68,10 +68,10 @@ namespace Main {
         }
         var Socket* c = a.0;
         var byte* buf = new(byte, 64U);
-        var int total = 0;
+        var uint total = 0U;
         for(;;) {
-            var (int, Err*) r = c.Read(buf, 64);
-            if(r.1 != null || r.0 == 0) {
+            var (uint, Err*) r = c.Read(buf, 64U);
+            if(r.1 != null || r.0 == 0U) {
                 break;
             }
             c.Write(buf, r.0);
@@ -79,7 +79,7 @@ namespace Main {
         }
         free(buf);
         c.Close();
-        return total;
+        return total{int};
     }
 
     static fun int(Socket.Listener*, TLS.Context*) tlsServe = (l, ctx) {
@@ -93,7 +93,7 @@ namespace Main {
             return 0;
         }
         var byte* buf = new(byte, 64U);
-        var (int, Err*) r = t.0.Read(buf, 64);
+        var (uint, Err*) r = t.0.Read(buf, 64U);
         t.0.WriteStr("re:" + Strs::FromBytes(buf, r.0));
         free(buf);
         t.0.Close();
@@ -137,11 +137,11 @@ namespace Main {
         var UDP.Conn* ua = UDP::Bind("127.0.0.1", 0U).0;
         var UDP.Conn* ub = UDP::Bind("127.0.0.1", 0U).0;
         var uint aport = ua.LocalAddr().0.1;
-        var (byte*, int) ping = Strs::ToBytes("ping");
+        var (byte*, uint) ping = Strs::ToBytes("ping");
         ub.SendTo(ping.0, 4U, IP::Parse("127.0.0.1").0, aport);
         var byte* got = new(byte, 16U);
         var (UDP.Packet, Err*) packet = ua.RecvFrom(got, 16U);
-        s = s + Strs::FromBytes(got, packet.0.len{int}) + " " + (packet.0.port == ub.LocalAddr().0.1){str} + " " + packet.0.ip.Str() + "\n";
+        s = s + Strs::FromBytes(got, packet.0.len) + " " + (packet.0.port == ub.LocalAddr().0.1){str} + " " + packet.0.ip.Str() + "\n";
         free(got);
         ua.Close();
         ub.Close();
@@ -170,7 +170,7 @@ namespace Main {
         var Socket* held = sl.Accept().0;
         quiet.SetReadTimeout(100U);
         var byte* one = new(byte, 1U);
-        s = s + (quiet.Read(one, 1).1 != null){str} + "\n";
+        s = s + (quiet.Read(one, 1U).1 != null){str} + "\n";
         free(one);
         quiet.Close();
         held.Close();
@@ -215,7 +215,7 @@ namespace Main {
         var str all = c.ReadAll().0;
         c.WriteStr(all);
         c.Close();
-        return Strs::ByteLen(all);
+        return Strs::ByteLen(all){int};
     }
 
     fun void(uint, str...) main = (argC, argV) {

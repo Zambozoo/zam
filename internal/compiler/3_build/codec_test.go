@@ -185,7 +185,7 @@ namespace Main {
         s = s + (XML::Parse("<a><b></a>").1 != null){str} + " " + (XML::Parse("").1 != null){str};
         var int total = 0;
         for(var int i = 0; i < 1000; i++) {
-            total = total + Strs::ByteLen(XML::Parse("<n v=\"" + i{str} + "\"/>").0.Attr("v").0);
+            total = total + Strs::ByteLen(XML::Parse("<n v=\"" + i{str} + "\"/>").0.Attr("v").0){int};
         }
         s = s + " " + total{str} + "\n";
         File::StdOut.WriteStr(s);
@@ -303,8 +303,8 @@ namespace Main {
         for(var int i = 0; i < 30; i++) {
             text = text + "hello compression! ";
         }
-        var (byte*, int) tb = Strs::ToBytes(text);
-        var uint tn = tb.1{uint};
+        var (byte*, uint) tb = Strs::ToBytes(text);
+        var uint tn = tb.1;
 
         var Arr[byte]* zst = Main::hex("28b52ffd643e01ed0000b07a616d2068656c6c6f20636f6d7072657373696f6e2101004a58359b82650c51");
         var Arr[byte]* lz = Main::hex("04224d186440a723000000ff077a616d2068656c6c6f20636f6d7072657373696f6e211300ffff1250696f6e21200000000038146ba7");

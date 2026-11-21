@@ -241,9 +241,11 @@ func TestRecoverAutomaticPanics(t *testing.T) {
 		"a free of a local": {`var int x = 1; free(&x);`, "freed memory new did not allocate"},
 		"a double free":     {`var int* p = new(int, 2); free(p); free(p);`, "freed memory that was already freed"},
 		"a zero divisor":    {`var int zero = 0; var int x = 7 % zero;`, "divide by zero"},
-		"a native's panic": {`var char* cs = new(char, 1); cs[0] = 55296{char}; var str s = Strs::ToChars(cs, 1);`,
+		"a native's panic": {`var byte* b = null; var str s = Strs::FromBytes(b, 1U);`,
+			"Strs.FromBytes: null bytes"},
+		"an invalid code point": {`var char* cs = new(char, 1); cs[0] = 55296{char}; var str s = Strs::ToChars(cs, 1U);`,
 			"Strs.ToChars: invalid code point"},
-		"a native handed null":  {`var str s = null; var int n = Strs::ByteLen(s);`, "handed a native a null string"},
+		"a native handed null":  {`var str s = null; var uint n = Strs::ByteLen(s);`, "handed a native a null string"},
 		"a native's bad length": {`var int* a = new(int, 1); Arrs::[int]Copy((-1){uint}, a, a);`, "Arrs.Copy: negative length"},
 	} {
 		t.Run(name, func(t *testing.T) {

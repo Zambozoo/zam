@@ -142,7 +142,7 @@ namespace Main {
         var (Arr[byte]*, Err*) resp = OCSP::Respond(req.Arr(), req.Len(), ca.0, caKey, OCSP.Status::Revoked, Time::FromUnix(1700000000, 0), Duration::Hours(1));
         Main::must("respond", resp.1);
         var File* f = File::Create(dir + "/ocsp.der").0;
-        f.Write(resp.0.Arr(), resp.0.Len(){int});
+        f.Write(resp.0.Arr(), resp.0.Len());
         f.Close();
         Main::put("ocspRequest", Hex::Encode(req.Arr(), req.Len()));
         var (OCSP.Result*, Err*) queried = OCSP::Query(leaf.0, ca.0);

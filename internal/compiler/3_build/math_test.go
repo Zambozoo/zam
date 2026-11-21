@@ -55,13 +55,13 @@ namespace Main {
     }
 
     static fun str() hashes = () {
-        var (byte*, int) a = Strs::ToBytes("a");
-        var (byte*, int) abc = Strs::ToBytes("abc");
-        var (byte*, int) fox = Strs::ToBytes("the quick brown fox jumps over the lazy dog!");
-        var (byte*, int) hello = Strs::ToBytes("hello");
-        var (byte*, int) g = Strs::ToBytes("abcdefg");
+        var (byte*, uint) a = Strs::ToBytes("a");
+        var (byte*, uint) abc = Strs::ToBytes("abc");
+        var (byte*, uint) fox = Strs::ToBytes("the quick brown fox jumps over the lazy dog!");
+        var (byte*, uint) hello = Strs::ToBytes("hello");
+        var (byte*, uint) g = Strs::ToBytes("abcdefg");
         var str s = Hash::FNV1a(a.0, 1U){str} + " " + Hash::XXHash64(abc.0, 3U, 0U){str};
-        s = s + " " + Hash::XXHash64(fox.0, fox.1{uint}, 0U){str} + " " + Hash::XXHash64(fox.0, fox.1{uint}, 7U){str};
+        s = s + " " + Hash::XXHash64(fox.0, fox.1, 0U){str} + " " + Hash::XXHash64(fox.0, fox.1, 7U){str};
         s = s + " " + Hash::Murmur3(hello.0, 5U, 0U){str} + " " + Hash::Murmur3(g.0, 7U, 3U){str};
         s = s + " " + (Hash::Str("abc") == Hash::XXHash64(abc.0, 3U, 0U)){str} + " " + (Hash::Flt(0.0) == Hash::Flt(-0.0)){str};
         return s;
@@ -187,4 +187,34 @@ namespace Main {
 		"9223372036854775808 25258789920773876895098112514266759168 21 -9223372036854775808 false false 0 1 true 1.18059e+21 "+
 		"1/2 0 2 -1\n"+
 		"true\n", stdout)
+}
+
+// TestMathIntrinsics checks, at their edges, the natives codegen computes in
+// place or calls the C library for, unoptimized and with their arguments unknown until
+// run so no optimization folds them.
+func TestMathIntrinsics(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+import m = std("math/Flts.zam");
+
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        var uint zero = argC;
+        var flt x = zero{flt} - 2.5;
+        var str s = Uints::Ones(zero - 1U){str} + " " + Uints::LeadingZeros(zero){str} + " " + Uints::TrailingZeros(zero){str};
+        s = s + " " + (Uints::ReverseBytes(zero + 258U) == 144396663052566528U){str};
+        s = s + " " + m.Flts::Floor(x){str} + " " + m.Flts::Ceil(x){str} + " " + m.Flts::Trunc(x){str} + " " + m.Flts::Round(x){str};
+        s = s + " " + m.Flts::Sqrt(-x * 4.0 - 1.0){str} + " " + m.Flts::IsNaN(m.Flts::Sqrt(x)){str} + " " + m.Flts::Fma(x, 2.0, 1.0){str};
+        s = s + " " + Flts::ToBits(Flts::FromBits(zero + 4607182418800017408U)){str} + " " + Psts::ToBits(Psts::FromBits(zero + 42U)){str};
+        var flt y = zero{flt};
+        s = s + " " + m.Flts::Cbrt(y + 27.0){str} + " " + m.Flts::Exp(y){str} + " " + m.Flts::Log1p(y){str} + " " + m.Flts::Remainder(y + 7.0, 2.0){str};
+        s = s + " " + m.Flts::Mod(y - 7.5, 2.0){str} + " " + m.Flts::Pow(y + 2.0, -1.0){str} + " " + m.Flts::Atan2(y, -1.0){str} + " " + m.Flts::Cosh(y){str};
+        File::StdOut.WriteStr(s + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "64 64 64 true -3 -2 -2 -3 3 true -4 4607182418800017408 42 3 1 0 -1 -1.5 0.5 3.14159 1\n", stdout)
 }

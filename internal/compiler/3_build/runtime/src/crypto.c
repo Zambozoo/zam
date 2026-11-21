@@ -22,14 +22,13 @@
 
 static const unsigned char emptyBytes[1];
 
-ZamInt cryptoLength(ZamThread *thread, uint64_t wordIndex) {
-    ZamInt n = (ZamInt)zam_native_argument(thread, wordIndex);
-    return n < 0 ? 0 : n;
+ZamUint cryptoLength(ZamThread *thread, uint64_t wordIndex) {
+    return (ZamUint)zam_native_argument(thread, wordIndex);
 }
 
 // cryptoBytes resolves the byte pointer at wordIndex, n bytes long, to
 // something a library will read even when n is zero.
-const unsigned char *cryptoBytes(ZamThread *thread, uint64_t wordIndex, ZamInt n) {
+const unsigned char *cryptoBytes(ZamThread *thread, uint64_t wordIndex, ZamUint n) {
     if (n == 0)
         return emptyBytes;
     return zam_native_argument_pointer(thread, wordIndex);
@@ -71,7 +70,7 @@ static void cryptoSodium(ZamThread *thread) {
 
 // stdCryptoRand fills n bytes at b from the system's secure generator.
 static void stdCryptoRand(ZamThread *thread) {
-    ZamInt n = cryptoLength(thread, 1);
+    ZamUint n = cryptoLength(thread, 1);
     if (n > 0 && RAND_bytes(zam_native_argument_pointer(thread, 0), (int)n) != 1)
         zam_native_panic(thread, "no secure random bytes");
     zam_native_return_void(thread);
@@ -80,7 +79,7 @@ static void stdCryptoRand(ZamThread *thread) {
 // stdCryptoEqual compares n bytes at a and b in time independent of their
 // contents.
 static void stdCryptoEqual(ZamThread *thread) {
-    ZamInt n = cryptoLength(thread, 2);
+    ZamUint n = cryptoLength(thread, 2);
     bool equal = CRYPTO_memcmp(cryptoBytes(thread, 0, n), cryptoBytes(thread, 1, n), (size_t)n) == 0;
     codec_write_bool(thread, 3, equal);
     zam_native_return_void(thread);
@@ -114,7 +113,7 @@ static void cryptoDigestFree(CryptoDigest *d) {
 // default length for 0, answering (handle, size, blockSize, err).
 static void stdHashNew(ZamThread *thread) {
     const char *name = cryptoDigest(thread, 0);
-    ZamInt size = (ZamInt)zam_native_argument(thread, 1);
+    ZamUint size = (ZamUint)zam_native_argument(thread, 1);
     codec_write_word(thread, 2, 0);
     CryptoDigest *d = calloc(1, sizeof *d);
     if (d == NULL)
@@ -153,7 +152,7 @@ static void stdHashNew(ZamThread *thread) {
 
 static void stdHashWrite(ZamThread *thread) {
     CryptoDigest *d = codec_handle(thread, 0);
-    ZamInt n = cryptoLength(thread, 2);
+    ZamUint n = cryptoLength(thread, 2);
     if (n > 0 && EVP_DigestUpdate(d->ctx, zam_native_argument_pointer(thread, 1), (size_t)n) != 1)
         zam_native_panic(thread, "cannot update a digest");
     zam_native_return_void(thread);
@@ -194,7 +193,7 @@ static void stdHashFree(ZamThread *thread) {
 // from outIndex on.
 static void cryptoMacNew(ZamThread *thread, const char *name, const char *digest, uint64_t keyIndex,
                          uint64_t outIndex) {
-    ZamInt keyLength = cryptoLength(thread, keyIndex + 1);
+    ZamUint keyLength = cryptoLength(thread, keyIndex + 1);
     const unsigned char *key = cryptoBytes(thread, keyIndex, keyLength);
     codec_write_word(thread, outIndex, 0);
     EVP_MAC *mac = EVP_MAC_fetch(NULL, name, NULL);
@@ -237,7 +236,7 @@ static void stdPoly1305New(ZamThread *thread) {
 
 static void stdMacWrite(ZamThread *thread) {
     EVP_MAC_CTX *ctx = codec_handle(thread, 0);
-    ZamInt n = cryptoLength(thread, 2);
+    ZamUint n = cryptoLength(thread, 2);
     if (n > 0 && EVP_MAC_update(ctx, zam_native_argument_pointer(thread, 1), (size_t)n) != 1)
         zam_native_panic(thread, "cannot update a MAC");
     zam_native_return_void(thread);
@@ -271,7 +270,7 @@ static void stdMacFree(ZamThread *thread) {
 // cryptoDerive runs the KDF named over params into the outLength bytes at
 // the pointer at outIndex, writing an error to errIndex when it fails.
 static void cryptoDerive(ZamThread *thread, const char *name, OSSL_PARAM *params,
-                         uint64_t outIndex, ZamInt outLength, uint64_t errIndex) {
+                         uint64_t outIndex, ZamUint outLength, uint64_t errIndex) {
     EVP_KDF *kdf = EVP_KDF_fetch(NULL, name, NULL);
     EVP_KDF_CTX *ctx = kdf == NULL ? NULL : EVP_KDF_CTX_new(kdf);
     EVP_KDF_free(kdf);
@@ -284,7 +283,7 @@ static void cryptoDerive(ZamThread *thread, const char *name, OSSL_PARAM *params
         cryptoFail(thread, errIndex, "cannot derive a key");
 }
 
-static OSSL_PARAM cryptoOctets(const char *key, const unsigned char *b, ZamInt n) {
+static OSSL_PARAM cryptoOctets(const char *key, const unsigned char *b, ZamUint n) {
     return OSSL_PARAM_construct_octet_string(key, (void *)b, (size_t)n);
 }
 
@@ -293,10 +292,10 @@ static OSSL_PARAM cryptoOctets(const char *key, const unsigned char *b, ZamInt n
 static void stdHkdf(ZamThread *thread) {
     const char *digest = cryptoDigest(thread, 0);
     int mode = (int)(ZamInt)zam_native_argument(thread, 1);
-    ZamInt keyLength = cryptoLength(thread, 3);
-    ZamInt saltLength = cryptoLength(thread, 5);
-    ZamInt infoLength = cryptoLength(thread, 7);
-    ZamInt outLength = cryptoLength(thread, 9);
+    ZamUint keyLength = cryptoLength(thread, 3);
+    ZamUint saltLength = cryptoLength(thread, 5);
+    ZamUint infoLength = cryptoLength(thread, 7);
+    ZamUint outLength = cryptoLength(thread, 9);
     OSSL_PARAM params[6];
     int p = 0;
     params[p++] = OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, (char *)(digest == NULL ? "" : digest), 0);
@@ -314,10 +313,10 @@ static void stdHkdf(ZamThread *thread) {
 // iterations).
 static void stdPbkdf2(ZamThread *thread) {
     const char *digest = cryptoDigest(thread, 0);
-    ZamInt passwordLength = cryptoLength(thread, 2);
-    ZamInt saltLength = cryptoLength(thread, 4);
+    ZamUint passwordLength = cryptoLength(thread, 2);
+    ZamUint saltLength = cryptoLength(thread, 4);
     uint64_t iterations = zam_native_argument(thread, 5);
-    ZamInt outLength = cryptoLength(thread, 7);
+    ZamUint outLength = cryptoLength(thread, 7);
     OSSL_PARAM params[] = {
         OSSL_PARAM_construct_utf8_string(OSSL_KDF_PARAM_DIGEST, (char *)(digest == NULL ? "" : digest), 0),
         cryptoOctets(OSSL_KDF_PARAM_PASSWORD, cryptoBytes(thread, 1, passwordLength), passwordLength),
@@ -331,12 +330,12 @@ static void stdPbkdf2(ZamThread *thread) {
 
 // stdScrypt derives outLength bytes from (password, salt, N, r, p).
 static void stdScrypt(ZamThread *thread) {
-    ZamInt passwordLength = cryptoLength(thread, 1);
-    ZamInt saltLength = cryptoLength(thread, 3);
+    ZamUint passwordLength = cryptoLength(thread, 1);
+    ZamUint saltLength = cryptoLength(thread, 3);
     uint64_t n = zam_native_argument(thread, 4);
     uint32_t r = (uint32_t)zam_native_argument(thread, 5);
     uint32_t p = (uint32_t)zam_native_argument(thread, 6);
-    ZamInt outLength = cryptoLength(thread, 8);
+    ZamUint outLength = cryptoLength(thread, 8);
     uint64_t maxMemory = UINT64_MAX;
     OSSL_PARAM params[] = {
         cryptoOctets(OSSL_KDF_PARAM_PASSWORD, cryptoBytes(thread, 0, passwordLength), passwordLength),
@@ -354,12 +353,12 @@ static void stdScrypt(ZamThread *thread) {
 // stdArgon2 derives outLength bytes with Argon2id from (password, salt,
 // passes, memory in KiB, lanes).
 static void stdArgon2(ZamThread *thread) {
-    ZamInt passwordLength = cryptoLength(thread, 1);
-    ZamInt saltLength = cryptoLength(thread, 3);
+    ZamUint passwordLength = cryptoLength(thread, 1);
+    ZamUint saltLength = cryptoLength(thread, 3);
     uint32_t passes = (uint32_t)zam_native_argument(thread, 4);
     uint32_t memory = (uint32_t)zam_native_argument(thread, 5);
     uint32_t lanes = (uint32_t)zam_native_argument(thread, 6);
-    ZamInt outLength = cryptoLength(thread, 8);
+    ZamUint outLength = cryptoLength(thread, 8);
     OSSL_PARAM params[] = {
         cryptoOctets(OSSL_KDF_PARAM_PASSWORD, cryptoBytes(thread, 0, passwordLength), passwordLength),
         cryptoOctets(OSSL_KDF_PARAM_SALT, cryptoBytes(thread, 2, saltLength), saltLength),
@@ -376,7 +375,7 @@ static void stdArgon2(ZamThread *thread) {
 // PHC string form, from (password, passes, memory in KiB).
 static void stdArgon2Hash(ZamThread *thread) {
     cryptoSodium(thread);
-    ZamInt passwordLength = cryptoLength(thread, 1);
+    ZamUint passwordLength = cryptoLength(thread, 1);
     uint64_t passes = zam_native_argument(thread, 2);
     uint64_t memory = zam_native_argument(thread, 3);
     char hash[crypto_pwhash_STRBYTES];
@@ -398,7 +397,7 @@ static void stdArgon2Hash(ZamThread *thread) {
 static void stdArgon2Verify(ZamThread *thread) {
     cryptoSodium(thread);
     char *hash = codec_c_string(thread, 0);
-    ZamInt passwordLength = cryptoLength(thread, 2);
+    ZamUint passwordLength = cryptoLength(thread, 2);
     bool ok = crypto_pwhash_str_verify(hash, (const char *)cryptoBytes(thread, 1, passwordLength),
                                        (unsigned long long)passwordLength) == 0;
     free(hash);
@@ -408,7 +407,7 @@ static void stdArgon2Verify(ZamThread *thread) {
 
 // cryptoPassword copies a password into a NUL-terminated string for bcrypt,
 // or answers NULL when it holds a NUL of its own.
-static char *cryptoPassword(ZamThread *thread, uint64_t wordIndex, ZamInt n) {
+static char *cryptoPassword(ZamThread *thread, uint64_t wordIndex, ZamUint n) {
     const unsigned char *b = cryptoBytes(thread, wordIndex, n);
     if (memchr(b, 0, (size_t)n) != NULL)
         return NULL;
@@ -422,7 +421,7 @@ static char *cryptoPassword(ZamThread *thread, uint64_t wordIndex, ZamInt n) {
 
 // stdBcryptHash hashes a password with bcrypt at cost under a fresh salt.
 static void stdBcryptHash(ZamThread *thread) {
-    ZamInt passwordLength = cryptoLength(thread, 1);
+    ZamUint passwordLength = cryptoLength(thread, 1);
     ZamInt cost = (ZamInt)zam_native_argument(thread, 2);
     codec_write_word(thread, 3, 0);
     if (passwordLength > 72) {
@@ -453,7 +452,7 @@ static void stdBcryptHash(ZamThread *thread) {
 // stdBcryptVerify reports whether a password matches a bcrypt hash.
 static void stdBcryptVerify(ZamThread *thread) {
     char *expected = codec_c_string(thread, 0);
-    ZamInt passwordLength = cryptoLength(thread, 2);
+    ZamUint passwordLength = cryptoLength(thread, 2);
     char *password = passwordLength > 72 ? NULL : cryptoPassword(thread, 1, passwordLength);
     bool ok = password != NULL && bcrypt_checkpass(password, expected) == 0;
     if (password != NULL) {
@@ -475,7 +474,7 @@ typedef enum CryptoAead {
 
 // cryptoAeadCipher names the OpenSSL cipher for an AEAD, or NULL for those
 // libsodium serves.
-static const char *cryptoAeadCipher(ZamInt kind, ZamInt keyLength) {
+static const char *cryptoAeadCipher(ZamInt kind, ZamUint keyLength) {
     switch (kind) {
     case cryptoAesGcm:
         return keyLength == 16 ? "AES-128-GCM" : keyLength == 24 ? "AES-192-GCM" : "AES-256-GCM";
@@ -488,10 +487,12 @@ static const char *cryptoAeadCipher(ZamInt kind, ZamInt keyLength) {
 // cryptoEvpAead seals or opens n bytes at in into out with an OpenSSL AEAD,
 // the tag following the ciphertext.
 static bool cryptoEvpAead(const char *cipherName, bool seal, const unsigned char *key,
-                          const unsigned char *nonce, ZamInt nonceLength, const unsigned char *in,
-                          ZamInt n, const unsigned char *aad, ZamInt aadLength, unsigned char *out) {
-    const ZamInt tagLength = 16;
-    ZamInt bodyLength = seal ? n : n - tagLength;
+                          const unsigned char *nonce, ZamUint nonceLength, const unsigned char *in,
+                          ZamUint n, const unsigned char *aad, ZamUint aadLength, unsigned char *out) {
+    const ZamUint tagLength = 16;
+    if (!seal && n < tagLength)
+        return false;
+    ZamUint bodyLength = seal ? n : n - tagLength;
     EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, cipherName, NULL);
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     size_t ivLength = (size_t)nonceLength;
@@ -500,7 +501,7 @@ static bool cryptoEvpAead(const char *cipherName, bool seal, const unsigned char
         OSSL_PARAM_construct_end(),
     };
     int written = 0;
-    bool ok = cipher != NULL && ctx != NULL && bodyLength >= 0 &&
+    bool ok = cipher != NULL && ctx != NULL &&
               EVP_CipherInit_ex2(ctx, cipher, NULL, NULL, seal, params) == 1 &&
               EVP_CipherInit_ex2(ctx, NULL, key, nonce, seal, NULL) == 1 &&
               (aadLength == 0 || EVP_CipherUpdate(ctx, NULL, &written, aad, (int)aadLength) == 1) &&
@@ -519,8 +520,8 @@ static bool cryptoEvpAead(const char *cipherName, bool seal, const unsigned char
 
 // cryptoSodiumAead seals or opens with an AEAD libsodium serves.
 static bool cryptoSodiumAead(ZamInt kind, bool seal, const unsigned char *key,
-                             const unsigned char *nonce, const unsigned char *in, ZamInt n,
-                             const unsigned char *aad, ZamInt aadLength, unsigned char *out) {
+                             const unsigned char *nonce, const unsigned char *in, ZamUint n,
+                             const unsigned char *aad, ZamUint aadLength, unsigned char *out) {
     if (kind == cryptoXChaCha20Poly1305) {
         if (seal)
             return crypto_aead_xchacha20poly1305_ietf_encrypt(out, NULL, in, (unsigned long long)n, aad,
@@ -543,10 +544,10 @@ static bool cryptoSodiumAead(ZamInt kind, bool seal, const unsigned char *key,
 static void stdAead(ZamThread *thread) {
     ZamInt kind = (ZamInt)zam_native_argument(thread, 0);
     bool seal = zam_native_argument(thread, 1) != 0;
-    ZamInt keyLength = cryptoLength(thread, 3);
-    ZamInt nonceLength = cryptoLength(thread, 5);
-    ZamInt n = cryptoLength(thread, 7);
-    ZamInt aadLength = cryptoLength(thread, 9);
+    ZamUint keyLength = cryptoLength(thread, 3);
+    ZamUint nonceLength = cryptoLength(thread, 5);
+    ZamUint n = cryptoLength(thread, 7);
+    ZamUint aadLength = cryptoLength(thread, 9);
     const unsigned char *key = cryptoBytes(thread, 2, keyLength);
     const unsigned char *nonce = cryptoBytes(thread, 4, nonceLength);
     const unsigned char *in = cryptoBytes(thread, 6, n);
@@ -576,8 +577,8 @@ typedef enum CryptoAesMode {
 static void stdAes(ZamThread *thread) {
     ZamInt mode = (ZamInt)zam_native_argument(thread, 0);
     bool encrypt = zam_native_argument(thread, 1) != 0;
-    ZamInt keyLength = cryptoLength(thread, 3);
-    ZamInt n = cryptoLength(thread, 6);
+    ZamUint keyLength = cryptoLength(thread, 3);
+    ZamUint n = cryptoLength(thread, 6);
     const unsigned char *key = cryptoBytes(thread, 2, keyLength);
     const unsigned char *iv = zam_native_argument_pointer(thread, 4);
     const unsigned char *in = cryptoBytes(thread, 5, n);
@@ -587,7 +588,7 @@ static void stdAes(ZamThread *thread) {
     EVP_CIPHER *cipher = EVP_CIPHER_fetch(NULL, name, NULL);
     EVP_CIPHER_CTX *ctx = EVP_CIPHER_CTX_new();
     int written = 0, last = 0;
-    bool ok = cipher != NULL && ctx != NULL && EVP_CIPHER_get_key_length(cipher) == keyLength &&
+    bool ok = cipher != NULL && ctx != NULL && (ZamUint)EVP_CIPHER_get_key_length(cipher) == keyLength &&
               EVP_CipherInit_ex2(ctx, cipher, key, iv, encrypt, NULL) == 1 &&
               (n == 0 || EVP_CipherUpdate(ctx, out, &written, in, (int)n) == 1) &&
               EVP_CipherFinal_ex(ctx, out + written, &last) == 1;
@@ -608,9 +609,9 @@ static void stdSalsa20(ZamThread *thread) {
     cryptoSodium(thread);
     const unsigned char *key = zam_native_argument_pointer(thread, 0);
     const unsigned char *nonce = zam_native_argument_pointer(thread, 1);
-    ZamInt nonceLength = cryptoLength(thread, 2);
+    ZamUint nonceLength = cryptoLength(thread, 2);
     uint64_t counter = zam_native_argument(thread, 3);
-    ZamInt n = cryptoLength(thread, 5);
+    ZamUint n = cryptoLength(thread, 5);
     if (n > 0) {
         const unsigned char *in = zam_native_argument_pointer(thread, 4);
         unsigned char *out = zam_native_argument_pointer(thread, 6);
@@ -715,7 +716,7 @@ static void cryptoKeyResult(ZamThread *thread, uint64_t wordIndex, EVP_PKEY *k, 
 // (handle, err).
 static void stdPkeyGenerate(ZamThread *thread) {
     const CryptoKeyKind *kind = cryptoKeyKind((ZamInt)zam_native_argument(thread, 0));
-    ZamInt bits = (ZamInt)zam_native_argument(thread, 1);
+    ZamUint bits = (ZamUint)zam_native_argument(thread, 1);
     EVP_PKEY *k = NULL;
     EVP_PKEY_CTX *ctx = kind == NULL ? NULL : EVP_PKEY_CTX_new_from_name(NULL, kind->name, NULL);
     bool ok = ctx != NULL && EVP_PKEY_keygen_init(ctx) == 1 &&
@@ -746,7 +747,7 @@ EVP_PKEY *cryptoDecode(const unsigned char *b, size_t n, bool pem, int selection
 // stdPkeyDecode reads a PKCS #8 private key or a SubjectPublicKeyInfo public
 // key from (b, n, pem), answering (handle, kind, private, err).
 static void stdPkeyDecode(ZamThread *thread) {
-    ZamInt n = cryptoLength(thread, 1);
+    ZamUint n = cryptoLength(thread, 1);
     const unsigned char *b = cryptoBytes(thread, 0, n);
     bool pem = zam_native_argument(thread, 2) != 0;
     bool private = true;
@@ -809,7 +810,7 @@ static void stdPkeyPublic(ZamThread *thread) {
 // n, private), answering (handle, err).
 static void stdPkeyFromRaw(ZamThread *thread) {
     const CryptoKeyKind *kind = cryptoKeyKind((ZamInt)zam_native_argument(thread, 0));
-    ZamInt n = cryptoLength(thread, 2);
+    ZamUint n = cryptoLength(thread, 2);
     const unsigned char *b = cryptoBytes(thread, 1, n);
     bool private = zam_native_argument(thread, 3) != 0;
     EVP_PKEY *k = NULL;
@@ -875,7 +876,7 @@ static EVP_MD_CTX *cryptoSignInit(ZamThread *thread, EVP_PKEY *k, uint64_t diges
 // stdPkeySign signs n bytes at b with (key, digest, pss, b, n), answering
 // (buffer, length, err).
 static void stdPkeySign(ZamThread *thread) {
-    ZamInt n = cryptoLength(thread, 4);
+    ZamUint n = cryptoLength(thread, 4);
     EVP_MD_CTX *ctx = cryptoSignInit(thread, codec_handle(thread, 0), 1, zam_native_argument(thread, 2) != 0, true);
     const unsigned char *b = cryptoBytes(thread, 3, n);
     size_t length = 0;
@@ -890,8 +891,8 @@ static void stdPkeySign(ZamThread *thread) {
 // stdPkeyVerify reports whether (key, digest, pss, b, n, sig, sigLength)
 // holds a valid signature of n bytes at b.
 static void stdPkeyVerify(ZamThread *thread) {
-    ZamInt n = cryptoLength(thread, 4);
-    ZamInt sigLength = cryptoLength(thread, 6);
+    ZamUint n = cryptoLength(thread, 4);
+    ZamUint sigLength = cryptoLength(thread, 6);
     EVP_MD_CTX *ctx = cryptoSignInit(thread, codec_handle(thread, 0), 1, zam_native_argument(thread, 2) != 0, false);
     bool ok = ctx != NULL && EVP_DigestVerify(ctx, cryptoBytes(thread, 5, sigLength), (size_t)sigLength,
                                               cryptoBytes(thread, 3, n), (size_t)n) == 1;
@@ -906,7 +907,7 @@ static void stdPkeyVerify(ZamThread *thread) {
 static void stdPkeyOaep(ZamThread *thread) {
     const char *digest = cryptoDigest(thread, 1);
     bool decrypt = zam_native_argument(thread, 2) != 0;
-    ZamInt n = cryptoLength(thread, 4);
+    ZamUint n = cryptoLength(thread, 4);
     const unsigned char *b = cryptoBytes(thread, 3, n);
     EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_pkey(NULL, codec_handle(thread, 0), NULL);
     size_t length = 0;
@@ -956,7 +957,7 @@ static void stdPkeyEncapsulate(ZamThread *thread) {
 // stdPkeyDecapsulate recovers the shared secret a ciphertext carries, from
 // (private key, ct, n), answering (buffer, length, err).
 static void stdPkeyDecapsulate(ZamThread *thread) {
-    ZamInt n = cryptoLength(thread, 2);
+    ZamUint n = cryptoLength(thread, 2);
     const unsigned char *ct = cryptoBytes(thread, 1, n);
     EVP_PKEY_CTX *ctx = EVP_PKEY_CTX_new_from_pkey(NULL, codec_handle(thread, 0), NULL);
     size_t length = 0;
@@ -983,9 +984,9 @@ static OSSL_HPKE_SUITE cryptoHpkeSuite(ZamThread *thread) {
 // answering (encBuffer, encLength, ctBuffer, ctLength, err).
 static void stdHpkeSeal(ZamThread *thread) {
     OSSL_HPKE_SUITE suite = cryptoHpkeSuite(thread);
-    ZamInt infoLength = cryptoLength(thread, 5);
-    ZamInt aadLength = cryptoLength(thread, 7);
-    ZamInt n = cryptoLength(thread, 9);
+    ZamUint infoLength = cryptoLength(thread, 5);
+    ZamUint aadLength = cryptoLength(thread, 7);
+    ZamUint n = cryptoLength(thread, 9);
     const unsigned char *info = cryptoBytes(thread, 4, infoLength);
     const unsigned char *aad = cryptoBytes(thread, 6, aadLength);
     const unsigned char *b = cryptoBytes(thread, 8, n);
@@ -1020,10 +1021,10 @@ static void stdHpkeSeal(ZamThread *thread) {
 // (buffer, length, err).
 static void stdHpkeOpen(ZamThread *thread) {
     OSSL_HPKE_SUITE suite = cryptoHpkeSuite(thread);
-    ZamInt encLength = cryptoLength(thread, 5);
-    ZamInt infoLength = cryptoLength(thread, 7);
-    ZamInt aadLength = cryptoLength(thread, 9);
-    ZamInt ctLength = cryptoLength(thread, 11);
+    ZamUint encLength = cryptoLength(thread, 5);
+    ZamUint infoLength = cryptoLength(thread, 7);
+    ZamUint aadLength = cryptoLength(thread, 9);
+    ZamUint ctLength = cryptoLength(thread, 11);
     const unsigned char *enc = cryptoBytes(thread, 4, encLength);
     const unsigned char *info = cryptoBytes(thread, 6, infoLength);
     const unsigned char *aad = cryptoBytes(thread, 8, aadLength);

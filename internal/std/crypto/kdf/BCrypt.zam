@@ -12,7 +12,7 @@ public namespace BCrypt {
         var (str, Err*) r;
         var str hash;
         var str errStr;
-        native(STD_BCRYPT_HASH){void(byte*, int, int, str*, str*)}(password, passwordLen{int}, cost, &hash, &errStr);
+        native(STD_BCRYPT_HASH){void(byte*, uint, int, str*, str*)}(password, passwordLen, cost, &hash, &errStr);
         r.0 = hash;
         r.1 = null;
         if(errStr != null) {
@@ -24,7 +24,7 @@ public namespace BCrypt {
     // Verify reports whether a password matches a hash from Hash.
     public static fun bool(str, byte*, uint) Verify = (hash, password, passwordLen) {
         var bool ok = false;
-        native(STD_BCRYPT_VERIFY){void(str, byte*, int, bool*)}(hash, password, passwordLen{int}, &ok);
+        native(STD_BCRYPT_VERIFY){void(str, byte*, uint, bool*)}(hash, password, passwordLen, &ok);
         return ok;
     }
 }

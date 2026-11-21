@@ -5,8 +5,8 @@ public namespace Strs {
     // str's own bytes field — a plain cast, no copy, NUL-terminated — so the
     // caller must not outlive the str; use Strs.FromBytes on the result if
     // lifetime independence is needed.
-    public static fun (byte*, int)(str) ToBytes = (s) {
-        var (byte*, int) p;
+    public static fun (byte*, uint)(str) ToBytes = (s) {
+        var (byte*, uint) p;
         p.0 = s{byte*};
         p.1 = Strs::ByteLen(s);
         return p;
@@ -14,51 +14,183 @@ public namespace Strs {
 
     // FromBytes copies the given byte run into a fresh str allocation. The
     // caller may free the source buffer immediately after.
-    public static fun str(byte*, int) FromBytes = (b, i) {
+    public static fun str(byte*, uint) FromBytes = (b, n) {
         var str s;
-        native(STD_STRS_FROM_BYTES){void(byte*, int, str*)}(b, i, &s);
+        native(STD_STRS_FROM_BYTES){void(byte*, uint, str*)}(b, n, &s);
         return s;
     }
 
-    // Chars hands back the str's bytes typed as char* and the number of code
-    // points they decode to. The pointer aliases the str's own bytes — a
-    // plain cast, no copy — so the caller must not outlive the str. Reading a
-    // char through it reads one byte at the char's low eight bits and whatever
-    // follows above them; it is a reinterpretation for the C side rather than a
-    // decoded run.
-    public static fun (char*, int)(str) Chars = (s) {
-        var (char*, int) p;
-        p.0 = s{char*};
-        p.1 = Strs::CharLen(s);
-        return p;
+    // Chars decodes the str's UTF-8 into a fresh Arr of its code points, each
+    // malformed byte decoding to U+FFFD.
+    public static fun Arr[char]*(str) Chars = (s) {
+        var (byte*, uint) p = Strs::ToBytes(s);
+        var uint n = Strs::decode(p.0, p.1, null);
+        var char* cs = new(char, n);
+        Strs::decode(p.0, p.1, cs);
+        return Arr::[char]New(n, cs...);
     }
 
-    // ToChars encodes a run of code points as a fresh UTF-8 str.
-    public static fun str(char*, int) ToChars = (cs, i) {
+    // Iter visits the code points of the str's UTF-8 as Chars decodes them,
+    // one at a time.
+    public static fun Iter*(str) Iter = (s) {
+        var Iter* it = new(Iter);
+        it.s = s;
+        it.i = 0U;
+        return it;
+    }
+
+    private class Iter {
         var str s;
-        native(STD_STRS_TO_CHARS){void(char*, int, str*)}(cs, i, &s);
-        return s;
+        var uint i;
+
+        public fun (char, bool)() Next = () {
+            var (char, bool) p;
+            var (byte*, uint) b = Strs::ToBytes(this.s);
+            if(this.i >= b.1) {
+                p.1 = false;
+                return p;
+            }
+            var (uint, uint) d = Strs::decodeAt(b.0, b.1, this.i);
+            p.0 = d.0{int}{char};
+            p.1 = true;
+            this.i = this.i + d.1;
+            return p;
+        }
+
+        // Prev steps back over the code point before the iterator: the one
+        // that begins at the last lead byte within four bytes, or U+FFFD for
+        // the last byte when that code point does not end where it stands.
+        public fun (char, bool)() Prev = () {
+            var (char, bool) p;
+            if(this.i == 0U) {
+                p.1 = false;
+                return p;
+            }
+            var (byte*, uint) b = Strs::ToBytes(this.s);
+            var uint start = this.i - 1U;
+            for(var uint k = 0U; k < 3U && start > 0U && (b.0[start]{uint} & 192U) == 128U; k++) {
+                start--;
+            }
+            var (uint, uint) d = Strs::decodeAt(b.0, b.1, start);
+            if(start + d.1 != this.i) {
+                d.0 = 65533U;
+                start = this.i - 1U;
+            }
+            p.0 = d.0{int}{char};
+            p.1 = true;
+            this.i = start;
+            return p;
+        }
     }
 
-    // The number of UTF-8 code points in the str.
-    public static fun int(str) CharLen = (s) {
-        var int n;
-        native(STD_STRS_CHAR_LEN){void(str, int*)}(s, &n);
-        return n;
+    // decode decodes the n UTF-8 bytes at b into out, unless out is null, and
+    // answers how many code points they hold.
+    private static fun uint(byte*, uint, char*) decode = (b, n, out) {
+        var uint count = 0U;
+        for(var uint i = 0U; i < n;) {
+            var (uint, uint) d = Strs::decodeAt(b, n, i);
+            if(out != null) {
+                out[count] = d.0{int}{char};
+            }
+            count++;
+            i = i + d.1;
+        }
+        return count;
+    }
+
+    // decodeAt decodes the code point at i of the n UTF-8 bytes at b, and
+    // answers it and how many bytes it spans, a malformed byte being one
+    // U+FFFD.
+    private static fun (uint, uint)(byte*, uint, uint) decodeAt = (b, n, i) {
+        var uint c = b[i]{uint};
+        var uint size = 1U;
+        var uint least = 0U;
+        if(c >= 240U && c < 245U) {
+            size = 4U;
+            c = c & 7U;
+            least = 65536U;
+        } else if(c >= 224U && c < 240U) {
+            size = 3U;
+            c = c & 15U;
+            least = 2048U;
+        } else if(c >= 194U && c < 224U) {
+            size = 2U;
+            c = c & 31U;
+            least = 128U;
+        } else if(c >= 128U) {
+            c = 65533U;
+        }
+        if(size > 1U) {
+            var bool ok = i + size <= n;
+            for(var uint k = 1U; ok && k < size; k++) {
+                var uint next = b[i + k]{uint};
+                ok = (next & 192U) == 128U;
+                c = (c << 6U) | (next & 63U);
+            }
+            if(!ok || c < least || c > 1114111U || (c >= 55296U && c <= 57343U)) {
+                c = 65533U;
+                size = 1U;
+            }
+        }
+        var (uint, uint) d;
+        d.0 = c;
+        d.1 = size;
+        return d;
+    }
+
+    // ToChars encodes a run of code points as a fresh UTF-8 str. A code point
+    // past U+10FFFF or in the surrogate range has no encoding and panics.
+    public static fun str(char*, uint) ToChars = (cs, n) {
+        var byte* b = new(byte, n * 4U + 1U);
+        defer free(b);
+        var uint o = 0U;
+        for(var uint k = 0U; k < n; k++) {
+            var uint c = cs[k]{int}{uint};
+            if(c > 1114111U || (c >= 55296U && c <= 57343U)) {
+                native(STD_SYSTEM_PANIC){void(str)}("Strs.ToChars: invalid code point");
+            }
+            if(c < 128U) {
+                b[o] = c{byte};
+                o++;
+            } else if(c < 2048U) {
+                b[o] = (192U | (c >> 6U)){byte};
+                b[o + 1U] = (128U | (c & 63U)){byte};
+                o = o + 2U;
+            } else if(c < 65536U) {
+                b[o] = (224U | (c >> 12U)){byte};
+                b[o + 1U] = (128U | ((c >> 6U) & 63U)){byte};
+                b[o + 2U] = (128U | (c & 63U)){byte};
+                o = o + 3U;
+            } else {
+                b[o] = (240U | (c >> 18U)){byte};
+                b[o + 1U] = (128U | ((c >> 12U) & 63U)){byte};
+                b[o + 2U] = (128U | ((c >> 6U) & 63U)){byte};
+                b[o + 3U] = (128U | (c & 63U)){byte};
+                o = o + 4U;
+            }
+        }
+        return Strs::FromBytes(b, o);
+    }
+
+    // The number of code points the str's UTF-8 decodes to, as Chars decodes
+    // it.
+    public static fun uint(str) CharLen = (s) {
+        var (byte*, uint) p = Strs::ToBytes(s);
+        return Strs::decode(p.0, p.1, null);
     }
 
     // The number of bytes in the str.
-    public static fun int(str) ByteLen = (s) {
-        var int n;
-        native(STD_STRS_BYTE_LEN){void(str, int*)}(s, &n);
+    public static fun uint(str) ByteLen = (s) {
+        var uint n;
+        native(STD_STRS_BYTE_LEN){void(str, uint*)}(s, &n);
         return n;
     }
 
     // Split returns the runs of s between each sep byte, so an empty s is one
     // empty run.
     public static fun Arr[str]*(str, byte) Split = (s, sep) {
-        var (byte*, int) p = Strs::ToBytes(s);
-        var uint n = p.1{uint};
+        var (byte*, uint) p = Strs::ToBytes(s);
+        var uint n = p.1;
         var uint count = 1U;
         for(var uint i = 0U; i < n; i++) {
             if(p.0[i] == sep) {
@@ -70,7 +202,7 @@ public namespace Strs {
         var uint k = 0U;
         for(var uint i = 0U; i <= n; i++) {
             if(i == n || p.0[i] == sep) {
-                out.Set(k, Strs::FromBytes(&(p.0[start]), (i - start){int}));
+                out.Set(k, Strs::FromBytes(&(p.0[start]), i - start));
                 k++;
                 start = i + 1U;
             }
@@ -91,30 +223,30 @@ public namespace Strs {
     public static fun str(str, any...) Sprintf = (fmt, args) {
         var str result = "";
         var int argIndex = 0;
-        var (byte*, int) fmtBytes = Strs::ToBytes(fmt);
+        var (byte*, uint) fmtBytes = Strs::ToBytes(fmt);
         var byte* b = fmtBytes.0;
-        var int n = fmtBytes.1;
+        var uint n = fmtBytes.1;
 
-        for (var int i = 0; i < n; ) {
+        for (var uint i = 0U; i < n; ) {
             if (b[i]{int} != '%'{int}) {
-                var int start = i;
-                for (; i < n; i = i + 1) {
+                var uint start = i;
+                for (; i < n; i = i + 1U) {
                     if (b[i]{int} == '%'{int}) {
                         break;
                     }
                 }
                 result = result + Strs::FromBytes(b + start, i - start);
             } else {
-                i = i + 1;
+                i = i + 1U;
                 if (i >= n) {
                     result = result + "%";
                 } else if (b[i]{int} == '%'{int}) {
                     result = result + "%";
-                    i = i + 1;
+                    i = i + 1U;
                 } else {
                     result = result + args[argIndex]{str};
                     argIndex = argIndex + 1;
-                    i = i + 1;
+                    i = i + 1U;
                 }
             }
         }

@@ -68,11 +68,11 @@ public class X509 {
     }
 
     // list takes the count certificate handles a native left at list.
-    static fun Arr[X509*]*(uint, int) list = (list, count) {
-        var uint n = count{uint};
+    static fun Arr[X509*]*(uint, uint) list = (list, count) {
+        var uint n = count;
         var uint* handles = new(uint, n + 1U);
         defer free(handles);
-        native(STD_PKI_TAKE){void(uint, uint*, int)}(list, handles, count);
+        native(STD_PKI_TAKE){void(uint, uint*, uint)}(list, handles, count);
         var Arr[X509*]* out = Arr::[X509*]New(n, new(X509*, n + 1U)...);
         for(var uint i = 0U; i < n; i++) {
             out.Set(i, X509::of(handles[i]));
@@ -119,9 +119,9 @@ public class X509 {
         out.0 = null;
         out.1 = null;
         var uint list = 0U;
-        var int count = 0;
+        var uint count = 0U;
         var str errStr;
-        native(STD_X509_DECODE){void(byte*, int, bool, uint*, int*, str*)}(b, n{int}, pem, &list, &count, &errStr);
+        native(STD_X509_DECODE){void(byte*, uint, bool, uint*, uint*, str*)}(b, n, pem, &list, &count, &errStr);
         if(errStr != null) {
             out.1 = StrErr::New(errStr);
             return out;
@@ -147,8 +147,8 @@ public class X509 {
 
     // ParsePEMChain reads every certificate in PEM, in order.
     public static fun (Arr[X509*]*, Err*)(str) ParsePEMChain = (s) {
-        var (byte*, int) p = Strs::ToBytes(s);
-        return X509::decode(p.0, p.1{uint}, true);
+        var (byte*, uint) p = Strs::ToBytes(s);
+        return X509::decode(p.0, p.1, true);
     }
 
     // ParseDER reads a certificate from n bytes of DER at b.
@@ -177,7 +177,7 @@ public class X509 {
         }
         var uint h = 0U;
         var str errStr;
-        native(STD_X509_CREATE){void(byte*, int, uint, byte*, int, str, str, str, str, int, int, bool, uint*, str*)}(subjectDer.0.Arr(), subjectDer.0.Len(){int}, issuerHandle, issuerDer.0.Arr(), issuerDer.0.Len(){int}, t.commonName, t.organization, X509::lines(t.dnsNames), t.ocspURL, t.notBefore.Unix(), t.notAfter.Unix(), t.isCA, &h, &errStr);
+        native(STD_X509_CREATE){void(byte*, uint, uint, byte*, uint, str, str, str, str, int, int, bool, uint*, str*)}(subjectDer.0.Arr(), subjectDer.0.Len(), issuerHandle, issuerDer.0.Arr(), issuerDer.0.Len(), t.commonName, t.organization, X509::lines(t.dnsNames), t.ocspURL, t.notBefore.Unix(), t.notAfter.Unix(), t.isCA, &h, &errStr);
         if(errStr != null) {
             out.1 = StrErr::New(errStr);
             return out;
@@ -210,14 +210,14 @@ public class X509 {
             return der;
         }
         var uint h = 0U;
-        var int n = 0;
+        var uint n = 0U;
         var str errStr;
-        native(STD_X509_REQUEST){void(byte*, int, str, str, uint*, int*, str*)}(der.0.Arr(), der.0.Len(){int}, commonName, X509::lines(dnsNames), &h, &n, &errStr);
+        native(STD_X509_REQUEST){void(byte*, uint, str, str, uint*, uint*, str*)}(der.0.Arr(), der.0.Len(), commonName, X509::lines(dnsNames), &h, &n, &errStr);
         return X509::take(h, n, errStr);
     }
 
     // take copies n bytes out of the buffer a native left them in.
-    static fun (Arr[byte]*, Err*)(uint, int, str) take = (h, n, errStr) {
+    static fun (Arr[byte]*, Err*)(uint, uint, str) take = (h, n, errStr) {
         var (Arr[byte]*, Err*) out;
         out.0 = null;
         out.1 = null;
@@ -225,23 +225,23 @@ public class X509 {
             out.1 = StrErr::New(errStr);
             return out;
         }
-        var byte* b = new(byte, n{uint} + 1U);
+        var byte* b = new(byte, n + 1U);
         native(STD_CODEC_TAKE){void(uint, byte*)}(h, b);
-        out.0 = Arr::[byte]New(n{uint}, b...);
+        out.0 = Arr::[byte]New(n, b...);
         return out;
     }
 
     fun (Arr[byte]*, Err*)(bool) encode = (pem) {
         var uint h = 0U;
-        var int n = 0;
+        var uint n = 0U;
         var str errStr;
-        native(STD_X509_ENCODE){void(uint, bool, uint*, int*, str*)}(this.handle, pem, &h, &n, &errStr);
+        native(STD_X509_ENCODE){void(uint, bool, uint*, uint*, str*)}(this.handle, pem, &h, &n, &errStr);
         return X509::take(h, n, errStr);
     }
 
     public fun str() PEM = () {
         var Arr[byte]* b = this.encode(true).0;
-        return Strs::FromBytes(b.Arr(), b.Len(){int});
+        return Strs::FromBytes(b.Arr(), b.Len());
     }
 
     public fun Arr[byte]*() DER = () {
@@ -288,9 +288,9 @@ public class X509 {
 
     public fun (Key*, Err*)() PublicKey = () {
         var uint h = 0U;
-        var int n = 0;
+        var uint n = 0U;
         var str errStr;
-        native(STD_X509_PUBLIC_KEY){void(uint, uint*, int*, str*)}(this.handle, &h, &n, &errStr);
+        native(STD_X509_PUBLIC_KEY){void(uint, uint*, uint*, str*)}(this.handle, &h, &n, &errStr);
         var (Arr[byte]*, Err*) der = X509::take(h, n, errStr);
         if(der.1 != null) {
             var (Key*, Err*) out;
@@ -319,7 +319,7 @@ public class X509 {
         var uint* i = X509::handles(intermediates);
         defer free(i);
         var str errStr;
-        native(STD_X509_VERIFY){void(uint, uint*, int, uint*, int, str, int, str*)}(this.handle, r, X509::count(roots){int}, i, X509::count(intermediates){int}, host, at.Unix(), &errStr);
+        native(STD_X509_VERIFY){void(uint, uint*, uint, uint*, uint, str, int, str*)}(this.handle, r, X509::count(roots), i, X509::count(intermediates), host, at.Unix(), &errStr);
         if(errStr != null) {
             return StrErr::New(errStr);
         }
