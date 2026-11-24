@@ -1,14 +1,11 @@
 import "TokenKind.zam";
 
-// Token is a kind lexed at an offset, with the value a literal or an
-// identifier carries
+// Token is a kind and value lexed at an offset
 public class Token {
     public var TokenKind kind;
-    // offset is where the token starts, counted in chars from the start of
-    // its source.
+    // offset is where the token starts
     public var uint offset;
-    // value is what a literal other than a bool or null holds, or an
-    // identifier's name.
+    // value is an identifer or literal value
     public var any value;
 
     public static fun Token*(TokenKind, uint, any) New = (kind, offset, value) {
