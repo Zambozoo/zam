@@ -17,8 +17,10 @@ They are mutually exclusive.
 * static, meaning it is tied to the definition itself, not any instance of the type.
 By definition, all fields in namespaces are implicitly static.
 Fields in other declarations are implicitly non-static, meaning they are tied to any instances of the declaration.
-Static fields are initialized before `main` runs, file by file in path order.
-Within a file, they are initialized in the order they are written, whichever declaration holds them, so an initializer sees the statics written above it.
+Static fields are initialized before `main` runs, in two passes.
+Constant statics and the values of enums backed by a primitive come first, then every other static, including the values of enums backed by nothing.
+Each pass goes file by file in path order, and within a file in the order the statics are written, whichever declaration holds them.
+So an initializer sees every constant static and primitive-backed enum value, and the other statics written above it.
 Static methods can be named from any initializer.
 * virtual, which is only applicable to methods, and specifies that it must be overridden.
 This is used when implementing interfaces and extending abstracts.

@@ -3,7 +3,7 @@ import std("lang/Ints.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 
-// ByteSize reads, writes bytes with optional suffixes.
+// ByteSize reads, writes bytes with optional suffixes
 public namespace ByteSize {
     namespace Errs {
         public fun Err*(str) InvalidByteSize = (s) {

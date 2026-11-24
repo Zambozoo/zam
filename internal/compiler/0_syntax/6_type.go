@@ -1196,6 +1196,20 @@ func (t *TypeGenericArg) IsSubtypeOf(other Type) bool {
 	return true
 }
 
+// IsEnum reports whether t is an enum, or a generic argument bounded to enums.
+func IsEnum(t Type) bool {
+	switch t := StripConst(t).(type) {
+	case *TypeGenericArg:
+		bound, _ := t.owner.Generics().Get(GenericArgKey{Owner: t.owner, Name: t.Name})
+		_, ok := bound.(GenericEnumBounded)
+		return ok
+	case TypeResolvable:
+		_, ok := t.Decl().(*DeclEnum)
+		return ok
+	}
+	return false
+}
+
 // IsSupertypeOf implements the [Type] interface.
 func (t *TypeGenericArg) IsSupertypeOf(child Type) bool {
 	key := GenericArgKey{

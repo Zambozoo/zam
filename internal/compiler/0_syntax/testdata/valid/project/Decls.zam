@@ -4,6 +4,10 @@ public namespace Decls {
     var int counter = 0;
     public static var int shared;
     private fun void() Helper = () {}
+    fun[E <: enum] E(E) Same = (e) {
+        return e;
+    }
+
     fun[T, U <: Obj*, V :> [Node*, Obj*]] T(T, U, V) Identity = (t, u, v) {
         return t;
     }
@@ -140,6 +144,22 @@ public namespace Decls {
 
     enum Empty {
         ;
+    }
+
+    enum Led {
+        enum Size : int {
+            Small(1), Big(2);
+        }
+
+        class Inner {}
+
+        First.Init(Size::Big);
+
+        var Size size;
+
+        fun void(Size) Init = (s) {
+            this.size = s;
+        }
     }
 
     alias Number = int;

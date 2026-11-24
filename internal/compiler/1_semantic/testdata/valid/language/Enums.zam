@@ -1,0 +1,22 @@
+public namespace Enums {
+    enum Color {
+        Red, Blue;
+    }
+
+    class Holder[E <: enum] {
+        var E held;
+    }
+
+    fun[E <: enum] uint() Count = () {
+        return 0U;
+    }
+
+    fun[E <: enum] uint() Forward = () {
+        return Enums::[E]Count();
+    }
+
+    fun void() Run = () {
+        var uint n = Enums::[Color]Forward();
+        var Holder[Color]* h = null;
+    }
+}

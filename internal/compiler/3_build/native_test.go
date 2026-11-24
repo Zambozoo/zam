@@ -1027,6 +1027,130 @@ func TestStaticsInitializeInLineOrder(t *testing.T) {
 	assert.Equal(t, 21, status)
 }
 
+// TestNativeConstantsInitializeFirst reads a constant static and the value of
+// a primitive-backed enum from initializers written above them: an enum value
+// backed by nothing and a static that is not constant.
+func TestNativeConstantsInitializeFirst(t *testing.T) {
+	t.Parallel()
+	_, status := runNative(t, `namespace Main {
+    enum Planet {
+        Earth.Init(Size::Big, Main::moons);
+
+        var Size size;
+        var int n;
+
+        fun void(Size, int) Init = (s, n) {
+            this.size = s;
+            this.n = n;
+        }
+
+        enum Size : int {
+            Small(1),
+            Big(2);
+        }
+    }
+
+    static var int doubled = Main::moons * 2;
+    static var int$ moons = 3;
+
+    fun void(uint, str...) main = (argC, argV) {
+        native(STD_SYSTEM_EXIT){void(int)}(Planet::Earth.size{int} * 100 + Planet::Earth.n * 10 + doubled);
+    }
+}
+`)
+	assert.Equal(t, 236, status)
+}
+
+// TestNativeEnumValuesReadLeadingDecls initializes enum values from a nested
+// enum backed by nothing, declared above them.
+func TestNativeEnumValuesReadLeadingDecls(t *testing.T) {
+	t.Parallel()
+	_, status := runNative(t, `namespace Main {
+    enum Planet {
+        enum Ring {
+            None, Some;
+        }
+
+        Earth.Init(Ring::None),
+        Saturn.Init(Ring::Some);
+
+        var Ring ring;
+
+        fun void(Ring) Init = (r) {
+            this.ring = r;
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        native(STD_SYSTEM_EXIT){void(int)}((Planet::Saturn.ring == Planet.Ring::Some){int} * 2 + (Planet::Earth.ring == Planet.Ring::None){int});
+    }
+}
+`)
+	assert.Equal(t, 3, status)
+}
+
+// TestNativeEnumsOrdinalAllLen reads where values stand, how many there are
+// and every value, for an enum backed by nothing, ones backed by primitives of
+// different widths and one with members, kept through a collection.
+func TestNativeEnumsOrdinalAllLen(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    enum Plain {
+        A, B, C;
+    }
+
+    enum Small : byte {
+        X(7{byte}), Y(9{byte});
+    }
+
+    enum Wide : int {
+        P(100), Q(200), R(300), S(400);
+    }
+
+    enum Named : str {
+        One("one"), Two("two");
+    }
+
+    enum Planet {
+        Mercury.Init("hot"),
+        Venus.Init("cloudy"),
+        Earth.Init("home");
+
+        var str note;
+
+        fun void(str) Init = (n) {
+            this.note = n;
+        }
+    }
+
+    static fun void() churn = () {
+        for(var int i = 0; i < 20000; i++) {
+            var str s = i{str} + "-churn";
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Arr[Planet]* planets = Enums::[Planet]All();
+        Main::churn();
+        System.GC::Major();
+
+        var str out = Enums::[Plain]Len(){str} + Enums::[Small]Len(){str} + Enums::[Wide]Len(){str} + Enums::[Named]Len(){str} + Enums::[Planet]Len(){str};
+        out = out + " " + Enums::[Plain]Ordinal(Plain::C){str} + Enums::[Small]Ordinal(Small::Y){str} + Enums::[Wide]Ordinal(Wide::R){str} + Enums::[Named]Ordinal(Named::Two){str} + Enums::[Planet]Ordinal(Planet::Venus){str};
+        out = out + " " + (Enums::[Plain]All().Get(1U) == Plain::B){str} + " " + Enums::[Small]All().Get(1U){byte}{str} + " " + Enums::[Wide]All().Get(3U){int}{str} + " " + Enums::[Named]All().Get(0U){str};
+        for(var uint i = 0U; i < planets.Len(); i++) {
+            out = out + " " + planets.Get(i).note + Enums::[Planet]Ordinal(planets.Get(i)){str};
+        }
+        File::StdOut.WriteStr(out + "\n");
+    }
+}
+`)
+	assert.Zero(t, status, output)
+	assert.Equal(t, "32423 21211 true 9 400 one hot0 cloudy1 home2\n", output)
+}
+
 // TestNativeTrapsWhatItCannotCompile compiles a method native compilation
 // cannot compile yet as a trap, says so in the object, and ends the program
 // saying why only once the method is called. One the program cannot reach is

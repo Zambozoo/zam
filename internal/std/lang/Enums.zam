@@ -1,0 +1,27 @@
+import "Arr.zam";
+
+// Values of an enum and where each stands among them
+public namespace Enums {
+    // Ordinal answers where e stands among its enum's values, from 0, in the
+    // order they are declared.
+    public static fun[E <: enum] uint(E) Ordinal = (e) {
+        var uint n;
+        native(STD_ENUM_ORDINAL){void(type, E, uint*)}(type(E), e, &n);
+        return n;
+    }
+
+    // Len answers how many values E has.
+    public static fun[E <: enum] uint() Len = () {
+        var uint n;
+        native(STD_ENUM_LEN){void(type, uint*)}(type(E), &n);
+        return n;
+    }
+
+    // All lists every value of E, in the order they are declared.
+    public static fun[E <: enum] Arr[E]*() All = () {
+        var uint n = Enums::[E]Len();
+        var E* values = new(E, n);
+        native(STD_ENUM_VALUES){void(type, E*)}(type(E), values);
+        return Arr::[E]New(n, values...);
+    }
+}

@@ -1,0 +1,9 @@
+public namespace Main {
+    fun[E <: enum] uint() Count = () {
+        return 0U;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var uint n = Main::[int]Count();
+    }
+}

@@ -1,0 +1,5 @@
+public namespace Main {
+    fun[E :> enum] uint() Count = () {
+        return 0U;
+    }
+}

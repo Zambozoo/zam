@@ -101,6 +101,9 @@ func (c *collector) expr(e syntax.Expr) {
 		if _, intrinsic := nativeIntrinsics[e.ID]; intrinsic {
 			break
 		}
+		if _, intrinsic := enumIntrinsics[e.ID]; intrinsic {
+			break
+		}
 		if _, at := c.reader.natives.Get(e.ID); at < 0 {
 			c.reader.natives.Set(e.ID, uint64(c.reader.natives.Len()))
 		}

@@ -1,5 +1,6 @@
 import std("codec/format/JSON.zam");
-import std("data/list/ArrList.zam");
+import std("lang/Arr.zam");
+import std("lang/Enums.zam");
 import std("lang/Err.zam");
 import std("lang/StrErr.zam");
 
@@ -17,6 +18,7 @@ public enum Target {
             return StrErr::New("unknown target \"" + name + "\", expected one of " + Names());
         }
     }
+
     // name is the target's name, as its pack is named.
     public var str name;
     public var str os;
@@ -27,15 +29,9 @@ public enum Target {
     // zig is the -target Zig compiles C for the target with.
     public var str zig;
 
-    // All lists every target.
-    public static fun ArrList[Target]*() All = () {
-        var ArrList[Target]* all = ArrList::[Target]New(6U, AArch64LinuxMusl, X86_64LinuxMusl, AArch64MacOS, X86_64MacOS, AArch64WindowsGNU, X86_64WindowsGNU);
-        return all;
-    }
-
     // Names answers the name of every target, separated by commas.
     public static fun str() Names = () {
-        var ArrList[Target]* all = All();
+        var Arr[Target]* all = Enums::[Target]All();
         var str out = "";
         var str sep = "";
         for(var uint i = 0U; i < all.Len(); i++) {
@@ -47,7 +43,7 @@ public enum Target {
 
     // Parse answers the target called name.
     public static fun (Target, Err*)(str) Parse = (name) {
-        var ArrList[Target]* all = All();
+        var Arr[Target]* all = Enums::[Target]All();
         for(var uint i = 0U; i < all.Len(); i++) {
             if(all.Get(i).name == name) {
                 return (all.Get(i), null);

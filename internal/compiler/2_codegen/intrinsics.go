@@ -1,6 +1,7 @@
 package codegen
 
 import (
+	"fmt"
 	"slices"
 
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
@@ -122,5 +123,84 @@ func (e *funcEmitter) emitNativeIntrinsic(x *syntax.ExprNAry, ft *syntax.TypeFun
 	}
 	out := e.b.CreateIntToPtr(args[intrinsic.arity], e.p.ptr, "")
 	e.b.CreateStore(intrinsic.emit(e, args[:intrinsic.arity]), out)
+	return e.const64(0), nil
+}
+
+// enumIntrinsics are the natives codegen computes from the enum their first
+// argument names, a type value type(E), once a generic E is grounded. Each writes
+// what it answers through the pointer passed last:
+//   - STD_ENUM_LEN, void(type, uint*): how many values the enum has
+//   - STD_ENUM_ORDINAL, void(type, E, uint*): where the value stands among them
+//   - STD_ENUM_VALUES, void(type, E*): every value, in order, into the buffer
+var enumIntrinsics = map[string]int{
+	"STD_ENUM_LEN":     0,
+	"STD_ENUM_ORDINAL": 1,
+	"STD_ENUM_VALUES":  0,
+}
+
+// emitEnumIntrinsic computes the enum intrinsic id over x's arguments.
+func (e *funcEmitter) emitEnumIntrinsic(x *syntax.ExprNAry, ft *syntax.TypeFunction, id string) (llvm.Value, error) {
+	arity := enumIntrinsics[id]
+	if !isVoid(ft.ReturnType) || len(ft.ParameterTypes) != arity+2 || len(x.Exprs)-1 != len(ft.ParameterTypes) {
+		return llvm.Value{}, unsupported("native %s as %s", id, ft)
+	}
+	named, ok := x.Exprs[1].(*syntax.ExprType)
+	if !ok || named.Field != "" || len(named.TypeArgs) > 0 {
+		return llvm.Value{}, fmt.Errorf("native %s must be passed an enum's type value first", id)
+	}
+	t := e.ground(named.Type)
+	r, ok := syntax.StripConst(t).(syntax.TypeResolvable)
+	if !ok {
+		return llvm.Value{}, fmt.Errorf("native %s passed %s, which is not an enum", id, t)
+	}
+	enum, ok := r.Decl().(*syntax.DeclEnum)
+	if !ok {
+		return llvm.Value{}, fmt.Errorf("native %s passed %s, which is not an enum", id, t)
+	}
+
+	args := make([]llvm.Value, arity+1)
+	for i, param := range ft.ParameterTypes[1:] {
+		param = e.ground(param)
+		if _, err := valueKind(param); err != nil {
+			return llvm.Value{}, err
+		}
+		v, err := e.emitExprAs(x.Exprs[i+2], param)
+		if err != nil {
+			return llvm.Value{}, err
+		}
+		args[i] = v
+	}
+	out := e.b.CreateIntToPtr(args[arity], e.p.ptr, "")
+	values := enumValues(enum)
+	_, members := memberEnum(t)
+	stride := uint64(1)
+	if primitive := enum.Primitive(); primitive != nil {
+		stride, _ = fieldByteInfo(primitive)
+	}
+
+	switch id {
+	case "STD_ENUM_LEN":
+		e.b.CreateStore(e.const64(uint64(len(values))), out)
+	case "STD_ENUM_ORDINAL":
+		discriminant := args[0]
+		if members {
+			discriminant = e.b.CreateLoad(e.p.i64, discriminant, "")
+		}
+		e.b.CreateStore(e.b.CreateUDiv(discriminant, e.const64(stride), ""), out)
+	case "STD_ENUM_VALUES":
+		width, _ := fieldByteInfo(t)
+		if isAggregate(t) {
+			width = byteSize(t)
+		}
+		for i, value := range values {
+			at := e.b.CreateGEP(e.ctx.Int8Type(), out, []llvm.Value{e.const64(uint64(i) * byteSize(t))}, "")
+			pl := llvmPlace{address: at, typ: t, width: width, heap: true}
+			if members {
+				e.store(pl, e.staticAddress(*value.Index()))
+			} else {
+				e.store(pl, e.const64(enumDiscriminant(value)))
+			}
+		}
+	}
 	return e.const64(0), nil
 }

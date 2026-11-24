@@ -170,6 +170,32 @@ Enumerables are declarations that define a fixed set of values.
 They are separate from classes, abstracts, and interfaces.
 They cannot be generic, and are automatically handled by the garbage collector.
 
+An enum's values come before its other fields, ended by a `;`.
+Declarations nested in the enum may come before the values, so a value's initializer can read what is written above it:
+```zam
+enum Planet {
+    enum Size : int {
+        Small(1), Big(2);
+    }
+
+    Earth.Init(Size::Big);
+
+    var Size size;
+
+    fun void(Size) Init = (s) {
+        this.size = s;
+    }
+}
+```
+
+A type parameter bounded by `<: enum` takes only enums.
+The standard library's `Enums`, in `lang/Enums.zam`, uses it to answer how many values an enum has, every value in declaration order, and where a value stands among them:
+```zam
+var uint count = Enums::[Planet]Len();          // 1
+var Arr[Planet]* planets = Enums::[Planet]All(); // [Earth]
+var uint at = Enums::[Planet]Ordinal(Planet::Earth); // 0
+```
+
 An enum can be backed by a primitive, which each value names, and a cast to that primitive reads the value's backing.
 A cast of an enum value to `str` writes out its backing value, or, for an enum backed by nothing, the value's raw form.
 A cast of a pointer to an enum or struct to `str` writes it out through its `Str` method, which by default writes out the value the same way.

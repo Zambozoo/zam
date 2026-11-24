@@ -965,21 +965,39 @@ func (e *funcEmitter) emitBody(ft *syntax.TypeFunction, receiver syntax.Type, pa
 }
 
 // emitStaticInitializers compiles what every static member and enum value is
-// initialized to, in the order the program runs them in: file by file, and
-// within a file in the order they are written, whichever declaration holds
-// them.
+// initialized to, in the order the program runs them in: constant statics and
+// values of enums backed by a primitive before every other static, and each
+// of the two file by file, and within a file in the order they are written,
+// whichever declaration holds them.
 func (p *llvmProgram) emitStaticInitializers(ast *syntax.AST) ([]llvm.Value, error) {
 	var fns []llvm.Value
-	for _, entry := range ast.CodeFiles.All() {
-		for _, f := range staticInitializers(entry.Value.Decl) {
-			fn, err := p.emitStaticInitializerOf(f)
-			if err != nil {
-				return nil, err
+	for _, first := range []bool{true, false} {
+		for _, entry := range ast.CodeFiles.All() {
+			for _, f := range staticInitializers(entry.Value.Decl) {
+				if initializedFirst(f) != first {
+					continue
+				}
+				fn, err := p.emitStaticInitializerOf(f)
+				if err != nil {
+					return nil, err
+				}
+				fns = append(fns, fn)
 			}
-			fns = append(fns, fn)
 		}
 	}
 	return fns, nil
+}
+
+// initializedFirst reports whether f is initialized before every other static:
+// a constant static member, or a value of an enum backed by a primitive.
+func initializedFirst(f syntax.Field) bool {
+	switch f := f.(type) {
+	case *syntax.FieldMember:
+		return syntax.IsConst(f.FieldType())
+	case *syntax.FieldEnum:
+		return f.Value != nil
+	}
+	return false
 }
 
 // emitStaticInitializer compiles what runs before main: storing the closure
@@ -4150,6 +4168,9 @@ func (e *funcEmitter) emitNativeCall(x *syntax.ExprNAry) (llvm.Value, error) {
 	}
 	if intrinsic, ok := nativeIntrinsics[native.ID]; ok {
 		return e.emitNativeIntrinsic(x, ft, intrinsic)
+	}
+	if _, ok := enumIntrinsics[native.ID]; ok {
+		return e.emitEnumIntrinsic(x, ft, native.ID)
 	}
 	index, ok := e.p.natives[native.ID]
 	if !ok {

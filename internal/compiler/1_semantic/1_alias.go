@@ -393,6 +393,10 @@ func unsatisfiedBound(generics *base.StaticOrderedMap[syntax.GenericArgKey, synt
 					return fmt.Errorf("type argument %s for %s is not a supertype of %s", arg, entry.Key.Name, b)
 				}
 			}
+		case syntax.GenericEnumBounded:
+			if !syntax.IsEnum(arg) {
+				return fmt.Errorf("type argument %s for %s is not an enum", arg, entry.Key.Name)
+			}
 		}
 	}
 	return nil

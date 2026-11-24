@@ -3,12 +3,14 @@ import "Flow.zam";
 import "Values.zam";
 import "Aliases.zam";
 import "Extras.zam";
+import "Enums.zam";
 import shapes = "Shapes.zam";
 
 public namespace Main {
     fun void(uint, str...) main = (argC, argV) {
         Flow::Run();
         Values::Run();
+        Enums::Run();
         var shapes.Shapes.Square* square = null;
     }
 }

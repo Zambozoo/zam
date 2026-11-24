@@ -97,3 +97,11 @@ func TestValidateASTBroken(t *testing.T) {
 		})
 	}
 }
+
+// A type argument for a generic bounded to enums must be an enum.
+func TestValidateASTEnumBound(t *testing.T) {
+	t.Parallel()
+	errs := validate(t, path.Join("invalid", "enumbound"))
+	require.Len(t, errs, 1)
+	assert.ErrorContains(t, errs[0], "type argument int for E is not an enum")
+}

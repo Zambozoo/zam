@@ -208,6 +208,8 @@ type (
 	GenericLowerBounded []Type
 	// GenericUpperBounded is a generic upper bounded.
 	GenericUpperBounded []Type
+	// GenericEnumBounded is a generic bounded to enums, written <: enum.
+	GenericEnumBounded struct{}
 
 	// DeclClass is a class declaration.
 	DeclClass struct {
@@ -723,6 +725,11 @@ func (g GenericUpperBounded) Bounds() []Type {
 	return []Type(g)
 }
 
+// Bounds implements the [GenericBound] interface. An enum bound names no type.
+func (g GenericEnumBounded) Bounds() []Type {
+	return nil
+}
+
 // newGenerics creates a new generic bound map for the given owner. The owner
 // is passed explicitly so a method's parameter list can be read into a map
 // keyed against the method itself rather than against the enclosing decl.
@@ -747,36 +754,45 @@ func newGenerics(parser SyntaxParser, owner GenericOwner) (*base.StaticOrderedMa
 		if op, err := parser.Match(TTSubtype, TTSupertype); err != nil {
 			return nil, err
 		} else if op != nil {
-			var bounds []Type
-			if tok, err := parser.Match(TTLeftBracket); err != nil {
+			if tok, err := parser.Match(TTEnum); err != nil {
 				return nil, err
-			} else if tok == nil {
-				_type, err := newType(parser)
-				if err != nil {
-					return nil, err
+			} else if tok != nil {
+				if op.Kind != TTSubtype {
+					return nil, fmt.Errorf("generic %q can only be bounded to enums from above, as <: enum", id)
 				}
-				bounds = append(bounds, _type)
+				bound = GenericEnumBounded{}
 			} else {
-				for {
+				var bounds []Type
+				if tok, err := parser.Match(TTLeftBracket); err != nil {
+					return nil, err
+				} else if tok == nil {
 					_type, err := newType(parser)
 					if err != nil {
 						return nil, err
 					}
 					bounds = append(bounds, _type)
+				} else {
+					for {
+						_type, err := newType(parser)
+						if err != nil {
+							return nil, err
+						}
+						bounds = append(bounds, _type)
 
-					if tok, err := parser.ConsumeAny(TTComma, TTRightBracket); err != nil {
-						return nil, err
-					} else if tok.Kind == TTRightBracket {
-						break
+						if tok, err := parser.ConsumeAny(TTComma, TTRightBracket); err != nil {
+							return nil, err
+						} else if tok.Kind == TTRightBracket {
+							break
+						}
 					}
 				}
-			}
 
-			switch op.Kind {
-			case TTSubtype:
-				bound = GenericUpperBounded(bounds)
-			case TTSupertype:
-				bound = GenericLowerBounded(bounds)
+				switch op.Kind {
+				case TTSubtype:
+					bound = GenericUpperBounded(bounds)
+				case TTSupertype:
+					bound = GenericLowerBounded(bounds)
+				}
 			}
 		}
 
@@ -1524,6 +1540,55 @@ func newDeclEnum(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclEn
 		return nil, err
 	}
 
+	// addMember adds a field written outside the values.
+	addMember := func(beforeValues bool) error {
+		recoverFrom := parser.Checkpoint()
+		field, err := newField(parser, false, 0)
+		if err != nil {
+			partial, isPartial := kept[Field](err)
+			if err := recoverFrom(err); err != nil {
+				return err
+			}
+			if !isPartial {
+				return nil
+			}
+			field = partial
+		}
+
+		if err := checkFieldCollision(decl.staticFields, decl.instanceFields, decl.innerDecls, field); err != nil {
+			parser.Report(err)
+			return nil
+		}
+
+		if nested, ok := field.(Decl); ok {
+			decl.innerDecls.Set(field.Name(), nested)
+		} else if beforeValues {
+			parser.Report(fmt.Errorf("field %q of enum %s must come after its values, as only declarations may come before them", field.Name(), name))
+		} else if field.Modifiers().Has(ModifierStatic) {
+			decl.staticFields.Set(field.Name(), field)
+		} else {
+			if field.Modifiers().Has(ModifierVirtual) {
+				parser.Report(fmt.Errorf("virtual field %q is not allowed in enum", field.Name()))
+				return nil
+			}
+			decl.instanceFields.Set(field.Name(), field)
+		}
+		return nil
+	}
+
+	for {
+		tok, err := parser.Peek()
+		if err != nil {
+			return nil, err
+		}
+		if tok.Kind == TTIdentifier || tok.Kind == TTSemiColon || tok.Kind == TTRightBrace || tok.Kind == TTEOF {
+			break
+		}
+		if err := addMember(true); err != nil {
+			return nil, err
+		}
+	}
+
 	for {
 		if tok, err := parser.Match(TTSemiColon); err != nil {
 			return nil, err
@@ -1567,34 +1632,8 @@ func newDeclEnum(parser SyntaxParser, start *Token, modifiers Modifier) (*DeclEn
 			break
 		}
 
-		recoverFrom := parser.Checkpoint()
-		field, err := newField(parser, false, 0)
-		if err != nil {
-			partial, isPartial := kept[Field](err)
-			if err := recoverFrom(err); err != nil {
-				return nil, err
-			}
-			if !isPartial {
-				continue
-			}
-			field = partial
-		}
-
-		if err := checkFieldCollision(decl.staticFields, decl.instanceFields, decl.innerDecls, field); err != nil {
-			parser.Report(err)
-			continue
-		}
-
-		if nested, ok := field.(Decl); ok {
-			decl.innerDecls.Set(field.Name(), nested)
-		} else if field.Modifiers().Has(ModifierStatic) {
-			decl.staticFields.Set(field.Name(), field)
-		} else {
-			if field.Modifiers().Has(ModifierVirtual) {
-				parser.Report(fmt.Errorf("virtual field %q is not allowed in enum", field.Name()))
-				continue
-			}
-			decl.instanceFields.Set(field.Name(), field)
+		if err := addMember(false); err != nil {
+			return nil, err
 		}
 	}
 

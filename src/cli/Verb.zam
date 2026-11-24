@@ -1,5 +1,3 @@
-import std("data/list/ArrList.zam");
-
 // Verb is what the command line asks the compiler to do
 public enum Verb {
     // Build compiles a program to a binary
@@ -23,11 +21,6 @@ public enum Verb {
     public var str name;
     // usage is what the command line says the verb does
     public var str usage;
-
-    // All lists the verbs in the order usage lists them
-    public static fun ArrList[Verb]*() All = () {
-        return ArrList::[Verb]New(8U, Build, Run, Test, Get, Clean, LSP, Debug, Version);
-    }
 
     fun void(str, str) Init = (name, usage) {
         this.name = name;
