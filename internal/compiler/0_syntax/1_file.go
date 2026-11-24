@@ -3,7 +3,6 @@ package syntax
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/zambozoo/zam/internal/base"
@@ -180,26 +179,38 @@ func parseImportSpec(parser SyntaxParser, tok *Token) ([]*Import, bool, error) {
 	return nil, false, nil
 }
 
-// addImports adds importStmts to imports, reporting any that duplicate an id
+// addImports adds importStmts to imports, reporting any that duplicate a name
 // already there.
 //
-// Two imports under one id are allowed only when neither carries an alias: a
-// package name may hold more than one file, since every file in the package
-// has a decl of its own to be reached by name, but an alias is a renaming and
-// renaming the same thing twice is the error the duplicate check catches. A
-// glob expands into unaliased imports under one id per file it matched, which
-// the same rule covers.
+// An import binds its alias or else its package name, followed by the name of
+// the file it imports. An id may therefore hold many imports, as an alias over
+// a glob does, but two different files of one name under one id are reached by
+// the same name and collide, as does one file imported twice.
 func addImports(parser SyntaxParser, imports map[string][]*Import, importStmts []*Import) {
 	for _, importStmt := range importStmts {
 		id := importStmt.ID()
-		if existing := imports[id]; len(existing) > 0 {
-			if importStmt.Alias != nil || slices.ContainsFunc(existing, func(prev *Import) bool { return prev.Alias != nil }) {
-				parser.Report(fmt.Errorf("duplicate import %q", id))
-				continue
+		if collides := collidingImport(imports[id], importStmt); collides != nil {
+			if collides.Path == importStmt.Path {
+				parser.Report(fmt.Errorf("duplicate import %q of %q", importStmt.boundName(), importStmt.Path))
+			} else {
+				parser.Report(fmt.Errorf("duplicate import %q: %q collides with %q", importStmt.boundName(), importStmt.Path, collides.Path))
 			}
+			continue
 		}
 		imports[id] = append(imports[id], importStmt)
 	}
+}
+
+// collidingImport answers the import among existing that binds the same name
+// as importStmt, or nil when none does. All of existing share an id with
+// importStmt.
+func collidingImport(existing []*Import, importStmt *Import) *Import {
+	for _, prev := range existing {
+		if prev.fileName() == importStmt.fileName() {
+			return prev
+		}
+	}
+	return nil
 }
 
 // Accept implements the [FileVisitor] interface.
@@ -367,17 +378,11 @@ func resolveImportPath(parser SyntaxParser, pkg *string, pathStr string) (base.P
 // never reaches [base.ParsePath], which would turn it into part of a filename
 // and leave a path nothing can open.
 //
-// Aliasing a glob is refused rather than treated as a prefix: the alias names
-// one thing in the local scope, and a glob names many; there is no mapping
-// from one name to many files the rest of the compiler would read. A glob
-// that matches nothing is refused for the same reason naming a missing file
-// is: the import claims a dependency that the next build will not find, and
+// An alias on a glob names the whole set, as a package name does, and each
+// file is reached through it by its own name. A glob that matches nothing is
+// refused for the same reason naming a missing file is: the import claims a dependency that the next build will not find, and
 // catching it here keeps the mistake close to its source.
 func newGlobImport(parser SyntaxParser, start *Token, pkg, alias *string, pathStr string) ([]*Import, error) {
-	if alias != nil {
-		return nil, fmt.Errorf("alias %q cannot be used with a glob import %q", *alias, pathStr)
-	}
-
 	dirPathStr := strings.TrimSuffix(pathStr, globSuffix)
 	if dirPathStr == "" || pathStr == "*" {
 		dirPathStr = "."
@@ -404,6 +409,7 @@ func newGlobImport(parser SyntaxParser, start *Token, pkg, alias *string, pathSt
 			File:  *parser.File(),
 
 			Package: pkg,
+			Alias:   alias,
 			Path:    child,
 		})
 	}
@@ -415,11 +421,25 @@ func (i *Import) Accept(visitor FileVisitor) error {
 	return visitor.VisitImport(i)
 }
 
+// fileName answers the name of the file the import names, without its
+// extension.
+func (i *Import) fileName() string {
+	return strings.TrimSuffix(i.Path.Base(), base.CodeFileExtension)
+}
+
+// boundName answers the name the import is reached by in its scope.
+func (i *Import) boundName() string {
+	if i.Alias != nil || i.Package != nil {
+		return i.ID() + "." + i.fileName()
+	}
+	return i.fileName()
+}
+
 func (i *Import) ID() string {
 	if i.Alias != nil {
 		return *i.Alias
 	} else if i.Package != nil {
 		return *i.Package
 	}
-	return strings.TrimSuffix(i.Path.Base(), base.CodeFileExtension)
+	return i.fileName()
 }

@@ -1,0 +1,5 @@
+import m = "a/*";
+import m = "b/*";
+
+public namespace Main {
+}

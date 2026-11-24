@@ -26,7 +26,8 @@ std.ArrList::New(0);
 ```
 
 With aliasing, they can be referenced by their alias instead of their package name.
-This is to avoid any import ambiguity, which would lead to a compilation error.
+Two imports in one scope that are reached by the same name are a compilation error, including those a glob expands into.
+Aliasing one of them resolves the collision.
 ```
 import alias = std("data/list/ArrList.zam");
 // ...
@@ -46,9 +47,11 @@ import alias = "some/local/File.zam";
 // ...
 alias.File::New();
 ```
-Glob imports cannot be aliased.
+An alias on a glob names every file it matches, each reached through the alias by its own name.
 ```
-import alias = "some/glob/path/*"; // <-- Error!
+import alias = "some/glob/path/*";
+// ...
+alias.File::New();
 ```
 
 Several imports can be grouped under one `import`.

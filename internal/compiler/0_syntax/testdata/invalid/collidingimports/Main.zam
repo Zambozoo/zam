@@ -1,0 +1,5 @@
+import "a/Twin.zam";
+import "b/Twin.zam";
+
+public namespace Main {
+}

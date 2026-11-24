@@ -1,8 +1,5 @@
-import "a/Twin.zam";
-import "b/Twin.zam";
 import "Other.zam";
 import again = "Other.zam";
-import "./Other.zam";
 
 public namespace Main {
     struct Plain {}
@@ -38,16 +35,10 @@ public namespace Main {
     var GenTailed~* l;
     var Plain.Missing m;
     var Missing~* n;
-    var Twin o;
     var Other p;
 
     fun void() Statics = () {
         var int x = Missing::Y;
         var int y = Ns::[int]Z;
-        {
-            import "a/Twin.zam";
-            import "b/Twin.zam";
-            var Twin z;
-        }
     }
 }

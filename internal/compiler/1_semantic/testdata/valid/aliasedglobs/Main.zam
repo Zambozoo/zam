@@ -1,0 +1,8 @@
+import x = "a/*";
+import y = "b/*";
+
+public namespace Main {
+    var x.Left.Box l;
+    var y.Left.Box m;
+    var y.Right.Box r;
+}

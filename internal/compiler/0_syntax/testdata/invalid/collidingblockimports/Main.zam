@@ -1,0 +1,6 @@
+public namespace Main {
+    fun void() Run = () {
+        import "a/Twin.zam";
+        import "b/Twin.zam";
+    }
+}

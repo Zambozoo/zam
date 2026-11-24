@@ -20,7 +20,7 @@ import std("io/net/*");
 import std("io/web/*");
 import std("lang/*");
 import std("lang/time/*");
-import std("math/*");
+import math = std("math/*");
 import std("sync/*");
 import std("test/*");
 

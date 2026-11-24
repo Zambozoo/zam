@@ -13,7 +13,7 @@ func TestRandStaysInRange(t *testing.T) {
 	t.Parallel()
 	binary := compile(t, `import std("lang/*");
 import std("io/local/*");
-import std("math/*");
+import std("math/Rand.zam");
 
 namespace Main {
     fun void(uint, str...) main = (argC, argV) {

@@ -1,0 +1,5 @@
+import "A.zam";
+import "A.zam";
+
+public namespace Main {
+}

@@ -13,7 +13,6 @@ import {
 import "Exprs.zam";
 import "Top.zam";
 import "sub/*";
-import dep("Dep.zam");
 import dep("*");
 
 public namespace Main {
