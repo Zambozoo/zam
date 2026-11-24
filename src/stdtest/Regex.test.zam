@@ -1,0 +1,132 @@
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import std("codec/text/Regex.zam");
+
+public namespace RegexTest {
+    private fun void(str, str, bool) check = (pattern, text, want) {
+        var (Regex*, Err*) r = Regex::Compile(pattern);
+        if(!Assert::True(r.1 == null, pattern + " did not compile")) {
+            return;
+        }
+        Assert::True(r.0.Match(text) == want, pattern + " on " + text + " should be " + want{str});
+    }
+
+    private fun void(str, str) rejects = (pattern, want) {
+        var (Regex*, Err*) r = Regex::Compile(pattern);
+        if(Assert::True(r.1 != null, pattern + " compiled")) {
+            Assert::True(Strs::Contains(r.1.Err(), want), r.1.Err() + " does not contain " + want);
+        }
+    }
+
+    public fun void(uint, str...) Literals = (argC, argV) {
+        RegexTest::check("abc", "abc", true);
+        RegexTest::check("abc", "xxabcxx", true);
+        RegexTest::check("abc", "ab", false);
+        RegexTest::check("", "anything", true);
+        RegexTest::check("", "", true);
+        RegexTest::check("a.c", "abc", true);
+        RegexTest::check("a.c", "a\nc", false);
+        RegexTest::check("héllo", "say héllo", true);
+        RegexTest::check("a{", "a{", true);
+        RegexTest::check("a{x}", "a{x}", true);
+    }
+
+    public fun void(uint, str...) Anchors = (argC, argV) {
+        RegexTest::check("^abc", "abcd", true);
+        RegexTest::check("^abc", "xabc", false);
+        RegexTest::check("abc$", "xabc", true);
+        RegexTest::check("abc$", "abcx", false);
+        RegexTest::check("^$", "", true);
+        RegexTest::check("^$", "a", false);
+        RegexTest::check("Append$", "ArrListTest.Append", true);
+        RegexTest::check("\\bfoo\\b", "a foo b", true);
+        RegexTest::check("\\bfoo\\b", "afoo", false);
+        RegexTest::check("\\Boo\\B", "foob", true);
+        RegexTest::check("\\Afoo", "foo", true);
+        RegexTest::check("foo\\z", "foo", true);
+    }
+
+    public fun void(uint, str...) Repetition = (argC, argV) {
+        RegexTest::check("^ab*c$", "ac", true);
+        RegexTest::check("^ab*c$", "abbbc", true);
+        RegexTest::check("^ab+c$", "ac", false);
+        RegexTest::check("^ab+c$", "abc", true);
+        RegexTest::check("^ab?c$", "ac", true);
+        RegexTest::check("^ab?c$", "abbc", false);
+        RegexTest::check("^a{3}$", "aaa", true);
+        RegexTest::check("^a{3}$", "aa", false);
+        RegexTest::check("^a{2,}$", "aaaa", true);
+        RegexTest::check("^a{2,}$", "a", false);
+        RegexTest::check("^a{1,2}$", "aaa", false);
+        RegexTest::check("^a{0}b$", "b", true);
+        RegexTest::check("^a*?b$", "aab", true);
+        RegexTest::check("^(ab)+$", "ababab", true);
+        RegexTest::check("^(ab)+$", "aba", false);
+        RegexTest::check("^(?:ab){2}$", "abab", true);
+        RegexTest::check("^(a*)*$", "aaaa", true);
+    }
+
+    public fun void(uint, str...) Alternation = (argC, argV) {
+        RegexTest::check("^(cat|dog)$", "dog", true);
+        RegexTest::check("^(cat|dog)$", "bird", false);
+        RegexTest::check("cat|dog", "hotdog", true);
+        RegexTest::check("^a|b$", "ax", true);
+        RegexTest::check("^(a|)b$", "b", true);
+    }
+
+    public fun void(uint, str...) Classes = (argC, argV) {
+        RegexTest::check("^[abc]+$", "abcabc", true);
+        RegexTest::check("^[abc]+$", "abd", false);
+        RegexTest::check("^[a-c]$", "b", true);
+        RegexTest::check("^[^a-c]$", "d", true);
+        RegexTest::check("^[^a-c]$", "b", false);
+        RegexTest::check("^[a-c-]$", "-", true);
+        RegexTest::check("^[]a]$", "]", true);
+        RegexTest::check("^[\\]]$", "]", true);
+        RegexTest::check("^\\d+$", "12345", true);
+        RegexTest::check("^\\d+$", "12a45", false);
+        RegexTest::check("^\\D$", "a", true);
+        RegexTest::check("^\\w+$", "foo_Bar9", true);
+        RegexTest::check("^\\W$", " ", true);
+        RegexTest::check("^\\s$", "\t", true);
+        RegexTest::check("^\\S$", "a", true);
+        RegexTest::check("^[\\d.]+$", "1.5", true);
+        RegexTest::check("^[\\D]$", "5", false);
+        RegexTest::check("^[^\\n]$", "x", true);
+        RegexTest::check("^\\.$", ".", true);
+        RegexTest::check("^\\.$", "x", false);
+        RegexTest::check("^\\t$", "\t", true);
+    }
+
+    public fun void(uint, str...) Pathological = (argC, argV) {
+        var str text = Strs::Repeat("a", 40U);
+        RegexTest::check("^(a+)+$", text + "b", false);
+        RegexTest::check("^(a|aa)+$", text, true);
+    }
+
+    public fun void(uint, str...) Rejects = (argC, argV) {
+        RegexTest::rejects("(", "missing closing )");
+        RegexTest::rejects("(a", "missing closing )");
+        RegexTest::rejects("a)", "unexpected )");
+        RegexTest::rejects("[a", "missing closing ]");
+        RegexTest::rejects("[]", "missing closing ]");
+        RegexTest::rejects("*a", "missing argument to repetition operator");
+        RegexTest::rejects("+", "missing argument to repetition operator");
+        RegexTest::rejects("a**", "invalid nested repetition operator");
+        RegexTest::rejects("a+*", "invalid nested repetition operator");
+        RegexTest::rejects("a{2,1}", "invalid repeat count");
+        RegexTest::rejects("a{1001}", "invalid repeat count");
+        RegexTest::rejects("[z-a]", "invalid character class range");
+        RegexTest::rejects("a\\", "trailing backslash");
+        RegexTest::rejects("\\q", "invalid escape sequence");
+        RegexTest::rejects("\\1", "invalid escape sequence");
+        RegexTest::rejects("(?i)a", "invalid or unsupported Perl syntax");
+        RegexTest::rejects("((a{1000}){1000}){1000}", "expression too large");
+    }
+
+    public fun void(uint, str...) String = (argC, argV) {
+        var (Regex*, Err*) r = Regex::Compile("a+b");
+        Assert::[str]Equal("a+b", r.0.Str());
+    }
+}

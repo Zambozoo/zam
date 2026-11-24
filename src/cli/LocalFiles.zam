@@ -1,0 +1,29 @@
+import std("io/local/FS.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+
+// LocalFiles is the files of the machine the compiler runs on
+public class LocalFiles {
+    namespace Errs {
+        public fun Err*(str) PathIsDirectory = (path) {
+            return StrErr::New("path is a directory: " + path);
+        }
+    }
+
+    public static fun LocalFiles*() New = () {
+        return new(LocalFiles);
+    }
+
+    public fun (bool, Err*)(str) FileExists = (path) {
+        var (bool, Err*) out;
+        if(!FS::Exists(path)) {
+            return out;
+        }
+        if(FS::IsDir(path)) {
+            out.1 = Errs::PathIsDirectory(path);
+            return out;
+        }
+        out.0 = true;
+        return out;
+    }
+}

@@ -1,0 +1,39 @@
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+
+// Optimization is how far native compilation optimizes a program
+public enum Optimization : str {
+    // None compiles without optimizing
+    None("0"),
+    // Less optimizes what is quick to
+    Less("1"),
+    // Default optimizes as release builds do
+    Default("2"),
+    // Aggressive optimizes as far as it can, at the cost of size
+    Aggressive("3"),
+    // Size optimizes as Default does, favoring size
+    Size("s");
+
+    namespace Errs {
+        public fun Err*(str) InvalidOptimization = (s) {
+            return StrErr::New("optimization must be one of 0, 1, 2, 3 or s: " + s);
+        }
+    }
+
+    public static fun (Optimization, Err*)(str) Parse = (s) {
+        switch(s) {
+            case (Optimization::None{str}):
+                return (Optimization::None, null);
+            case (Optimization::Less{str}):
+                return (Optimization::Less, null);
+            case (Optimization::Default{str}):
+                return (Optimization::Default, null);
+            case (Optimization::Aggressive{str}):
+                return (Optimization::Aggressive, null);
+            case (Optimization::Size{str}):
+                return (Optimization::Size, null);
+        } else {
+            return (Optimization::Default, Errs::InvalidOptimization(s));
+        }
+    }
+}

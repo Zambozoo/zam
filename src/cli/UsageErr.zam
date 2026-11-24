@@ -1,0 +1,28 @@
+import std("lang/Err.zam");
+
+// UsageErr is a command line that cannot be run
+public class UsageErr {
+    public var str name;
+    public var str flags;
+    public var Err* cause;
+
+    public static fun UsageErr*(str, str, Err*) New = (name, flags, cause) {
+        var UsageErr* e = new(UsageErr);
+        e.name = name;
+        e.flags = flags;
+        e.cause = cause;
+        return e;
+    }
+
+    public fun str() Str = () {
+        return this.Err();
+    }
+
+    public fun str() Err = () {
+        var str line = "";
+        if(this.cause != null) {
+            line = "Error: " + this.cause.Err() + "\n";
+        }
+        return line + "Usage of " + this.name + ":\n" + this.flags;
+    }
+}

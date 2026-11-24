@@ -63,6 +63,13 @@ public namespace System {
         return id;
     }
 
+    // ProcessorCount reports how many processors the system has online.
+    public fun uint() ProcessorCount = () {
+        var uint n;
+        native(STD_SYSTEM_PROCESSOR_COUNT){void(uint*)}(&n);
+        return n;
+    }
+
     // ThreadID reports the OS-level id of the calling thread as the raw bits
     // of its pthread_t, which is what Signal.ThreadSend takes.
     public fun uint() ThreadID = () {

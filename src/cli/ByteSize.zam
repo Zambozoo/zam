@@ -1,0 +1,72 @@
+import std("lang/Err.zam");
+import std("lang/Ints.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+
+// ByteSize reads, writes bytes with optional suffixes.
+public namespace ByteSize {
+    namespace Errs {
+        public fun Err*(str) InvalidByteSize = (s) {
+            return StrErr::New("invalid size " + Strs::Quote(s));
+        }
+
+        public fun Err*(str) InvalidByteSizePositive = (s) {
+            return StrErr::New("size must be positive: " + Strs::Quote(s));
+        }
+
+        public fun Err*(str) InvalidByteSizeOutOfRange = (s) {
+            return StrErr::New("size out of range: " + Strs::Quote(s));
+        }
+    }
+
+    private var int$ kilo = 1 << 10;
+    private var int$ mega = kilo << 10;
+    private var int$ giga = mega << 10;
+
+    private var str$ suffixByte = "B";
+    private var str$ suffixKilo = "KB";
+    private var str$ suffixMega = "MB";
+    private var str$ suffixGiga = "GB";
+
+    public fun (int, Err*)(str) Parse = (s) {
+        var str digits = Strs::ToUpper(Strs::TrimSpace(s));
+        var int multiplier = 1;
+        var uint len = Strs::ByteLen(digits);
+
+        if(Strs::HasSuffix(digits, suffixGiga)) {
+            digits = Strs::Slice(digits, 0U, len - Strs::ByteLen(suffixGiga));
+            multiplier = giga;
+        } else if(Strs::HasSuffix(digits, suffixMega)) {
+            digits = Strs::Slice(digits, 0U, len - Strs::ByteLen(suffixMega));
+            multiplier = mega;
+        } else if(Strs::HasSuffix(digits, suffixKilo)) {
+            digits = Strs::Slice(digits, 0U, len - Strs::ByteLen(suffixKilo));
+            multiplier = kilo;
+        } else if(Strs::HasSuffix(digits, suffixByte)) {
+            digits = Strs::Slice(digits, 0U, len - Strs::ByteLen(suffixByte));
+        }
+
+        var (int, Err*) count = Strs::ParseInt(Strs::TrimSpace(digits));
+        if(count.1 != null) {
+            return (0, Errs::InvalidByteSize(s));
+        }
+        if(count.0 <= 0) {
+            return (0, Errs::InvalidByteSizePositive(s));
+        }
+        if(count.0 > Ints::Max / multiplier) {
+            return (0, Errs::InvalidByteSizeOutOfRange(s));
+        }
+        return (count.0 * multiplier, null);
+    }
+
+    public fun str(int) Format = (b) {
+        if(b >= giga && b % giga == 0) {
+            return (b / giga){str} + suffixGiga;
+        } else if(b >= mega && b % mega == 0) {
+            return (b / mega){str} + suffixMega;
+        } else if(b >= kilo && b % kilo == 0) {
+            return (b / kilo){str} + suffixKilo;
+        }
+        return b{str} + suffixByte;
+    }
+}

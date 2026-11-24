@@ -1,0 +1,127 @@
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "Flag.zam";
+import "FlagSet.zam";
+
+public namespace FlagSetTest {
+    private fun Arr[str]*(str) argv = (line) {
+        if(line == "") {
+            return Arr::[str]New(0U, new(str, 1U)...);
+        }
+        return Strs::Split(line, ' '{byte});
+    }
+
+    private fun FlagSet*() build = () {
+        var FlagSet* fs = FlagSet::New("zam build");
+        fs.Text("output", "o", "out", "output file");
+        fs.Bool("verbose", "v", false, "verbose");
+        fs.Bool("no-project", "n", false, "no project");
+        fs.Int("threads", "t", 1, "max threads");
+        fs.Float("gc-ratio", "g", 0.75, "0.75", "ratio");
+        fs.Size("stack-size", "s", 524288, "stack");
+        return fs;
+    }
+
+    private fun void(FlagSet*, str, str) fails = (fs, line, want) {
+        var (bool, Err*) r = fs.Parse(FlagSetTest::argv(line));
+        if(Assert::True(r.1 != null, line + " was accepted")) {
+            Assert::True(Strs::Contains(r.1.Err(), want), r.1.Err() + " does not contain " + want);
+        }
+    }
+
+    public fun void(uint, str...) LongFlags = (argC, argV) {
+        var FlagSet* other = FlagSet::New("x");
+        var Flag* output = other.Text("output", "o", "out", "output file");
+        var Flag* threads = other.Int("threads", "t", 1, "threads");
+        var Flag* ratio = other.Float("gc-ratio", "g", 0.75, "0.75", "ratio");
+        var Flag* size = other.Size("stack-size", "s", 524288, "stack");
+        var Flag* verbose = other.Bool("verbose", "v", false, "verbose");
+        var (bool, Err*) r = other.Parse(FlagSetTest::argv("--output a.out --threads 4 --gc-ratio=0.5 --stack-size 1MB --verbose rest"));
+        Assert::True(r.1 == null, "parse failed");
+        Assert::False(r.0, "help was asked for");
+        Assert::[str]Equal("a.out", output.strValue);
+        Assert::[int]Equal(4, threads.intValue);
+        Assert::[flt]Equal(0.5, ratio.fltValue);
+        Assert::[int]Equal(1048576, size.intValue);
+        Assert::True(verbose.boolValue, "verbose was not set");
+        Assert::[str]Equal("[rest]", other.Args(){str});
+    }
+
+    public fun void(uint, str...) ShortFlags = (argC, argV) {
+        var FlagSet* fs = FlagSet::New("x");
+        var Flag* output = fs.Text("output", "o", "out", "output file");
+        var Flag* verbose = fs.Bool("verbose", "v", false, "verbose");
+        var Flag* noProject = fs.Bool("no-project", "n", false, "no project");
+        var Flag* threads = fs.Int("threads", "t", 1, "threads");
+        var (bool, Err*) r = fs.Parse(FlagSetTest::argv("-nv -oa.out -t=3 input"));
+        Assert::True(r.1 == null, "parse failed");
+        Assert::True(verbose.boolValue, "verbose was not set");
+        Assert::True(noProject.boolValue, "no-project was not set");
+        Assert::[str]Equal("a.out", output.strValue);
+        Assert::[int]Equal(3, threads.intValue);
+        Assert::[str]Equal("[input]", fs.Args(){str});
+    }
+
+    public fun void(uint, str...) StopsAtFirstArgument = (argC, argV) {
+        var FlagSet* fs = FlagSet::New("x");
+        var Flag* verbose = fs.Bool("verbose", "v", false, "verbose");
+        var (bool, Err*) r = fs.Parse(FlagSetTest::argv("input -v --other"));
+        Assert::True(r.1 == null, "parse failed");
+        Assert::False(verbose.boolValue, "verbose was set after an argument");
+        Assert::[str]Equal("[input, -v, --other]", fs.Args(){str});
+        Assert::[int]Equal(-1, fs.ArgsLenAtDash());
+    }
+
+    public fun void(uint, str...) DashDash = (argC, argV) {
+        var FlagSet* fs = FlagSet::New("x");
+        fs.Bool("verbose", "v", false, "verbose");
+        var (bool, Err*) r = fs.Parse(FlagSetTest::argv("-v a -- b -v"));
+        Assert::True(r.1 == null, "parse failed");
+        Assert::[str]Equal("[a, --, b, -v]", fs.Args(){str});
+        Assert::[int]Equal(-1, fs.ArgsLenAtDash());
+
+        var FlagSet* second = FlagSet::New("x");
+        second.Bool("verbose", "v", false, "verbose");
+        var (bool, Err*) s = second.Parse(FlagSetTest::argv("-- b -v"));
+        Assert::True(s.1 == null, "parse failed");
+        Assert::[str]Equal("[b, -v]", second.Args(){str});
+        Assert::[int]Equal(0, second.ArgsLenAtDash());
+    }
+
+    public fun void(uint, str...) Help = (argC, argV) {
+        var FlagSet* fs = FlagSetTest::build();
+        var (bool, Err*) r = fs.Parse(FlagSetTest::argv("--help"));
+        Assert::True(r.0, "--help was not help");
+        Assert::True(r.1 == null, "--help was an error");
+        var FlagSet* second = FlagSetTest::build();
+        var (bool, Err*) s = second.Parse(FlagSetTest::argv("-vh"));
+        Assert::True(s.0, "-h was not help");
+    }
+
+    public fun void(uint, str...) Rejects = (argC, argV) {
+        FlagSetTest::fails(FlagSetTest::build(), "--invalid", "unknown flag: --invalid");
+        FlagSetTest::fails(FlagSetTest::build(), "-e", "unknown shorthand flag: 'e' in -e");
+        FlagSetTest::fails(FlagSetTest::build(), "-env", "unknown shorthand flag: 'e' in -env");
+        FlagSetTest::fails(FlagSetTest::build(), "--output", "flag needs an argument: --output");
+        FlagSetTest::fails(FlagSetTest::build(), "-o", "flag needs an argument: 'o' in -o");
+        FlagSetTest::fails(FlagSetTest::build(), "---x", "bad flag syntax: ---x");
+        FlagSetTest::fails(FlagSetTest::build(), "--threads x", "invalid argument \"x\" for \"-t, --threads\" flag");
+        FlagSetTest::fails(FlagSetTest::build(), "--verbose=maybe", "invalid argument \"maybe\" for \"-v, --verbose\" flag");
+        FlagSetTest::fails(FlagSetTest::build(), "--stack-size 16TB", "invalid size \"16TB\"");
+    }
+
+    public fun void(uint, str...) Usages = (argC, argV) {
+        var FlagSet* fs = FlagSet::New("x");
+        fs.Text("output", "o", "out", "output file");
+        fs.Bool("verbose", "v", false, "verbose");
+        fs.Int("gc-markers", "", 0, "markers");
+        fs.Size("stack-size", "s", 524288, "stack");
+        var str want = "  -o, --output string" + Strs::Repeat(" ", 5U) + "output file (default \"out\")\n" +
+            "  -v, --verbose" + Strs::Repeat(" ", 11U) + "verbose\n" +
+            "      --gc-markers int" + Strs::Repeat(" ", 4U) + "markers\n" +
+            "  -s, --stack-size size" + Strs::Repeat(" ", 3U) + "stack (default 512KB)\n";
+        Assert::[str]Equal(want, fs.Usages());
+    }
+}

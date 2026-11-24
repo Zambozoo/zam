@@ -1,0 +1,299 @@
+import std("codec/format/JSON.zam");
+import std("data/list/ArrList.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+import std("test/Assert.zam");
+import "Command.zam";
+import "FileProvider.zam";
+import "Optimization.zam";
+import "Paths.zam";
+import "Verb.zam";
+
+public namespace CommandTest {
+    // Files answers every path as a file, except the one it is told to fail
+    // on, and the ones it is told are missing.
+    private class Files {
+        var bool exists;
+        var str failPath;
+        var ArrList[str]* asked;
+
+        public static fun Files*(bool, str) New = (exists, failPath) {
+            var Files* f = new(Files);
+            f.exists = exists;
+            f.failPath = failPath;
+            f.asked = ArrList::[str]New(0U);
+            return f;
+        }
+
+        public fun (bool, Err*)(str) FileExists = (path) {
+            this.asked.AddLast(path);
+            var (bool, Err*) r;
+            r.0 = this.exists;
+            r.1 = null;
+            if(path == this.failPath) {
+                r.0 = false;
+                r.1 = StrErr::New("cannot stat " + path);
+            }
+            return r;
+        }
+    }
+
+    private fun Arr[str]*(str) argv = (line) {
+        return Strs::Split(line, ' '{byte});
+    }
+
+    // accepts reads line as the arguments of a command that is allowed.
+    private fun Command*(str) accepts = (line) {
+        var (Command*, Err*) r = Command::New(CommandTest::argv(line), Files::New(true, ""));
+        if(!Assert::True(r.1 == null, line + " was rejected")) {
+            Assert::Fatal(r.1.Err());
+        }
+        return r.0;
+    }
+
+    // rejectsWith reads line as the arguments of a command with files, and
+    // asserts the error says want.
+    private fun void(str, Files*, str) rejectsWith = (line, files, want) {
+        var (Command*, Err*) r = Command::New(CommandTest::argv(line), files);
+        if(Assert::True(r.1 != null, line + " was accepted")) {
+            Assert::True(Strs::Contains(r.1.Err(), want), r.1.Err() + " does not contain " + want);
+        }
+    }
+
+    private fun void(str, str) rejects = (line, want) {
+        CommandTest::rejectsWith(line, Files::New(true, ""), want);
+    }
+
+    private fun str(str) input = (name) {
+        var (str, Err*) p = Paths::Parse(name);
+        return p.0;
+    }
+
+    public fun void(uint, str...) MissingProgramName = (argC, argV) {
+        var (Command*, Err*) r = Command::New(Arr::[str]New(0U, new(str, 1U)...), Files::New(true, ""));
+        Assert::True(r.1 != null && Strs::Contains(r.1.Err(), "missing program name"), "missing program name was accepted");
+    }
+
+    public fun void(uint, str...) VerbErrors = (argC, argV) {
+        CommandTest::rejects("zam", "missing command");
+        CommandTest::rejects("zam input", "unknown command \"input\"");
+    }
+
+    public fun void(uint, str...) Help = (argC, argV) {
+        var (Command*, Err*) r = Command::New(CommandTest::argv("zam --help"), Files::New(true, ""));
+        Assert::True(r.1 != null, "--help was accepted");
+        Assert::True(Strs::Contains(r.1.Err(), "clean"), "the usage lists no clean");
+        Assert::False(Strs::Contains(r.1.Err(), "Error:"), "help is not an error");
+
+        var (Command*, Err*) b = Command::New(CommandTest::argv("zam build --help"), Files::New(true, ""));
+        Assert::True(b.1 != null, "build --help was accepted");
+        Assert::False(Strs::Contains(b.1.Err(), "Error:"), "help is not an error");
+        Assert::True(Strs::Contains(b.1.Err(), "--optimize"), "the usage lists no --optimize");
+    }
+
+    public fun void(uint, str...) Get = (argC, argV) {
+        var Command* c = CommandTest::accepts("zam get example.com/a@v1 example.com/b@v2");
+        Assert::[Verb]Equal(Verb::Get, c.verb);
+        Assert::[str]Equal("[example.com/a@v1, example.com/b@v2]", c.refs{str});
+        Assert::True(c.writeProject, "get does not write the project");
+
+        var Command* all = CommandTest::accepts("zam get");
+        Assert::[uint]Equal(0U, all.refs.Len());
+
+        var Command* named = CommandTest::accepts("zam get --as list example.com/zam-list@v1");
+        Assert::[str]Equal("list", named.asName);
+        Assert::[str]Equal("[example.com/zam-list@v1]", named.refs{str});
+
+        CommandTest::rejects("zam get --as list example.com/a@v1 example.com/b@v1", "--as names one dependency, but 2 were given");
+    }
+
+    public fun void(uint, str...) BareVerbs = (argC, argV) {
+        Assert::[Verb]Equal(Verb::Clean, CommandTest::accepts("zam clean").verb);
+        Assert::[Verb]Equal(Verb::LSP, CommandTest::accepts("zam lsp").verb);
+        Assert::[Verb]Equal(Verb::Debug, CommandTest::accepts("zam debug").verb);
+        Assert::[Verb]Equal(Verb::Version, CommandTest::accepts("zam version").verb);
+        Assert::[Verb]Equal(Verb::Version, CommandTest::accepts("zam --version").verb);
+        Assert::False(CommandTest::accepts("zam clean").writeProject, "clean writes the project");
+        CommandTest::rejects("zam clean extra", "too many arguments");
+    }
+
+    public fun void(uint, str...) BuildDefaults = (argC, argV) {
+        var Command* c = CommandTest::accepts("zam build input");
+        Assert::[Verb]Equal(Verb::Build, c.verb);
+        Assert::[str]Equal(CommandTest::input("input"), c.inputPath);
+        Assert::[str]Equal("out", c.outputPath);
+        Assert::False(c.verbose, "verbose by default");
+        Assert::[int]Equal(1, c.maxThreads);
+        Assert::[flt]Equal(0.75, c.gcTriggerRatio);
+        Assert::[int]Equal(524288, c.initialStackSize);
+        Assert::[int]Equal(16777216, c.initialHeapSize);
+        Assert::[int]Equal(8388608, c.nurserySize);
+        Assert::[int]Equal(68719476736, c.maxHeapSize);
+        Assert::[int]Equal(0, c.gcMarkers);
+        Assert::True(c.gcConcurrent, "gc is not concurrent by default");
+        Assert::[flt]Equal(1.0, c.gcRemarkGrowth);
+        Assert::[int]Equal(2, c.gcPrecleanPasses);
+        Assert::[int]Equal(3, c.gcReturnAge);
+        Assert::[Optimization]Equal(Optimization::Default, c.optimization);
+        Assert::True(!c.hasTarget, "a target by default");
+        Assert::True(c.writeProject, "the command line does not write the project");
+        Assert::False(c.noProject, "no project by default");
+    }
+
+    public fun void(uint, str...) BuildErrors = (argC, argV) {
+        CommandTest::rejects("zam build --invalid", "unknown flag: --invalid");
+        CommandTest::rejects("zam build", "missing input file argument");
+        CommandTest::rejects("zam build input extra", "too many arguments");
+        CommandTest::rejectsWith("zam build input", Files::New(true, "out"), "cannot stat out");
+        CommandTest::rejectsWith("zam build input", Files::New(true, CommandTest::input("input")), "cannot stat");
+        CommandTest::rejectsWith("zam build input", Files::New(false, ""), "input file not found: " + CommandTest::input("input"));
+        CommandTest::rejects("zam build -env input", "unknown shorthand flag: 'e'");
+        CommandTest::rejects("zam run -o out input", "unknown shorthand flag: 'o'");
+        CommandTest::rejects("zam run --target aarch64-macos input", "unknown flag: --target");
+    }
+
+    public fun void(uint, str...) Threads = (argC, argV) {
+        Assert::[int]Equal(1, CommandTest::accepts("zam build --threads 0 input").maxThreads);
+        Assert::[int]Equal(8, CommandTest::accepts("zam build -t 8 input").maxThreads);
+    }
+
+    // Paths are the keys files are known by, so two spellings of one file have
+    // to name one file.
+    public fun void(uint, str...) EntryPath = (argC, argV) {
+        var str want = CommandTest::input("input");
+        Assert::[str]Equal(want, CommandTest::accepts("zam build ./input").inputPath);
+        Assert::[str]Equal(want, CommandTest::accepts("zam build sub/../input").inputPath);
+        Assert::[str]Equal(want, CommandTest::accepts("zam build " + want).inputPath);
+    }
+
+    public fun void(uint, str...) Targets = (argC, argV) {
+        var Command* c = CommandTest::accepts("zam build --target aarch64-macos input");
+        Assert::True(c.hasTarget, "no target");
+        Assert::[str]Equal("aarch64-macos", c.target.name);
+        Assert::[str]Equal("arm64-apple-macosx13.0", c.target.triple);
+        CommandTest::rejects("zam build --target riscv64-linux-musl input", "unknown target \"riscv64-linux-musl\"");
+    }
+
+    public fun void(uint, str...) Sizes = (argC, argV) {
+        var Command* c = CommandTest::accepts("zam build --stack-size 1MB --heap-size 2GB --gc-ratio 0.5 -N 1MB -M 4GB input");
+        Assert::[int]Equal(1048576, c.initialStackSize);
+        Assert::[int]Equal(2147483648, c.initialHeapSize);
+        Assert::[flt]Equal(0.5, c.gcTriggerRatio);
+        Assert::[int]Equal(1048576, c.nurserySize);
+        Assert::[int]Equal(4294967296, c.maxHeapSize);
+        CommandTest::rejects("zam build -s 16TB input", "invalid size \"16TB\"");
+        CommandTest::rejects("zam build -s 0KB input", "size must be positive: \"0KB\"");
+        CommandTest::rejects("zam build -m 16MB -N 8MB -M 1MB input", "heap size 16MB and nursery size 8MB must not exceed max heap size 1MB");
+    }
+
+    public fun void(uint, str...) GCFlags = (argC, argV) {
+        var Command* c = CommandTest::accepts("zam build --gc-markers 4 --gc-concurrent=false --gc-remark-growth 0.5 --gc-preclean-passes 3 --gc-return-age 5 input");
+        Assert::[int]Equal(4, c.gcMarkers);
+        Assert::False(c.gcConcurrent, "gc is concurrent");
+        Assert::[flt]Equal(0.5, c.gcRemarkGrowth);
+        Assert::[int]Equal(3, c.gcPrecleanPasses);
+        Assert::[int]Equal(5, c.gcReturnAge);
+        CommandTest::rejects("zam build -g 1.5 input", "gc trigger ratio must be within (0, 1]: 1.5");
+        CommandTest::rejects("zam build -g 0 input", "gc trigger ratio must be within (0, 1]: 0");
+        CommandTest::rejects("zam build --gc-markers -1 input", "gc markers must be within [0, 64]: -1");
+        CommandTest::rejects("zam build --gc-markers 65 input", "gc markers must be within [0, 64]: 65");
+        CommandTest::rejects("zam build --gc-remark-growth 0 input", "gc remark growth must be positive: 0");
+        CommandTest::rejects("zam build --gc-preclean-passes 17 input", "gc preclean passes must be within [0, 16]: 17");
+        CommandTest::rejects("zam build --gc-return-age 0 input", "gc return age must be positive: 0");
+    }
+
+    public fun void(uint, str...) Optimizations = (argC, argV) {
+        Assert::[Optimization]Equal(Optimization::None, CommandTest::accepts("zam build -O 0 input").optimization);
+        Assert::[Optimization]Equal(Optimization::Less, CommandTest::accepts("zam build -O 1 input").optimization);
+        Assert::[Optimization]Equal(Optimization::Aggressive, CommandTest::accepts("zam build --optimize 3 input").optimization);
+        Assert::[Optimization]Equal(Optimization::Size, CommandTest::accepts("zam build -O s input").optimization);
+        CommandTest::rejects("zam build -O 4 input", "optimization must be one of 0, 1, 2, 3 or s: 4");
+    }
+
+    public fun void(uint, str...) RunArguments = (argC, argV) {
+        var Command* c = CommandTest::accepts("zam run input a -b c");
+        Assert::[Verb]Equal(Verb::Run, c.verb);
+        Assert::[str]Equal("[a, -b, c]", c.runArgs{str});
+        var Command* none = CommandTest::accepts("zam run input");
+        Assert::[uint]Equal(0U, none.runArgs.Len());
+
+        var Files* files = Files::New(true, "out");
+        var (Command*, Err*) r = Command::New(CommandTest::argv("zam run input"), files);
+        Assert::True(r.1 == null, "run checks the output file");
+    }
+
+    public fun void(uint, str...) ShortFlagsCombine = (argC, argV) {
+        var Command* c = CommandTest::accepts("zam run -nv input");
+        Assert::True(c.verbose, "verbose was not set");
+        Assert::True(c.noProject, "no-project was not set");
+    }
+
+    public fun void(uint, str...) TestDefaults = (argC, argV) {
+        var Command* c = CommandTest::accepts("zam test");
+        Assert::[Verb]Equal(Verb::Test, c.verb);
+        Assert::[str]Equal("[.]", c.testTargets{str});
+        Assert::[uint]Equal(0U, c.runArgs.Len());
+        Assert::[str]Equal("", c.runPattern);
+        Assert::[int]Equal(System::ProcessorCount(){int}, c.parallel);
+        Assert::[flt]Equal(0.75, c.gcTriggerRatio);
+        Assert::True(c.writeProject, "test does not write the project");
+    }
+
+    public fun void(uint, str...) TestArguments = (argC, argV) {
+        var Command* c = CommandTest::accepts("zam test --run Append$ --parallel 2 list map/... -- x -y");
+        Assert::[str]Equal("[list, map/...]", c.testTargets{str});
+        Assert::[str]Equal("[x, -y]", c.runArgs{str});
+        Assert::[str]Equal("Append$", c.runPattern);
+        Assert::[int]Equal(2, c.parallel);
+
+        var Command* bare = CommandTest::accepts("zam test -- x");
+        Assert::[str]Equal("[.]", bare.testTargets{str});
+        Assert::[str]Equal("[x]", bare.runArgs{str});
+
+        var Command* late = CommandTest::accepts("zam test list x -- y");
+        Assert::[str]Equal("[list, x]", late.testTargets{str});
+        Assert::[str]Equal("[y]", late.runArgs{str});
+    }
+
+    public fun void(uint, str...) TestErrors = (argC, argV) {
+        CommandTest::rejects("zam test --run ( .", "invalid --run pattern");
+        CommandTest::rejects("zam test --parallel 0", "parallel must be positive: 0");
+        CommandTest::rejects("zam test -o out", "unknown shorthand flag: 'o'");
+    }
+
+    public fun void(uint, str...) JSONForm = (argC, argV) {
+        var Command* c = CommandTest::accepts("zam build -v --target aarch64-macos input");
+        var (JSON*, Err*) parsed = JSON::Parse(c.Str());
+        if(!Assert::True(parsed.1 == null, "Str is not JSON")) {
+            return;
+        }
+        var JSON* j = parsed.0;
+        Assert::[uint]Equal(25U, j.Len());
+        Assert::[str]Equal("Verb", j.Keys().Get(0U));
+        Assert::[str]Equal("WriteProject", j.Keys().Get(24U));
+        Assert::[str]Equal("build", j.Get("Verb").0.AsStr());
+        Assert::[str]Equal(CommandTest::input("input"), j.Get("InputPath").0.AsStr());
+        Assert::[str]Equal("out", j.Get("OutputPath").0.AsStr());
+        Assert::True(j.Get("Verbose").0.AsBool(), "verbose");
+        Assert::[flt]Equal(0.75, j.Get("GCTriggerRatio").0.AsFlt());
+        Assert::[int]Equal(524288, j.Get("InitialStackSize").0.AsInt());
+        Assert::[int]Equal(68719476736, j.Get("MaxHeapSize").0.AsInt());
+        Assert::[str]Equal("2", j.Get("Optimization").0.AsStr());
+        Assert::[uint]Equal(0U, j.Get("RunArgs").0.Len());
+        Assert::[str]Equal("aarch64-macos", j.Get("Target").0.Get("Name").0.AsStr());
+        Assert::[str]Equal("arm64-apple-macosx13.0", j.Get("Target").0.Get("Triple").0.AsStr());
+        Assert::True(j.Get("WriteProject").0.AsBool(), "write project");
+    }
+
+    public fun void(uint, str...) JSONNullsAndLists = (argC, argV) {
+        var JSON* j = CommandTest::accepts("zam run input a \"b").JSON();
+        Assert::True(j.Get("Target").0.IsNull(), "a target by default");
+        Assert::[uint]Equal(2U, j.Get("RunArgs").0.Len());
+        Assert::[str]Equal("a", j.Get("RunArgs").0.At(0U).AsStr());
+        Assert::[str]Equal("\"b", j.Get("RunArgs").0.At(1U).AsStr());
+        Assert::[str]Equal("{\"Verb\":\"run\"", Strs::Slice(CommandTest::accepts("zam run input").Str(), 0U, 13U));
+    }
+}

@@ -577,6 +577,30 @@ static void stdStrsByteLen(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
+// stdStrsParseFlt reads the whole of a str as a decimal or special float,
+// leaving ok false, and the float zero, when any of it is not one or the value
+// does not fit.
+static void stdStrsParseFlt(ZamThread *thread) {
+    const ZamString *s = stringArgument(thread, 0);
+    double *out = (double *)zam_native_argument_pointer(thread, 1);
+    bool *ok = (bool *)zam_native_argument_pointer(thread, 2);
+    *out = 0;
+    *ok = false;
+    if (s->length == 0 || strlen(s->bytes) != s->length ||
+        (unsigned char)s->bytes[0] <= ' ') {
+        zam_native_return_void(thread);
+        return;
+    }
+    char *end = NULL;
+    errno = 0;
+    double value = strtod(s->bytes, &end);
+    if (end == s->bytes + s->length && errno != ERANGE) {
+        *out = value;
+        *ok = true;
+    }
+    zam_native_return_void(thread);
+}
+
 // stdArrsCopy moves a run of A elements from src to dst. The element type
 // rode across as its three-word id so the width is read off the image here:
 // a template is not one width, and baking a size for one instantiation would
@@ -739,6 +763,13 @@ static void stdSystemCaller(ZamThread *thread) {
 static void stdSystemProcessID(ZamThread *thread) {
     ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
     *out = (ZamWord)getpid();
+    zam_native_return_void(thread);
+}
+
+// stdSystemProcessorCount reports how many processors the system has online.
+static void stdSystemProcessorCount(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+    *out = (ZamWord)zam_processor_count();
     zam_native_return_void(thread);
 }
 
@@ -1302,6 +1333,7 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_PIPE_INIT", stdPipeInit},
     {"STD_STRS_FROM_BYTES", stdStrsFromBytes},
     {"STD_STRS_BYTE_LEN", stdStrsByteLen},
+    {"STD_STRS_PARSE_FLT", stdStrsParseFlt},
     {"STD_ARRS_COPY", stdArrsCopy},
     {"STD_ARRS_MARK_ALL", stdArrsMarkAll},
     {"STD_GC_BLOCK", stdGcBlock},
@@ -1316,6 +1348,7 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_SYSTEM_RECOVER", stdSystemRecover},
     {"STD_SYSTEM_CALLER", stdSystemCaller},
     {"STD_SYSTEM_PROCESS_ID", stdSystemProcessID},
+    {"STD_SYSTEM_PROCESSOR_COUNT", stdSystemProcessorCount},
     {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},
     {"STD_RAND_UINT", stdRandUint},
     {"STD_RAND_FLT", stdRandFlt},

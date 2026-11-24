@@ -1993,6 +1993,50 @@ namespace Main {
 	assert.Equal(t, "3 home! hot! true false\nhome!#3 first hot!#1\n", output)
 }
 
+// TestNativeUnqualifiedEnumValues names enum values without their enum from
+// within it, for an enum with members and for one without.
+func TestNativeUnqualifiedEnumValues(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    enum Planet {
+        Mercury.Init("hot"),
+        Earth.Init("home");
+
+        var str note;
+
+        fun void(str) Init = (n) {
+            this.note = n;
+        }
+
+        static fun Planet() Home = () {
+            return Earth;
+        }
+
+        fun Planet() Next = () {
+            return Earth;
+        }
+    }
+
+    enum Color {
+        Red, Blue;
+
+        static fun Color() Sky = () {
+            return Blue;
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        File::StdOut.WriteStr(Planet::Home().note + " " + Planet::Mercury.Next().note + " " + (Color::Sky() == Color::Blue){str} + "\n");
+    }
+}
+`)
+	assert.Zero(t, status, output)
+	assert.Equal(t, "home home true\n", output)
+}
+
 // TestNativeInheritedGenericAbstractMethods calls, through a generic
 // abstract, methods an instantiation inherits from it and overrides.
 func TestNativeInheritedGenericAbstractMethods(t *testing.T) {

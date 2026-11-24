@@ -1,0 +1,727 @@
+import {
+    "../../data/list/ArrList.zam";
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+}
+
+// Regex is a regular expression in the syntax Go's regexp package takes from
+// RE2, less flags, POSIX classes, Unicode classes and the \x, \Q and \pN
+// escapes. A group never captures, since a match reports no more than that
+// there is one. Text is read as code points, and matching takes time linear in
+// the text however the expression is written.
+public class Regex {
+    static var int$ kindLit = 0;
+    static var int$ kindAny = 1;
+    static var int$ kindClass = 2;
+    static var int$ kindNClass = 3;
+    static var int$ kindCat = 4;
+    static var int$ kindAlt = 5;
+    static var int$ kindStar = 6;
+    static var int$ kindPlus = 7;
+    static var int$ kindQuest = 8;
+    static var int$ kindRepeat = 9;
+    static var int$ kindEmpty = 10;
+    static var int$ kindBol = 11;
+    static var int$ kindEol = 12;
+    static var int$ kindWordB = 13;
+    static var int$ kindNWordB = 14;
+
+    static var int$ opChar = 0;
+    static var int$ opAny = 1;
+    static var int$ opClass = 2;
+    static var int$ opNClass = 3;
+    static var int$ opSplit = 4;
+    static var int$ opJmp = 5;
+    static var int$ opMatch = 6;
+    static var int$ opBol = 7;
+    static var int$ opEol = 8;
+    static var int$ opWordB = 9;
+    static var int$ opNWordB = 10;
+
+    static var int$ maxRepeat = 1000;
+    static var int$ maxCodePoint = 1114111;
+    static var uint$ maxProgram = 100000U;
+
+    var str source;
+    var ArrList[int]* ops;
+    var ArrList[int]* xs;
+    var ArrList[int]* ys;
+    var ArrList[int]* ranges;
+    var bool tooBig;
+
+    // Compile reads src as a regular expression, or says what is wrong with
+    // it.
+    public static fun (Regex*, Err*)(str) Compile = (src) {
+        var (Regex*, Err*) out;
+        out.0 = null;
+        out.1 = null;
+        var Parser* p = new(Parser);
+        p.Init(src);
+        var Node* root = p.ParseAlt();
+        if(p.err == null && p.More()) {
+            p.Fail("unexpected )");
+        }
+        if(p.err != null) {
+            out.1 = p.err;
+            return out;
+        }
+        var Regex* re = new(Regex);
+        re.source = src;
+        re.ops = ArrList::[int]New(0U);
+        re.xs = ArrList::[int]New(0U);
+        re.ys = ArrList::[int]New(0U);
+        re.ranges = p.ranges;
+        re.tooBig = false;
+        re.emit(root);
+        re.add(Regex::opMatch, 0, 0);
+        if(re.tooBig) {
+            out.1 = StrErr::New("expression too large");
+            return out;
+        }
+        out.0 = re;
+        return out;
+    }
+
+    // Match reports whether the regular expression matches anywhere in s.
+    public fun bool(str) Match = (s) {
+        var Matcher* m = new(Matcher);
+        m.Init(this, s);
+        return m.Run();
+    }
+
+    public fun str() Str = () {
+        return this.source;
+    }
+
+    private fun int(int, int, int) add = (op, x, y) {
+        this.ops.AddLast(op);
+        this.xs.AddLast(x);
+        this.ys.AddLast(y);
+        return this.ops.Len(){int} - 1;
+    }
+
+    private fun void(Node*) emit = (n) {
+        if(this.ops.Len() > Regex::maxProgram) {
+            this.tooBig = true;
+            return;
+        }
+        var int k = n.kind;
+        if(k == Regex::kindLit) {
+            this.add(Regex::opChar, n.cp, 0);
+        } else if(k == Regex::kindAny) {
+            this.add(Regex::opAny, 0, 0);
+        } else if(k == Regex::kindClass) {
+            this.add(Regex::opClass, n.cp, n.lo);
+        } else if(k == Regex::kindNClass) {
+            this.add(Regex::opNClass, n.cp, n.lo);
+        } else if(k == Regex::kindBol) {
+            this.add(Regex::opBol, 0, 0);
+        } else if(k == Regex::kindEol) {
+            this.add(Regex::opEol, 0, 0);
+        } else if(k == Regex::kindWordB) {
+            this.add(Regex::opWordB, 0, 0);
+        } else if(k == Regex::kindNWordB) {
+            this.add(Regex::opNWordB, 0, 0);
+        } else if(k == Regex::kindCat) {
+            this.emit(n.a);
+            this.emit(n.b);
+        } else if(k == Regex::kindAlt) {
+            var int split = this.add(Regex::opSplit, 0, 0);
+            this.xs.Set(split{uint}, split + 1);
+            this.emit(n.a);
+            var int jump = this.add(Regex::opJmp, 0, 0);
+            this.ys.Set(split{uint}, this.ops.Len(){int});
+            this.emit(n.b);
+            this.xs.Set(jump{uint}, this.ops.Len(){int});
+        } else if(k == Regex::kindStar) {
+            var int split = this.add(Regex::opSplit, 0, 0);
+            this.xs.Set(split{uint}, split + 1);
+            this.emit(n.a);
+            this.add(Regex::opJmp, split, 0);
+            this.ys.Set(split{uint}, this.ops.Len(){int});
+        } else if(k == Regex::kindPlus) {
+            var int start = this.ops.Len(){int};
+            this.emit(n.a);
+            var int split = this.add(Regex::opSplit, start, 0);
+            this.ys.Set(split{uint}, this.ops.Len(){int});
+        } else if(k == Regex::kindQuest) {
+            var int split = this.add(Regex::opSplit, 0, 0);
+            this.xs.Set(split{uint}, split + 1);
+            this.emit(n.a);
+            this.ys.Set(split{uint}, this.ops.Len(){int});
+        } else if(k == Regex::kindRepeat) {
+            for(var int i = 0; i < n.lo; i++) {
+                this.emit(n.a);
+            }
+            if(n.hi < 0) {
+                this.emit(Node::Unary(Regex::kindStar, n.a));
+            } else {
+                var ArrList[int]* splits = ArrList::[int]New(0U);
+                for(var int i = n.lo; i < n.hi; i++) {
+                    var int split = this.add(Regex::opSplit, 0, 0);
+                    this.xs.Set(split{uint}, split + 1);
+                    splits.AddLast(split);
+                    this.emit(n.a);
+                }
+                for(var uint i = 0U; i < splits.Len(); i++) {
+                    this.ys.Set(splits.Get(i){uint}, this.ops.Len(){int});
+                }
+            }
+        }
+    }
+
+    // Node is a piece of an expression as it was written. A node of one
+    // child keeps it in a, and a node of two keeps them in a and b.
+    private class Node {
+        var int kind;
+        var int cp;
+        var int lo;
+        var int hi;
+        var Node* a;
+        var Node* b;
+
+        public static fun Node*(int) New = (kind) {
+            var Node* n = new(Node);
+            n.kind = kind;
+            n.cp = 0;
+            n.lo = 0;
+            n.hi = 0;
+            n.a = null;
+            n.b = null;
+            return n;
+        }
+
+        public static fun Node*(int) Char = (cp) {
+            var Node* n = Node::New(Regex::kindLit);
+            n.cp = cp;
+            return n;
+        }
+
+        public static fun Node*(int, Node*) Unary = (kind, a) {
+            var Node* n = Node::New(kind);
+            n.a = a;
+            return n;
+        }
+
+        public static fun Node*(int, Node*, Node*) Pair = (kind, a, b) {
+            var Node* n = Node::New(kind);
+            n.a = a;
+            n.b = b;
+            return n;
+        }
+    }
+
+    // Parser reads the code points of an expression into nodes, stopping at
+    // the first thing wrong with it, which it keeps in err. The ranges of
+    // every class it reads are kept end to end in ranges, each class naming
+    // where its own start.
+    private class Parser {
+        var Arr[char]* src;
+        var uint pos;
+        var uint n;
+        var Err* err;
+        var ArrList[int]* ranges;
+
+        public fun void(str) Init = (s) {
+            this.src = Strs::Chars(s);
+            this.n = this.src.Len();
+            this.pos = 0U;
+            this.err = null;
+            this.ranges = ArrList::[int]New(0U);
+        }
+
+        public fun void(str) Fail = (msg) {
+            if(this.err == null) {
+                this.err = StrErr::New(msg);
+            }
+        }
+
+        public fun bool() More = () {
+            return this.pos < this.n;
+        }
+
+        // Peek is the code point at the position, which must be in range.
+        public fun int() Peek = () {
+            return this.src.Get(this.pos){int};
+        }
+
+        public fun Node*() ParseAlt = () {
+            var Node* left = this.parseCat();
+            if(this.err != null) {
+                return null;
+            }
+            for(; this.More() && this.Peek() == '|'{int};) {
+                this.pos++;
+                var Node* right = this.parseCat();
+                if(this.err != null) {
+                    return null;
+                }
+                left = Node::Pair(Regex::kindAlt, left, right);
+            }
+            return left;
+        }
+
+        private fun Node*() parseCat = () {
+            var Node* left = null;
+            for(; this.More() && this.Peek() != '|'{int} && this.Peek() != ')'{int};) {
+                var Node* right = this.parseRepeat();
+                if(this.err != null) {
+                    return null;
+                }
+                if(left == null) {
+                    left = right;
+                } else {
+                    left = Node::Pair(Regex::kindCat, left, right);
+                }
+            }
+            if(left == null) {
+                return Node::New(Regex::kindEmpty);
+            }
+            return left;
+        }
+
+        private fun Node*() parseRepeat = () {
+            var Node* atom = this.parseAtom();
+            if(this.err != null || !this.More()) {
+                return atom;
+            }
+            var int c = this.Peek();
+            var Node* wrapped = null;
+            if(c == '*'{int}) {
+                this.pos++;
+                wrapped = Node::Unary(Regex::kindStar, atom);
+            } else if(c == '+'{int}) {
+                this.pos++;
+                wrapped = Node::Unary(Regex::kindPlus, atom);
+            } else if(c == '?'{int}) {
+                this.pos++;
+                wrapped = Node::Unary(Regex::kindQuest, atom);
+            } else if(c == '{'{int}) {
+                wrapped = this.parseCounted(atom);
+                if(this.err != null) {
+                    return null;
+                }
+            }
+            if(wrapped == null) {
+                return atom;
+            }
+            if(this.More() && this.Peek() == '?'{int}) {
+                this.pos++;
+            }
+            if(this.More()) {
+                var int next = this.Peek();
+                if(next == '*'{int} || next == '+'{int} || next == '?'{int}) {
+                    this.Fail("invalid nested repetition operator");
+                    return null;
+                }
+            }
+            return wrapped;
+        }
+
+        // parseCounted reads a {n}, {n,} or {n,m} repetition of atom at the
+        // position, answering null and leaving the position where it was when
+        // what is there is not one, which makes the { a literal.
+        private fun Node*(Node*) parseCounted = (atom) {
+            var uint i = this.pos + 1U;
+            var (int, uint) lo = this.digits(i);
+            if(lo.0 < 0) {
+                return null;
+            }
+            i = lo.1;
+            var int hi = lo.0;
+            if(i < this.n && this.src.Get(i){int} == ','{int}) {
+                var (int, uint) upper = this.digits(i + 1U);
+                hi = upper.0;
+                i = upper.1;
+            }
+            if(i >= this.n || this.src.Get(i){int} != '}'{int}) {
+                return null;
+            }
+            if(hi < 0 && this.src.Get(i - 1U){int} != ','{int}) {
+                return null;
+            }
+            if(lo.0 > Regex::maxRepeat || hi > Regex::maxRepeat || (hi >= 0 && hi < lo.0)) {
+                this.Fail("invalid repeat count");
+                return null;
+            }
+            this.pos = i + 1U;
+            var Node* n = Node::Unary(Regex::kindRepeat, atom);
+            n.lo = lo.0;
+            n.hi = hi;
+            return n;
+        }
+
+        // digits reads the decimal digits from i, answering their value, -1
+        // when there are none, and where they end. A value past what any
+        // repeat may be is cut short, being invalid whatever it is.
+        private fun (int, uint)(uint) digits = (i) {
+            var (int, uint) out;
+            out.0 = -1;
+            out.1 = i;
+            for(; out.1 < this.n; out.1++) {
+                var int c = this.src.Get(out.1){int};
+                if(c < '0'{int} || c > '9'{int}) {
+                    break;
+                }
+                if(out.0 < 0) {
+                    out.0 = 0;
+                }
+                if(out.0 <= Regex::maxRepeat) {
+                    out.0 = out.0 * 10 + (c - '0'{int});
+                }
+            }
+            return out;
+        }
+
+        private fun Node*() parseAtom = () {
+            var int c = this.Peek();
+            this.pos++;
+            if(c == '('{int}) {
+                return this.parseGroup();
+            } else if(c == '['{int}) {
+                return this.parseClass();
+            } else if(c == '.'{int}) {
+                return Node::New(Regex::kindAny);
+            } else if(c == '^'{int}) {
+                return Node::New(Regex::kindBol);
+            } else if(c == '$'{int}) {
+                return Node::New(Regex::kindEol);
+            } else if(c == '\\'{int}) {
+                return this.parseEscape();
+            } else if(c == '*'{int} || c == '+'{int} || c == '?'{int}) {
+                this.Fail("missing argument to repetition operator");
+                return null;
+            }
+            return Node::Char(c);
+        }
+
+        // parseGroup reads what follows a ( up to and including its ).
+        private fun Node*() parseGroup = () {
+            if(this.More() && this.Peek() == '?'{int}) {
+                if(this.pos + 1U < this.n && this.src.Get(this.pos + 1U){int} == ':'{int}) {
+                    this.pos = this.pos + 2U;
+                } else {
+                    this.Fail("invalid or unsupported Perl syntax");
+                    return null;
+                }
+            }
+            var Node* inner = this.ParseAlt();
+            if(this.err != null) {
+                return null;
+            }
+            if(!this.More() || this.Peek() != ')'{int}) {
+                this.Fail("missing closing )");
+                return null;
+            }
+            this.pos++;
+            return inner;
+        }
+
+        // parseEscape reads what follows a \ outside of a class.
+        private fun Node*() parseEscape = () {
+            if(!this.More()) {
+                this.Fail("trailing backslash at end of expression");
+                return null;
+            }
+            var int e = this.Peek();
+            this.pos++;
+            if(e == 'b'{int}) {
+                return Node::New(Regex::kindWordB);
+            } else if(e == 'B'{int}) {
+                return Node::New(Regex::kindNWordB);
+            } else if(e == 'A'{int}) {
+                return Node::New(Regex::kindBol);
+            } else if(e == 'z'{int}) {
+                return Node::New(Regex::kindEol);
+            }
+            var uint start = this.ranges.Len();
+            if(this.perl(e)) {
+                var Node* n = Node::New(Regex::kindClass);
+                n.cp = start{int};
+                n.lo = ((this.ranges.Len() - start) / 2U){int};
+                return n;
+            }
+            var int c = this.simple(e);
+            if(c < 0) {
+                this.Fail("invalid escape sequence");
+                return null;
+            }
+            return Node::Char(c);
+        }
+
+        // simple answers the code point a \ before e stands for, or -1 when
+        // it stands for none.
+        private fun int(int) simple = (e) {
+            if(e == 'n'{int}) {
+                return 10;
+            } else if(e == 't'{int}) {
+                return 9;
+            } else if(e == 'r'{int}) {
+                return 13;
+            } else if(e == 'f'{int}) {
+                return 12;
+            } else if(e == 'v'{int}) {
+                return 11;
+            } else if(e == 'a'{int}) {
+                return 7;
+            }
+            var bool letter = (e >= 'a'{int} && e <= 'z'{int}) || (e >= 'A'{int} && e <= 'Z'{int});
+            var bool digit = e >= '0'{int} && e <= '9'{int};
+            if(e >= 128 || letter || digit) {
+                return -1;
+            }
+            return e;
+        }
+
+        // perl adds the ranges of the class \d, \w, \s, \D, \W or \S named by
+        // e, and says whether it was one.
+        private fun bool(int) perl = (e) {
+            if(e == 'd'{int}) {
+                this.addPerl(0, false);
+            } else if(e == 'D'{int}) {
+                this.addPerl(0, true);
+            } else if(e == 'w'{int}) {
+                this.addPerl(1, false);
+            } else if(e == 'W'{int}) {
+                this.addPerl(1, true);
+            } else if(e == 's'{int}) {
+                this.addPerl(2, false);
+            } else if(e == 'S'{int}) {
+                this.addPerl(2, true);
+            } else {
+                return false;
+            }
+            return true;
+        }
+
+        private fun void(int, bool) addPerl = (kind, negated) {
+            var ArrList[int]* base = ArrList::[int]New(0U);
+            if(kind == 0) {
+                this.pair(base, 48, 57);
+            } else if(kind == 1) {
+                this.pair(base, 48, 57);
+                this.pair(base, 65, 90);
+                this.pair(base, 95, 95);
+                this.pair(base, 97, 122);
+            } else {
+                this.pair(base, 9, 10);
+                this.pair(base, 12, 13);
+                this.pair(base, 32, 32);
+            }
+            if(!negated) {
+                for(var uint i = 0U; i < base.Len(); i++) {
+                    this.ranges.AddLast(base.Get(i));
+                }
+                return;
+            }
+            var int next = 0;
+            for(var uint i = 0U; i < base.Len(); i = i + 2U) {
+                if(base.Get(i) > next) {
+                    this.pair(this.ranges, next, base.Get(i) - 1);
+                }
+                next = base.Get(i + 1U) + 1;
+            }
+            if(next <= Regex::maxCodePoint) {
+                this.pair(this.ranges, next, Regex::maxCodePoint);
+            }
+        }
+
+        private fun void(ArrList[int]*, int, int) pair = (l, lo, hi) {
+            l.AddLast(lo);
+            l.AddLast(hi);
+        }
+
+        // parseClass reads what follows a [ up to and including its ].
+        private fun Node*() parseClass = () {
+            var bool negate = false;
+            if(this.More() && this.Peek() == '^'{int}) {
+                negate = true;
+                this.pos++;
+            }
+            var uint start = this.ranges.Len();
+            var bool first = true;
+            for(;;) {
+                if(!this.More()) {
+                    this.Fail("missing closing ]");
+                    return null;
+                }
+                var int c = this.Peek();
+                this.pos++;
+                if(c == ']'{int} && !first) {
+                    break;
+                }
+                first = false;
+                var int lo = c;
+                if(c == '\\'{int}) {
+                    if(!this.More()) {
+                        this.Fail("trailing backslash at end of expression");
+                        return null;
+                    }
+                    var int e = this.Peek();
+                    this.pos++;
+                    if(this.perl(e)) {
+                        continue;
+                    }
+                    lo = this.simple(e);
+                    if(lo < 0) {
+                        this.Fail("invalid escape sequence");
+                        return null;
+                    }
+                }
+                var int hi = lo;
+                if(this.pos + 1U < this.n && this.Peek() == '-'{int} && this.src.Get(this.pos + 1U){int} != ']'{int}) {
+                    this.pos++;
+                    hi = this.Peek();
+                    this.pos++;
+                    if(hi == '\\'{int}) {
+                        if(!this.More()) {
+                            this.Fail("trailing backslash at end of expression");
+                            return null;
+                        }
+                        hi = this.simple(this.Peek());
+                        this.pos++;
+                        if(hi < 0) {
+                            this.Fail("invalid escape sequence");
+                            return null;
+                        }
+                    }
+                    if(hi < lo) {
+                        this.Fail("invalid character class range");
+                        return null;
+                    }
+                }
+                this.pair(this.ranges, lo, hi);
+            }
+            var Node* n = Node::New(Regex::kindClass);
+            if(negate) {
+                n = Node::New(Regex::kindNClass);
+            }
+            n.cp = start{int};
+            n.lo = ((this.ranges.Len() - start) / 2U){int};
+            return n;
+        }
+    }
+
+    // Matcher runs a compiled expression over text, following every thread of
+    // the program at once, one code point at a time. seen holds, for each
+    // instruction, the step it was last added to a list at, so no list holds
+    // one twice.
+    private class Matcher {
+        var Regex* re;
+        var Arr[char]* text;
+        var uint n;
+        var ArrList[int]* seen;
+
+        public fun void(Regex*, str) Init = (re, s) {
+            this.re = re;
+            this.text = Strs::Chars(s);
+            this.n = this.text.Len();
+            this.seen = ArrList::[int]New(0U);
+            for(var uint i = 0U; i < re.ops.Len(); i++) {
+                this.seen.AddLast(0);
+            }
+        }
+
+        public fun bool() Run = () {
+            var ArrList[int]* current = ArrList::[int]New(0U);
+            var ArrList[int]* next = ArrList::[int]New(0U);
+            for(var uint p = 0U; p <= this.n; p++) {
+                this.add(current, 0, p, p{int} + 1);
+                for(var uint i = 0U; i < current.Len(); i++) {
+                    var int pc = current.Get(i);
+                    var int op = this.re.ops.Get(pc{uint});
+                    if(op == Regex::opMatch) {
+                        return true;
+                    }
+                    if(p >= this.n) {
+                        continue;
+                    }
+                    var int c = this.text.Get(p){int};
+                    var bool ok = false;
+                    if(op == Regex::opChar) {
+                        ok = this.re.xs.Get(pc{uint}) == c;
+                    } else if(op == Regex::opAny) {
+                        ok = c != 10;
+                    } else if(op == Regex::opClass) {
+                        ok = this.inClass(pc, c);
+                    } else if(op == Regex::opNClass) {
+                        ok = !this.inClass(pc, c);
+                    }
+                    if(ok) {
+                        this.add(next, pc + 1, p + 1U, p{int} + 2);
+                    }
+                }
+                current.Clear();
+                var ArrList[int]* swap = current;
+                current = next;
+                next = swap;
+            }
+            return false;
+        }
+
+        // add follows the instructions that take no code point from pc at
+        // text position p, and puts the ones that do on list.
+        private fun void(ArrList[int]*, int, uint, int) add = (list, pc, p, step) {
+            if(this.seen.Get(pc{uint}) == step) {
+                return;
+            }
+            this.seen.Set(pc{uint}, step);
+            var int op = this.re.ops.Get(pc{uint});
+            if(op == Regex::opJmp) {
+                this.add(list, this.re.xs.Get(pc{uint}), p, step);
+            } else if(op == Regex::opSplit) {
+                this.add(list, this.re.xs.Get(pc{uint}), p, step);
+                this.add(list, this.re.ys.Get(pc{uint}), p, step);
+            } else if(op == Regex::opBol) {
+                if(p == 0U) {
+                    this.add(list, pc + 1, p, step);
+                }
+            } else if(op == Regex::opEol) {
+                if(p == this.n) {
+                    this.add(list, pc + 1, p, step);
+                }
+            } else if(op == Regex::opWordB) {
+                if(this.boundary(p)) {
+                    this.add(list, pc + 1, p, step);
+                }
+            } else if(op == Regex::opNWordB) {
+                if(!this.boundary(p)) {
+                    this.add(list, pc + 1, p, step);
+                }
+            } else {
+                list.AddLast(pc);
+            }
+        }
+
+        private fun bool(int, int) inClass = (pc, c) {
+            var uint start = this.re.xs.Get(pc{uint}){uint};
+            var uint count = this.re.ys.Get(pc{uint}){uint};
+            for(var uint i = 0U; i < count; i++) {
+                if(c >= this.re.ranges.Get(start + 2U * i) && c <= this.re.ranges.Get(start + 2U * i + 1U)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private fun bool(uint) wordAt = (i) {
+            if(i >= this.n) {
+                return false;
+            }
+            var int c = this.text.Get(i){int};
+            return (c >= '0'{int} && c <= '9'{int}) || (c >= 'a'{int} && c <= 'z'{int}) || (c >= 'A'{int} && c <= 'Z'{int}) || c == '_'{int};
+        }
+
+        // boundary reports whether text position p is between a word code
+        // point and one that is not, in either order.
+        private fun bool(uint) boundary = (p) {
+            var bool before = false;
+            if(p > 0U) {
+                before = this.wordAt(p - 1U);
+            }
+            return before != this.wordAt(p);
+        }
+    }
+}

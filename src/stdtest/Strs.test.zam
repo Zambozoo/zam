@@ -1,0 +1,76 @@
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+
+public namespace StrsTest {
+    public fun void(uint, str...) Slice = (argC, argV) {
+        Assert::[str]Equal("ell", Strs::Slice("hello", 1U, 4U));
+        Assert::[str]Equal("", Strs::Slice("hello", 5U, 5U));
+        Assert::[str]Equal("hello", Strs::Slice("hello", 0U, 5U));
+    }
+
+    public fun void(uint, str...) Prefixes = (argC, argV) {
+        Assert::True(Strs::HasPrefix("hello", "he"), "hello has prefix he");
+        Assert::True(Strs::HasPrefix("hello", ""), "hello has the empty prefix");
+        Assert::False(Strs::HasPrefix("he", "hello"), "he has prefix hello");
+        Assert::True(Strs::HasSuffix("hello", "llo"), "hello has suffix llo");
+        Assert::True(Strs::HasSuffix("hello", ""), "hello has the empty suffix");
+        Assert::False(Strs::HasSuffix("lo", "hello"), "lo has suffix hello");
+    }
+
+    public fun void(uint, str...) Index = (argC, argV) {
+        var (uint, bool) at = Strs::Index("hello", "ll");
+        Assert::True(at.1, "ll is in hello");
+        Assert::[uint]Equal(2U, at.0);
+        Assert::False(Strs::Index("hello", "lo!").1, "lo! is not in hello");
+        Assert::[uint]Equal(0U, Strs::Index("hello", "").0);
+        Assert::True(Strs::Contains("hello", "o"), "o is in hello");
+        Assert::False(Strs::Contains("hello", "x"), "x is not in hello");
+    }
+
+    public fun void(uint, str...) Trim = (argC, argV) {
+        Assert::[str]Equal("a b", Strs::TrimSpace(" \t a b\r\n"));
+        Assert::[str]Equal("", Strs::TrimSpace("  "));
+        Assert::[str]Equal("x", Strs::TrimSpace("x"));
+    }
+
+    public fun void(uint, str...) Upper = (argC, argV) {
+        Assert::[str]Equal("ABC-1Z", Strs::ToUpper("abc-1z"));
+        Assert::[str]Equal("", Strs::ToUpper(""));
+    }
+
+    public fun void(uint, str...) RepeatAndQuote = (argC, argV) {
+        Assert::[str]Equal("ababab", Strs::Repeat("ab", 3U));
+        Assert::[str]Equal("", Strs::Repeat("ab", 0U));
+        Assert::[str]Equal("\"a\\\"b\\\\c\\n\"", Strs::Quote("a\"b\\c\n"));
+    }
+
+    public fun void(uint, str...) ParseInt = (argC, argV) {
+        Assert::[int]Equal(0, Strs::ParseInt("0").0);
+        Assert::[int]Equal(42, Strs::ParseInt("42").0);
+        Assert::[int]Equal(42, Strs::ParseInt("+42").0);
+        Assert::[int]Equal(-42, Strs::ParseInt("-42").0);
+        Assert::[int]Equal(9223372036854775807, Strs::ParseInt("9223372036854775807").0);
+        Assert::[int]Equal(-9223372036854775807 - 1, Strs::ParseInt("-9223372036854775808").0);
+        Assert::True(Strs::ParseInt("").1 != null, "the empty string is an int");
+        Assert::True(Strs::ParseInt("-").1 != null, "- is an int");
+        Assert::True(Strs::ParseInt("4x").1 != null, "4x is an int");
+        Assert::True(Strs::ParseInt(" 4").1 != null, "a leading space is allowed");
+        Assert::True(Strs::ParseInt("9223372036854775808").1 != null, "2^63 fits an int");
+        Assert::True(Strs::ParseInt("-9223372036854775809").1 != null, "-2^63-1 fits an int");
+        Assert::True(Strs::ParseInt("99999999999999999999").1 != null, "20 digits fit an int");
+    }
+
+    public fun void(uint, str...) ParseFlt = (argC, argV) {
+        Assert::[flt]Equal(0.75, Strs::ParseFlt("0.75").0);
+        Assert::[flt]Equal(-1.5, Strs::ParseFlt("-1.5").0);
+        Assert::[flt]Equal(1000.0, Strs::ParseFlt("1e3").0);
+        Assert::[flt]Equal(2.0, Strs::ParseFlt("2").0);
+        Assert::True(Strs::ParseFlt("").1 != null, "the empty string is a flt");
+        Assert::True(Strs::ParseFlt("x").1 != null, "x is a flt");
+        Assert::True(Strs::ParseFlt("1.5x").1 != null, "1.5x is a flt");
+        Assert::True(Strs::ParseFlt(" 1").1 != null, "a leading space is allowed");
+        Assert::True(Strs::ParseFlt("1e999").1 != null, "1e999 fits a flt");
+    }
+}

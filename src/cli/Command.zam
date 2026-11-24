@@ -1,0 +1,469 @@
+import std("codec/format/JSON.zam");
+import std("codec/text/Regex.zam");
+import std("data/list/ArrList.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+import "ByteSize.zam";
+import "FileProvider.zam";
+import "Flag.zam";
+import "FlagSet.zam";
+import "Optimization.zam";
+import "Paths.zam";
+import "Target.zam";
+import "UsageErr.zam";
+import "Verb.zam";
+
+// Command is what the command line asks of the compiler
+public class Command {
+    namespace Errs {
+        public fun Err*() MissingProgramName = () {
+            return StrErr::New("missing program name");
+        }
+        
+        public fun Err*() MissingCommand = () {
+            return StrErr::New("missing command");
+        }
+
+        public fun Err*(str, str) UnknownCommand = (program, name) {
+            return StrErr::New("unknown command " + Strs::Quote(name));
+        }
+
+        public fun Err*(str, str) TooManyArguments = (program, name) {
+            return StrErr::New("too many arguments: " + Strs::Quote(name));
+        }
+
+        public fun Err*(str) TooManyDependencies = (name) {
+            return StrErr::New("--as names one dependency, but " + name + " were given");
+        }
+
+        public fun Err*(Err*) InvalidRunPattern = (err) {
+            return StrErr::New("invalid --run pattern: " + err.Err());
+        }
+
+        public fun Err*(int) InvalidParallel = (parallel) {
+            return StrErr::New("parallel must be positive: " + parallel{str});
+        }
+
+        public fun Err*() MissingInputFileArgument = () {
+            return  StrErr::New("missing input file argument");
+        }
+
+        public fun Err*(flt) InvalidGCTriggerRatio = (ratio) {
+            return StrErr::New("gc trigger ratio must be within (0, 1]: " + ratio{str});
+        }
+
+        public fun Err*(int, int) InvalidGCMarkers = (default, markers) {
+            return StrErr::New("gc markers must be within [0, " + default{str} + "]: " + markers{str});
+        }
+
+        public fun Err*(flt) InvalidGCRemarkGrowth = (growth) {
+            return StrErr::New("gc remark growth must be positive: " + growth{str});
+        }
+
+        public fun Err*(int, int) InvalidGCPrecleanPasses = (default, passes) {
+            return StrErr::New("gc preclean passes must be within [0, " + default{str} + "]: " + passes{str});
+        }
+
+        public fun Err*(int) InvalidGCReturnAge = (age) {
+            return StrErr::New("gc return age must be positive: " + age{str});
+        }
+
+        public fun Err*(int, int, int) InvalidHeapAndNurserySize = (default, size, nursery) {
+            return StrErr::New("heap size " + ByteSize::Format(size) + " and nursery size " + ByteSize::Format(nursery) + " must not exceed max heap size " + ByteSize::Format(default));
+        }
+
+        public fun Err*(str) InputFileNotFound = (path) {
+            return StrErr::New("input file not found: " + Strs::Quote(path));
+        }
+    }
+
+    private namespace Default {
+        var int$ threads = 1;
+        var flt$ gcRatio = 0.75;
+        var int$ stackSize = 524288;
+        var int$ heapSize = 16777216;
+        var int$ nursery = 8388608;
+        var int$ maxHeap = 68719476736;
+        var int$ gcMarkers = 0;
+        var bool$ gcConcurrent = true;
+        var flt$ gcRemarkGrowth = 1.0;
+        var int$ gcPrecleanPasses = 2;
+        var int$ gcReturnAge = 3;
+        var int$ maxGCPrecleanPasses = 16;
+        var int$ maxGCMarkers = 64;
+    }
+
+    public var Verb verb;
+    public var str inputPath;
+    public var str outputPath;
+    public var bool verbose;
+    public var int maxThreads;
+    public var flt gcTriggerRatio;
+    public var int initialStackSize;
+    public var int initialHeapSize;
+    public var int nurserySize;
+    public var int maxHeapSize;
+    public var int gcMarkers;
+    public var bool gcConcurrent;
+    public var flt gcRemarkGrowth;
+    public var int gcPrecleanPasses;
+    public var int gcReturnAge;
+    public var Optimization optimization;
+    public var Target target;
+    public var bool hasTarget;
+    public var Arr[str]* runArgs;
+    public var Arr[str]* testTargets;
+    public var str runPattern;
+    public var int parallel;
+    public var Arr[str]* refs;
+    public var str asName;
+    public var bool noProject;
+    public var bool writeProject;
+
+    // New instantiates a Command
+    public static fun (Command*, Err*)(Arr[str]*, FileProvider*) New = (argv, files) {
+        if(argv.Len() == 0U) {
+            return (null, Errs::MissingProgramName());
+        }
+
+        var str program = argv.Get(0U);
+        if(argv.Len() == 1U) {
+            return (null, UsageErr::New(program, verbUsages(), Errs::MissingCommand()));
+        }
+
+        var str name = argv.Get(1U);
+        if(name == "-h" || name == "--help" || name == "help") {
+            return (null, UsageErr::New(program, verbUsages(), null));
+        } else if(name == "--version") {
+            name = "version";
+        }
+
+        var ArrList[Verb]* all = Verb::All();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            var Verb verb = all.Get(i);
+            if(verb.name != name) {
+                continue;
+            }
+            var str full = program + " " + name;
+            var Arr[str]* rest = sub(argv, 2U, argv.Len());
+            if(verb == Verb::Build || verb == Verb::Run || verb == Verb::Test) {
+                return newCompile(verb, full, rest, files);
+            } else if(verb == Verb::Get) {
+                return newGet(full, rest);
+            }
+            return newBare(verb, full, rest);
+        }
+
+        return (null, UsageErr::New(program, verbUsages(), Errs::UnknownCommand(program, name)));
+    }
+
+    public fun str() Str = () {
+        return this.JSON().Encode(false);
+    }
+
+    // JSON implements the JSON interface
+    public fun JSON*() JSON = () {
+        var JSON* o = JSON::NewObject();
+        o.Set("Verb", JSON::NewStr(this.verb.name));
+        o.Set("InputPath", JSON::NewStr(this.inputPath));
+        o.Set("OutputPath", JSON::NewStr(this.outputPath));
+        o.Set("Verbose", JSON::NewBool(this.verbose));
+        o.Set("MaxThreads", JSON::NewInt(this.maxThreads));
+        o.Set("GCTriggerRatio", JSON::NewFlt(this.gcTriggerRatio));
+        o.Set("InitialStackSize", JSON::NewInt(this.initialStackSize));
+        o.Set("InitialHeapSize", JSON::NewInt(this.initialHeapSize));
+        o.Set("NurserySize", JSON::NewInt(this.nurserySize));
+        o.Set("MaxHeapSize", JSON::NewInt(this.maxHeapSize));
+        o.Set("GCMarkers", JSON::NewInt(this.gcMarkers));
+        o.Set("GCConcurrent", JSON::NewBool(this.gcConcurrent));
+        o.Set("GCRemarkGrowth", JSON::NewFlt(this.gcRemarkGrowth));
+        o.Set("GCPrecleanPasses", JSON::NewInt(this.gcPrecleanPasses));
+        o.Set("GCReturnAge", JSON::NewInt(this.gcReturnAge));
+        o.Set("Optimization", JSON::NewStr(this.optimization{str}));
+        if(!this.hasTarget) {
+            o.Set("Target", JSON::Null());
+        } else {
+            o.Set("Target", this.target.JSON());
+        }
+        o.Set("RunArgs", listJSON(this.runArgs));
+        o.Set("TestTargets", listJSON(this.testTargets));
+        o.Set("RunPattern", JSON::NewStr(this.runPattern));
+        o.Set("Parallel", JSON::NewInt(this.parallel));
+        o.Set("Refs", listJSON(this.refs));
+        o.Set("As", JSON::NewStr(this.asName));
+        o.Set("NoProject", JSON::NewBool(this.noProject));
+        o.Set("WriteProject", JSON::NewBool(this.writeProject));
+        return o;
+    }
+
+    private static fun JSON*(Arr[str]*) listJSON = (l) {
+        if(l == null) {
+            return JSON::Null();
+        }
+        var JSON* a = JSON::NewArray();
+        for(var uint i = 0U; i < l.Len(); i++) {
+            a.Append(JSON::NewStr(l.Get(i)));
+        }
+        return a;
+    }
+
+    // blank answers a Command that asks for verb and nothing else
+    private static fun Command*(Verb) blank = (verb) {
+        var Command* c = new(Command);
+        c.verb = verb;
+        c.inputPath = "";
+        c.outputPath = "";
+        c.optimization = Optimization::Default;
+        c.runArgs = empty();
+        c.testTargets = c.runArgs;
+        c.runPattern = "";
+        c.refs = c.runArgs;
+        c.asName = "";
+        return c;
+    }
+
+    private static fun Arr[str]*() empty = () {
+        return Arr::[str]New(0U, new(str, 1U)...);
+    }
+
+    private static fun str() verbUsages = () {
+        var ArrList[Verb]* all = Verb::All();
+        var str s = "";
+        for(var uint i = 0U; i < all.Len(); i++) {
+            var Verb v = all.Get(i);
+            s = Strs::Sprintf("%s  %s %s%s\n", s, v.name, Strs::Repeat(" ", 7U - Strs::ByteLen(v.name)), v.usage);
+        }
+        return s;
+    }
+
+    private static fun Arr[str]*(Arr[str]*, uint, uint) sub = (a, from, to) {
+        var str* items = new(str, to - from + 1U);
+        for(var uint i = from; i < to; i++) {
+            items[i - from] = a.Get(i);
+        }
+        return Arr::[str]New(to - from, items...);
+    }
+
+    // parse reads args into a FlagSet
+    private static fun Err*(FlagSet*, str, Arr[str]*) parse = (fs, name, args) {
+        var (bool, Err*) r = fs.Parse(args);
+        if(r.1 != null) {
+            return UsageErr::New(name, fs.Usages(), r.1);
+        } else if(r.0) {
+            return UsageErr::New(name, fs.Usages(), null);
+        }
+        return null;
+    }
+
+    // newGet reads the command for get
+    private static fun (Command*, Err*)(str, Arr[str]*) newGet = (name, args) {
+        var FlagSet* fs = FlagSet::New(name);
+        var Flag* asFlag = fs.Text("as", "", "", "package name to add the dependency under, the last element of its repository by default");
+        var Err* err = parse(fs, name, args);
+        if(err != null) {
+            return (null, err);
+        }
+
+        var Arr[str]* refs = fs.Args();
+        if(asFlag.strValue != "" && refs.Len() != 1U) {
+            return (null, Errs::TooManyDependencies(refs.Len(){str}));
+        }
+
+        var Command* c = blank(Verb::Get);
+        c.refs = refs;
+        c.asName = asFlag.strValue;
+        c.writeProject = true;
+        return (c, null);
+    }
+
+    // newBare reads the command for a verb that takes no flags or arguments
+    private static fun (Command*, Err*)(Verb, str, Arr[str]*) newBare = (verb, name, args) {
+        var FlagSet* fs = FlagSet::New(name);
+        var Err* err = parse(fs, name, args);
+        if(err != null) {
+            return (null, err);
+        }
+
+        if(fs.Args().Len() > 0U) {
+            return (null, Errs::TooManyArguments(name, fs.Args(){str}));
+        }
+
+        return (blank(verb), null);
+    }
+
+    // newCompile reads the command for build, run or test.
+    private static fun (Command*, Err*)(Verb, str, Arr[str]*, FileProvider*) newCompile = (verb, name, args, files) {
+        var FlagSet* fs = FlagSet::New(name);
+
+        var Flag* output = null;
+        if(verb == Verb::Build) {
+            output = fs.Text("output", "o", "out", "output file");
+        }
+        var Flag* verbose = fs.Bool("verbose", "v", false, "verbose");
+        var Flag* threads = fs.Int("threads", "t", Default::threads, "max threads");
+        var Flag* gcRatio = fs.Float("gc-ratio", "g", Default::gcRatio, "0.75", "fraction of the heap that must be in use to trigger a collection");
+        var Flag* stackSize = fs.Size("stack-size", "s", Default::stackSize, "initial stack size");
+        var Flag* heapSize = fs.Size("heap-size", "m", Default::heapSize, "initial heap size");
+        var Flag* nurserySize = fs.Size("nursery-size", "N", Default::nursery, "bytes allocated since the last collection that trigger a minor collection");
+        var Flag* maxHeapSize = fs.Size("max-heap-size", "M", Default::maxHeap, "most memory the heap may ever hold");
+        var Flag* gcMarkers = fs.Int("gc-markers", "", Default::gcMarkers, "threads that mark during a major collection, 0 for half the processors up to 8");
+        var Flag* gcConcurrent = fs.Bool("gc-concurrent", "", Default::gcConcurrent, "mark major collections the heap's growth asks for alongside the program");
+        var Flag* gcRemarkGrowth = fs.Float("gc-remark-growth", "", Default::gcRemarkGrowth, "1", "fraction of its size the heap may grow by while marking alongside the program before the remark is forced");
+        var Flag* gcPrecleanPasses = fs.Int("gc-preclean-passes", "", Default::gcPrecleanPasses, "passes over the cards dirtied while marking alongside the program, before the remark");
+        var Flag* gcReturnAge = fs.Int("gc-return-age", "", Default::gcReturnAge, "collections a run of free pages waits before it is given back to the system");
+        var Flag* optimize = fs.Text("optimize", "O", "2", "how far to optimize the program: 0, 1, 2, 3, or s for size");
+        var Flag* targetFlag = null;
+        if(verb == Verb::Build) {
+            targetFlag = fs.Text("target", "", "", "the platform to compile for, the host when unset: one of " + Target::Names());
+        }
+        var Flag* noProject = fs.Bool("no-project", "n", false, "ignore project files and compile local files as one project depending only on std");
+        var Flag* runPattern = null;
+        var Flag* parallel = null;
+        if(verb == Verb::Test) {
+            runPattern = fs.Text("run", "", "", "run only the tests whose names this regular expression matches");
+            parallel = fs.Int("parallel", "", System::ProcessorCount(){int}, "test files run at once");
+        }
+
+        var Err* err = parse(fs, name, args);
+        if(err != null) {
+            return (null, err);
+        }
+
+        var Command* c = blank(verb);
+        var Arr[str]* rest = fs.Args();
+        if(verb == Verb::Test) {
+            var Arr[str]* testTargets = rest;
+            var int dash = fs.ArgsLenAtDash();
+            if(dash >= 0) {
+                testTargets = sub(rest, 0U, dash{uint});
+                c.runArgs = sub(rest, dash{uint}, rest.Len());
+            } else {
+                var int at = indexOf(rest, "--");
+                if(at >= 0) {
+                    testTargets = sub(rest, 0U, at{uint});
+                    c.runArgs = sub(rest, at{uint} + 1U, rest.Len());
+                }
+            }
+            if(testTargets.Len() == 0U) {
+                var str* dot = new(str, 1U);
+                dot[0U] = ".";
+                testTargets = Arr::[str]New(1U, dot...);
+            }
+            c.testTargets = testTargets;
+            var (Regex*, Err*) pattern = Regex::Compile(runPattern.strValue);
+            if(pattern.1 != null) {
+                return (null, Errs::InvalidRunPattern(pattern.1));
+            }
+            if(parallel.intValue < 1) {
+                return (null, Errs::InvalidParallel(parallel.intValue));
+            }
+        } else {
+            if(rest.Len() == 0U) {
+                return (null, Errs::MissingInputFileArgument());
+            } else if(rest.Len() > 1U && verb == Verb::Build) {
+                return (null, Errs::TooManyArguments(name, rest{str}));
+            }
+
+            var (str, Err*) input = Paths::Parse(rest.Get(0U));
+            if(input.1 != null) {
+                return (null, input.1);
+            }
+            c.inputPath = input.0;
+
+            if(verb == Verb::Run) {
+                c.runArgs = sub(rest, 1U, rest.Len());
+            } else {
+                var (bool, Err*) exists = files.FileExists(output.strValue);
+                if(exists.1 != null) {
+                    return (null, exists.1);
+                }
+            }
+        }
+
+        if(targetFlag != null && targetFlag.strValue != "") {
+            var (Target, Err*) t = Target::Parse(targetFlag.strValue);
+            if(t.1 != null) {
+                return (null, t.1);
+            }
+            c.target = t.0;
+            c.hasTarget = true;
+        }
+
+        var int maxThreads = threads.intValue;
+        if(maxThreads < 1) {
+            maxThreads = Default::threads;
+        }
+
+        var (Optimization, Err*) optimization = Optimization::Parse(optimize.strValue);
+        if(optimization.1 != null) {
+            return (null, optimization.1);
+        }
+
+        if(gcRatio.fltValue <= 0.0 || gcRatio.fltValue > 1.0) {
+            return (null, Errs::InvalidGCTriggerRatio(gcRatio.fltValue));
+        }
+        if(gcMarkers.intValue < 0 || gcMarkers.intValue > Default::maxGCMarkers) {
+            return (null, Errs::InvalidGCMarkers(Default::maxGCMarkers, gcMarkers.intValue));
+        }
+        if(gcRemarkGrowth.fltValue <= 0.0) {
+            return (null, Errs::InvalidGCRemarkGrowth(gcRemarkGrowth.fltValue));
+        }
+        if(gcPrecleanPasses.intValue < 0 || gcPrecleanPasses.intValue > Default::maxGCPrecleanPasses) {
+            return (null, Errs::InvalidGCPrecleanPasses(Default::maxGCPrecleanPasses, gcPrecleanPasses.intValue));
+        }
+        if(gcReturnAge.intValue < 1) {
+            return (null, Errs::InvalidGCReturnAge(gcReturnAge.intValue));
+        }
+        if(heapSize.intValue > maxHeapSize.intValue || nurserySize.intValue > maxHeapSize.intValue) {
+            return (null, Errs::InvalidHeapAndNurserySize(maxHeapSize.intValue, heapSize.intValue, nurserySize.intValue));
+        }
+
+        if(verb != Verb::Test) {
+            var (bool, Err*) exists = files.FileExists(c.inputPath);
+            if(exists.1 != null) {
+                return (null, exists.1);
+            } else if(!exists.0) {
+                return (null, Errs::InputFileNotFound(c.inputPath));
+            }
+        }
+
+        if(output != null) {
+            c.outputPath = output.strValue;
+        }
+        c.verbose = verbose.boolValue;
+        c.maxThreads = maxThreads;
+        c.gcTriggerRatio = gcRatio.fltValue;
+        c.initialStackSize = stackSize.intValue;
+        c.initialHeapSize = heapSize.intValue;
+        c.nurserySize = nurserySize.intValue;
+        c.maxHeapSize = maxHeapSize.intValue;
+        c.gcMarkers = gcMarkers.intValue;
+        c.gcConcurrent = gcConcurrent.boolValue;
+        c.gcRemarkGrowth = gcRemarkGrowth.fltValue;
+        c.gcPrecleanPasses = gcPrecleanPasses.intValue;
+        c.gcReturnAge = gcReturnAge.intValue;
+        c.optimization = optimization.0;
+        if(runPattern != null) {
+            c.runPattern = runPattern.strValue;
+        }
+        if(parallel != null) {
+            c.parallel = parallel.intValue;
+        }
+        c.noProject = noProject.boolValue;
+        c.writeProject = true;
+        return (c, null);
+    }
+
+    // indexOf answers where s first is among items, or -1 when it is not.
+    private static fun int(Arr[str]*, str) indexOf = (items, s) {
+        for(var uint i = 0U; i < items.Len(); i++) {
+            if(items.Get(i) == s) {
+                return i{int};
+            }
+        }
+        return -1;
+    }
+}

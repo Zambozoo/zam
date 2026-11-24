@@ -1,0 +1,78 @@
+import std("codec/format/JSON.zam");
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+
+// Target is a platform native programs are compiled for
+public enum Target {
+    AArch64LinuxMusl.Init("aarch64-linux-musl", "linux", "aarch64", "aarch64-unknown-linux-musl", "aarch64-linux-musl"),
+    X86_64LinuxMusl.Init("x86_64-linux-musl", "linux", "x86_64", "x86_64-unknown-linux-musl", "x86_64-linux-musl"),
+    AArch64MacOS.Init("aarch64-macos", "macos", "aarch64", "arm64-apple-macosx13.0", "aarch64-macos.13.0"),
+    X86_64MacOS.Init("x86_64-macos", "macos", "x86_64", "x86_64-apple-macosx13.0", "x86_64-macos.13.0"),
+    AArch64WindowsGNU.Init("aarch64-windows-gnu", "windows", "aarch64", "aarch64-pc-windows-gnu", "aarch64-windows-gnu"),
+    X86_64WindowsGNU.Init("x86_64-windows-gnu", "windows", "x86_64", "x86_64-pc-windows-gnu", "x86_64-windows-gnu");
+
+    namespace Errs {
+        public fun Err*(str) UnknownTarget = (name) {
+            return StrErr::New("unknown target \"" + name + "\", expected one of " + Names());
+        }
+    }
+    // name is the target's name, as its pack is named.
+    public var str name;
+    public var str os;
+    // arch is the architecture as Zig and the packs name it.
+    public var str arch;
+    // triple is the LLVM target triple objects are compiled for.
+    public var str triple;
+    // zig is the -target Zig compiles C for the target with.
+    public var str zig;
+
+    // All lists every target.
+    public static fun ArrList[Target]*() All = () {
+        var ArrList[Target]* all = ArrList::[Target]New(6U, AArch64LinuxMusl, X86_64LinuxMusl, AArch64MacOS, X86_64MacOS, AArch64WindowsGNU, X86_64WindowsGNU);
+        return all;
+    }
+
+    // Names answers the name of every target, separated by commas.
+    public static fun str() Names = () {
+        var ArrList[Target]* all = All();
+        var str out = "";
+        var str sep = "";
+        for(var uint i = 0U; i < all.Len(); i++) {
+            out = out + sep + all.Get(i).name;
+            sep = ", ";
+        }
+        return out;
+    }
+
+    // Parse answers the target called name.
+    public static fun (Target, Err*)(str) Parse = (name) {
+        var ArrList[Target]* all = All();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            if(all.Get(i).name == name) {
+                return (all.Get(i), null);
+            }
+        }
+        return (AArch64LinuxMusl, Errs::UnknownTarget(name));
+    }
+
+    // JSON answers the target as a JSON object, its members named as the
+    // fields are in the Go target.
+    public fun JSON*() JSON = () {
+        var JSON* o = JSON::NewObject();
+        o.Set("Name", JSON::NewStr(this.name));
+        o.Set("OS", JSON::NewStr(this.os));
+        o.Set("Arch", JSON::NewStr(this.arch));
+        o.Set("Triple", JSON::NewStr(this.triple));
+        o.Set("Zig", JSON::NewStr(this.zig));
+        return o;
+    }
+
+    fun void(str, str, str, str, str) Init = (name, os, arch, triple, zig) {
+        this.name = name;
+        this.os = os;
+        this.arch = arch;
+        this.triple = triple;
+        this.zig = zig;
+    }
+}

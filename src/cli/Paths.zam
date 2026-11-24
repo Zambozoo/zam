@@ -1,0 +1,62 @@
+import std("data/list/ArrList.zam");
+import std("io/local/FS.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+
+// Paths reads the paths a command line is written with
+public namespace Paths {
+    public static var str$ standardPrefix = "std://";
+    public static var char$ separator = '/';
+    public static var str$ dot = ".";
+    public static var str$ doubleDot = "..";
+    
+    public fun (str, Err*)(str) Parse = (p) {
+        if(Strs::HasPrefix(p, standardPrefix)) {
+            return (p, null);
+        }
+        if(Strs::HasPrefix(p, separator{str})) {
+            return (Paths::Clean(p), null);
+        }
+        var (str, Err*) cwd = FS::Cwd();
+        if(cwd.1 != null) {
+            return (null, cwd.1);
+        }
+        return (Paths::Clean(cwd.0 + separator + p), null);
+    }
+
+    // Clean answers the shortest path equivalent to p
+    public fun str(str) Clean = (p) {
+        var bool rooted = Strs::HasPrefix(p, separator{str});
+        var Arr[str]* parts = Strs::Split(p, separator{byte});
+        var ArrList[str]* kept = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < parts.Len(); i++) {
+            var str part = parts.Get(i);
+            if(part == "" || part == dot) {
+                continue;
+            }
+            if(part == doubleDot) {
+                if(kept.Len() > 0U && kept.GetLast() != doubleDot) {
+                    kept.RemoveLast();
+                } else if(!rooted) {
+                    kept.AddLast(part);
+                }
+                continue;
+            }
+            kept.AddLast(part);
+        }
+        var str out = "";
+        var str sep = "";
+        for(var uint i = 0U; i < kept.Len(); i++) {
+            out = out + sep + kept.Get(i);
+            sep = "/";
+        }
+        if(rooted) {
+            return separator + out;
+        }
+        if(out == "") {
+            return dot;
+        }
+        return out;
+    }
+}

@@ -1,0 +1,120 @@
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "ByteSize.zam";
+
+// Flag is a flag a command takes, with the value it was given
+public class Flag {
+    namespace Errs {
+        public fun Err*(str) InvalidBoolean = (v) {
+            return StrErr::New("invalid boolean " + Strs::Quote(v));
+        }
+    }
+    public static var str$ KeywordBool = "bool";
+    public static var str$ KeywordInt = "int";
+    public static var str$ KeywordFloat = "float";
+    public static var str$ KeywordSize = "size";
+    public static var str$ KeywordString = "string";
+    public static var str$ KeywordHelp = "help";
+
+    public var str name;
+    public var str shorthand;
+    public var str usage;
+    public var str kind;
+    public var str defaultText;
+    public var bool boolValue;
+    public var int intValue;
+    public var flt fltValue;
+    public var str strValue;
+
+    public static fun Flag*(str, str, str, str, str) New = (name, shorthand, kind, usage, defaultText) {
+        var Flag* f = new(Flag);
+        f.name = name;
+        f.shorthand = shorthand;
+        f.kind = kind;
+        f.usage = usage;
+        f.defaultText = defaultText;
+        f.strValue = "";
+        return f;
+    }
+
+    // Set reads v as the flag's value
+    public fun Err*(str) Set = (v) {
+        if(this.kind == Flag::KeywordBool) {
+            if(v == "1" || v == "t" || v == "T" || v == "TRUE" || v == true{str} || v == "True") {
+                this.boolValue = true;
+                return null;
+            }
+            if(v == "0" || v == "f" || v == "F" || v == "FALSE" || v == false{str} || v == "False") {
+                this.boolValue = false;
+                return null;
+            }
+            return Errs::InvalidBoolean(v);
+        } else if(this.kind == Flag::KeywordInt) {
+            var (int, Err*) i = Strs::ParseInt(v);
+            if(i.1 != null) {
+                return i.1;
+            }
+            this.intValue = i.0;
+        } else if(this.kind == Flag::KeywordFloat) {
+            var (flt, Err*) f = Strs::ParseFlt(v);
+            if(f.1 != null) {
+                return f.1;
+            }
+            this.fltValue = f.0;
+        } else if(this.kind == Flag::KeywordSize) {
+            var (int, Err*) b = ByteSize::Parse(v);
+            if(b.1 != null) {
+                return b.1;
+            }
+            this.intValue = b.0;
+        } else {
+            this.strValue = v;
+        }
+        return null;
+    }
+
+    // Display is how the flag is written in an error
+    public fun str() Display = () {
+        if(this.shorthand != "") {
+            return "-" + this.shorthand + ", --" + this.name;
+        }
+        return "--" + this.name;
+    }
+
+    // Left is the part of the flag's line in the usage that names it
+    public fun str() Left = () {
+        var str line = "      --" + this.name;
+        if(this.shorthand != "") {
+            line = "  -" + this.shorthand + ", --" + this.name;
+        }
+        if(this.kind != Flag::KeywordBool) {
+            line = line + " " + this.kind;
+        }
+        return line;
+    }
+
+    // Right is the part of the flag's line in the usage that says what it is for
+    public fun str() Right = () {
+        var str line = this.usage;
+        if(!this.zeroDefault()) {
+            if(this.kind == Flag::KeywordString) {
+                line = line + " (default " + Strs::Quote(this.defaultText) + ")";
+            } else {
+                line = line + " (default " + this.defaultText + ")";
+            }
+        }
+        return line;
+    }
+
+    private fun bool() zeroDefault = () {
+        if(this.kind == Flag::KeywordBool) {
+            return this.defaultText == false{str};
+        } else if(this.kind == Flag::KeywordInt) {
+            return this.defaultText == 0{str};
+        } else if(this.kind == Flag::KeywordFloat) {
+            return this.defaultText == 0{str};
+        }
+        return this.defaultText == "";
+    }
+}

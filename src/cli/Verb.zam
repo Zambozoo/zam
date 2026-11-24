@@ -1,0 +1,36 @@
+import std("data/list/ArrList.zam");
+
+// Verb is what the command line asks the compiler to do
+public enum Verb {
+    // Build compiles a program to a binary
+    Build.Init("build", "compile a program to a binary"),
+    // Run compiles a program to a temporary binary and runs it
+    Run.Init("run", "compile a program and run it, passing on the arguments after its file"),
+    // Test compiles and runs the tests in test files
+    Test.Init("test", "compile and run the tests in test files, passing on the arguments after --"),
+    // Get adds and fetches dependencies
+    Get.Init("get", "add dependencies to the project file and fetch every dependency"),
+    // Clean removes dependencies, target packs, and runtimes zam keeps in its cache
+    Clean.Init("clean", "remove every fetched dependency and cached target pack and runtime"),
+    // LSP serves the language server protocol
+    LSP.Init("lsp", "serve the language server protocol over stdin and stdout"),
+    // Debug serves the debug adapter protocol
+    Debug.Init("debug", "serve the debug adapter protocol over stdin and stdout"),
+    // Version prints the version of zam
+    Version.Init("version", "print the version of zam");
+
+    // name is what the command line calls the verb
+    public var str name;
+    // usage is what the command line says the verb does
+    public var str usage;
+
+    // All lists the verbs in the order usage lists them
+    public static fun ArrList[Verb]*() All = () {
+        return ArrList::[Verb]New(8U, Build, Run, Test, Get, Clean, LSP, Debug, Version);
+    }
+
+    fun void(str, str) Init = (name, usage) {
+        this.name = name;
+        this.usage = usage;
+    }
+}

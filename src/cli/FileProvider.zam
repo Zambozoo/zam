@@ -1,0 +1,7 @@
+import std("lang/Err.zam");
+
+// FileProvider answers what the command line asks of the files it names
+public interface FileProvider {
+    // FileExists reports whether path names a file
+    fun (bool, Err*)(str) FileExists;
+}

@@ -34,7 +34,7 @@ func TestStdFSHasExpectedFiles(t *testing.T) {
 // file is not a program and has no main method, which only code generation asks
 // of an entry.
 func TestStdFilesValidate(t *testing.T) {
-	for _, name := range []string{"lang/Err", "lang/StrErr", "lang/Strs", "lang/Objs", "lang/System", "io/local/File", "test/Test", "test/Assert"} {
+	for _, name := range []string{"lang/Err", "lang/StrErr", "lang/Strs", "lang/Objs", "lang/System", "io/local/File", "test/Test", "test/Assert", "codec/text/Regex"} {
 		t.Run(name, func(t *testing.T) {
 			cmd := &cli.Command{
 				InputPath:  base.StdPath(name + base.CodeFileExtension),

@@ -1,0 +1,256 @@
+import std("data/list/ArrList.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "ByteSize.zam";
+import "Flag.zam";
+
+// FlagSet is the flags one command takes, and reads them from the arguments it is given.
+public class FlagSet {
+    namespace Errs {
+        public fun Err*(str) BadFlagSyntax = (s) {
+            return StrErr::New("bad flag syntax: " + s);
+        }
+
+        public fun Err*(str) UnknownFlag = (name) {
+            return StrErr::New("unknown flag: --" + name);
+        }
+
+        public fun Err*(str, str) FlagNeedsArgument = (name, shorts) {
+            return StrErr::New("flag needs an argument: --" + name + " or -" + shorts);
+        }
+
+        public fun Err*(str, str) UnknownShorthandFlag = (c, shorts) {
+            return StrErr::New("unknown shorthand flag: '" + c + "' in -" + shorts);
+        }
+
+        public fun Err*(str, str, str) InvalidArgument = (value, display, err) {
+            return StrErr::New("invalid argument " + Strs::Quote(value) + " for " + Strs::Quote(display) + " flag: " + err);
+        }
+    }
+
+    var str name;
+    var ArrList[Flag*]* flags;
+    var ArrList[str]* args;
+    var int argsLenAtDash;
+
+    public static fun FlagSet*(str) New = (name) {
+        var FlagSet* fs = new(FlagSet);
+        fs.name = name;
+        fs.flags = ArrList::[Flag*]New(0U);
+        fs.args = ArrList::[str]New(0U);
+        fs.argsLenAtDash = -1;
+        return fs;
+    }
+
+    public fun Flag*(str, str, bool, str) Bool = (name, shorthand, value, usage) {
+        var Flag* f = this.define(Flag::New(name, shorthand, "bool", usage, value{str}));
+        f.boolValue = value;
+        return f;
+    }
+
+    public fun Flag*(str, str, int, str) Int = (name, shorthand, value, usage) {
+        var Flag* f = this.define(Flag::New(name, shorthand, "int", usage, value{str}));
+        f.intValue = value;
+        return f;
+    }
+
+    public fun Flag*(str, str, flt, str, str) Float = (name, shorthand, value, defaultText, usage) {
+        var Flag* f = this.define(Flag::New(name, shorthand, "float", usage, defaultText));
+        f.fltValue = value;
+        return f;
+    }
+
+    public fun Flag*(str, str, str, str) Text = (name, shorthand, value, usage) {
+        var Flag* f = this.define(Flag::New(name, shorthand, "string", usage, value));
+        f.strValue = value;
+        return f;
+    }
+
+    public fun Flag*(str, str, int, str) Size = (name, shorthand, value, usage) {
+        var Flag* f = this.define(Flag::New(name, shorthand, "size", usage, ByteSize::Format(value)));
+        f.intValue = value;
+        return f;
+    }
+
+    private fun Flag*(Flag*) define = (f) {
+        this.flags.AddLast(f);
+        return f;
+    }
+
+    public fun Arr[str]*() Args = () {
+        return this.args.Arr();
+    }
+
+    // ArgsLenAtDash is how many of the Args come before the -- or -1 when it read none.
+    public fun int() ArgsLenAtDash = () {
+        return this.argsLenAtDash;
+    }
+
+    // Usages lists the flags, one to a line in the order they were defined
+    public fun str() Usages = () {
+        var uint widest = 0U;
+        for(var uint i = 0U; i < this.flags.Len(); i++) {
+            var uint w = Strs::ByteLen(this.flags.Get(i).Left());
+            if(w > widest) {
+                widest = w;
+            }
+        }
+        var str out = "";
+        for(var uint i = 0U; i < this.flags.Len(); i++) {
+            var Flag* f = this.flags.Get(i);
+            var str left = f.Left();
+            var str pad = Strs::Repeat(" ", widest + 1U - Strs::ByteLen(left));
+            out = out + left + " " + pad + " " + f.Right() + "\n";
+        }
+        return out;
+    }
+
+    // Parse reads the flags from args
+    public fun (bool, Err*)(Arr[str]*) Parse = (args) {
+        this.args.Clear();
+        this.argsLenAtDash = -1;
+        var uint i = 0U;
+        for(; i < args.Len();) {
+            var str s = args.Get(i);
+            var uint length = Strs::ByteLen(s);
+            if(length < 2U || !Strs::HasPrefix(s, "-")) {
+                this.keep(args, i);
+                return (false, null);
+            }
+            i++;
+            var (uint, bool, Err*)(str, Arr[str]*, uint) f = this.parseShort;
+            if(Strs::HasPrefix(s, "--")) {
+                if(length == 2U) {
+                    this.argsLenAtDash = this.args.Len(){int};
+                    this.keep(args, i);
+                    return (false, null);
+                }
+                f = this.parseLong;
+            }
+
+            var (uint, bool, Err*) r = f(s, args, i);
+            i = r.0;
+            if(r.1 || r.2 != null) {
+                return (r.1, r.2);
+            }
+        }
+        return (false, null);
+    }
+
+    // keep adds the arguments from i on to the ones left.
+    private fun void(Arr[str]*, uint) keep = (args, i) {
+        for(; i < args.Len(); i++) {
+            this.args.AddLast(args.Get(i));
+        }
+    }
+
+    // parseLong reads the --s at args[i - 1], answering where the next
+    // argument is, whether help was asked for, and what is wrong with it.
+    private fun (uint, bool, Err*)(str, Arr[str]*, uint) parseLong = (s, args, i) {
+        var str body = Strs::Slice(s, 2U, Strs::ByteLen(s));
+        if(Strs::HasPrefix(body, "-") || Strs::HasPrefix(body, "=") || Strs::HasPrefix(body, "#")) {
+            return (i, false, Errs::BadFlagSyntax(s));
+        }
+        var str name = body;
+        var str value = "";
+        var bool hasValue = false;
+        var (uint, bool) eq = Strs::Index(body, "=");
+        if(eq.1) {
+            name = Strs::Slice(body, 0U, eq.0);
+            value = Strs::Slice(body, eq.0 + 1U, Strs::ByteLen(body));
+            hasValue = true;
+        }
+        var Flag* f = this.lookup(name);
+        if(f == null) {
+            if(name == Flag::KeywordHelp) {
+                return (i, true, null);
+            } else {
+                return (i, false, Errs::UnknownFlag(name));
+            }
+        }
+        if(!hasValue) {
+            if(f.kind == Flag::KeywordBool) {
+                value = true{str};
+            } else if(i < args.Len()) {
+                value = args.Get(i);
+                i = i + 1U;
+            } else {
+                return (i, false, Errs::FlagNeedsArgument(name, ""));
+            }
+        }
+        var Err* err = this.set(f, value);
+        if(err != null) {
+            return (i, false, err);
+        }
+        return (i, false, null);
+    }
+
+    // parseShort reads the -s at args[i - 1], which is one or more
+    // shorthands, the last of which may take a value, with the same answers
+    // as parseLong.
+    private fun (uint, bool, Err*)(str, Arr[str]*, uint) parseShort = (s, args, i) {
+        var str shorts = Strs::Slice(s, 1U, Strs::ByteLen(s));
+        for(; Strs::ByteLen(shorts) > 0U;) {
+            var uint length = Strs::ByteLen(shorts);
+            var str c = Strs::Slice(shorts, 0U, 1U);
+            var Flag* f = this.lookupShort(c);
+            if(f == null) {
+                if(c == "h") {
+                    return (i, true, null);
+                } else {
+                    return (i, false, Errs::UnknownShorthandFlag(c, shorts));
+                }
+            }
+            var str value = "";
+            if(length > 2U && Strs::Slice(shorts, 1U, 2U) == "=") {
+                value = Strs::Slice(shorts, 2U, length);
+                shorts = "";
+            } else if(f.kind == Flag::KeywordBool) {
+                value = true{str};
+                shorts = Strs::Slice(shorts, 1U, length);
+            } else if(length > 1U) {
+                value = Strs::Slice(shorts, 1U, length);
+                shorts = "";
+            } else if(i < args.Len()) {
+                value = args.Get(i);
+                i = i + 1U;
+                shorts = "";
+            } else {
+                return (i, false, Errs::FlagNeedsArgument(c, shorts));
+            }
+            var Err* err = this.set(f, value);
+            if(err != null) {
+                return (i, false, err);
+            }
+        }
+        return (i, false, null);
+    }
+
+    private fun Err*(Flag*, str) set = (f, value) {
+        var Err* err = f.Set(value);
+        if(err == null) {
+            return null;
+        }
+        return Errs::InvalidArgument(value, f.Display(), err.Err());
+    }
+
+    private fun Flag*(str) lookup = (name) {
+        for(var uint i = 0U; i < this.flags.Len(); i++) {
+            if(this.flags.Get(i).name == name) {
+                return this.flags.Get(i);
+            }
+        }
+        return null;
+    }
+
+    private fun Flag*(str) lookupShort = (shorthand) {
+        for(var uint i = 0U; i < this.flags.Len(); i++) {
+            if(this.flags.Get(i).shorthand == shorthand) {
+                return this.flags.Get(i);
+            }
+        }
+        return null;
+    }
+}

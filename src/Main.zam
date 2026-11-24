@@ -1,0 +1,44 @@
+import std("io/local/File.zam");
+import std("lang/Arr.zam");
+import std("lang/Arrs.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+import "cli/Command.zam";
+import "cli/LocalFiles.zam";
+
+namespace Main {
+    private var str$ name = "zam";
+
+    private enum Step : str {
+        Command("command");
+    }
+
+    fun Arr[str]*(uint, str...) asArgs = (argC, argV) {
+        var uint len = argC + 1U;
+        var str* args = new(str, len);
+        var Arr[str]* arr = Arr::[str]New(len, args...);
+        args[0U] = name;
+        Arrs::[str]Copy(argC, argV, args + 1U);
+        return arr;
+    }
+
+    fun void(Step, Err*) onError = (step, err) {
+        if(err == null) {
+            return;
+        }
+
+        var str$ msg = Strs::Sprintf("[%s] %s\n", step, err.Err());
+        File::StdErr.WriteStr(msg);
+        System::Exit(1);
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Arr[str]* args = asArgs(argC, argV...);
+
+        var (Command*, Err*) r = Command::New(args, LocalFiles::New());
+        onError(Step::Command, r.1);
+
+        File::StdOut.WriteStr(r.0.Str() + "\n");
+    }
+}

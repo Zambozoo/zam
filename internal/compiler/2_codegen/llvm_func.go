@@ -2588,6 +2588,9 @@ func (e *funcEmitter) place(expr syntax.Expr) (llvmPlace, error) {
 			e.p.staticValue(method)
 			return llvmPlace{address: e.staticAddress(*method.Index()), typ: method.FieldType(), width: 8}, nil
 		}
+		if value, ok := f.(*syntax.FieldEnum); ok {
+			return llvmPlace{address: e.staticAddress(*value.Index()), typ: value.Type(), width: 8}, nil
+		}
 		member, ok := f.(*syntax.FieldMember)
 		if !ok {
 			return llvmPlace{}, unsupported("static %q of kind %T", name, f)

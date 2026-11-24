@@ -1,0 +1,47 @@
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "ByteSize.zam";
+
+public namespace ByteSizeTest {
+    private fun void(str, int) parses = (s, want) {
+        var (int, Err*) r = ByteSize::Parse(s);
+        Assert::True(r.1 == null, "parsing " + s + " failed");
+        Assert::[int]Equal(want, r.0);
+    }
+
+    private fun void(str, str) rejects = (s, want) {
+        var (int, Err*) r = ByteSize::Parse(s);
+        if(Assert::True(r.1 != null, "parsing " + s + " succeeded")) {
+            Assert::True(Strs::Contains(r.1.Err(), want), r.1.Err() + " does not contain " + want);
+        }
+    }
+
+    public fun void(uint, str...) Parse = (argC, argV) {
+        ByteSizeTest::parses("512", 512);
+        ByteSizeTest::parses("512B", 512);
+        ByteSizeTest::parses("1KB", 1024);
+        ByteSizeTest::parses("1kb", 1024);
+        ByteSizeTest::parses(" 2 MB ", 2097152);
+        ByteSizeTest::parses("1GB", 1073741824);
+        ByteSizeTest::parses("8191GB", 8191 * 1073741824);
+    }
+
+    public fun void(uint, str...) ParseRejects = (argC, argV) {
+        ByteSizeTest::rejects("16TB", "invalid size \"16TB\"");
+        ByteSizeTest::rejects("", "invalid size \"\"");
+        ByteSizeTest::rejects("KB", "invalid size \"KB\"");
+        ByteSizeTest::rejects("0KB", "size must be positive: \"0KB\"");
+        ByteSizeTest::rejects("-1", "size must be positive: \"-1\"");
+        ByteSizeTest::rejects("9223372036854775807GB", "size out of range");
+    }
+
+    public fun void(uint, str...) Format = (argC, argV) {
+        Assert::[str]Equal("512B", ByteSize::Format(512));
+        Assert::[str]Equal("1KB", ByteSize::Format(1024));
+        Assert::[str]Equal("1025B", ByteSize::Format(1025));
+        Assert::[str]Equal("512KB", ByteSize::Format(524288));
+        Assert::[str]Equal("16MB", ByteSize::Format(16777216));
+        Assert::[str]Equal("64GB", ByteSize::Format(68719476736));
+    }
+}
