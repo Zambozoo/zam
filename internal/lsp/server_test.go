@@ -41,7 +41,7 @@ func (c *client) call(method string, params any) any {
 			}
 		},
 	}
-	r, validMethod, validParams, err := c.server.handler.Handle(ctx)
+	r, validMethod, validParams, err := c.server.Handle(ctx)
 	require.True(c.t, validMethod, method)
 	require.True(c.t, validParams, method)
 	require.NoError(c.t, err, method)

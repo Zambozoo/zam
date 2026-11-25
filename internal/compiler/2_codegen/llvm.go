@@ -57,6 +57,9 @@ type Object struct {
 	// Unsupported says, for each function compiled as a trap, what native
 	// compilation could not compile in it. Calling one ends the program.
 	Unsupported []string
+	// Coverage is each statement a program compiled for coverage records
+	// running, in the order of the bytes it writes.
+	Coverage []CoveredStatement
 }
 
 // initializeTargets registers every target LLVM is linked with, once.
@@ -77,6 +80,9 @@ type ObjectOptions struct {
 	// Debug compiles without optimizing, whatever Optimization says, so that a
 	// debugger stepping the program sees each line's effects by the next.
 	Debug bool
+	// Coverage compiles the program to record which of its own statements
+	// run, written at exit to the file $ZAM_COVERAGE names.
+	Coverage bool
 }
 
 // GenerateObject compiles the program into an object file as opts says.
@@ -148,7 +154,7 @@ func GenerateObject(cmd *cli.Command, ast *syntax.AST, opts ObjectOptions) (obje
 	defer data.Dispose()
 	mod.SetDataLayout(data.String())
 
-	unsupported, err := emitModule(ctx, mod, ast, result)
+	unsupported, statements, err := emitModule(ctx, mod, ast, result, opts.Coverage)
 	if err != nil {
 		return nil, err
 	}
@@ -184,7 +190,7 @@ func GenerateObject(cmd *cli.Command, ast *syntax.AST, opts ObjectOptions) (obje
 		return nil, err
 	}
 	defer buf.Dispose()
-	return &Object{Bytes: append([]byte(nil), buf.Bytes()...), Triple: triple, Unsupported: unsupported}, nil
+	return &Object{Bytes: append([]byte(nil), buf.Bytes()...), Triple: triple, Unsupported: unsupported, Coverage: statements}, nil
 }
 
 // MainFunctionName is what the program's main is compiled as, and named by in
@@ -274,7 +280,7 @@ func emitStdNativeTables(ctx llvm.Context, mod llvm.Module, names []string) erro
 // emitModule lays the program out in mod: its image as constant data, the
 // project's natives table, its compiled main, and the C entry point
 // that starts the runtime on them.
-func emitModule(ctx llvm.Context, mod llvm.Module, ast *syntax.AST, result *Result) ([]string, error) {
+func emitModule(ctx llvm.Context, mod llvm.Module, ast *syntax.AST, result *Result, coverage bool) ([]string, []CoveredStatement, error) {
 	image := result.Image
 	ptr := llvm.PointerType(ctx.Int8Type(), 0)
 	i32, i64 := ctx.Int32Type(), ctx.Int64Type()
@@ -287,7 +293,7 @@ func emitModule(ctx llvm.Context, mod llvm.Module, ast *syntax.AST, result *Resu
 
 	emitProjectNatives(ctx, mod, result.NativeNames)
 	if err := emitStdNativeTables(ctx, mod, result.NativeNames); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	builder := ctx.NewBuilder()
@@ -295,9 +301,14 @@ func emitModule(ctx llvm.Context, mod llvm.Module, ast *syntax.AST, result *Resu
 
 	main, ok := ast.MainCodeDecl.GetStaticMethod(base.MainMethodName)
 	if !ok {
-		return nil, fmt.Errorf("no %s method", base.MainMethodName)
+		return nil, nil, fmt.Errorf("no %s method", base.MainMethodName)
 	}
 	program := newLLVMProgram(ctx, mod, result)
+	counters, counterCount := llvm.ConstNull(ptr), 0
+	if coverage {
+		program.coverage = newLLVMCoverage(ctx, mod, ast)
+		counters, counterCount = program.coverage.counters, len(program.coverage.statements)
+	}
 	program.debug = newLLVMDebug(ctx, mod, string(ast.MainCodeDecl.File().Path))
 	program.debug.shortOf = func(t syntax.Type) (short uint64, ok bool) {
 		// A type the image cannot name, or one a short id names only part of,
@@ -315,19 +326,19 @@ func emitModule(ctx llvm.Context, mod llvm.Module, ast *syntax.AST, result *Resu
 	}
 	initializers, err := program.emitStaticInitializers(ast)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	program.functionFor(main)
 	if err := program.emitReachable(ast); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	staticInit, err := program.emitStaticInitializer(ast, initializers)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	classes, classCount, err := program.emitClassTable(ast)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// A main compiled as a trap is a different function from the one declared.
 	zamMainBody := program.functions[main]
@@ -335,7 +346,7 @@ func emitModule(ctx llvm.Context, mod llvm.Module, ast *syntax.AST, result *Resu
 	functions, functionCount := program.emitFunctionNames()
 	program.debug.finish()
 
-	startType := llvm.FunctionType(ctx.VoidType(), []llvm.Type{i32, ptr, ptr, i64, ptr, ptr, i64, ptr, i64}, false)
+	startType := llvm.FunctionType(ctx.VoidType(), []llvm.Type{i32, ptr, ptr, i64, ptr, ptr, i64, ptr, i64, ptr, i64}, false)
 	start := llvm.AddFunction(mod, "zamrt_start", startType)
 	start.AddFunctionAttr(ctx.CreateEnumAttribute(llvm.AttributeKindID("noreturn"), 0))
 
@@ -345,9 +356,14 @@ func emitModule(ctx llvm.Context, mod llvm.Module, ast *syntax.AST, result *Resu
 		cMain.Param(0), cMain.Param(1), imageData, llvm.ConstInt(i64, uint64(len(image)), false), zamMain,
 		classes, llvm.ConstInt(i64, uint64(classCount), false),
 		functions, llvm.ConstInt(i64, uint64(functionCount), false),
+		counters, llvm.ConstInt(i64, uint64(counterCount), false),
 	}, "")
 	builder.CreateUnreachable()
-	return program.stubs, nil
+	var statements []CoveredStatement
+	if program.coverage != nil {
+		statements = program.coverage.statements
+	}
+	return program.stubs, statements, nil
 }
 
 // emitFunctionNames lays out what traces name every compiled function by, in

@@ -3,8 +3,10 @@ package test
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -145,6 +147,62 @@ public namespace ListTest {
 	out, passed = run(t, "--run", "Nothing", dir)
 	assert.True(t, passed)
 	assert.Equal(t, "no tests to run\n", out)
+}
+
+// The coverage of every test file's process is merged, each line covered
+// when a statement starting on it ran, and the standard library's and the
+// tests' own statements are left out.
+func TestRunCoverage(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"lib/Lib.zam": `namespace Lib {
+    fun int(int) Sign = (x) {
+        if(x < 0) {
+            return -1;
+        }
+        return 1;
+    }
+
+    fun int() Unused = () {
+        return 0;
+    }
+}
+`,
+		"lib/Positive.test.zam": `import std("test/Assert.zam");
+import "Lib.zam";
+
+public namespace PositiveTest {
+    public fun void(uint, str...) Positive = (argC, argV) {
+        Assert::[int]Equal(1, Lib::Sign(5));
+    }
+}
+`,
+		"lib/Negative.test.zam": `import std("test/Assert.zam");
+import "Lib.zam";
+
+public namespace NegativeTest {
+    public fun void(uint, str...) Negative = (argC, argV) {
+        Assert::[int]Equal(-1, Lib::Sign(-5));
+    }
+}
+`,
+	})
+	profile := filepath.Join(t.TempDir(), "lcov.info")
+
+	out, passed := run(t, "--coverprofile", profile, dir+"/...")
+	assert.True(t, passed, out)
+	assert.True(t, strings.HasSuffix(out, "coverage: 75.0% of statements\n"), out)
+	lcov, err := os.ReadFile(profile)
+	require.NoError(t, err)
+	assert.Regexp(t, `^SF:\S*[/\\]lib[/\\]Lib\.zam
+DA:3,1
+DA:4,1
+DA:6,1
+DA:10,0
+LF:4
+LH:3
+end_of_record
+$`, string(lcov))
 }
 
 // regexpQuote quotes the trailing elements of path, which is how far a

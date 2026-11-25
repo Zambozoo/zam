@@ -25,6 +25,7 @@ Flags come before the input file, or the paths `test` is given. Sizes take an op
 | `--target` | the host | platform to compile for; `build` only. See [Native code](#native-code) |
 | `--run` | | regular expression picking the tests to run by name; `test` only |
 | `--parallel` | the number of processors | test files run at once; `test` only |
+| `--coverprofile` | | file to write the statements the tests run to, as LCOV; `test` only |
 | `-n`, `--no-project` | `false` | ignore project files and compile local files as one project depending only on std |
 | `-v`, `--verbose` | `false` | verbose output |
 | `-t`, `--threads` | `1` | threads the compiler uses |

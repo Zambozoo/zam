@@ -42,6 +42,17 @@ FAIL list/ArrList.test.zam 12ms
 ```
 `zam test` exits with status 1 if any test failed.
 
+## Coverage
+```bash
+zam test --coverprofile lcov.info ./...
+```
+`--coverprofile` records which statements the tests run and writes them to the file as [LCOV](https://github.com/linux-test-project/lcov), a line covered when a statement starting on it ran, then says how much of the statements ran:
+```
+coverage: 87.5% of statements
+```
+Only the project's own files are covered, not the standard library or the test files.
+A test file's process ended by a fault, rather than an exit or a panic, records nothing.
+
 ## Failing
 `std/test/Assert.zam` checks a condition, and fails the test running if it does not hold:
 * `True(bool, str)` and `False(bool, str)`.
@@ -60,4 +71,4 @@ A panic or fault also writes a [stack trace](../4_memory_and_runtime/2_stack_tra
 ## Debugging Tests
 A launch of a test file under [the debugger](../4_memory_and_runtime/3_debugging.md) runs its tests as `zam test` would, `test` picking them by name as `--run` does.
 A failed check stops it there, with the test's frame among those it stopped in, and the test goes on once continued.
-In an editor using the language server, links above each test, and above the test file's namespace, run or debug that test or every test in the file.
+In VS Code, the Zam extension lists every test file and its tests in the Testing view, and runs, debugs or covers each test or every test of a file, showing what ran in the editor.

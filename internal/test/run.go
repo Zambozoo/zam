@@ -67,14 +67,25 @@ func Run(cmd *cli.Command, files *base.FileProvider, packages packageProvider, o
 		return false, err
 	}
 	opts.OutputPath = binary
-	object, err := codegen.GenerateObject(runner.cmd, runner.ast, codegen.ObjectOptions{Optimization: runner.cmd.Optimization})
+	object, err := codegen.GenerateObject(runner.cmd, runner.ast, codegen.ObjectOptions{
+		Optimization: runner.cmd.Optimization,
+		Coverage:     cmd.CoverProfile != "",
+	})
 	if err != nil {
 		return false, err
 	}
 	if err := build.LinkObject(object.Bytes, opts); err != nil {
 		return false, err
 	}
-	return runFiles(cmd, tests, binary, out)
+	coverDir := ""
+	if cmd.CoverProfile != "" {
+		coverDir = dir
+	}
+	passed, err := runFiles(cmd, tests, binary, coverDir, out)
+	if err != nil || cmd.CoverProfile == "" {
+		return passed, err
+	}
+	return passed, writeCoverage(cmd.CoverProfile, object.Coverage, coverFiles(coverDir, len(tests)), out)
 }
 
 // program is the validated runner of a set of tests, and the command it is
@@ -177,8 +188,9 @@ func validate(cmd *cli.Command, files *base.FileProvider, packages packageProvid
 }
 
 // runFiles runs binary once for each of tests, at most cmd.Parallel at once,
-// and writes each one's output and outcome to out in the order of tests.
-func runFiles(cmd *cli.Command, tests []File, binary string, out io.Writer) (bool, error) {
+// and writes each one's output and outcome to out in the order of tests. Each
+// writes its coverage into coverDir, unless coverDir is empty.
+func runFiles(cmd *cli.Command, tests []File, binary, coverDir string, out io.Writer) (bool, error) {
 	results := make([]chan result, len(tests))
 	slots := make(chan struct{}, cmd.Parallel)
 	var wg sync.WaitGroup
@@ -187,7 +199,11 @@ func runFiles(cmd *cli.Command, tests []File, binary string, out io.Writer) (boo
 		wg.Go(func() {
 			slots <- struct{}{}
 			defer func() { <-slots }()
-			results[i] <- runFile(binary, i, cmd.RunArgs)
+			cover := ""
+			if coverDir != "" {
+				cover = coverFiles(coverDir, len(tests))[i]
+			}
+			results[i] <- runFile(binary, i, cmd.RunArgs, cover)
 		})
 	}
 	defer wg.Wait()
@@ -222,9 +238,13 @@ func runFiles(cmd *cli.Command, tests []File, binary string, out io.Writer) (boo
 	return passed, nil
 }
 
-// runFile runs the tests of the file at index in binary, passing args on.
-func runFile(binary string, index int, args []string) result {
+// runFile runs the tests of the file at index in binary, passing args on, and
+// writing its coverage to cover unless cover is empty.
+func runFile(binary string, index int, args []string, cover string) result {
 	process := exec.Command(binary, append([]string{strconv.Itoa(index)}, args...)...)
+	if cover != "" {
+		process.Env = append(os.Environ(), coverageVariable+"="+cover)
+	}
 	start := time.Now()
 	output, err := process.CombinedOutput()
 	r := result{output: output, duration: time.Since(start)}

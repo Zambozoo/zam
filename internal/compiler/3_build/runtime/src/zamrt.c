@@ -2,6 +2,7 @@
 
 #include <setjmp.h>
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -220,9 +221,36 @@ _Noreturn void zamrt_exit(ZamThread *thread, int64_t status) {
 // startVM is the VM a compiled program runs on.
 static ZamVM startVM;
 
+// coverage is the byte a program compiled for coverage sets for each of its
+// statements that runs, coverageCount how many there are, and coveragePath
+// the file they are written to at exit.
+static const uint8_t *coverage;
+static uint64_t coverageCount;
+static const char *coveragePath;
+
+// writeCoverage writes the coverage bytes to their file.
+static void writeCoverage(void) {
+    FILE *file = fopen(coveragePath, "wb");
+    if (file == NULL) {
+        fprintf(stderr, "cannot write coverage to %s\n", coveragePath);
+        return;
+    }
+    if (fwrite(coverage, 1, coverageCount, file) != coverageCount)
+        fprintf(stderr, "cannot write coverage to %s\n", coveragePath);
+    fclose(file);
+}
+
 _Noreturn void zamrt_start(int argc, const char *argv[], const uint8_t *image, size_t imageBytes,
                            ZamEntry main, const ZamCompiledClass *classes, uint64_t classCount,
-                           const ZamCompiledFunction *functions, uint64_t functionCount) {
+                           const ZamCompiledFunction *functions, uint64_t functionCount,
+                           const uint8_t *counters, uint64_t counterCount) {
+    coveragePath = getenv("ZAM_COVERAGE");
+    if (coveragePath != NULL && coveragePath[0] != '\0' && counterCount > 0) {
+        coverage = counters;
+        coverageCount = counterCount;
+        atexit(writeCoverage);
+    }
+
     ZamVM *vm = &startVM;
     zam_vm_init(vm, image, imageBytes);
     vm->compiledClasses = classes;

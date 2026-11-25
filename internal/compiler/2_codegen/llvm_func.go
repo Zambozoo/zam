@@ -72,6 +72,9 @@ type llvmProgram struct {
 
 	// debug is the DWARF the functions are described in, nil for none.
 	debug *llvmDebug
+	// coverage is what the program records running of its statements, nil
+	// when it is not compiled for coverage.
+	coverage *llvmCoverage
 	// initializers is the instance initializer compiled for each class that
 	// has one.
 	initializers map[syntax.Decl]llvm.Value
@@ -1687,6 +1690,7 @@ func supportedObject(d syntax.Decl) error {
 func (e *funcEmitter) emitStmt(stmt syntax.Stmt) error {
 	if _, block := stmt.(*syntax.StmtBlock); !block {
 		e.at(stmt.Start())
+		e.cover(stmt.Start())
 	}
 	mark := len(e.temps)
 	err := e.emitStmtKind(stmt)

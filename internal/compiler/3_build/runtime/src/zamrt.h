@@ -229,10 +229,14 @@ _Noreturn void zamrt_exit(ZamThread *thread, int64_t status);
 // imageBytes at image, with classCount compiled classes sorted by short id
 // and functionCount compiled functions named for traces by function id,
 // calls main over the program's arguments as main takes them, a count and a
-// run of strings, and ends the program once main returns.
+// run of strings, and ends the program once main returns. A program compiled
+// for coverage passes the counterCount bytes its statements set as they run,
+// which are written at exit to the file $ZAM_COVERAGE names, when it names
+// one; a program ended by a fault writes none.
 _Noreturn void zamrt_start(int argc, const char *argv[], const uint8_t *image, size_t imageBytes,
                            ZamEntry main, const ZamCompiledClass *classes, uint64_t classCount,
-                           const ZamCompiledFunction *functions, uint64_t functionCount);
+                           const ZamCompiledFunction *functions, uint64_t functionCount,
+                           const uint8_t *counters, uint64_t counterCount);
 
 // zamrt_new allocates count zeroed, stamped values of element. It runs no
 // initializer; the compiled code calls the type's own.

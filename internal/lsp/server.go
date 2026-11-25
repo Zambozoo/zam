@@ -73,7 +73,6 @@ func newServer(packages packageProvider, delay time.Duration) *server {
 		TextDocumentHover:              s.hover,
 		TextDocumentDefinition:         s.definition,
 		TextDocumentReferences:         s.references,
-		TextDocumentCodeLens:           s.codeLens,
 	}
 	return s
 }
@@ -85,7 +84,7 @@ func Run() error {
 		return err
 	}
 	s := newServer(base.NewPackageProvider(filepath.Join(zamPath, "pkg")), debounce)
-	return glspserver.NewServer(&s.handler, "zam", false).RunStdio()
+	return glspserver.NewServer(s, "zam", false).RunStdio()
 }
 
 func (s *server) initialize(_ *glsp.Context, _ *protocol.InitializeParams) (any, error) {

@@ -118,6 +118,7 @@ public class Command {
     public var Arr[str]* testTargets;
     public var str runPattern;
     public var int parallel;
+    public var str coverProfile;
     public var Arr[str]* refs;
     public var str asName;
     public var bool noProject;
@@ -192,6 +193,7 @@ public class Command {
         o.Set("TestTargets", listJSON(this.testTargets));
         o.Set("RunPattern", JSON::NewStr(this.runPattern));
         o.Set("Parallel", JSON::NewInt(this.parallel));
+        o.Set("CoverProfile", JSON::NewStr(this.coverProfile));
         o.Set("Refs", listJSON(this.refs));
         o.Set("As", JSON::NewStr(this.asName));
         o.Set("NoProject", JSON::NewBool(this.noProject));
@@ -220,6 +222,7 @@ public class Command {
         c.runArgs = empty();
         c.testTargets = c.runArgs;
         c.runPattern = "";
+        c.coverProfile = "";
         c.refs = c.runArgs;
         c.asName = "";
         return c;
@@ -322,9 +325,11 @@ public class Command {
         var Flag* noProject = fs.Bool("no-project", "n", false, "ignore project files and compile local files as one project depending only on std");
         var Flag* runPattern = null;
         var Flag* parallel = null;
+        var Flag* coverProfile = null;
         if(verb == Verb::Test) {
             runPattern = fs.Text("run", "", "", "run only the tests whose names this regular expression matches");
             parallel = fs.Int("parallel", "", System::ProcessorCount(){int}, "test files run at once");
+            coverProfile = fs.Text("coverprofile", "", "", "record which statements the tests run and write them to this file as LCOV");
         }
 
         var Err* err = parse(fs, name, args);
@@ -451,6 +456,9 @@ public class Command {
         }
         if(parallel != null) {
             c.parallel = parallel.intValue;
+        }
+        if(coverProfile != null) {
+            c.coverProfile = coverProfile.strValue;
         }
         c.noProject = noProject.boolValue;
         c.writeProject = true;

@@ -16,9 +16,12 @@ func collectNativesAndLiterals(ast *syntax.AST, reader *codegenReader) {
 	}
 }
 
-// collector walks declarations for what collectNativesAndLiterals records.
+// collector walks declarations for what collectNativesAndLiterals records,
+// into reader when there is one, and hands each statement other than a block
+// to statement when there is one.
 type collector struct {
-	reader *codegenReader
+	reader    *codegenReader
+	statement func(syntax.Stmt)
 }
 
 func (c *collector) decl(d syntax.Decl) {
@@ -46,6 +49,9 @@ func (c *collector) field(f syntax.Field) {
 }
 
 func (c *collector) stmt(s syntax.Stmt) {
+	if _, block := s.(*syntax.StmtBlock); c.statement != nil && s != nil && !block {
+		c.statement(s)
+	}
 	switch s := s.(type) {
 	case *syntax.StmtBlock:
 		for _, stmt := range s.Stmts {
@@ -98,6 +104,9 @@ func (c *collector) expr(e syntax.Expr) {
 	case *syntax.ExprNAry:
 		c.exprs(e.Exprs)
 	case *syntax.ExprNative:
+		if c.reader == nil {
+			break
+		}
 		if _, intrinsic := nativeIntrinsics[e.ID]; intrinsic {
 			break
 		}
@@ -111,7 +120,7 @@ func (c *collector) expr(e syntax.Expr) {
 		c.expr(e.Size)
 		c.expr(e.Tail)
 	case *syntax.ExprSymbol:
-		if e.Kind() == syntax.ExprKindLiteralString {
+		if c.reader != nil && e.Kind() == syntax.ExprKindLiteralString {
 			c.reader.internString(stringLiteral(e.Start().Value.(string)))
 		}
 	}

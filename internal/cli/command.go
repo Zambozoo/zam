@@ -80,6 +80,9 @@ const (
 	flagParallelLong = "parallel"
 	usageParallel    = "test files run at once"
 
+	flagCoverProfileLong = "coverprofile"
+	usageCoverProfile    = "record which statements the tests run and write them to this file as LCOV"
+
 	flagAsLong = "as"
 	usageAs    = "package name to add the dependency under, the last element of its repository by default"
 
@@ -264,6 +267,11 @@ type (
 		// Parallel is how many test files test runs at once.
 		// Uses the --parallel flag with a default of the number of processors.
 		Parallel int
+
+		// CoverProfile is the file test writes the coverage of its tests to,
+		// as LCOV, or empty for none.
+		// Uses the --coverprofile flag.
+		CoverProfile string
 
 		// Refs are the dependencies get adds, each spelled repo@version.
 		Refs []string
@@ -479,6 +487,7 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 	var gcRemarkGrowth float64
 	var runPattern string
 	var parallel int
+	var coverProfile string
 	stackSize, heapSize := defaultStackSize, defaultHeapSize
 	nurserySize, maxHeapSize := defaultNursery, defaultMaxHeap
 
@@ -505,6 +514,7 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 	if verb == VerbTest {
 		fs.StringVar(&runPattern, flagRunPatternLong, "", usageRunPattern)
 		fs.IntVar(&parallel, flagParallelLong, runtime.NumCPU(), usageParallel)
+		fs.StringVar(&coverProfile, flagCoverProfileLong, "", usageCoverProfile)
 	}
 
 	if err := parse(fs, name, args); err != nil {
@@ -626,6 +636,7 @@ func newCompile(verb Verb, name string, args []string, fileProvider fileProvider
 		TestTargets:      testTargets,
 		RunPattern:       runPattern,
 		Parallel:         parallel,
+		CoverProfile:     coverProfile,
 		NoProject:        noProject,
 		WriteProject:     true,
 	}, nil

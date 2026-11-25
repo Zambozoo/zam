@@ -243,11 +243,12 @@ public namespace CommandTest {
     }
 
     public fun void(uint, str...) TestArguments = (argC, argV) {
-        var Command* c = CommandTest::accepts("zam test --run Append$ --parallel 2 list map/... -- x -y");
+        var Command* c = CommandTest::accepts("zam test --run Append$ --parallel 2 --coverprofile lcov.info list map/... -- x -y");
         Assert::[str]Equal("[list, map/...]", c.testTargets{str});
         Assert::[str]Equal("[x, -y]", c.runArgs{str});
         Assert::[str]Equal("Append$", c.runPattern);
         Assert::[int]Equal(2, c.parallel);
+        Assert::[str]Equal("lcov.info", c.coverProfile);
 
         var Command* bare = CommandTest::accepts("zam test -- x");
         Assert::[str]Equal("[.]", bare.testTargets{str});
@@ -271,9 +272,9 @@ public namespace CommandTest {
             return;
         }
         var JSON* j = parsed.0;
-        Assert::[uint]Equal(25U, j.Len());
+        Assert::[uint]Equal(26U, j.Len());
         Assert::[str]Equal("Verb", j.Keys().Get(0U));
-        Assert::[str]Equal("WriteProject", j.Keys().Get(24U));
+        Assert::[str]Equal("WriteProject", j.Keys().Get(25U));
         Assert::[str]Equal("build", j.Get("Verb").0.AsStr());
         Assert::[str]Equal(CommandTest::input("input"), j.Get("InputPath").0.AsStr());
         Assert::[str]Equal("out", j.Get("OutputPath").0.AsStr());

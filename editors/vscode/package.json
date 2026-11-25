@@ -12,14 +12,15 @@
     "directory": "editors/vscode"
   },
   "engines": {
-    "vscode": "^1.85.0"
+    "vscode": "^1.88.0"
   },
   "categories": [
     "Programming Languages",
     "Debuggers"
   ],
   "activationEvents": [
-    "onDebugResolve:zam"
+    "onDebugResolve:zam",
+    "workspaceContains:**/*.test.zam"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -161,29 +162,7 @@
           }
         ]
       }
-    ],
-    "commands": [
-      {
-        "command": "zam.runTest",
-        "title": "Zam: Run Test"
-      },
-      {
-        "command": "zam.debugTest",
-        "title": "Zam: Debug Test"
-      }
-    ],
-    "menus": {
-      "commandPalette": [
-        {
-          "command": "zam.runTest",
-          "when": "false"
-        },
-        {
-          "command": "zam.debugTest",
-          "when": "false"
-        }
-      ]
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

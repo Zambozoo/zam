@@ -678,7 +678,7 @@ func TestCommand_String(t *testing.T) {
 				InitialStackSize: 1 << 19,
 				InitialHeapSize:  1 << 24,
 			},
-			want: `{"Verb":0,"InputPath":"input","OutputPath":"out","Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"Optimization":"","Target":{"Name":"","OS":"","Arch":"","Triple":"","Zig":""},"RunArgs":null,"TestTargets":null,"TestPaths":null,"RunPattern":"","Parallel":0,"Refs":null,"As":"","NoProject":false,"WriteProject":false}`,
+			want: `{"Verb":0,"InputPath":"input","OutputPath":"out","Verbose":true,"MaxThreads":10,"GCTriggerRatio":0.75,"InitialStackSize":524288,"InitialHeapSize":16777216,"NurserySize":0,"MaxHeapSize":0,"GCMarkers":0,"GCConcurrent":false,"GCRemarkGrowth":0,"GCPrecleanPasses":0,"GCReturnAge":0,"Optimization":"","Target":{"Name":"","OS":"","Arch":"","Triple":"","Zig":""},"RunArgs":null,"TestTargets":null,"TestPaths":null,"RunPattern":"","Parallel":0,"CoverProfile":"","Refs":null,"As":"","NoProject":false,"WriteProject":false}`,
 		},
 	}
 
@@ -699,6 +699,7 @@ func TestNewTest(t *testing.T) {
 		runArgs  []string
 		pattern  string
 		parallel int
+		cover    string
 		errFunc  assert.ErrorAssertionFunc
 	}{
 		{
@@ -710,11 +711,12 @@ func TestNewTest(t *testing.T) {
 		},
 		{
 			name:     "targets, flags and arguments",
-			argv:     []string{"zam", "test", "--run", "Append$", "--parallel", "2", "list", "map/...", "--", "x", "-y"},
+			argv:     []string{"zam", "test", "--run", "Append$", "--parallel", "2", "--coverprofile", "lcov.info", "list", "map/...", "--", "x", "-y"},
 			targets:  []string{"list", "map/..."},
 			runArgs:  []string{"x", "-y"},
 			pattern:  "Append$",
 			parallel: 2,
+			cover:    "lcov.info",
 			errFunc:  assert.NoError,
 		},
 		{
@@ -755,6 +757,7 @@ func TestNewTest(t *testing.T) {
 			assert.Equal(t, tt.runArgs, got.RunArgs)
 			assert.Equal(t, tt.pattern, got.RunPattern)
 			assert.Equal(t, tt.parallel, got.Parallel)
+			assert.Equal(t, tt.cover, got.CoverProfile)
 			assert.Equal(t, defaultGCRatio, got.GCTriggerRatio, "the compile flags apply too")
 			assert.True(t, got.WriteProject)
 		})
