@@ -58,7 +58,8 @@ public namespace PackageArchiveTest {
         }
         Assert::[str]Equal("b", FS::ReadFile(Paths::Join(out, "dir/b.zam")).0);
         Assert::False(FS::Exists(Paths::Join(out, ".git")), "git's own files are extracted");
-        Assert::True(FS::WriteFile(Paths::Join(out, "a.txt"), "x") != null, "an extracted file is writable");
+        Assert::True((FS::Stat(Paths::Join(out, "a.txt")).0.mode & 146) == 0, "an extracted file is writable");
+        Assert::True((FS::Stat(Paths::Join(out, "dir")).0.mode & 146) == 0, "an extracted directory is writable");
         Assert::True(PackageArchive::Extract(archive, out) == null, "extracting again fails");
     }
 
