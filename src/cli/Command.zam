@@ -19,13 +19,9 @@ import "Verb.zam";
 // Command is what the command line asks of the compiler
 public class Command {
     namespace Errs {
-        public fun Err*() MissingProgramName = () {
-            return StrErr::New("missing program name");
-        }
+        public var Err*$ MissingProgramName = StrErr::New("missing program name");
         
-        public fun Err*() MissingCommand = () {
-            return StrErr::New("missing command");
-        }
+        public var Err*$ MissingCommand = StrErr::New("missing command");
 
         public fun Err*(str, str) UnknownCommand = (program, name) {
             return StrErr::New("unknown command " + Strs::Quote(name));
@@ -47,9 +43,7 @@ public class Command {
             return StrErr::New("parallel must be positive: " + parallel{str});
         }
 
-        public fun Err*() MissingInputFileArgument = () {
-            return  StrErr::New("missing input file argument");
-        }
+        public var Err*$ MissingInputFileArgument = StrErr::New("missing input file argument");
 
         public fun Err*(flt) InvalidGCTriggerRatio = (ratio) {
             return StrErr::New("gc trigger ratio must be within (0, 1]: " + ratio{str});
@@ -127,12 +121,12 @@ public class Command {
     // New instantiates a Command
     public static fun (Command*, Err*)(Arr[str]*, FileProvider*) New = (argv, files) {
         if(argv.Len() == 0U) {
-            return (null, Errs::MissingProgramName());
+            return (null, Errs::MissingProgramName);
         }
 
         var str program = argv.Get(0U);
         if(argv.Len() == 1U) {
-            return (null, UsageErr::New(program, verbUsages(), Errs::MissingCommand()));
+            return (null, UsageErr::New(program, verbUsages(), Errs::MissingCommand));
         }
 
         var str name = argv.Get(1U);
@@ -367,7 +361,7 @@ public class Command {
             }
         } else {
             if(rest.Len() == 0U) {
-                return (null, Errs::MissingInputFileArgument());
+                return (null, Errs::MissingInputFileArgument);
             } else if(rest.Len() > 1U && verb == Verb::Build) {
                 return (null, Errs::TooManyArguments(name, rest{str}));
             }

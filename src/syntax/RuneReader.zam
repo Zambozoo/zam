@@ -1,3 +1,4 @@
+import std("codec/text/UTF8.zam");
 import std("data/list/ArrList.zam");
 import std("lang/Err.zam");
 import std("lang/StrErr.zam");
@@ -82,44 +83,17 @@ public class RuneReader {
             return Errs::EOF;
         }
 
-        var uint c = this.bytes[this.at]{uint};
-        var uint size = 1U;
-        var uint least = 0U;
-        if((c >= 128U && c < 194U) || c > 244U) {
+        var (char, uint, UTF8.Status) d = UTF8::Decode(this.bytes, this.len, this.at);
+        if(d.2 != UTF8.Status::Valid) {
             this.closed = true;
-            return Errs::InvalidUTF8;
-        } else if(c >= 240U) {
-            size = 4U;
-            c = c & 7U;
-            least = 65536U;
-        } else if(c >= 224U) {
-            size = 3U;
-            c = c & 15U;
-            least = 2048U;
-        } else if(c >= 194U) {
-            size = 2U;
-            c = c & 31U;
-            least = 128U;
-        }
-        if(this.at + size > this.len) {
-            this.closed = true;
-            return Errs::IncompleteUTF8;
-        }
-        for(var uint k = 1U; k < size; k++) {
-            var uint next = this.bytes[this.at + k]{uint};
-            if((next & 192U) != 128U) {
-                this.closed = true;
-                return Errs::InvalidUTF8;
+            if(d.2 == UTF8.Status::Incomplete) {
+                return Errs::IncompleteUTF8;
             }
-            c = (c << 6U) | (next & 63U);
-        }
-        if(c < least || c > 1114111U || (c >= 55296U && c <= 57343U)) {
-            this.closed = true;
             return Errs::InvalidUTF8;
         }
 
-        this.at = this.at + size;
-        this.buf.AddLast(c{int}{char});
+        this.at = this.at + d.1;
+        this.buf.AddLast(d.0);
         return null;
     }
 }

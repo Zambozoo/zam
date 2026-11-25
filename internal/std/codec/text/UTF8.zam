@@ -1,0 +1,139 @@
+// UTF-8's encoding of chars as bytes
+public namespace UTF8 {
+    // Status is how decoding a char went
+    public enum Status {
+        // Valid is a char decoded whole.
+        Valid,
+        // Incomplete is a char cut off by the end of the bytes.
+        Incomplete,
+        // Invalid is bytes that encode no char.
+        Invalid;
+    }
+
+    // MaxBytes is the most bytes a char is encoded in.
+    public var uint$ MaxBytes = 4U;
+    // Replacement is the char that stands in for bytes that encode none.
+    public var char$ Replacement = '\uFFFD';
+
+    // asciiMax is the highest byte that is a char of its own
+    var uint$ asciiMax = 127U;
+    // lead2Min, lead3Min and lead4Min are the lowest bytes that lead a char of
+    // N bytes
+    var uint$ lead2Min = 194U;
+    var uint$ lead3Min = 224U;
+    var uint$ lead4Min = 240U;
+    // lead4Max is the highest byte that leads a char of four bytes
+    var uint$ lead4Max = 244U;
+    // lead2Tag, lead3Tag and lead4Tag mark a byte leading a char of N bytes
+    var uint$ lead2Tag = 192U;
+    var uint$ lead3Tag = 224U;
+    var uint$ lead4Tag = 240U;
+    // lead2Bits, lead3Bits and lead4Bits are the bits of the char in a byte
+    // leading N bytes
+    var uint$ lead2Bits = 31U;
+    var uint$ lead3Bits = 15U;
+    var uint$ lead4Bits = 7U;
+    // continuationMask picks the bits marking a continuation byte
+    var uint$ continuationMask = 192U;
+    // continuationTag marks a continuation byte
+    var uint$ continuationTag = 128U;
+    // continuationBits is the bits of the char a continuation byte carries
+    var uint$ continuationBits = 63U;
+    // continuationShift is how many bits of the char a continuation byte
+    // carries
+    var uint$ continuationShift = 6U;
+    // min2, min3 and min4 are the lowest chars encoded in N bytes
+    var uint$ min2 = 128U;
+    var uint$ min3 = 2048U;
+    var uint$ min4 = 65536U;
+    // max is the highest char
+    var uint$ max = 1114111U;
+    // surrogateMin and surrogateMax bound the chars UTF-16 reserves, which
+    // UTF-8 does not encode
+    var uint$ surrogateMin = 55296U;
+    var uint$ surrogateMax = 57343U;
+
+    // Decode decodes the char at i of the n bytes at b, answering it and how
+    // many bytes it spans, or how it failed.
+    public static fun (char, uint, Status)(byte*, uint, uint) Decode = (b, n, i) {
+        var (char, uint, Status) out;
+        out.2 = Status::Invalid;
+        var uint c = b[i]{uint};
+        var uint size = 1U;
+        var uint least = 0U;
+        if((c > UTF8::asciiMax && c < UTF8::lead2Min) || c > UTF8::lead4Max) {
+            return out;
+        } else if(c >= UTF8::lead4Min) {
+            size = 4U;
+            c = c & UTF8::lead4Bits;
+            least = UTF8::min4;
+        } else if(c >= UTF8::lead3Min) {
+            size = 3U;
+            c = c & UTF8::lead3Bits;
+            least = UTF8::min3;
+        } else if(c >= UTF8::lead2Min) {
+            size = 2U;
+            c = c & UTF8::lead2Bits;
+            least = UTF8::min2;
+        }
+        if(i + size > n) {
+            out.2 = Status::Incomplete;
+            return out;
+        }
+        for(var uint k = 1U; k < size; k++) {
+            var uint next = b[i + k]{uint};
+            if(!UTF8::IsContinuation(next{byte})) {
+                return out;
+            }
+            c = (c << UTF8::continuationShift) | (next & UTF8::continuationBits);
+        }
+        if(c < least || !UTF8::Encodes(c{int}{char})) {
+            return out;
+        }
+        out.0 = c{int}{char};
+        out.1 = size;
+        out.2 = Status::Valid;
+        return out;
+    }
+
+    // Encode writes the bytes of c to out, which has room for MaxBytes, and
+    // answers how many it wrote, or 0 for a char UTF-8 does not encode.
+    public static fun uint(char, byte*) Encode = (c, out) {
+        if(!UTF8::Encodes(c)) {
+            return 0U;
+        }
+        var uint x = c{int}{uint};
+        if(x < UTF8::min2) {
+            out[0U] = x{byte};
+            return 1U;
+        }
+        var uint size = 4U;
+        var uint tag = UTF8::lead4Tag;
+        if(x < UTF8::min3) {
+            size = 2U;
+            tag = UTF8::lead2Tag;
+        } else if(x < UTF8::min4) {
+            size = 3U;
+            tag = UTF8::lead3Tag;
+        }
+        for(var uint k = size - 1U; k > 0U; k--) {
+            out[k] = (UTF8::continuationTag | (x & UTF8::continuationBits)){byte};
+            x = x >> UTF8::continuationShift;
+        }
+        out[0U] = (tag | x){byte};
+        return size;
+    }
+
+    // IsContinuation reports whether b continues a char rather than starting
+    // one.
+    public static fun bool(byte) IsContinuation = (b) {
+        return (b{uint} & UTF8::continuationMask) == UTF8::continuationTag;
+    }
+
+    // Encodes reports whether UTF-8 encodes c: whether it is no higher than
+    // U+10FFFF and not a surrogate.
+    public static fun bool(char) Encodes = (c) {
+        var uint x = c{int}{uint};
+        return x <= UTF8::max && (x < UTF8::surrogateMin || x > UTF8::surrogateMax);
+    }
+}

@@ -1,0 +1,77 @@
+import std("codec/text/UTF8.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+
+public namespace UTF8Test {
+    // bytes answers a run of the n bytes bs.
+    private fun byte*(uint, uint...) bytes = (n, bs) {
+        var byte* b = new(byte, n);
+        for(var uint i = 0U; i < n; i++) {
+            b[i] = bs[i]{byte};
+        }
+        return b;
+    }
+
+    // decodes checks that the n bytes at b decode to want, spanning all of them.
+    private fun void(byte*, uint, char) decodes = (b, n, want) {
+        var (char, uint, UTF8.Status) d = UTF8::Decode(b, n, 0U);
+        Assert::True(d.2 == UTF8.Status::Valid, want{str} + " does not decode");
+        Assert::[char]Equal(want, d.0);
+        Assert::[uint]Equal(n, d.1);
+    }
+
+    // fails checks that the n bytes at b fail to decode as want says.
+    private fun void(byte*, uint, UTF8.Status, str) fails = (b, n, want, name) {
+        Assert::True(UTF8::Decode(b, n, 0U).2 == want, name + " does not fail as it should");
+    }
+
+    // roundTrips checks that c encodes and decodes back to itself in size bytes.
+    private fun void(char, uint) roundTrips = (c, size) {
+        var byte* b = new(byte, UTF8::MaxBytes);
+        Assert::[uint]Equal(size, UTF8::Encode(c, b));
+        UTF8Test::decodes(b, size, c);
+    }
+
+    public fun void(uint, str...) Decode = (argC, argV) {
+        UTF8Test::decodes(UTF8Test::bytes(1U, 97U), 1U, 'a');
+        UTF8Test::decodes(UTF8Test::bytes(2U, 195U, 169U), 2U, 'é');
+        UTF8Test::decodes(UTF8Test::bytes(3U, 226U, 130U, 172U), 3U, '€');
+        UTF8Test::decodes(UTF8Test::bytes(4U, 240U, 159U, 152U, 128U), 4U, '😀');
+        var (char, uint, UTF8.Status) d = UTF8::Decode(UTF8Test::bytes(3U, 97U, 195U, 169U), 3U, 1U);
+        Assert::[char]Equal('é', d.0);
+    }
+
+    public fun void(uint, str...) DecodeFails = (argC, argV) {
+        UTF8Test::fails(UTF8Test::bytes(1U, 128U), 1U, UTF8.Status::Invalid, "a continuation byte first");
+        UTF8Test::fails(UTF8Test::bytes(2U, 192U, 128U), 2U, UTF8.Status::Invalid, "an overlong lead byte");
+        UTF8Test::fails(UTF8Test::bytes(1U, 245U), 1U, UTF8.Status::Invalid, "a lead byte past U+10FFFF");
+        UTF8Test::fails(UTF8Test::bytes(3U, 226U, 40U, 161U), 3U, UTF8.Status::Invalid, "a bad continuation");
+        UTF8Test::fails(UTF8Test::bytes(3U, 224U, 128U, 128U), 3U, UTF8.Status::Invalid, "an overlong three bytes");
+        UTF8Test::fails(UTF8Test::bytes(3U, 237U, 160U, 128U), 3U, UTF8.Status::Invalid, "a surrogate");
+        UTF8Test::fails(UTF8Test::bytes(4U, 244U, 144U, 128U, 128U), 4U, UTF8.Status::Invalid, "a char past U+10FFFF");
+        UTF8Test::fails(UTF8Test::bytes(2U, 226U, 130U), 2U, UTF8.Status::Incomplete, "a char cut off at the end");
+    }
+
+    public fun void(uint, str...) Encode = (argC, argV) {
+        UTF8Test::roundTrips(0{char}, 1U);
+        UTF8Test::roundTrips(127{char}, 1U);
+        UTF8Test::roundTrips(128{char}, 2U);
+        UTF8Test::roundTrips(2047{char}, 2U);
+        UTF8Test::roundTrips(2048{char}, 3U);
+        UTF8Test::roundTrips(65535{char}, 3U);
+        UTF8Test::roundTrips(65536{char}, 4U);
+        UTF8Test::roundTrips(1114111{char}, 4U);
+        var byte* b = new(byte, UTF8::MaxBytes);
+        Assert::[uint]Equal(0U, UTF8::Encode(55296{char}, b));
+        Assert::[uint]Equal(0U, UTF8::Encode(1114112{char}, b));
+    }
+
+    public fun void(uint, str...) IsContinuation = (argC, argV) {
+        Assert::True(UTF8::IsContinuation(128{byte}) && UTF8::IsContinuation(191{byte}), "128 and 191 are continuations");
+        Assert::False(UTF8::IsContinuation(127{byte}) || UTF8::IsContinuation(192{byte}), "127 or 192 is a continuation");
+    }
+
+    public fun void(uint, str...) Replacement = (argC, argV) {
+        Assert::[char]Equal(UTF8::Replacement, Strs::Chars(Strs::FromBytes(UTF8Test::bytes(3U, 97U, 255U, 98U), 3U)).Get(1U));
+    }
+}

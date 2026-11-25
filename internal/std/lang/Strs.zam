@@ -1,4 +1,5 @@
 import {
+    "../codec/text/UTF8.zam";
     "Arr.zam";
     "Err.zam";
     "StrErr.zam";
@@ -73,12 +74,12 @@ public namespace Strs {
             }
             var (byte*, uint) b = Strs::ToBytes(this.s);
             var uint start = this.i - 1U;
-            for(var uint k = 0U; k < 3U && start > 0U && (b.0[start]{uint} & 192U) == 128U; k++) {
+            for(var uint k = 0U; k < UTF8::MaxBytes - 1U && start > 0U && UTF8::IsContinuation(b.0[start]); k++) {
                 start--;
             }
             var (uint, uint) d = Strs::decodeAt(b.0, b.1, start);
             if(start + d.1 != this.i) {
-                d.0 = 65533U;
+                d.0 = UTF8::Replacement{int}{uint};
                 start = this.i - 1U;
             }
             p.0 = d.0{int}{char};
@@ -107,72 +108,29 @@ public namespace Strs {
     // answers it and how many bytes it spans, a malformed byte being one
     // U+FFFD.
     private static fun (uint, uint)(byte*, uint, uint) decodeAt = (b, n, i) {
-        var uint c = b[i]{uint};
-        var uint size = 1U;
-        var uint least = 0U;
-        if(c >= 240U && c < 245U) {
-            size = 4U;
-            c = c & 7U;
-            least = 65536U;
-        } else if(c >= 224U && c < 240U) {
-            size = 3U;
-            c = c & 15U;
-            least = 2048U;
-        } else if(c >= 194U && c < 224U) {
-            size = 2U;
-            c = c & 31U;
-            least = 128U;
-        } else if(c >= 128U) {
-            c = 65533U;
+        var (char, uint, UTF8.Status) d = UTF8::Decode(b, n, i);
+        var (uint, uint) out;
+        out.0 = UTF8::Replacement{int}{uint};
+        out.1 = 1U;
+        if(d.2 == UTF8.Status::Valid) {
+            out.0 = d.0{int}{uint};
+            out.1 = d.1;
         }
-        if(size > 1U) {
-            var bool ok = i + size <= n;
-            for(var uint k = 1U; ok && k < size; k++) {
-                var uint next = b[i + k]{uint};
-                ok = (next & 192U) == 128U;
-                c = (c << 6U) | (next & 63U);
-            }
-            if(!ok || c < least || c > 1114111U || (c >= 55296U && c <= 57343U)) {
-                c = 65533U;
-                size = 1U;
-            }
-        }
-        var (uint, uint) d;
-        d.0 = c;
-        d.1 = size;
-        return d;
+        return out;
     }
 
     // ToChars encodes a run of code points as a fresh UTF-8 str. A code point
     // past U+10FFFF or in the surrogate range has no encoding and panics.
     public static fun str(char*, uint) ToChars = (cs, n) {
-        var byte* b = new(byte, n * 4U + 1U);
+        var byte* b = new(byte, n * UTF8::MaxBytes + 1U);
         defer free(b);
         var uint o = 0U;
         for(var uint k = 0U; k < n; k++) {
-            var uint c = cs[k]{int}{uint};
-            if(c > 1114111U || (c >= 55296U && c <= 57343U)) {
+            var uint size = UTF8::Encode(cs[k], b + o);
+            if(size == 0U) {
                 native(STD_SYSTEM_PANIC){void(str)}("Strs.ToChars: invalid code point");
             }
-            if(c < 128U) {
-                b[o] = c{byte};
-                o++;
-            } else if(c < 2048U) {
-                b[o] = (192U | (c >> 6U)){byte};
-                b[o + 1U] = (128U | (c & 63U)){byte};
-                o = o + 2U;
-            } else if(c < 65536U) {
-                b[o] = (224U | (c >> 12U)){byte};
-                b[o + 1U] = (128U | ((c >> 6U) & 63U)){byte};
-                b[o + 2U] = (128U | (c & 63U)){byte};
-                o = o + 3U;
-            } else {
-                b[o] = (240U | (c >> 18U)){byte};
-                b[o + 1U] = (128U | ((c >> 12U) & 63U)){byte};
-                b[o + 2U] = (128U | ((c >> 6U) & 63U)){byte};
-                b[o + 3U] = (128U | (c & 63U)){byte};
-                o = o + 4U;
-            }
+            o = o + size;
         }
         return Strs::FromBytes(b, o);
     }
