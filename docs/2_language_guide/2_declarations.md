@@ -188,6 +188,8 @@ enum Planet {
 }
 ```
 
+Enum values compare in the order they are declared, whatever their members hold, so `<`, `<=>` and an ordered collection such as `TreeSet` put them in declaration order.
+
 A type parameter bounded by `<: enum` takes only enums.
 The standard library's `Enums`, in `lang/Enums.zam`, uses it to answer how many values an enum has, every value in declaration order, and where a value stands among them:
 ```zam

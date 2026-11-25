@@ -194,6 +194,14 @@ struct ZamThread {
     bool faultBus;
     uintptr_t faultAddress;
 
+    // stackLimit is the lowest a compiled frame may stand on the thread's
+    // stack before a call raises a stack overflow, zero where the stack's
+    // bounds are unknown, and stackOverflowing is set from that panic until a
+    // frame stands above the limit again, so that what the panic runs to
+    // unwind may use the stack kept back below it.
+    uintptr_t stackLimit;
+    bool stackOverflowing;
+
     // exitStatus is what the program exited with, kept to the low eight bits,
     // since a status is a byte to whoever started the program.
     uint8_t exitStatus;
@@ -486,5 +494,6 @@ void zam_thread_install_fault_handler(void);
 
 // zam_thread_bind_current records this thread as the one the C signal
 // handler delivers to for the current OS thread. Called at the top of a
-// thread's run, before any Signal.Handle registration could fire.
+// thread's run, before any Signal.Handle registration could fire. It also
+// records where on the calling thread's stack a stack overflow is raised.
 void zam_thread_bind_current(ZamThread *thread);

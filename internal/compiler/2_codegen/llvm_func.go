@@ -3049,6 +3049,9 @@ func (e *funcEmitter) emitComparison(x *syntax.ExprNAry) (llvm.Value, error) {
 	if len(x.Exprs) != 2 {
 		return llvm.Value{}, unsupported("a chain of %d comparisons", len(x.Exprs)-1)
 	}
+	if kind, err := valueKind(e.ground(x.Exprs[0].ResolvedType())); err == nil && kind == kindMemberEnum {
+		return e.emitPointerComparison(x)
+	}
 	if comparedByRuntime(e.ground(x.Exprs[0].ResolvedType())) {
 		return e.emitRuntimeComparison(x)
 	}
@@ -3109,7 +3112,8 @@ func (e *funcEmitter) floatComparison(op syntax.ExprKind, left, right llvm.Value
 }
 
 // emitPointerComparison compares two pointers as addresses, or two enum values
-// by their discriminants.
+// by their discriminants, the first word of one with members, which orders
+// them as they are declared.
 func (e *funcEmitter) emitPointerComparison(x *syntax.ExprNAry) (llvm.Value, error) {
 	typ := e.ground(x.Exprs[0].ResolvedType())
 	left, err := e.emitExprAs(x.Exprs[0], typ)
@@ -3119,6 +3123,9 @@ func (e *funcEmitter) emitPointerComparison(x *syntax.ExprNAry) (llvm.Value, err
 	right, err := e.emitExprAs(x.Exprs[1], typ)
 	if err != nil {
 		return llvm.Value{}, err
+	}
+	if kind, err := valueKind(typ); err == nil && kind == kindMemberEnum {
+		left, right = e.b.CreateLoad(e.p.i64, left, ""), e.b.CreateLoad(e.p.i64, right, "")
 	}
 	predicates := map[syntax.ExprKind]llvm.IntPredicate{
 		syntax.ExprKindEqual:              llvm.IntEQ,
@@ -4018,10 +4025,23 @@ func (e *funcEmitter) emitTypeof(x *syntax.ExprNAry) (llvm.Value, error) {
 	return out, nil
 }
 
-// emitSpaceship orders two values as -1, 0 or 1.
+// emitSpaceship orders two values as -1, 0 or 1: as the other comparisons do,
+// an enum by its discriminant and a pointer to anything but an object by its
+// address.
 func (e *funcEmitter) emitSpaceship(x *syntax.ExprNAry) (llvm.Value, error) {
 	typ := e.ground(x.Exprs[0].ResolvedType())
 	kind, err := primitiveKind(typ)
+	members := false
+	if valueKindOf, valueErr := valueKind(typ); err != nil && valueErr == nil {
+		switch {
+		case valueKindOf == kindEnum:
+			kind, err = syntax.TypeKindUint, nil
+		case valueKindOf == kindMemberEnum:
+			kind, err, members = syntax.TypeKindUint, nil, true
+		case valueKindOf == syntax.TypeKindPointer && !comparedByRuntime(typ):
+			kind, err = syntax.TypeKindUint, nil
+		}
+	}
 	if err != nil {
 		if _, err := valueKind(typ); err != nil {
 			return llvm.Value{}, err
@@ -4045,6 +4065,9 @@ func (e *funcEmitter) emitSpaceship(x *syntax.ExprNAry) (llvm.Value, error) {
 	right, err := e.emitExprAs(x.Exprs[1], typ)
 	if err != nil {
 		return llvm.Value{}, err
+	}
+	if members {
+		left, right = e.b.CreateLoad(e.p.i64, left, ""), e.b.CreateLoad(e.p.i64, right, "")
 	}
 	var greater, less llvm.Value
 	switch {

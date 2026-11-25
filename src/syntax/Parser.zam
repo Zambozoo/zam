@@ -1,0 +1,241 @@
+import std("data/list/ArrList.zam");
+import std("data/set/TreeSet.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "Lexer.zam";
+import "Token.zam";
+import "TokenKind.zam";
+
+// Parser reads a source's tokens one at a time and records the errors it recovers from
+public class Parser {
+    namespace Errs {
+        public var Err*$ Recorded = StrErr::New("parse abandoned after a recorded error");
+
+        public fun Err*(TokenKind, str) UnexpectedToken = (got, expected) {
+            return StrErr::New("unexpected token: " + Strs::Quote(got.text) + ", expected " + expected);
+        }
+    }
+
+    // Diagnostic is an error and the token it was raised at
+    public class Diagnostic {
+        public var Err* err;
+        public var Token* token;
+    }
+
+    // Recovery is how to recover from an error raised
+    public class Recovery {
+        var Parser* parser;
+        var int start;
+
+        // Recover records and deduplicates err, and skips to where the next element can begin
+        public fun Err*(Err*) Recover = (err) {
+            if(this.parser.lexFailed) {
+                return err;
+            }
+            if(err != Errs::Recorded) {
+                this.parser.Report(err);
+            }
+            var Err* skipped = this.parser.synchronize();
+            if(skipped != null) {
+                return skipped;
+            }
+            if(this.parser.offset() == this.start) {
+                return Errs::Recorded;
+            }
+            return null;
+        }
+    }
+
+    var Lexer* lexer;
+    var Token* current;
+    var bool lexFailed;
+    // diagnostics is every error recovered from, in the order raised
+    public var ArrList[Diagnostic*]* diagnostics;
+
+    public static fun Parser*(str) New = (source) {
+        var Parser* p = new(Parser);
+        p.lexer = Lexer::New(source);
+        p.diagnostics = ArrList::[Diagnostic*]New(0U);
+        return p;
+    }
+
+    // LineStarts answers the offset each line read so far begins at
+    public fun ArrList[uint]*() LineStarts = () {
+        return this.lexer.lineStarts;
+    }
+
+    // Peek answers the next token without reading past it
+    public fun (Token*, Err*)() Peek = () {
+        var Err* err = this.init();
+        if(err != null) {
+            return (null, err);
+        }
+        return (this.current, null);
+    }
+
+    // Match reads the next token when it is of kind
+    public fun (Token*, Err*)(TokenKind) Match = (kind) {
+        var Err* err = this.init();
+        if(err != null) {
+            return (null, err);
+        } else if(this.current.kind != kind) {
+            return (null, null);
+        }
+        return this.advance();
+    }
+
+    // MatchAny reads the next token when it is of one of kinds
+    public fun (Token*, Err*)(TreeSet[TokenKind]*) MatchAny = (kinds) {
+        var Err* err = this.init();
+        if(err != null) {
+            return (null, err);
+        } else if(!kinds.Contains(this.current.kind)) {
+            return (null, null);
+        }
+        return this.advance();
+    }
+
+    // Consume reads the next token, which must be of kind
+    public fun (Token*, Err*)(TokenKind) Consume = (kind) {
+        var (Token*, Err*) tok = this.Match(kind);
+        if(tok.1 == null && tok.0 == null) {
+            return (null, this.Unexpected(TreeSet::[TokenKind]New(1U, kind)));
+        }
+        return tok;
+    }
+
+    // ConsumeAny reads the next token, which must be of one of kinds
+    public fun (Token*, Err*)(TreeSet[TokenKind]*) ConsumeAny = (kinds) {
+        var (Token*, Err*) tok = this.MatchAny(kinds);
+        if(tok.1 == null && tok.0 == null) {
+            return (null, this.Unexpected(kinds));
+        }
+        return tok;
+    }
+
+    // Unexpected answers the error where one of kinds was wanted
+    public fun Err*(TreeSet[TokenKind]*) Unexpected = (kinds) {
+        var Arr[TokenKind]* wanted = kinds.Arr();
+        var str expected = Strs::Quote(wanted.Get(0U).text);
+        if(wanted.Len() > 1U) {
+            expected = "one of ";
+            for(var uint i = 0U; i < wanted.Len(); i++) {
+                if(i == wanted.Len() - 1U) {
+                    expected = expected + ", or ";
+                } else if(i > 0U) {
+                    expected = expected + ", ";
+                }
+                expected = expected + Strs::Quote(wanted.Get(i).text);
+            }
+        }
+        return Errs::UnexpectedToken(this.current.kind, expected);
+    }
+
+    // Checkpoint marks where an element of a sequence begins
+    public fun Recovery*() Checkpoint = () {
+        this.init();
+        var Recovery* r = new(Recovery);
+        r.parser = this;
+        r.start = this.offset();
+        return r;
+    }
+
+    // Report records err at the next token without stopping the parse
+    public fun void(Err*) Report = (err) {
+        this.ReportAt(err, this.current);
+    }
+
+    // ReportAt records err at tok without stopping the parse
+    public fun void(Err*, Token*) ReportAt = (err, tok) {
+        var Diagnostic* d = new(Diagnostic);
+        d.err = err;
+        d.token = tok;
+        this.diagnostics.AddLast(d);
+    }
+
+    // init reads the first token, the first time it is asked to
+    fun Err*() init = () {
+        if(this.current != null) {
+            return null;
+        }
+        var (Token*, Err*) next = this.lexer.Next();
+        if(next.1 != null) {
+            this.lexFailed = true;
+            return next.1;
+        }
+        this.current = next.0;
+        return null;
+    }
+
+    // advance reads past the next token, answering it
+    fun (Token*, Err*)() advance = () {
+        var Token* old = this.current;
+        var (Token*, Err*) next = this.lexer.Next();
+        if(next.1 != null) {
+            this.lexFailed = true;
+            return (null, next.1);
+        }
+        this.current = next.0;
+        return (old, null);
+    }
+
+    // offset answers where the next token begins, or -1 before there is one
+    fun int() offset = () {
+        if(this.current == null) {
+            return -1;
+        }
+        return this.current.offset{int};
+    }
+
+    // synchronize skips to where the next element of a sequence can begin
+    fun Err*() synchronize = () {
+        var int depth = 0;
+        var bool block = false;
+        for(;;) {
+            var (Token*, Err*) tok = this.Peek();
+            if(tok.1 != null) {
+                return tok.1;
+            }
+            var TokenKind kind = tok.0.kind;
+            if(kind == TokenKind::EOF) {
+                return Errs::Recorded;
+            } else if(kind == TokenKind::LeftBrace) {
+                if(depth == 0) {
+                    var Err* err = this.advance().1;
+                    if(err != null) {
+                        return err;
+                    }
+                    depth++;
+                    var (Token*, Err*) next = this.Peek();
+                    if(next.1 != null) {
+                        return next.1;
+                    }
+                    block = next.0.kind == TokenKind::RightBrace;
+                    continue;
+                }
+                block = true;
+                depth++;
+            } else if(kind == TokenKind::RightBrace) {
+                if(depth == 0) {
+                    return null;
+                }
+                depth--;
+                if(depth == 0 && block) {
+                    return this.advance().1;
+                }
+            } else if(kind == TokenKind::SemiColon) {
+                if(depth == 0) {
+                    return this.advance().1;
+                }
+                block = true;
+            }
+            var Err* err = this.advance().1;
+            if(err != null) {
+                return err;
+            }
+        }
+        return null;
+    }
+}

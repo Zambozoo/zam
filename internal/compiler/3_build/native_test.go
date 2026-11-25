@@ -1272,6 +1272,68 @@ namespace Main {
 	assert.Equal(t, "null a b other\n", output)
 }
 
+// TestNativeEnumsWithMembersOrderAsDeclared orders the values of an enum with
+// members as they are declared, alone and in a TreeSet, whatever their members
+// hold.
+func TestNativeEnumsWithMembersOrderAsDeclared(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `import std("lang/*");
+import std("io/local/*");
+import std("data/set/TreeSet.zam");
+
+namespace Main {
+    enum Shade {
+        Dark, Light;
+    }
+
+    enum Planet {
+        Venus.Init("z"),
+        Earth.Init("a"),
+        Mars.Init("m");
+
+        var str note;
+
+        fun void(str) Init = (n) {
+            this.note = n;
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var TreeSet[Planet]* set = TreeSet::[Planet]New(3U, Planet::Mars, Planet::Venus, Planet::Earth);
+        var Arr[Planet]* sorted = set.Arr();
+        var str out = (Planet::Venus < Planet::Earth){str} + " " + (Planet::Mars <=> Planet::Earth){str} + (Planet::Earth <=> Planet::Mars){str};
+        out = out + " " + (Planet::Earth == Planet::Earth){str} + " " + (Shade::Light <=> Shade::Dark){str} + (Shade::Dark <=> Shade::Light){str};
+        for(var uint i = 0U; i < sorted.Len(); i++) {
+            out = out + " " + sorted.Get(i).note;
+        }
+        File::StdOut.WriteStr(out + "\n");
+    }
+}
+`)
+	assert.Zero(t, status, output)
+	assert.Equal(t, "true 1-1 true 1-1 z a m\n", output)
+}
+
+// TestNativeStackOverflowPanics ends a recursion too deep for the stack with
+// a stack overflow panic, which says where it happened, rather than a fault.
+func TestNativeStackOverflowPanics(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `namespace Main {
+    fun int(int) Down = (n) {
+        return Main::Down(n + 1) + 1;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        Main::Down(0);
+    }
+}
+`)
+	assert.NotZero(t, status)
+	assert.Contains(t, output, "stack overflow")
+	assert.Contains(t, output, "at Main.Down")
+	assert.Contains(t, output, "more frames")
+}
+
 // TestNativeTrapsWhatItCannotCompile compiles a method native compilation
 // cannot compile yet as a trap, says so in the object, and ends the program
 // saying why only once the method is called. One the program cannot reach is

@@ -1,0 +1,203 @@
+import std("data/list/ArrList.zam");
+import "../Token.zam";
+import "../TokenKind.zam";
+
+// Type is a type as it is written
+public abstract Type {
+    // Kind is which type a Type is
+    public enum Kind : int {
+        Primitive(0),
+        Wrapped(1),
+        Array(2),
+        Tailed(3),
+        Tuple(4),
+        Function(5),
+        Reference(6),
+        Generic(7);
+    }
+
+    // Wrap is what a wrapped type makes of the type it wraps
+    public enum Wrap : str {
+        Pointer("*"),
+        Const("$"),
+        Variadic("..."),
+        Thread("thread");
+    }
+
+    public var Kind kind;
+    // start is the token the type begins at
+    public var Token* start;
+
+    // list writes types after a space each.
+    static fun str(ArrList[Type*]*) list = (types) {
+        var str out = "";
+        for(var uint i = 0U; i < types.Len(); i++) {
+            out = out + " " + types.Get(i).Str();
+        }
+        return out;
+    }
+
+    // Primitive is a type named by its keyword: int, str, void and the rest
+    public class Primitive <: Type* {
+        public static fun Primitive*(Token*) New = (start) {
+            var Primitive* t = new(Primitive);
+            t.kind = Kind::Primitive;
+            t.start = start;
+            return t;
+        }
+
+        public fun str() Str = () {
+            return this.start.kind.text;
+        }
+    }
+
+    // Wrapped is a pointer to a type, a const one, a variadic parameter of
+    // one, or a thread answering one
+    public class Wrapped <: Type* {
+        public var Wrap wrap;
+        public var Type* inner;
+
+        public static fun Wrapped*(Token*, Wrap, Type*) New = (start, wrap, inner) {
+            var Wrapped* t = new(Wrapped);
+            t.kind = Kind::Wrapped;
+            t.start = start;
+            t.wrap = wrap;
+            t.inner = inner;
+            return t;
+        }
+
+        public fun str() Str = () {
+            return "(" + this.wrap{str} + " " + this.inner.Str() + ")";
+        }
+    }
+
+    // Array is a run of a type, sized or, as a tail, not
+    public class Array <: Type* {
+        public var Type* inner;
+        public var bool sized;
+        public var uint size;
+
+        public static fun Array*(Type*, bool, uint) New = (inner, sized, size) {
+            var Array* t = new(Array);
+            t.kind = Kind::Array;
+            t.start = inner.start;
+            t.inner = inner;
+            t.sized = sized;
+            t.size = size;
+            return t;
+        }
+
+        public fun str() Str = () {
+            var str size = "~";
+            if(this.sized) {
+                size = this.size{str};
+            }
+            return "([" + size + "] " + this.inner.Str() + ")";
+        }
+    }
+
+    // Tailed is a declaration with a tail, of a size or of any
+    public class Tailed <: Type* {
+        public var Type* inner;
+        public var bool sized;
+        public var uint size;
+
+        public static fun Tailed*(Type*, bool, uint) New = (inner, sized, size) {
+            var Tailed* t = new(Tailed);
+            t.kind = Kind::Tailed;
+            t.start = inner.start;
+            t.inner = inner;
+            t.sized = sized;
+            t.size = size;
+            return t;
+        }
+
+        public fun str() Str = () {
+            var str size = "";
+            if(this.sized) {
+                size = this.size{str};
+            }
+            return "(~" + size + " " + this.inner.Str() + ")";
+        }
+    }
+
+    // Tuple is two or more types held together
+    public class Tuple <: Type* {
+        public var ArrList[Type*]* types;
+
+        public static fun Tuple*(Token*, ArrList[Type*]*) New = (start, types) {
+            var Tuple* t = new(Tuple);
+            t.kind = Kind::Tuple;
+            t.start = start;
+            t.types = types;
+            return t;
+        }
+
+        public fun str() Str = () {
+            return "(tuple" + Type::list(this.types) + ")";
+        }
+    }
+
+    // Function is a function's return type and parameter types
+    public class Function <: Type* {
+        public var Type* returns;
+        public var ArrList[Type*]* parameters;
+
+        public static fun Function*(Type*, ArrList[Type*]*) New = (returns, parameters) {
+            var Function* t = new(Function);
+            t.kind = Kind::Function;
+            t.start = returns.start;
+            t.returns = returns;
+            t.parameters = parameters;
+            return t;
+        }
+
+        public fun str() Str = () {
+            return "(fun " + this.returns.Str() + Type::list(this.parameters) + ")";
+        }
+    }
+
+    // Reference is a declaration named by a dotted path, or a generic
+    // argument named alone; which it is, is for resolution to say
+    public class Reference <: Type* {
+        public var ArrList[Token*]* ids;
+
+        public static fun Reference*(ArrList[Token*]*) New = (ids) {
+            var Reference* t = new(Reference);
+            t.kind = Kind::Reference;
+            t.start = ids.Get(0U);
+            t.ids = ids;
+            return t;
+        }
+
+        public fun str() Str = () {
+            var str out = "";
+            for(var uint i = 0U; i < this.ids.Len(); i++) {
+                if(i > 0U) {
+                    out = out + ".";
+                }
+                out = out + this.ids.Get(i).value{str};
+            }
+            return out;
+        }
+    }
+
+    // Generic is a generic declaration given its type arguments
+    public class Generic <: Type* {
+        public var Type* inner;
+        public var ArrList[Type*]* arguments;
+
+        public static fun Generic*(Type*, ArrList[Type*]*) New = (inner, arguments) {
+            var Generic* t = new(Generic);
+            t.kind = Kind::Generic;
+            t.start = inner.start;
+            t.inner = inner;
+            t.arguments = arguments;
+            return t;
+        }
+
+        public fun str() Str = () {
+            return "(generic " + this.inner.Str() + Type::list(this.arguments) + ")";
+        }
+    }
+}

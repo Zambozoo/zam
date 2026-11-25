@@ -42,7 +42,50 @@ static void zamSignalHandler(int sig) {
     thread->pendingSignalMask |= (sig_atomic_t)1u << sig;
 }
 
-void zam_thread_bind_current(ZamThread *thread) { currentZamThread = thread; }
+// stackReserve is how much of a thread's stack is kept back below where a
+// stack overflow is raised, for the panic and what it runs to unwind, a
+// quarter of the stack at most.
+static const uintptr_t stackReserve = 128 * 1024;
+
+// stackLimit answers the lowest a compiled frame may stand on the calling
+// thread's stack, or zero where its bounds are unknown. A stack grows down on
+// every target zam compiles for.
+static uintptr_t stackLimit(void) {
+    uintptr_t low = 0;
+    uintptr_t size = 0;
+#if defined(_WIN32)
+    ULONG_PTR lowest = 0, highest = 0;
+    GetCurrentThreadStackLimits(&lowest, &highest);
+    low = (uintptr_t)lowest;
+    size = (uintptr_t)(highest - lowest);
+#elif defined(__APPLE__)
+    pthread_t self = pthread_self();
+    size = (uintptr_t)pthread_get_stacksize_np(self);
+    low = (uintptr_t)pthread_get_stackaddr_np(self) - size;
+#else
+    pthread_attr_t attr;
+    if (pthread_getattr_np(pthread_self(), &attr) != 0)
+        return 0;
+    void *address = NULL;
+    size_t bytes = 0;
+    int err = pthread_attr_getstack(&attr, &address, &bytes);
+    pthread_attr_destroy(&attr);
+    if (err != 0)
+        return 0;
+    low = (uintptr_t)address;
+    size = (uintptr_t)bytes;
+#endif
+    if (low == 0 || size == 0)
+        return 0;
+    uintptr_t reserve = stackReserve < size / 4 ? stackReserve : size / 4;
+    return low + reserve;
+}
+
+void zam_thread_bind_current(ZamThread *thread) {
+    currentZamThread = thread;
+    thread->stackLimit = stackLimit();
+    thread->stackOverflowing = false;
+}
 
 ZamThread *zam_thread_current(void) { return currentZamThread; }
 

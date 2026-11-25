@@ -79,6 +79,38 @@ func TestRecover(t *testing.T) {
         Main::Out("done\n");
     }`, want: "divide by zero\ndone\n"},
 
+		"a stack overflow": {decls: `
+    fun int(int) Down = (n) {
+        return Main::Down(n + 1) + 1;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        {
+            defer Main::Out(System::Recover() + "\n");
+            Main::Down(0);
+        }
+        Main::Out("done\n");
+    }`, want: "stack overflow\ndone\n"},
+
+		"a stack overflow on a spawned thread": {decls: `
+    fun int(int) Down = (n) {
+        return Main::Down(n + 1) + 1;
+    }
+
+    fun str() Deep = () {
+        var str got = "";
+        {
+            defer got = System::Recover();
+            Main::Down(0);
+        }
+        return got;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var thread[str] t = async(Main::Deep());
+        Main::Out(wait(t) + "\n");
+    }`, want: "stack overflow\n"},
+
 		"a loop body": {decls: `
     fun void(uint, str...) main = (argC, argV) {
         for (var int i = 0; i < 3; i++) {

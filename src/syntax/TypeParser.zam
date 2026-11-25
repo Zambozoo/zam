@@ -1,0 +1,330 @@
+import std("data/list/ArrList.zam");
+import std("data/set/TreeSet.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "Parser.zam";
+import "Token.zam";
+import "TokenKind.zam";
+import "ast/Type.zam";
+
+// TypeParser reads types
+public namespace TypeParser {
+    namespace Errs {
+        public fun Err*(Type*) AlreadyConst = (t) {
+            return StrErr::New("type " + Strs::Quote(t.Str()) + " is already const");
+        }
+
+        public fun Err*(Type*) UnsizedTail = (t) {
+            return StrErr::New("unsized tailed type " + Strs::Quote(t.Str()) + " is not allowed");
+        }
+
+        public fun Err*(Type*) UnsizedTailNotPointer = (t) {
+            return StrErr::New("unsized tailed type " + Strs::Quote(t.Str()) + " must be a pointer type");
+        }
+
+        public fun Err*(Token*) BoundAmongArguments = (bound) {
+            return StrErr::New("bound " + Strs::Quote(bound.kind.text) + " cannot be written among type arguments; bounds belong in the parameter list a generic is declared with");
+        }
+
+        public fun Err*(uint) TupleTooShort = (n) {
+            return StrErr::New("tuple type must have at least two elements, got " + n{str});
+        }
+    }
+
+    var TreeSet[TokenKind]* baseKinds;
+    var TreeSet[TokenKind]* postfixKinds;
+    var TreeSet[TokenKind]* arraySizes;
+    var TreeSet[TokenKind]* tailSizes;
+    var TreeSet[TokenKind]* listEnds;
+    var TreeSet[TokenKind]* argumentEnds;
+    var TreeSet[TokenKind]* bounds;
+
+    // Parse reads a type that cannot be tailed
+    public fun (Type*, Err*)(Parser*) Parse = (p) {
+        return TypeParser::parse(p, false);
+    }
+
+    // ParseTailable reads a type that may be tailed
+    public fun (Type*, Err*)(Parser*) ParseTailable = (p) {
+        return TypeParser::parse(p, true);
+    }
+
+    // parse reads a type
+    fun (Type*, Err*)(Parser*, bool) parse = (p, tailable) {
+        TypeParser::init();
+        var (Type*, Err*) base = TypeParser::base(p, tailable);
+        if(base.1 != null) {
+            return base;
+        }
+        var Type* t = base.0;
+        if(TypeParser::unsizedArray(t)) {
+            return (t, null);
+        }
+
+        for(;;) {
+            var (Token*, Err*) tok = p.MatchAny(TypeParser::postfixKinds);
+            if(tok.1 != null) {
+                return (null, tok.1);
+            } else if(tok.0 == null) {
+                if(TypeParser::unsizedTail(t) && !tailable) {
+                    return (null, Errs::UnsizedTail(t));
+                }
+                return (t, null);
+            }
+
+            var TokenKind kind = tok.0.kind;
+            if(kind == TokenKind::Star) {
+                t = Type.Wrapped::New(t.start, Type.Wrap::Pointer, t);
+            } else if(kind == TokenKind::Dollar) {
+                var Type.Wrapped* w = t{Type.Wrapped*};
+                if(w != null && w.wrap == Type.Wrap::Const) {
+                    return (null, Errs::AlreadyConst(t));
+                }
+                t = Type.Wrapped::New(t.start, Type.Wrap::Const, t);
+            } else {
+                if(TypeParser::unsizedTail(t)) {
+                    return (null, Errs::UnsizedTailNotPointer(t));
+                }
+                var (Type*, Err*) next;
+                if(kind == TokenKind::LeftBracket) {
+                    next = TypeParser::array(p, t, tailable);
+                } else {
+                    next = TypeParser::function(p, t);
+                }
+                if(next.1 != null) {
+                    return next;
+                }
+                t = next.0;
+                if(TypeParser::unsizedArray(t)) {
+                    return (t, null);
+                }
+            }
+        }
+        return (t, null);
+    }
+
+    // base reads a base type
+    fun (Type*, Err*)(Parser*, bool) base = (p, tailable) {
+        var (Token*, Err*) start = p.ConsumeAny(TypeParser::baseKinds);
+        if(start.1 != null) {
+            return (null, start.1);
+        }
+        var TokenKind kind = start.0.kind;
+        if(kind == TokenKind::Thread) {
+            return TypeParser::threadType(p, start.0);
+        } else if(kind == TokenKind::LeftParen) {
+            return TypeParser::tuple(p, start.0);
+        } else if(kind != TokenKind::Identifier) {
+            return (Type.Primitive::New(start.0), null);
+        }
+
+        var ArrList[Token*]* ids = ArrList::[Token*]New(0U);
+        ids.AddLast(start.0);
+        for(;;) {
+            var (Token*, Err*) period = p.Match(TokenKind::Period);
+            if(period.1 != null) {
+                return (null, period.1);
+            } else if(period.0 == null) {
+                break;
+            }
+            var (Token*, Err*) id = p.Consume(TokenKind::Identifier);
+            if(id.1 != null) {
+                return (null, id.1);
+            }
+            ids.AddLast(id.0);
+        }
+        var Type* t = Type.Reference::New(ids);
+
+        var (Token*, Err*) tilde = p.Match(TokenKind::Tilde);
+        if(tilde.1 != null) {
+            return (null, tilde.1);
+        } else if(tilde.0 != null) {
+            var (Token*, Err*) size = p.Match(TokenKind::IntLiteral);
+            if(size.1 != null) {
+                return (null, size.1);
+            } else if(size.0 != null) {
+                t = Type.Tailed::New(t, true, size.0.value{uint});
+            } else {
+                t = Type.Tailed::New(t, false, 0U);
+            }
+        }
+
+        var (Token*, Err*) bracket = p.Match(TokenKind::LeftBracket);
+        if(bracket.1 != null) {
+            return (null, bracket.1);
+        } else if(bracket.0 == null) {
+            return (t, null);
+        }
+
+        var TreeSet[TokenKind]* sizes = TypeParser::arraySizes;
+        if(tailable) {
+            sizes = TypeParser::tailSizes;
+        }
+        var (Token*, Err*) size = p.MatchAny(sizes);
+        if(size.1 != null) {
+            return (null, size.1);
+        } else if(size.0 != null) {
+            if(TypeParser::unsizedTail(t)) {
+                return (null, Errs::UnsizedTailNotPointer(t));
+            }
+            var (Token*, Err*) end = p.Consume(TokenKind::RightBracket);
+            if(end.1 != null) {
+                return (null, end.1);
+            }
+            if(size.0.kind == TokenKind::IntLiteral) {
+                return (Type.Array::New(t, true, size.0.value{uint}), null);
+            }
+            return (Type.Array::New(t, false, 0U), null);
+        }
+
+        var ArrList[Type*]* arguments = ArrList::[Type*]New(0U);
+        for(;;) {
+            var (Type*, Err*) argument = TypeParser::parse(p, false);
+            if(argument.1 != null) {
+                return argument;
+            }
+            arguments.AddLast(argument.0);
+
+            var (Token*, Err*) bound = p.MatchAny(TypeParser::bounds);
+            if(bound.1 != null) {
+                return (null, bound.1);
+            } else if(bound.0 != null) {
+                return (null, Errs::BoundAmongArguments(bound.0));
+            }
+
+            var (Token*, Err*) end = p.ConsumeAny(TypeParser::argumentEnds);
+            if(end.1 != null) {
+                return (null, end.1);
+            } else if(end.0.kind == TokenKind::RightBracket) {
+                break;
+            }
+        }
+        return (Type.Generic::New(t, arguments), null);
+    }
+
+    // array reads the size of an array of t, or ~, and ']'
+    fun (Type*, Err*)(Parser*, Type*, bool) array = (p, t, tailable) {
+        var TreeSet[TokenKind]* sizes = TypeParser::arraySizes;
+        if(tailable) {
+            sizes = TypeParser::tailSizes;
+        }
+        var (Token*, Err*) size = p.ConsumeAny(sizes);
+        if(size.1 != null) {
+            return (null, size.1);
+        }
+        var (Token*, Err*) end = p.Consume(TokenKind::RightBracket);
+        if(end.1 != null) {
+            return (null, end.1);
+        }
+        if(size.0.kind == TokenKind::IntLiteral) {
+            return (Type.Array::New(t, true, size.0.value{uint}), null);
+        }
+        return (Type.Array::New(t, false, 0U), null);
+    }
+
+    // function reads the parameter types of a function
+    fun (Type*, Err*)(Parser*, Type*) function = (p, returns) {
+        var ArrList[Type*]* parameters = ArrList::[Type*]New(0U);
+        var (Token*, Err*) empty = p.Match(TokenKind::RightParen);
+        if(empty.1 != null) {
+            return (null, empty.1);
+        } else if(empty.0 != null) {
+            return (Type.Function::New(returns, parameters), null);
+        }
+
+        for {
+            var (Type*, Err*) parameter = TypeParser::parse(p, false);
+            if(parameter.1 != null) {
+                return parameter;
+            }
+            var (Token*, Err*) variadic = p.Match(TokenKind::PeriodPeriodPeriod);
+            if(variadic.1 != null) {
+                return (null, variadic.1);
+            } else if(variadic.0 != null) {
+                parameters.AddLast(Type.Wrapped::New(parameter.0.start, Type.Wrap::Variadic, parameter.0));
+                var (Token*, Err*) end = p.Consume(TokenKind::RightParen);
+                if(end.1 != null) {
+                    return (null, end.1);
+                }
+                break;
+            }
+            parameters.AddLast(parameter.0);
+
+            var (Token*, Err*) end = p.ConsumeAny(TypeParser::listEnds);
+            if(end.1 != null) {
+                return (null, end.1);
+            } else if(end.0.kind == TokenKind::RightParen) {
+                break;
+            }
+        }
+        return (Type.Function::New(returns, parameters), null);
+    }
+
+    // tuple reads the types of a tuple, two or more, and ')'
+    fun (Type*, Err*)(Parser*, Token*) tuple = (p, start) {
+        var ArrList[Type*]* types = ArrList::[Type*]New(0U);
+        for(;;) {
+            var (Type*, Err*) t = TypeParser::parse(p, false);
+            if(t.1 != null) {
+                return t;
+            }
+            types.AddLast(t.0);
+            var (Token*, Err*) end = p.ConsumeAny(TypeParser::listEnds);
+            if(end.1 != null) {
+                return (null, end.1);
+            } else if(end.0.kind == TokenKind::RightParen) {
+                break;
+            }
+        }
+        if(types.Len() < 2U) {
+            return (null, Errs::TupleTooShort(types.Len()));
+        }
+        return (Type.Tuple::New(start, types), null);
+    }
+
+    // threadType reads the [T] of a thread
+    fun (Type*, Err*)(Parser*, Token*) threadType = (p, start) {
+        var (Token*, Err*) open = p.Consume(TokenKind::LeftBracket);
+        if(open.1 != null) {
+            return (null, open.1);
+        }
+        var (Type*, Err*) t = TypeParser::parse(p, false);
+        if(t.1 != null) {
+            return t;
+        }
+        var (Token*, Err*) end = p.Consume(TokenKind::RightBracket);
+        if(end.1 != null) {
+            return (null, end.1);
+        }
+        return (Type.Wrapped::New(start, Type.Wrap::Thread, t.0), null);
+    }
+
+    // unsizedArray reports whether t is an array of no size, a tail
+    fun bool(Type*) unsizedArray = (t) {
+        var Type.Array* a = t{Type.Array*};
+        return a != null && !a.sized;
+    }
+
+    // unsizedTail reports whether t is a tailed type of no size
+    fun bool(Type*) unsizedTail = (t) {
+        var Type.Tailed* tail = t{Type.Tailed*};
+        return tail != null && !tail.sized;
+    }
+
+    // init builds the kind sets the first time a type is read
+    fun void() init = () {
+        if(TypeParser::baseKinds != null) {
+            return;
+        }
+        TypeParser::baseKinds = TreeSet::[TokenKind]New(14U, TokenKind::Void, TokenKind::Any, TokenKind::Bool, TokenKind::Char,
+            TokenKind::Byte, TokenKind::Int, TokenKind::Uint, TokenKind::Float, TokenKind::Posit, TokenKind::String,
+            TokenKind::Type, TokenKind::Thread, TokenKind::Identifier, TokenKind::LeftParen);
+        TypeParser::postfixKinds = TreeSet::[TokenKind]New(4U, TokenKind::Star, TokenKind::LeftBracket, TokenKind::LeftParen, TokenKind::Dollar);
+        TypeParser::arraySizes = TreeSet::[TokenKind]New(1U, TokenKind::IntLiteral);
+        TypeParser::tailSizes = TreeSet::[TokenKind]New(2U, TokenKind::IntLiteral, TokenKind::Tilde);
+        TypeParser::listEnds = TreeSet::[TokenKind]New(2U, TokenKind::Comma, TokenKind::RightParen);
+        TypeParser::argumentEnds = TreeSet::[TokenKind]New(2U, TokenKind::Comma, TokenKind::RightBracket);
+        TypeParser::bounds = TreeSet::[TokenKind]New(2U, TokenKind::Subtype, TokenKind::Supertype);
+    }
+}

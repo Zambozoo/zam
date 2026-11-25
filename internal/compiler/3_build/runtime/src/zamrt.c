@@ -33,6 +33,7 @@ static const char *const panicMessages[ZAMPANIC_COUNT] = {
     [ZAMPANIC_COUNT_OVERFLOW] = "allocated more elements than memory can hold",
     [ZAMPANIC_FREE_UNALLOCATED] = "freed memory new did not allocate",
     [ZAMPANIC_DOUBLE_FREE] = "freed memory that was already freed",
+    [ZAMPANIC_STACK_OVERFLOW] = "stack overflow",
 };
 
 _Static_assert(sizeof(jmp_buf) <= sizeof(((ZamHandler *)0)->jump), "a jmp_buf outgrows a landing pad");
@@ -168,6 +169,17 @@ ZamPanicking *zamrt_recover(ZamThread *thread, const ZamFrame *frame) {
 }
 
 void zamrt_frame_push(ZamThread *thread, ZamFrame *frame, const ZamFrameInfo *info) {
+    // A call whose frame lies below the limit raises a stack overflow before
+    // it runs, once: what the panic runs as it unwinds may go on below the
+    // limit, until a frame stands above it again.
+    if ((uintptr_t)frame < thread->stackLimit) {
+        if (!thread->stackOverflowing) {
+            thread->stackOverflowing = true;
+            zamrt_panic(thread, ZAMPANIC_STACK_OVERFLOW);
+        }
+    } else if (thread->stackOverflowing) {
+        thread->stackOverflowing = false;
+    }
     zamrt_frame_enter(thread, frame, info);
 }
 

@@ -1,0 +1,78 @@
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "Parser.zam";
+import "Token.zam";
+import "TokenKind.zam";
+
+public namespace ParserTest {
+    // sequence parses source as identifiers each ended by a ;, up to its end
+    // or a }, recovering from each that is not, and answers the names read,
+    // how many errors were recorded and what gave up the sequence.
+    private fun (str, uint, Err*)(str) sequence = (source) {
+        var Parser* p = Parser::New(source);
+        var str names = "";
+        for(;;) {
+            var Token* next = p.Peek().0;
+            if(next.kind == TokenKind::EOF || next.kind == TokenKind::RightBrace) {
+                return (names, p.diagnostics.Len(), null);
+            }
+            var Parser.Recovery* r = p.Checkpoint();
+            var (Token*, Err*) id = p.Consume(TokenKind::Identifier);
+            var Err* err = id.1;
+            if(err == null) {
+                err = p.Consume(TokenKind::SemiColon).1;
+                if(err == null) {
+                    names = names + id.0.value{str};
+                    continue;
+                }
+            }
+            var Err* stop = r.Recover(err);
+            if(stop != null) {
+                return (names, p.diagnostics.Len(), stop);
+            }
+        }
+        return (names, p.diagnostics.Len(), null);
+    }
+
+    // recovers checks that source reads as names with errors recorded, and
+    // ends as want says.
+    private fun void(str, str, uint, Err*) recovers = (source, names, errors, want) {
+        var (str, uint, Err*) got = ParserTest::sequence(source);
+        Assert::[str]Equal(names, got.0);
+        Assert::[uint]Equal(errors, got.1);
+        Assert::True(got.2 == want, source + " does not end as it should");
+    }
+
+    public fun void(uint, str...) SkipsPastSemicolons = (argC, argV) {
+        ParserTest::recovers("a; b c; d;", "ad", 1U, null);
+        ParserTest::recovers("a; 1 2 3; b;", "ab", 1U, null);
+    }
+
+    public fun void(uint, str...) SkipsBlocks = (argC, argV) {
+        ParserTest::recovers("a; b { x; } c; }", "ac", 1U, null);
+        ParserTest::recovers("a; b {} c;", "ac", 1U, null);
+        ParserTest::recovers("a; b { { x } } c;", "ac", 1U, null);
+    }
+
+    public fun void(uint, str...) SkipsCastBraces = (argC, argV) {
+        ParserTest::recovers("a; b {T} c; d;", "ad", 1U, null);
+    }
+
+    public fun void(uint, str...) StopsAtEnclosingBrace = (argC, argV) {
+        ParserTest::recovers("a; b } c;", "a", 1U, null);
+    }
+
+    public fun void(uint, str...) GivesUp = (argC, argV) {
+        ParserTest::recovers("a; b", "a", 1U, Parser.Errs::Recorded);
+        ParserTest::recovers("a; ;", "a", 1U, null);
+    }
+
+    public fun void(uint, str...) RecordsWhere = (argC, argV) {
+        var Parser* p = Parser::New("a b");
+        p.Consume(TokenKind::Identifier);
+        p.Checkpoint().Recover(p.Consume(TokenKind::SemiColon).1);
+        Assert::[uint]Equal(1U, p.diagnostics.Len());
+        Assert::[uint]Equal(2U, p.diagnostics.Get(0U).token.offset);
+        Assert::[str]Equal("unexpected token: \"IDENTIFIER\", expected \";\"", p.diagnostics.Get(0U).err.Err());
+    }
+}

@@ -1,0 +1,84 @@
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "Parser.zam";
+import "Token.zam";
+import "TokenKind.zam";
+import "TypeParser.zam";
+import "ast/Type.zam";
+
+public namespace TypeParserTest {
+    // parses checks that source reads whole as the type want.
+    private fun void(str, bool, str) parses = (source, tailable, want) {
+        var Parser* p = Parser::New(source);
+        var (Type*, Err*) t;
+        if(tailable) {
+            t = TypeParser::ParseTailable(p);
+        } else {
+            t = TypeParser::Parse(p);
+        }
+        if(!Assert::True(t.1 == null, source + " fails to parse")) {
+            Assert::Fatal(t.1.Err());
+        }
+        Assert::[str]Equal(want, t.0.Str());
+        Assert::True(p.Peek().0.kind == TokenKind::EOF, source + " is not read whole");
+    }
+
+    // fails checks that source fails to read as a type with an error
+    // containing want.
+    private fun void(str, str) fails = (source, want) {
+        var (Type*, Err*) t = TypeParser::Parse(Parser::New(source));
+        if(Assert::True(t.1 != null, source + " parses")) {
+            Assert::True(Strs::Contains(t.1.Err(), want), t.1.Err() + " does not contain " + want);
+        }
+    }
+
+    public fun void(uint, str...) Primitives = (argC, argV) {
+        TypeParserTest::parses("int", false, "int");
+        TypeParserTest::parses("str", false, "str");
+        TypeParserTest::parses("type", false, "type");
+    }
+
+    public fun void(uint, str...) Wrapped = (argC, argV) {
+        TypeParserTest::parses("int*", false, "(* int)");
+        TypeParserTest::parses("str$*", false, "(* ($ str))");
+        TypeParserTest::parses("thread[int]", false, "(thread int)");
+    }
+
+    public fun void(uint, str...) Arrays = (argC, argV) {
+        TypeParserTest::parses("int[4]", false, "([4] int)");
+        TypeParserTest::parses("int[4][2]", false, "([2] ([4] int))");
+        TypeParserTest::parses("int[~]", true, "([~] int)");
+    }
+
+    public fun void(uint, str...) Functions = (argC, argV) {
+        TypeParserTest::parses("int()", false, "(fun int)");
+        TypeParserTest::parses("int(str, bool...)", false, "(fun int str (... bool))");
+        TypeParserTest::parses("int()*", false, "(* (fun int))");
+        TypeParserTest::parses("void(int)(str)", false, "(fun (fun void int) str)");
+    }
+
+    public fun void(uint, str...) Tuples = (argC, argV) {
+        TypeParserTest::parses("(int, str)", false, "(tuple int str)");
+        TypeParserTest::parses("(int, (bool, char))*", false, "(* (tuple int (tuple bool char)))");
+    }
+
+    public fun void(uint, str...) References = (argC, argV) {
+        TypeParserTest::parses("A.B.C", false, "A.B.C");
+        TypeParserTest::parses("Box[int, A*]", false, "(generic Box int (* A))");
+        TypeParserTest::parses("Chars~*", false, "(* (~ Chars))");
+        TypeParserTest::parses("Chars~4", false, "(~4 Chars)");
+        TypeParserTest::parses("Chars~", true, "(~ Chars)");
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        TypeParserTest::fails("int$$", "type \"($ int)\" is already const");
+        TypeParserTest::fails("Chars~", "unsized tailed type \"(~ Chars)\" is not allowed");
+        TypeParserTest::fails("Chars~[4]", "unsized tailed type \"(~ Chars)\" must be a pointer type");
+        TypeParserTest::fails("(int)", "tuple type must have at least two elements, got 1");
+        TypeParserTest::fails("Box[A <: B]", "bound \"<:\" cannot be written among type arguments");
+        TypeParserTest::fails("int[~]", "unexpected token: \"~\", expected \"INT_LITERAL\"");
+        TypeParserTest::fails("int(str", "unexpected token: \"EOF\", expected one of \")\", or \",\"");
+        TypeParserTest::fails("1", "unexpected token: \"INT_LITERAL\", expected one of \"(\", \"any\"");
+    }
+}
