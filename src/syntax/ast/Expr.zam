@@ -1,0 +1,382 @@
+import std("data/list/ArrList.zam");
+import std("lang/Strs.zam");
+import "../Token.zam";
+import "../TokenKind.zam";
+import "Type.zam";
+
+// Expr is an expression as it is written
+public abstract Expr {
+    public enum Kind : int {
+        Symbol(0),
+        NAry(1),
+        Unary(2),
+        Ternary(3),
+        Tuple(4),
+        Call(5),
+        Spread(6),
+        Index(7),
+        Field(8),
+        Path(9),
+        Static(10),
+        TypeValue(11),
+        Cast(12),
+        New(13),
+        Native(14),
+        Async(15),
+        Wait(16);
+    }
+
+    public var Kind kind;
+    // start is the token the expression begins at
+    public var Token* start;
+
+    // list writes exprs after a space each
+    static fun str(ArrList[Expr*]*) list = (exprs) {
+        var str out = "";
+        for(var uint i = 0U; i < exprs.Len(); i++) {
+            out = out + " " + exprs.Get(i).Str();
+        }
+        return out;
+    }
+
+    // Symbol is a literal, a name, or this, super or null
+    public class Symbol <: Expr* {
+        public static fun Symbol*(Token*) New = (start) {
+            var Symbol* e = new(Symbol);
+            e.kind = Kind::Symbol;
+            e.start = start;
+            return e;
+        }
+
+        public fun str() Str = () {
+            var TokenKind k = this.start.kind;
+            if(k == TokenKind::StringLiteral) {
+                return Strs::Quote(this.start.value{str});
+            } else if(k == TokenKind::CharLiteral) {
+                return "'" + this.start.value{str} + "'";
+            } else if(this.start.hasValue) {
+                return this.start.value{str};
+            }
+            return k.text;
+        }
+    }
+
+    // NAry is an operator over two or more operands
+    public class NAry <: Expr* {
+        public var TokenKind operator;
+        public var ArrList[Expr*]* operands;
+
+        public static fun NAry*(TokenKind, ArrList[Expr*]*) New = (operator, operands) {
+            var NAry* e = new(NAry);
+            e.kind = Kind::NAry;
+            e.start = operands.Get(0U).start;
+            e.operator = operator;
+            e.operands = operands;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(" + this.operator.text + Expr::list(this.operands) + ")";
+        }
+    }
+
+    // Unary is an operator written before or after one operand
+    public class Unary <: Expr* {
+        public var TokenKind operator;
+        public var Expr* operand;
+        public var bool postfix;
+
+        public static fun Unary*(Token*, TokenKind, Expr*, bool) New = (start, operator, operand, postfix) {
+            var Unary* e = new(Unary);
+            e.kind = Kind::Unary;
+            e.start = start;
+            e.operator = operator;
+            e.operand = operand;
+            e.postfix = postfix;
+            return e;
+        }
+
+        public fun str() Str = () {
+            if(this.postfix) {
+                return "(" + this.operand.Str() + " " + this.operator.text + ")";
+            }
+            return "(" + this.operator.text + " " + this.operand.Str() + ")";
+        }
+    }
+
+    // Ternary is a condition and what it answers when it holds and when not
+    public class Ternary <: Expr* {
+        public var Expr* condition;
+        public var Expr* then;
+        public var Expr* otherwise;
+
+        public static fun Ternary*(Expr*, Expr*, Expr*) New = (condition, then, otherwise) {
+            var Ternary* e = new(Ternary);
+            e.kind = Kind::Ternary;
+            e.start = condition.start;
+            e.condition = condition;
+            e.then = then;
+            e.otherwise = otherwise;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(? " + this.condition.Str() + " " + this.then.Str() + " " + this.otherwise.Str() + ")";
+        }
+    }
+
+    // Tuple is two or more expressions separated by commas
+    public class Tuple <: Expr* {
+        public var ArrList[Expr*]* elements;
+
+        public static fun Tuple*(ArrList[Expr*]*) New = (elements) {
+            var Tuple* e = new(Tuple);
+            e.kind = Kind::Tuple;
+            e.start = elements.Get(0U).start;
+            e.elements = elements;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(tuple" + Expr::list(this.elements) + ")";
+        }
+    }
+
+    // Call is a callee and the arguments it is called with
+    public class Call <: Expr* {
+        public var Expr* callee;
+        public var ArrList[Expr*]* arguments;
+
+        public static fun Call*(Expr*, ArrList[Expr*]*) New = (callee, arguments) {
+            var Call* e = new(Call);
+            e.kind = Kind::Call;
+            e.start = callee.start;
+            e.callee = callee;
+            e.arguments = arguments;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(call " + this.callee.Str() + Expr::list(this.arguments) + ")";
+        }
+    }
+
+    // Spread is an argument passed as the variadic arguments it holds
+    public class Spread <: Expr* {
+        public var Expr* inner;
+
+        public static fun Spread*(Expr*) New = (inner) {
+            var Spread* e = new(Spread);
+            e.kind = Kind::Spread;
+            e.start = inner.start;
+            e.inner = inner;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(... " + this.inner.Str() + ")";
+        }
+    }
+
+    // Index is an element of what a pointer points at, by its index
+    public class Index <: Expr* {
+        public var Expr* target;
+        public var Expr* index;
+
+        public static fun Index*(Expr*, Expr*) New = (target, index) {
+            var Index* e = new(Index);
+            e.kind = Kind::Index;
+            e.start = target.start;
+            e.target = target;
+            e.index = index;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(index " + this.target.Str() + " " + this.index.Str() + ")";
+        }
+    }
+
+    // Field is a member selected out of a value, by its name or, out of a tuple, by its index
+    public class Field <: Expr* {
+        public var Expr* target;
+        public var Token* name;
+
+        public static fun Field*(Expr*, Token*) New = (target, name) {
+            var Field* e = new(Field);
+            e.kind = Kind::Field;
+            e.start = target.start;
+            e.target = target;
+            e.name = name;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(. " + this.target.Str() + " " + this.name.value{str} + ")";
+        }
+    }
+
+    // Path is a dotted name
+    public class Path <: Expr* {
+        public var ArrList[Token*]* ids;
+
+        public static fun Path*(ArrList[Token*]*) New = (ids) {
+            var Path* e = new(Path);
+            e.kind = Kind::Path;
+            e.start = ids.Get(0U);
+            e.ids = ids;
+            return e;
+        }
+
+        public fun str() Str = () {
+            var str out = "";
+            for(var uint i = 0U; i < this.ids.Len(); i++) {
+                if(i > 0U) {
+                    out = out + ".";
+                }
+                out = out + this.ids.Get(i).value{str};
+            }
+            return out;
+        }
+    }
+
+    // Static is a static member of a declaration, A.B::x, and the type arguments of a generic method, A::[T]f
+    public class Static <: Expr* {
+        public var Type* owner;
+        public var ArrList[Type*]* arguments;
+        public var Token* name;
+
+        public static fun Static*(Type*, ArrList[Type*]*, Token*) New = (owner, arguments, name) {
+            var Static* e = new(Static);
+            e.kind = Kind::Static;
+            e.start = owner.start;
+            e.owner = owner;
+            e.arguments = arguments;
+            e.name = name;
+            return e;
+        }
+
+        public fun str() Str = () {
+            var str arguments = "";
+            if(this.arguments != null) {
+                arguments = " [" + Strs::TrimSpace(Type::list(this.arguments)) + "]";
+            }
+            return "(:: " + this.owner.Str() + arguments + " " + this.name.value{str} + ")";
+        }
+    }
+
+    // TypeValue is a type written as a value, type(T)
+    public class TypeValue <: Expr* {
+        public var Type* named;
+
+        public static fun TypeValue*(Token*, Type*) New = (start, named) {
+            var TypeValue* e = new(TypeValue);
+            e.kind = Kind::TypeValue;
+            e.start = start;
+            e.named = named;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(type " + this.named.Str() + ")";
+        }
+    }
+
+    // Cast is a value converted to a type, x{T}
+    public class Cast <: Expr* {
+        public var Expr* inner;
+        public var Type* to;
+
+        public static fun Cast*(Expr*, Type*) New = (inner, to) {
+            var Cast* e = new(Cast);
+            e.kind = Kind::Cast;
+            e.start = inner.start;
+            e.inner = inner;
+            e.to = to;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(cast " + this.inner.Str() + " " + this.to.Str() + ")";
+        }
+    }
+
+    // New is an allocation of a type, of a count of them, and of the length of their tails
+    public class New <: Expr* {
+        public var Type* allocated;
+        public var Expr* count;
+        public var Expr* tail;
+
+        public static fun New*(Token*, Type*, Expr*, Expr*) Of = (start, allocated, count, tail) {
+            var New* e = new(New);
+            e.kind = Kind::New;
+            e.start = start;
+            e.allocated = allocated;
+            e.count = count;
+            e.tail = tail;
+            return e;
+        }
+
+        public fun str() Str = () {
+            var str out = "(new " + this.allocated.Str();
+            if(this.count != null) {
+                out = out + " " + this.count.Str();
+            }
+            if(this.tail != null) {
+                out = out + " " + this.tail.Str();
+            }
+            return out + ")";
+        }
+    }
+
+    // Native is a function of the runtime or the project named by its id
+    public class Native <: Expr* {
+        public var Token* id;
+
+        public static fun Native*(Token*, Token*) New = (start, id) {
+            var Native* e = new(Native);
+            e.kind = Kind::Native;
+            e.start = start;
+            e.id = id;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(native " + this.id.value{str} + ")";
+        }
+    }
+
+    // Async is a call run on a thread of its own
+    public class Async <: Expr* {
+        public var Expr* call;
+
+        public static fun Async*(Token*, Expr*) New = (start, call) {
+            var Async* e = new(Async);
+            e.kind = Kind::Async;
+            e.start = start;
+            e.call = call;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(async " + this.call.Str() + ")";
+        }
+    }
+
+    // Wait is what a thread answers, once it is done
+    public class Wait <: Expr* {
+        public var Expr* waited;
+
+        public static fun Wait*(Token*, Expr*) New = (start, waited) {
+            var Wait* e = new(Wait);
+            e.kind = Kind::Wait;
+            e.start = start;
+            e.waited = waited;
+            return e;
+        }
+
+        public fun str() Str = () {
+            return "(wait " + this.waited.Str() + ")";
+        }
+    }
+}

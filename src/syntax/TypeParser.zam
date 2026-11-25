@@ -32,13 +32,13 @@ public namespace TypeParser {
         }
     }
 
-    var TreeSet[TokenKind]* baseKinds;
-    var TreeSet[TokenKind]* postfixKinds;
-    var TreeSet[TokenKind]* arraySizes;
-    var TreeSet[TokenKind]* tailSizes;
-    var TreeSet[TokenKind]* listEnds;
-    var TreeSet[TokenKind]* argumentEnds;
-    var TreeSet[TokenKind]* bounds;
+    var TreeSet[TokenKind]* baseKindsSet;
+    var TreeSet[TokenKind]* postfixKindsSet;
+    var TreeSet[TokenKind]* arraySizesSet;
+    var TreeSet[TokenKind]* tailSizesSet;
+    var TreeSet[TokenKind]* listEndsSet;
+    var TreeSet[TokenKind]* argumentEndsSet;
+    var TreeSet[TokenKind]* boundsSet;
 
     // Parse reads a type that cannot be tailed
     public fun (Type*, Err*)(Parser*) Parse = (p) {
@@ -52,7 +52,6 @@ public namespace TypeParser {
 
     // parse reads a type
     fun (Type*, Err*)(Parser*, bool) parse = (p, tailable) {
-        TypeParser::init();
         var (Type*, Err*) base = TypeParser::base(p, tailable);
         if(base.1 != null) {
             return base;
@@ -63,7 +62,7 @@ public namespace TypeParser {
         }
 
         for(;;) {
-            var (Token*, Err*) tok = p.MatchAny(TypeParser::postfixKinds);
+            var (Token*, Err*) tok = p.MatchAny(TypeParser::postfixKinds());
             if(tok.1 != null) {
                 return (null, tok.1);
             } else if(tok.0 == null) {
@@ -106,7 +105,7 @@ public namespace TypeParser {
 
     // base reads a base type
     fun (Type*, Err*)(Parser*, bool) base = (p, tailable) {
-        var (Token*, Err*) start = p.ConsumeAny(TypeParser::baseKinds);
+        var (Token*, Err*) start = p.ConsumeAny(TypeParser::baseKinds());
         if(start.1 != null) {
             return (null, start.1);
         }
@@ -157,9 +156,9 @@ public namespace TypeParser {
             return (t, null);
         }
 
-        var TreeSet[TokenKind]* sizes = TypeParser::arraySizes;
+        var TreeSet[TokenKind]* sizes = TypeParser::arraySizes();
         if(tailable) {
-            sizes = TypeParser::tailSizes;
+            sizes = TypeParser::tailSizes();
         }
         var (Token*, Err*) size = p.MatchAny(sizes);
         if(size.1 != null) {
@@ -186,14 +185,14 @@ public namespace TypeParser {
             }
             arguments.AddLast(argument.0);
 
-            var (Token*, Err*) bound = p.MatchAny(TypeParser::bounds);
+            var (Token*, Err*) bound = p.MatchAny(TypeParser::bounds());
             if(bound.1 != null) {
                 return (null, bound.1);
             } else if(bound.0 != null) {
                 return (null, Errs::BoundAmongArguments(bound.0));
             }
 
-            var (Token*, Err*) end = p.ConsumeAny(TypeParser::argumentEnds);
+            var (Token*, Err*) end = p.ConsumeAny(TypeParser::argumentEnds());
             if(end.1 != null) {
                 return (null, end.1);
             } else if(end.0.kind == TokenKind::RightBracket) {
@@ -205,9 +204,9 @@ public namespace TypeParser {
 
     // array reads the size of an array of t, or ~, and ']'
     fun (Type*, Err*)(Parser*, Type*, bool) array = (p, t, tailable) {
-        var TreeSet[TokenKind]* sizes = TypeParser::arraySizes;
+        var TreeSet[TokenKind]* sizes = TypeParser::arraySizes();
         if(tailable) {
-            sizes = TypeParser::tailSizes;
+            sizes = TypeParser::tailSizes();
         }
         var (Token*, Err*) size = p.ConsumeAny(sizes);
         if(size.1 != null) {
@@ -251,7 +250,7 @@ public namespace TypeParser {
             }
             parameters.AddLast(parameter.0);
 
-            var (Token*, Err*) end = p.ConsumeAny(TypeParser::listEnds);
+            var (Token*, Err*) end = p.ConsumeAny(TypeParser::listEnds());
             if(end.1 != null) {
                 return (null, end.1);
             } else if(end.0.kind == TokenKind::RightParen) {
@@ -270,7 +269,7 @@ public namespace TypeParser {
                 return t;
             }
             types.AddLast(t.0);
-            var (Token*, Err*) end = p.ConsumeAny(TypeParser::listEnds);
+            var (Token*, Err*) end = p.ConsumeAny(TypeParser::listEnds());
             if(end.1 != null) {
                 return (null, end.1);
             } else if(end.0.kind == TokenKind::RightParen) {
@@ -312,19 +311,61 @@ public namespace TypeParser {
         return tail != null && !tail.sized;
     }
 
-    // init builds the kind sets the first time a type is read
-    fun void() init = () {
-        if(TypeParser::baseKinds != null) {
-            return;
+    // baseKinds answers the tokens a type can begin with
+    fun TreeSet[TokenKind]*() baseKinds = () {
+        if(TypeParser::baseKindsSet == null) {
+            TypeParser::baseKindsSet = TreeSet::[TokenKind]New(14U, TokenKind::Void, TokenKind::Any, TokenKind::Bool, TokenKind::Char,
+                TokenKind::Byte, TokenKind::Int, TokenKind::Uint, TokenKind::Float, TokenKind::Posit, TokenKind::String,
+                TokenKind::Type, TokenKind::Thread, TokenKind::Identifier, TokenKind::LeftParen);
         }
-        TypeParser::baseKinds = TreeSet::[TokenKind]New(14U, TokenKind::Void, TokenKind::Any, TokenKind::Bool, TokenKind::Char,
-            TokenKind::Byte, TokenKind::Int, TokenKind::Uint, TokenKind::Float, TokenKind::Posit, TokenKind::String,
-            TokenKind::Type, TokenKind::Thread, TokenKind::Identifier, TokenKind::LeftParen);
-        TypeParser::postfixKinds = TreeSet::[TokenKind]New(4U, TokenKind::Star, TokenKind::LeftBracket, TokenKind::LeftParen, TokenKind::Dollar);
-        TypeParser::arraySizes = TreeSet::[TokenKind]New(1U, TokenKind::IntLiteral);
-        TypeParser::tailSizes = TreeSet::[TokenKind]New(2U, TokenKind::IntLiteral, TokenKind::Tilde);
-        TypeParser::listEnds = TreeSet::[TokenKind]New(2U, TokenKind::Comma, TokenKind::RightParen);
-        TypeParser::argumentEnds = TreeSet::[TokenKind]New(2U, TokenKind::Comma, TokenKind::RightBracket);
-        TypeParser::bounds = TreeSet::[TokenKind]New(2U, TokenKind::Subtype, TokenKind::Supertype);
+        return TypeParser::baseKindsSet;
+    }
+
+    // postfixKinds answers the tokens a type can be followed by to make another
+    fun TreeSet[TokenKind]*() postfixKinds = () {
+        if(TypeParser::postfixKindsSet == null) {
+            TypeParser::postfixKindsSet = TreeSet::[TokenKind]New(4U, TokenKind::Star, TokenKind::LeftBracket, TokenKind::LeftParen, TokenKind::Dollar);
+        }
+        return TypeParser::postfixKindsSet;
+    }
+
+    // arraySizes answers the tokens an array's size can be
+    fun TreeSet[TokenKind]*() arraySizes = () {
+        if(TypeParser::arraySizesSet == null) {
+            TypeParser::arraySizesSet = TreeSet::[TokenKind]New(1U, TokenKind::IntLiteral);
+        }
+        return TypeParser::arraySizesSet;
+    }
+
+    // tailSizes answers the tokens an array's size can be where it may be a tail
+    fun TreeSet[TokenKind]*() tailSizes = () {
+        if(TypeParser::tailSizesSet == null) {
+            TypeParser::tailSizesSet = TreeSet::[TokenKind]New(2U, TokenKind::IntLiteral, TokenKind::Tilde);
+        }
+        return TypeParser::tailSizesSet;
+    }
+
+    // listEnds answers the tokens that follow a type in a list of them in parentheses
+    fun TreeSet[TokenKind]*() listEnds = () {
+        if(TypeParser::listEndsSet == null) {
+            TypeParser::listEndsSet = TreeSet::[TokenKind]New(2U, TokenKind::Comma, TokenKind::RightParen);
+        }
+        return TypeParser::listEndsSet;
+    }
+
+    // argumentEnds answers the tokens that follow a type argument
+    fun TreeSet[TokenKind]*() argumentEnds = () {
+        if(TypeParser::argumentEndsSet == null) {
+            TypeParser::argumentEndsSet = TreeSet::[TokenKind]New(2U, TokenKind::Comma, TokenKind::RightBracket);
+        }
+        return TypeParser::argumentEndsSet;
+    }
+
+    // bounds answers the tokens that write a generic bound
+    fun TreeSet[TokenKind]*() bounds = () {
+        if(TypeParser::boundsSet == null) {
+            TypeParser::boundsSet = TreeSet::[TokenKind]New(2U, TokenKind::Subtype, TokenKind::Supertype);
+        }
+        return TypeParser::boundsSet;
     }
 }

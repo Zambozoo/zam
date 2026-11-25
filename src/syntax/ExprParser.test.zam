@@ -1,0 +1,101 @@
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "ExprParser.zam";
+import "Parser.zam";
+import "TokenKind.zam";
+import "ast/Expr.zam";
+
+public namespace ExprParserTest {
+    // parses checks that source reads whole as the expression want.
+    private fun void(str, str) parses = (source, want) {
+        var Parser* p = Parser::New(source);
+        var (Expr*, Err*) e = ExprParser::Parse(p);
+        if(!Assert::True(e.1 == null, source + " fails to parse")) {
+            Assert::Fatal(e.1.Err());
+        }
+        Assert::[str]Equal(want, e.0.Str());
+        Assert::True(p.Peek().0.kind == TokenKind::EOF, source + " is not read whole");
+    }
+
+    // fails checks that source fails to read as an expression with an error
+    // containing want.
+    private fun void(str, str) fails = (source, want) {
+        var (Expr*, Err*) e = ExprParser::Parse(Parser::New(source));
+        if(Assert::True(e.1 != null, source + " parses")) {
+            Assert::True(Strs::Contains(e.1.Err(), want), e.1.Err() + " does not contain " + want);
+        }
+    }
+
+    public fun void(uint, str...) Precedence = (argC, argV) {
+        ExprParserTest::parses("1 + 2 * 3", "(+ 1 (* 2 3))");
+        ExprParserTest::parses("a + b + c - d", "(- (+ a b c) d)");
+        ExprParserTest::parses("(a + b) + c", "(+ (+ a b) c)");
+        ExprParserTest::parses("a << 1 + 2", "(<< a (+ 1 2))");
+        ExprParserTest::parses("a < b == c", "(== (< a b) c)");
+        ExprParserTest::parses("x <: y", "(<: x y)");
+        ExprParserTest::parses("a & b ^ c | d", "(| (^ (& a b) c) d)");
+        ExprParserTest::parses("a && b || c ?? d", "(?? (|| (&& a b) c) d)");
+    }
+
+    public fun void(uint, str...) AssignTernaryTuple = (argC, argV) {
+        ExprParserTest::parses("a = b ? c : d", "(= a (? b c d))");
+        ExprParserTest::parses("a, b = 1", "(tuple a (= b 1))");
+        ExprParserTest::parses("(1, 2)", "(tuple 1 2)");
+    }
+
+    public fun void(uint, str...) Prefix = (argC, argV) {
+        ExprParserTest::parses("-x", "(- x)");
+        ExprParserTest::parses("!!x", "(! (! x))");
+        ExprParserTest::parses("+x", "x");
+        ExprParserTest::parses("*p + &x", "(+ (* p) (& x))");
+        ExprParserTest::parses("++i", "(++ i)");
+        ExprParserTest::parses("#x", "(# x)");
+        ExprParserTest::parses("@x", "(@ x)");
+        ExprParserTest::parses("@{int*}", "(type (* int))");
+    }
+
+    public fun void(uint, str...) Postfix = (argC, argV) {
+        ExprParserTest::parses("x++", "(x ++)");
+        ExprParserTest::parses("a.b.c", "a.b.c");
+        ExprParserTest::parses("a.b.0", "(. a.b 0)");
+        ExprParserTest::parses("a.0.1", "(. (. a 0) 1)");
+        ExprParserTest::parses("f(x).y", "(. (call f x) y)");
+        ExprParserTest::parses("f()", "(call f)");
+        ExprParserTest::parses("f(a, b...)", "(call f a (... b))");
+        ExprParserTest::parses("a[i + 1]", "(index a (+ i 1))");
+        ExprParserTest::parses("x{int}{str}", "(cast (cast x int) str)");
+    }
+
+    public fun void(uint, str...) Statics = (argC, argV) {
+        ExprParserTest::parses("A.B::x", "(:: A.B x)");
+        ExprParserTest::parses("Arr::[int, str]New(1U)", "(call (:: Arr [int str] New) 1)");
+        ExprParserTest::parses("Planet::Earth.note", "(. (:: Planet Earth) note)");
+    }
+
+    public fun void(uint, str...) Primaries = (argC, argV) {
+        ExprParserTest::parses("\"s\\n\"", "\"s\\n\"");
+        ExprParserTest::parses("'c'", "'c'");
+        ExprParserTest::parses("1.5", "1.5");
+        ExprParserTest::parses("this == null", "(== this null)");
+        ExprParserTest::parses("true != false", "(!= true false)");
+        ExprParserTest::parses("type(int*)", "(type (* int))");
+        ExprParserTest::parses("new(int)", "(new int)");
+        ExprParserTest::parses("new(int, 4U)", "(new int 4)");
+        ExprParserTest::parses("new(A~, 2U, n)", "(new (~ A) 2 n)");
+        ExprParserTest::parses("new(int[~], 3U)", "(new ([~] int) 3)");
+        ExprParserTest::parses("native(STD_X){void(int)}(1)", "(call (cast (native STD_X) (fun void int)) 1)");
+        ExprParserTest::parses("async(f(x))", "(async (call f x))");
+        ExprParserTest::parses("wait(t)", "(wait t)");
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        ExprParserTest::fails("async(x)", "async expression must be a call expression");
+        ExprParserTest::fails("a ? b", "unexpected token: \"EOF\", expected \":\"");
+        ExprParserTest::fails("f(a", "unexpected token: \"EOF\", expected one of \")\", or \",\"");
+        ExprParserTest::fails("a.", "unexpected token: \"EOF\", expected \"IDENTIFIER\"");
+        ExprParserTest::fails("f().", "unexpected token: \"EOF\", expected one of \"INT_LITERAL\", or \"IDENTIFIER\"");
+        ExprParserTest::fails(")", "unexpected token: \")\", expected one of");
+        ExprParserTest::fails("A::[int x", "unexpected token: \"IDENTIFIER\", expected one of \"]\", or \",\"");
+    }
+}
