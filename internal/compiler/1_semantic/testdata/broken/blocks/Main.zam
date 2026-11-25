@@ -5,7 +5,7 @@ public namespace Main {
 
     fun int(int) Falls = (n) {
         switch (n) {
-            case (0): {
+            case (0) {
                 var int y = ;
             }
         } else {

@@ -91,10 +91,10 @@ public namespace Main {
     fun int() S6 = () { return "s"; }
     fun void() S7 = () { for (; 1;) {} }
     fun void() S8 = () { if (1) {} }
-    fun void() S9 = () { switch (1) { case ("s"): {} } }
+    fun void() S9 = () { switch (1) { case ("s") {} } }
     fun void() S10 = () { defer var int x; }
     fun void() S11 = () { defer defer Main::Void(); }
-    fun void() S12 = () { switch (1) { case (1): continue; } }
+    fun void() S12 = () { switch (1) { case (1) continue; } }
     fun void() S13 = () { for { defer break; } }
     fun void() S14 = () { for { defer continue; } }
     fun void() S15 = () { break; }
@@ -189,10 +189,10 @@ public namespace Main {
     alias Instantiated = Generic[Square*];
     alias Number = int;
 
-    fun int(int) NoElse = (n) { switch (n) { case (1): return 1; } }
-    fun int(int) Breaks = (n) { switch (n) { case (1): break; } else { return 1; } }
-    fun int(int) EmptyCase = (n) { switch (n) { case (1): {} } else { return 1; } }
-    fun int(int) LabelBreak = (n) { label outer: for { switch (n) { case (1): break outer; } } }
+    fun int(int) NoElse = (n) { switch (n) { case (1) return 1; } }
+    fun int(int) Breaks = (n) { switch (n) { case (1) break; } else { return 1; } }
+    fun int(int) EmptyCase = (n) { switch (n) { case (1) {} } else { return 1; } }
+    fun int(int) LabelBreak = (n) { label outer: for { switch (n) { case (1) break outer; } } }
     fun void() T1 = () { var (int, str) t = 1, 2; }
     fun void() T2 = () { var int x = missing{int}; }
     fun void() T3 = () { var int x = Main::Get(){int}; }

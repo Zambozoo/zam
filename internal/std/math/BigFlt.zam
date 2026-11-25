@@ -7,6 +7,7 @@ import {
     "Hash.zam";
     mu = "Uints.zam";
     mf = "Flts.zam";
+    mp = "../lang/Psts.zam";
     "BigInt.zam";
 }
 
@@ -16,6 +17,18 @@ import {
 // Sqrt and conversions round half to even; the transcendental functions are
 // accurate to within one unit in the last place.
 public class BigFlt {
+    // positBits is how many bits a pst has, positMaxScale the highest power
+    // of two one reaches, and positFraction how many bits of a fraction ToPst
+    // lays out before it rounds.
+    static var uint$ positBits = 64U;
+    static var int$ positMaxScale = 248;
+    static var uint$ positFraction = 256U;
+    // positMaxPos and positMinPos are the bits of the largest and smallest
+    // positive pst, and positNaR those of NaR.
+    static var uint$ positMaxPos = 9223372036854775807U;
+    static var uint$ positMinPos = 1U;
+    static var uint$ positNaR = 9223372036854775808U;
+
     var bool neg;
     var BigInt* mant;
     var int exp;
@@ -379,6 +392,74 @@ public class BigFlt {
             return -f;
         }
         return f;
+    }
+
+    // ToPst returns the nearest pst, ties to even. A nonzero value never
+    // rounds to zero, and none rounds to NaR.
+    public fun pst() ToPst = () {
+        if(this.IsZero()) {
+            return mp.Psts::FromBits(0U);
+        }
+        var int scale = this.top() - 1;
+        var uint b = BigFlt::positMinPos;
+        if(scale >= BigFlt::positMaxScale) {
+            b = BigFlt::positMaxPos;
+        } else if(scale >= -BigFlt::positMaxScale) {
+            b = this.positRound(scale);
+        }
+        if(this.neg) {
+            b = 0U - b;
+        }
+        return mp.Psts::FromBits(b);
+    }
+
+    // positRound lays out the regime, exponent and fraction of this
+    // magnitude, which lies in [2^scale, 2^(scale+1)), and rounds the pattern
+    // to the bits of a pst after its sign.
+    private fun uint(int) positRound = (scale) {
+        var int k = scale / 4;
+        if(scale < 0 && scale % 4 != 0) {
+            k = k - 1;
+        }
+        var int exponent = scale - 4 * k;
+
+        var BigInt* pattern = BigInt::FromUint(1U);
+        var uint length = (1 - k){uint};
+        if(k >= 0) {
+            pattern = BigFlt::one((k + 1){uint}).Sub(BigInt::FromUint(1U)).Shl(1U);
+            length = (k + 2){uint};
+        }
+        pattern = pattern.Shl(2U).Add(BigInt::FromInt(exponent));
+        length = length + 2U;
+
+        var int s = this.exp + BigFlt::positFraction{int} - scale;
+        var BigInt* whole = this.mant;
+        var bool truncated = false;
+        if(s >= 0) {
+            whole = whole.Shl(s{uint});
+        } else {
+            whole = whole.Shr((-s){uint});
+            truncated = !whole.Shl((-s){uint}).Eq(this.mant);
+        }
+        whole = whole.Sub(BigFlt::one(BigFlt::positFraction));
+        pattern = pattern.Shl(BigFlt::positFraction).Add(whole);
+        length = length + BigFlt::positFraction;
+
+        var uint shift = length - (BigFlt::positBits - 1U);
+        var BigInt* rounded = pattern.Shr(shift);
+        var bool guard = pattern.Bit(shift - 1U);
+        var BigInt* rest = pattern.Sub(pattern.Shr(shift - 1U).Shl(shift - 1U));
+        var bool sticky = !rest.IsZero() || truncated;
+        var uint b = rounded.ToInt().0{uint};
+        if(guard && (sticky || (b & 1U) == 1U)) {
+            b++;
+        }
+        if(b >= BigFlt::positNaR) {
+            return BigFlt::positMaxPos;
+        } else if(b == 0U) {
+            return BigFlt::positMinPos;
+        }
+        return b;
     }
 
     // one is 1 at w fraction bits.

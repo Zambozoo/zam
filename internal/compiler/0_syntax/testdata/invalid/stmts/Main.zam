@@ -56,16 +56,16 @@ public namespace Main {
         switch (1) { case 1: }
 
     fun void() CaseValues = () {
-        switch (1) { case (1 1): }
+        switch (1) { case (1 1) }
 
     fun void() CaseEmpty = () {
         switch (1) { case (: }
 
     fun void() CaseColon = () {
-        switch (1) { case (1) a }
+        switch (1) { case (1): a; }
 
     fun void() CaseBody = () {
-        switch (1) { case (1): var }
+        switch (1) { case (1) var }
 
     fun void() BlockEnd = () {
         { var }

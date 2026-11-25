@@ -1,4 +1,10 @@
-import bits = "../lang/Psts.zam";
+import {
+    bits = "../lang/Psts.zam";
+    "../lang/Err.zam";
+    "../lang/StrErr.zam";
+    "../lang/Strs.zam";
+    "BigFlt.zam";
+}
 
 // Mathematical functions and constants of pst, each rounded once from a
 // result carried with 128 bits. Sqrt, Fma, Mod, Remainder and the roundings to
@@ -6,6 +12,18 @@ import bits = "../lang/Psts.zam";
 // within about 2^-110 of a tie. Each answers NaR for NaR and wherever its
 // real result does not exist.
 public namespace Psts {
+    // parsePrecision is how many bits Parse reads a decimal to before it
+    // rounds it to a pst.
+    var uint$ parsePrecision = 512U;
+    // parseMaxMagnitude and parseMinMagnitude are the powers of ten past which
+    // every decimal rounds to Max or MinPos, so Parse need not read it: 2^248
+    // is about 10^74.65.
+    var int$ parseMaxMagnitude = 76;
+    var int$ parseMinMagnitude = -77;
+    // parseMaxExponent is past any exponent a decimal's digits could make up
+    // for, so Parse stops counting there.
+    var int$ parseMaxExponent = 1000000000000000;
+
     public var pst$ Pi = 3.141592653589793238462643383279502884197169399P;
     public var pst$ Tau = 6.283185307179586476925286766559005768394338798P;
     public var pst$ E = 2.718281828459045235360287471352662497757247093P;
@@ -17,6 +35,102 @@ public namespace Psts {
     public var pst$ Ln10 = 2.302585092994045684017991454684364207601101488P;
     public var pst$ Log2E = 1.442695040888963407359924681001892137426645954P;
     public var pst$ Log10E = 0.434294481903251827651128918916605082294397005P;
+
+    // Parse reads an optional sign, decimal digits with an optional point,
+    // and an optional exponent led by e or E, as BigFlt::Parse does, rounded
+    // to the nearest pst, ties to even. A nonzero value never rounds to zero,
+    // and one past either end of the psts, however far, saturates there.
+    public static fun (pst, Err*)(str) Parse = (s) {
+        var (int, bool, bool, bool) m = Psts::magnitude(s);
+        if(!m.3) {
+            return (bits.Psts::FromBits(0U), StrErr::New("invalid pst " + Strs::Quote(s)));
+        } else if(!m.2) {
+            return (bits.Psts::FromBits(0U), null);
+        }
+        var uint b = 0U;
+        if(m.0 >= Psts::parseMaxMagnitude) {
+            b = bits.Psts::ToBits(bits.Psts::Max);
+        } else if(m.0 <= Psts::parseMinMagnitude) {
+            b = bits.Psts::ToBits(bits.Psts::MinPos);
+        } else {
+            var (BigFlt*, bool) f = BigFlt::Parse(s, Psts::parsePrecision);
+            if(!f.1) {
+                return (bits.Psts::FromBits(0U), StrErr::New("invalid pst " + Strs::Quote(s)));
+            }
+            return (f.0.ToPst(), null);
+        }
+        if(m.1) {
+            b = 0U - b;
+        }
+        return (bits.Psts::FromBits(b), null);
+    }
+
+    // magnitude reads s as Parse does, answering the power of ten of its
+    // first nonzero digit, whether it is negative, whether it has a nonzero
+    // digit at all, and whether it is a decimal.
+    private static fun (int, bool, bool, bool)(str) magnitude = (s) {
+        var (int, bool, bool, bool) out;
+        var (byte*, uint) p = Strs::ToBytes(s);
+        var uint i = 0U;
+        if(i < p.1 && (p.0[i] == '-'{byte} || p.0[i] == '+'{byte})) {
+            out.1 = p.0[i] == '-'{byte};
+            i++;
+        }
+        var int digits = 0;
+        var int whole = -1;
+        var int first = -1;
+        for(; i < p.1; i++) {
+            var byte c = p.0[i];
+            if(c >= '0'{byte} && c <= '9'{byte}) {
+                if(first < 0 && c != '0'{byte}) {
+                    first = digits;
+                }
+                digits++;
+            } else if(c == '.'{byte} && whole < 0) {
+                whole = digits;
+            } else if(c == 'e'{byte} || c == 'E'{byte}) {
+                break;
+            } else {
+                return out;
+            }
+        }
+        if(digits == 0) {
+            return out;
+        }
+        if(whole < 0) {
+            whole = digits;
+        }
+
+        var int exponent = 0;
+        if(i < p.1) {
+            i++;
+            var bool negative = false;
+            if(i < p.1 && (p.0[i] == '-'{byte} || p.0[i] == '+'{byte})) {
+                negative = p.0[i] == '-'{byte};
+                i++;
+            }
+            if(i == p.1) {
+                return out;
+            }
+            for(; i < p.1; i++) {
+                var byte c = p.0[i];
+                if(c < '0'{byte} || c > '9'{byte}) {
+                    return out;
+                }
+                if(exponent < Psts::parseMaxExponent) {
+                    exponent = exponent * 10 + (c - '0'{byte}){int};
+                }
+            }
+            if(negative) {
+                exponent = -exponent;
+            }
+        }
+
+        out.0 = whole - 1 - first + exponent;
+        out.2 = first >= 0;
+        out.3 = true;
+        return out;
+    }
 
     // Sqrt returns the square root of x, NaR below zero.
     public static fun pst(pst) Sqrt = (x) {

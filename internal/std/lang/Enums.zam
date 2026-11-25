@@ -10,6 +10,13 @@ public namespace Enums {
         return n;
     }
 
+    // Address answers where e's value is kept, which every copy of e shares.
+    public static fun[E <: enum] E$*(E) Address = (e) {
+        var E$* p;
+        native(STD_ENUM_ADDRESS){void(type, E, E$**)}(type(E), e, &p);
+        return p;
+    }
+
     // Len answers how many values E has.
     public static fun[E <: enum] uint() Len = () {
         var uint n;

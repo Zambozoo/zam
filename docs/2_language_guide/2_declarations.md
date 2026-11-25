@@ -194,6 +194,7 @@ The standard library's `Enums`, in `lang/Enums.zam`, uses it to answer how many 
 var uint count = Enums::[Planet]Len();          // 1
 var Arr[Planet]* planets = Enums::[Planet]All(); // [Earth]
 var uint at = Enums::[Planet]Ordinal(Planet::Earth); // 0
+var Planet$* earth = Enums::[Planet]Address(Planet::Earth); // the one Earth every copy is of
 ```
 
 An enum can be backed by a primitive, which each value names, and a cast to that primitive reads the value's backing.

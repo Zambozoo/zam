@@ -1,0 +1,73 @@
+import std("data/trie/HashTrieMap.zam");
+import std("lang/Arr.zam");
+import std("lang/Enums.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import "RuneReader.zam";
+import "TokenKind.zam";
+
+// Trie matches the symbols or the keywords written at a reader's position
+public class Trie {
+    static var Trie* symbols;
+    static var Trie* keywords;
+
+    var HashTrieMap[char, TokenKind$*]* kinds;
+    // longest is how many chars the longest key has
+    var uint longest;
+
+    // Symbols answers the trie of every symbol
+    public static fun Trie*() Symbols = () {
+        if(Trie::symbols == null) {
+            Trie::symbols = Trie::of(TokenKind.Group::Symbol);
+        }
+        return Trie::symbols;
+    }
+
+    // Keywords answers the trie of every keyword
+    public static fun Trie*() Keywords = () {
+        if(Trie::keywords == null) {
+            Trie::keywords = Trie::of(TokenKind.Group::Keyword);
+        }
+        return Trie::keywords;
+    }
+
+    // Match advances and answers the kind of the key they are, or null for none
+    public fun (TokenKind$*, str, Err*)(RuneReader*) Match = (rr) {
+        var char* path = new(char, this.longest);
+        var uint n = 0U;
+        for(; n < this.longest;) {
+            var (char, Err*) c = rr.Peek(0U);
+            if(c.1 == RuneReader.Errs::EOF) {
+                break;
+            } else if(c.1 != null) {
+                return (null, null, c.1);
+            }
+            path[n] = c.0;
+            if(!this.kinds.HasPrefix(n + 1U, path)) {
+                break;
+            }
+            rr.Advance(1U);
+            n++;
+        }
+        return (this.kinds.Get(n, path).0, Strs::ToChars(path, n), null);
+    }
+
+    // of answers the trie of every kind in group
+    private static fun Trie*(TokenKind.Group) of = (group) {
+        var Trie* t = new(Trie);
+        t.kinds = HashTrieMap::[char, TokenKind$*]New();
+        var Arr[TokenKind]* all = Enums::[TokenKind]All();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            var TokenKind kind = all.Get(i);
+            if(kind.group != group) {
+                continue;
+            }
+            var Arr[char]* chars = Strs::Chars(kind.text);
+            t.kinds.Put(chars.Len(), chars.Arr(), Enums::[TokenKind]Address(kind));
+            if(chars.Len() > t.longest) {
+                t.longest = chars.Len();
+            }
+        }
+        return t;
+    }
+}

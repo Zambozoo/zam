@@ -22,15 +22,15 @@ public enum Optimization : str {
 
     public static fun (Optimization, Err*)(str) Parse = (s) {
         switch(s) {
-            case (Optimization::None{str}):
+            case (Optimization::None{str})
                 return (Optimization::None, null);
-            case (Optimization::Less{str}):
+            case (Optimization::Less{str})
                 return (Optimization::Less, null);
-            case (Optimization::Default{str}):
+            case (Optimization::Default{str})
                 return (Optimization::Default, null);
-            case (Optimization::Aggressive{str}):
+            case (Optimization::Aggressive{str})
                 return (Optimization::Aggressive, null);
-            case (Optimization::Size{str}):
+            case (Optimization::Size{str})
                 return (Optimization::Size, null);
         } else {
             return (Optimization::Default, Errs::InvalidOptimization(s));

@@ -68,7 +68,7 @@ public namespace Extras {
 
     fun int(int) Ends = (n) {
         switch (n) {
-            case (0): {
+            case (0) {
                 if (n == 0) {
                     continue;
                 } else {
@@ -83,7 +83,7 @@ public namespace Extras {
     fun int(int) Loops = (n) {
         for (; n < 1;) {
             switch (n) {
-                case (1): break;
+                case (1) break;
             }
             label inner: for {
                 break inner;

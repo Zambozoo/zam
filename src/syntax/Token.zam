@@ -1,3 +1,4 @@
+import std("lang/Strs.zam");
 import "TokenKind.zam";
 
 // Token is a kind and value lexed at an offset
@@ -7,12 +8,33 @@ public class Token {
     public var uint offset;
     // value is an identifer or literal value
     public var any value;
+    // hasValue is whether the token has a value
+    public var bool hasValue;
 
     public static fun Token*(TokenKind, uint, any) New = (kind, offset, value) {
+        var Token* t = Token::Bare(kind, offset);
+        t.value = value;
+        t.hasValue = true;
+        return t;
+    }
+
+    // Bare answers a token with no value, as a symbol or keyword is.
+    public static fun Token*(TokenKind, uint) Bare = (kind, offset) {
         var Token* t = new(Token);
         t.kind = kind;
         t.offset = offset;
-        t.value = value;
         return t;
+    }
+
+    // Str answers the token's offset, kind and value, an identifier's or a
+    // string's quoted.
+    public fun str() Str = () {
+        var str out = this.offset{str} + " " + this.kind.text;
+        if(!this.hasValue) {
+            return out;
+        } else if(this.kind == TokenKind::Identifier || this.kind == TokenKind::StringLiteral) {
+            return out + " " + Strs::Quote(this.value{str});
+        }
+        return out + " " + this.value{str};
     }
 }

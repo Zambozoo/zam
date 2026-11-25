@@ -596,7 +596,7 @@ func newStmtSwitch(parser SyntaxParser, start *Token) (*StmtSwitch, error) {
 }
 
 // newSwitchCase creates a new case whose keyword, start, has already been
-// consumed.
+// consumed. Its body follows the parentheses of its values directly.
 func newSwitchCase(parser SyntaxParser, start *Token) (*SwitchCase, error) {
 	if _, err := parser.Consume(TTLeftParen); err != nil {
 		return nil, err
@@ -614,9 +614,6 @@ func newSwitchCase(parser SyntaxParser, start *Token) (*SwitchCase, error) {
 		} else if tok.Kind == TTRightParen {
 			break
 		}
-	}
-	if _, err := parser.Consume(TTColon); err != nil {
-		return nil, err
 	}
 
 	body, err := newStmt(parser)

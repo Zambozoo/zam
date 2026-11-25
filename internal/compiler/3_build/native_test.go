@@ -191,14 +191,14 @@ func TestNativeStatements(t *testing.T) {
 		"switch": {`
         for(var int i = 0; i < 6; i++) {
             switch(i) {
-                case(0, 1): { result = result + 1; }
-                case(2): { result = result + 10; continue; }
-                case(3): { result = result + 20; }
+                case(0, 1) { result = result + 1; }
+                case(2) { result = result + 10; continue; }
+                case(3) { result = result + 20; }
             } else { result = result + 3; }
         }`, 58},
 		"switch break": {`
         switch(2) {
-            case(2): { result = 5; break; result = 6; }
+            case(2) { result = 5; break; result = 6; }
         } else { result = 7; }
         result = result + 1;`, 6},
 		"defer order": {`
@@ -646,7 +646,7 @@ func TestNativeEnums(t *testing.T) {
         result = result + (favorite == Color::Green){int} * 50;
         result = result + favorite.IsRed(){int} * 7;
         switch(c) {
-            case(Color::Red): { result = result + 1; }
+            case(Color::Red) { result = result + 1; }
         } else { result = result + 2; }
         var Color* p = &favorite;
         result = result + (*p == Color::Green){int} * 4;
@@ -1149,6 +1149,48 @@ namespace Main {
 `)
 	assert.Zero(t, status, output)
 	assert.Equal(t, "32423 21211 true 9 400 one hot0 cloudy1 home2\n", output)
+}
+
+// TestNativeEnumsAddress answers the one static each enum value is kept in,
+// whatever copy of it is asked about, for an enum backed by nothing, one
+// backed by a primitive and one with members.
+func TestNativeEnumsAddress(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    enum Plain {
+        A, B;
+    }
+
+    enum Wide : int {
+        P(100), Q(200);
+    }
+
+    enum Planet {
+        Earth.Init("home"),
+        Mars.Init("red");
+
+        var str note;
+
+        fun void(str) Init = (n) {
+            this.note = n;
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Planet copy = Planet::Mars;
+        var Planet$* mars = Enums::[Planet]Address(copy);
+        var Plain$* b = Enums::[Plain]Address(Plain::B);
+        var Wide$* q = Enums::[Wide]Address(Wide::Q);
+        File::StdOut.WriteStr(mars.note + " " + (mars == Enums::[Planet]Address(Planet::Mars)){str} + " " + (mars == Enums::[Planet]Address(Planet::Earth)){str});
+        File::StdOut.WriteStr(" " + (*b == Plain::B){str} + " " + (*q){int}{str} + "\n");
+    }
+}
+`)
+	assert.Zero(t, status, output)
+	assert.Equal(t, "red true false true 200\n", output)
 }
 
 // TestNativeTrapsWhatItCannotCompile compiles a method native compilation
@@ -2090,7 +2132,7 @@ namespace Main {
 
     static fun str(Planet) describe = (p) {
         switch(p) {
-            case(Planet::Mercury): { return "first"; }
+            case(Planet::Mercury) { return "first"; }
         } else { return p.Describe(); }
         return "";
     }

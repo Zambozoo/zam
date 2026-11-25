@@ -42,11 +42,11 @@ public namespace Stmts {
             continue outer;
         }
         label choice: switch (a) {
-            case (1): break choice;
+            case (1) break choice;
         }
         switch (a) {
-            case (1, 2): a = 3;
-            case (3): {
+            case (1, 2) a = 3;
+            case (3) {
             }
         } else {
             a = 0;

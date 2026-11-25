@@ -1,0 +1,531 @@
+import std("codec/text/UTF8.zam");
+import std("data/list/ArrList.zam");
+import std("lang/Chars.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("lang/Uints.zam");
+import m = std("math/Psts.zam");
+import "RuneReader.zam";
+import "Token.zam";
+import "TokenKind.zam";
+import "Trie.zam";
+
+// Lexer reads the tokens of a source one at a time
+public class Lexer {
+    namespace Errs {
+        public var Err*$ UnterminatedComment = StrErr::New("unterminated comment");
+        public var Err*$ InvalidSymbol = StrErr::New("invalid symbol");
+        public var Err*$ InvalidInt = StrErr::New("invalid integer");
+        public var Err*$ InvalidFloat = StrErr::New("invalid float");
+        public var Err*$ InvalidPosit = StrErr::New("invalid posit");
+        public var Err*$ InvalidEscapeSequence = StrErr::New("invalid escape sequence");
+        public var Err*$ InvalidUTF8 = StrErr::New("invalid UTF-8 sequence");
+        public var Err*$ UnterminatedStringLiteral = StrErr::New("unterminated string literal");
+        public var Err*$ UnterminatedCharLiteral = StrErr::New("unterminated char literal");
+    }
+
+    // Lexed is a token and the offset just past its last char
+    public class Lexed {
+        public var Token* token;
+        public var uint end;
+    }
+
+    // Iter visits the tokens of a lexer up to its source's end
+    public class Iter {
+        var Lexer* lexer;
+        var Err* err;
+        var bool done;
+
+        public static fun Iter*(Lexer*) New = (lexer) {
+            var Iter* it = new(Iter);
+            it.lexer = lexer;
+            return it;
+        }
+
+        // Next answers the next token, or null once there are none left
+        public fun Lexed*() Next = () {
+            if(this.done) {
+                return null;
+            }
+            var (Token*, Err*) next = this.lexer.Next();
+            if(next.1 != null || next.0.kind == TokenKind::EOF) {
+                this.err = next.1;
+                this.done = true;
+                return null;
+            }
+            var Lexed* lexed = new(Lexed);
+            lexed.token = next.0;
+            lexed.end = this.lexer.rr.Offset();
+            return lexed;
+        }
+
+        // Err answers the error that ended the tokens, or null
+        public fun Err*() Err = () {
+            return this.err;
+        }
+    }
+
+    var RuneReader* rr;
+    // lineStarts is the offset each line begins at
+    public var ArrList[uint]* lineStarts;
+    // last is the kind of the token lexed most recently
+    var TokenKind last;
+
+    public static fun Lexer*(str) New = (source) {
+        var Lexer* l = new(Lexer);
+        l.rr = RuneReader::New(source);
+        l.lineStarts = ArrList::[uint]New(0U);
+        l.lineStarts.AddLast(0U);
+        l.last = TokenKind::None;
+        return l;
+    }
+
+    // Iter answers the tokens left, one at a time, each with where it ends
+    public fun Iter*() Iter = () {
+        return Iter::New(this);
+    }
+
+    // Next answers the next token, or the error that keeps it from being read
+    public fun (Token*, Err*)() Next = () {
+        var (Token*, Err*) out = this.next();
+        if(out.1 == null) {
+            this.last = out.0.kind;
+        }
+        return out;
+    }
+
+    fun (Token*, Err*)() next = () {
+        var (Token*, Err*) out;
+        var Err* err = this.whitespace();
+        if(err == RuneReader.Errs::EOF) {
+            out.0 = Token::Bare(TokenKind::EOF, this.rr.Offset());
+            return out;
+        } else if(err != null) {
+            out.1 = err;
+            return out;
+        }
+
+        var char c = this.rr.Peek(0U).0;
+        if(Chars::IsDigit(c)) {
+            return this.number();
+        } else if(c == '"') {
+            return this.stringLiteral();
+        } else if(c == '\'') {
+            return this.charLiteral();
+        } else if(Chars::IsLetter(c) || c == '_') {
+            return this.identifier();
+        }
+        return this.symbol();
+    }
+
+    // newLine records where the line after the newline the reader is on begins
+    fun void() newLine = () {
+        this.lineStarts.AddLast(this.rr.Offset() + 1U);
+    }
+
+    // whitespace advances past white space and comments
+    fun Err*() whitespace = () {
+        for(;;) {
+            var (char, Err*) r = this.rr.Peek(0U);
+            if(r.1 != null) {
+                return r.1;
+            }
+            if(r.0 == '\n') {
+                this.newLine();
+                this.rr.Advance(1U);
+                continue;
+            }
+            if(r.0 == '/') {
+                var (char, Err*) r1 = this.rr.Peek(1U);
+                if(r1.1 == RuneReader.Errs::EOF) {
+                    return null;
+                } else if(r1.1 != null) {
+                    return r1.1;
+                } else if(r1.0 == '/') {
+                    var Err* err = this.lineComment();
+                    if(err != null) {
+                        return err;
+                    }
+                    continue;
+                } else if(r1.0 == '*') {
+                    var Err* err = this.blockComment();
+                    if(err != null) {
+                        return err;
+                    }
+                    continue;
+                }
+                return null;
+            }
+            if(Chars::IsSpace(r.0)) {
+                this.rr.Advance(1U);
+                continue;
+            }
+            return null;
+        }
+        return null;
+    }
+
+    // lineComment advances past a comment running to the end of its line
+    fun Err*() lineComment = () {
+        for(;;) {
+            var (char, Err*) c = this.rr.Peek(0U);
+            if(c.1 != null) {
+                return c.1;
+            }
+            if(c.0 == '\n') {
+                this.newLine();
+                this.rr.Advance(1U);
+                return null;
+            }
+            this.rr.Advance(1U);
+        }
+        return null;
+    }
+
+    // blockComment advances past a comment closed by '*/'
+    fun Err*() blockComment = () {
+        this.rr.Advance(2U);
+        for {
+            var (char, Err*) c0 = this.rr.Peek(0U);
+            if(c0.1 == RuneReader.Errs::EOF) {
+                return Errs::UnterminatedComment;
+            } else if(c0.1 != null) {
+                return c0.1;
+            }
+            var (char, Err*) c1 = this.rr.Peek(1U);
+            if(c1.1 == RuneReader.Errs::EOF) {
+                return Errs::UnterminatedComment;
+            } else if(c1.1 != null) {
+                return c1.1;
+            }
+            if(c0.0 == '*' && c1.0 == '/') {
+                this.rr.Advance(2U);
+                return null;
+            }
+            if(c0.0 == '\n') {
+                this.newLine();
+            }
+            this.rr.Advance(1U);
+        }
+        return null;
+    }
+
+    // peekIs reports whether the next char is either of a and b
+    fun bool(char, char) peekIs = (a, b) {
+        var (char, Err*) c = this.rr.Peek(0U);
+        return c.1 == null && (c.0 == a || c.0 == b);
+    }
+
+    // digits advances over the digits at the reader
+    fun (str, Err*)(str) digits = (text) {
+        for {
+            var (char, Err*) c = this.rr.Peek(0U);
+            if(c.1 == RuneReader.Errs::EOF) {
+                return (text, null);
+            } else if(c.1 != null) {
+                return (text, c.1);
+            } else if(!Chars::IsDigit(c.0)) {
+                return (text, null);
+            }
+            var char d = c.0;
+            text = text + Strs::ToChars(&d, 1U);
+            this.rr.Advance(1U);
+        }
+        return (text, null);
+    }
+
+    // number lexes digits
+    fun (Token*, Err*)() number = () {
+        var (Token*, Err*) out;
+        var uint offset = this.rr.Offset();
+        var (str, Err*) lit = this.digits("");
+        if(lit.1 != null) {
+            out.1 = lit.1;
+            return out;
+        }
+        if(this.last == TokenKind::Period) {
+            return Lexer::integer(TokenKind::IntLiteral, offset, lit.0);
+        }
+
+        var TokenKind kind = TokenKind::IntLiteral;
+        if(this.peekIs('.', '.')) {
+            kind = TokenKind::FloatLiteral;
+            this.rr.Advance(1U);
+            var (char, Err*) c = this.rr.Peek(0U);
+            if(c.1 == RuneReader.Errs::EOF || (c.1 == null && !Chars::IsDigit(c.0))) {
+                out.1 = Errs::InvalidFloat;
+                return out;
+            } else if(c.1 != null) {
+                out.1 = c.1;
+                return out;
+            }
+            lit = this.digits(lit.0 + ".");
+            if(lit.1 != null) {
+                out.1 = lit.1;
+                return out;
+            }
+        }
+        if(this.peekIs('e', 'E')) {
+            kind = TokenKind::FloatLiteral;
+            var char e = this.rr.Peek(0U).0;
+            this.rr.Advance(1U);
+            var str text = lit.0 + Strs::ToChars(&e, 1U);
+            if(this.peekIs('-', '-')) {
+                this.rr.Advance(1U);
+                text = text + "-";
+            }
+            lit = this.digits(text);
+            if(lit.1 != null) {
+                out.1 = lit.1;
+                return out;
+            }
+        }
+
+        if(kind == TokenKind::IntLiteral && this.peekIs('u', 'U')) {
+            kind = TokenKind::UintLiteral;
+            this.rr.Advance(1U);
+        }
+        if(kind != TokenKind::UintLiteral && this.peekIs('p', 'P')) {
+            this.rr.Advance(1U);
+            var (pst, Err*) p = m.Psts::Parse(lit.0);
+            if(p.1 != null) {
+                out.1 = Errs::InvalidPosit;
+            } else {
+                out.0 = Token::New(TokenKind::PositLiteral, offset, p.0);
+            }
+            return out;
+        }
+
+        if(kind == TokenKind::FloatLiteral) {
+            var (flt, Err*) f = Strs::ParseFlt(lit.0);
+            if(f.1 != null) {
+                out.1 = Errs::InvalidFloat;
+            } else {
+                out.0 = Token::New(kind, offset, f.0);
+            }
+            return out;
+        }
+        return Lexer::integer(kind, offset, lit.0);
+    }
+
+    // integer answers a token of kind holding the decimal digits text
+    static fun (Token*, Err*)(TokenKind, uint, str) integer = (kind, offset, text) {
+        var (Token*, Err*) out;
+        var (byte*, uint) b = Strs::ToBytes(text);
+        var uint value = 0U;
+        for(var uint i = 0U; i < b.1; i++) {
+            var uint d = b.0[i]{uint} - '0'{int}{uint};
+            if(value > (Uints::Max - d) / 10U) {
+                out.1 = Errs::InvalidInt;
+                return out;
+            }
+            value = value * 10U + d;
+        }
+        out.0 = Token::New(kind, offset, value);
+        return out;
+    }
+
+    // literalChar answers the char at the reader
+    fun (char, Err*)(bool) literalChar = (isString) {
+        var char c = this.rr.Peek(0U).0;
+        if(c == '\\') {
+            return this.escape(isString);
+        } else if(c == '\n') {
+            this.newLine();
+        }
+        return (c, null);
+    }
+
+    // escape answers the char the escape at the reader stands for
+    fun (char, Err*)(bool) escape = (isString) {
+        this.rr.Advance(1U);
+        var (char, Err*) r = this.rr.Peek(0U);
+        if(r.1 == RuneReader.Errs::EOF) {
+            return ('\0', Errs::InvalidEscapeSequence);
+        } else if(r.1 != null) {
+            return ('\0', r.1);
+        }
+        switch(r.0) {
+            case('n')
+                return ('\n', null);
+            case('t')
+                return ('\t', null);
+            case('r')
+                return ('\r', null);
+            case('0')
+                return ('\0', null);
+            case('\\')
+                return ('\\', null);
+            case('"') {
+                if(!isString) {
+                    return ('\0', Errs::InvalidEscapeSequence);
+                }
+                return ('"', null);
+            }
+            case('\'') {
+                if(isString) {
+                    return ('\0', Errs::InvalidEscapeSequence);
+                }
+                return ('\'', null);
+            }
+            case('u')
+                return this.codePoint(4U);
+            case('U')
+                return this.codePoint(8U);
+        } else {
+            return ('\0', Errs::InvalidEscapeSequence);
+        }
+        return ('\0', Errs::InvalidEscapeSequence);
+    }
+
+    // codePoint answers the char the n hex digits after the reader name
+    fun (char, Err*)(uint) codePoint = (n) {
+        var uint value = 0U;
+        for(var uint i = 0U; i < n; i++) {
+            var (char, Err*) d = this.rr.Peek(1U);
+            if(d.1 == RuneReader.Errs::EOF) {
+                return ('\0', Errs::InvalidEscapeSequence);
+            } else if(d.1 != null) {
+                return ('\0', d.1);
+            }
+            var (uint, bool) digit = Lexer::hexDigit(d.0);
+            if(!digit.1) {
+                return ('\0', Errs::InvalidEscapeSequence);
+            }
+            value = value * 16U + digit.0;
+            this.rr.Advance(1U);
+        }
+        var char c = value{int}{char};
+        if(!UTF8::Encodes(c)) {
+            return ('\0', Errs::InvalidUTF8);
+        }
+        return (c, null);
+    }
+
+    // hexDigit answers the value of the hex digit c
+    static fun (uint, bool)(char) hexDigit = (c) {
+        if(c >= '0' && c <= '9') {
+            return ((c{int} - '0'{int}){uint}, true);
+        } else if(c >= 'a' && c <= 'f') {
+            return ((c{int} - 'a'{int} + 10){uint}, true);
+        } else if(c >= 'A' && c <= 'F') {
+            return ((c{int} - 'A'{int} + 10){uint}, true);
+        }
+        return (0U, false);
+    }
+
+    // stringLiteral lexes a string literal
+    fun (Token*, Err*)() stringLiteral = () {
+        var (Token*, Err*) out;
+        var uint offset = this.rr.Offset();
+        this.rr.Advance(1U);
+        var ArrList[char]* value = ArrList::[char]New(0U);
+        for(;;) {
+            var (char, Err*) r = this.rr.Peek(0U);
+            if(r.1 == RuneReader.Errs::EOF) {
+                out.1 = Errs::UnterminatedStringLiteral;
+                return out;
+            } else if(r.1 != null) {
+                out.1 = r.1;
+                return out;
+            } else if(r.0 == '"') {
+                break;
+            }
+            var (char, Err*) c = this.literalChar(true);
+            if(c.1 != null) {
+                out.1 = c.1;
+                return out;
+            }
+            value.AddLast(c.0);
+            this.rr.Advance(1U);
+        }
+        this.rr.Advance(1U);
+        out.0 = Token::New(TokenKind::StringLiteral, offset, Strs::ToChars(value.Arr().Arr(), value.Len()));
+        return out;
+    }
+
+    // charLiteral lexes a char literal
+    fun (Token*, Err*)() charLiteral = () {
+        var (Token*, Err*) out;
+        var uint offset = this.rr.Offset();
+        this.rr.Advance(1U);
+        var (char, Err*) r = this.rr.Peek(0U);
+        if(r.1 == RuneReader.Errs::EOF || (r.1 == null && r.0 == '\'')) {
+            out.1 = Errs::UnterminatedCharLiteral;
+            return out;
+        } else if(r.1 != null) {
+            out.1 = r.1;
+            return out;
+        }
+        var (char, Err*) c = this.literalChar(false);
+        if(c.1 != null) {
+            out.1 = c.1;
+            return out;
+        }
+        this.rr.Advance(1U);
+
+        var (char, Err*) q = this.rr.Peek(0U);
+        if(q.1 == RuneReader.Errs::EOF || (q.1 == null && q.0 != '\'')) {
+            out.1 = Errs::UnterminatedCharLiteral;
+            return out;
+        } else if(q.1 != null) {
+            out.1 = q.1;
+            return out;
+        }
+        this.rr.Advance(1U);
+        out.0 = Token::New(TokenKind::CharLiteral, offset, c.0);
+        return out;
+    }
+
+    // identifier lexes a keyword or an identifier
+    fun (Token*, Err*)() identifier = () {
+        var (Token*, Err*) out;
+        var uint offset = this.rr.Offset();
+        var (TokenKind$*, str, Err*) match = Trie::Keywords().Match(this.rr);
+        if(match.2 != null) {
+            out.1 = match.2;
+            return out;
+        }
+        var bool keyword = match.0 != null;
+        var str text = match.1;
+        for(;;) {
+            var (char, Err*) r = this.rr.Peek(0U);
+            if(r.1 != null && r.1 != RuneReader.Errs::EOF) {
+                out.1 = r.1;
+                return out;
+            }
+            if(r.1 != null || !(Chars::IsLetter(r.0) || Chars::IsDigit(r.0) || r.0 == '_')) {
+                break;
+            }
+            keyword = false;
+            var char c = r.0;
+            text = text + Strs::ToChars(&c, 1U);
+            this.rr.Advance(1U);
+        }
+
+        if(keyword) {
+            out.0 = Token::Bare(*match.0, offset);
+        } else if(text == "_") {
+            out.0 = Token::Bare(TokenKind::Underscore, offset);
+        } else {
+            out.0 = Token::New(TokenKind::Identifier, offset, text);
+        }
+        return out;
+    }
+
+    // symbol lexes the symbol at the reader
+    fun (Token*, Err*)() symbol = () {
+        var (Token*, Err*) out;
+        var uint offset = this.rr.Offset();
+        var (TokenKind$*, str, Err*) match = Trie::Symbols().Match(this.rr);
+        if(match.2 != null) {
+            out.1 = match.2;
+        } else if(match.0 == null || match.1 == "") {
+            out.1 = Errs::InvalidSymbol;
+        } else {
+            out.0 = Token::Bare(*match.0, offset);
+        }
+        return out;
+    }
+}

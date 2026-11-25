@@ -132,10 +132,12 @@ func (e *funcEmitter) emitNativeIntrinsic(x *syntax.ExprNAry, ft *syntax.TypeFun
 //   - STD_ENUM_LEN, void(type, uint*): how many values the enum has
 //   - STD_ENUM_ORDINAL, void(type, E, uint*): where the value stands among them
 //   - STD_ENUM_VALUES, void(type, E*): every value, in order, into the buffer
+//   - STD_ENUM_ADDRESS, void(type, E, E$**): the static the value is kept in
 var enumIntrinsics = map[string]int{
 	"STD_ENUM_LEN":     0,
 	"STD_ENUM_ORDINAL": 1,
 	"STD_ENUM_VALUES":  0,
+	"STD_ENUM_ADDRESS": 1,
 }
 
 // emitEnumIntrinsic computes the enum intrinsic id over x's arguments.
@@ -182,11 +184,22 @@ func (e *funcEmitter) emitEnumIntrinsic(x *syntax.ExprNAry, ft *syntax.TypeFunct
 	case "STD_ENUM_LEN":
 		e.b.CreateStore(e.const64(uint64(len(values))), out)
 	case "STD_ENUM_ORDINAL":
-		discriminant := args[0]
-		if members {
-			discriminant = e.b.CreateLoad(e.p.i64, discriminant, "")
+		e.b.CreateStore(e.enumOrdinal(args[0], members, stride), out)
+	case "STD_ENUM_ADDRESS":
+		if len(values) == 0 {
+			return llvm.Value{}, unsupported("native %s of %s, which has no values", id, t)
 		}
-		e.b.CreateStore(e.b.CreateUDiv(discriminant, e.const64(stride), ""), out)
+		slots := make([]llvm.Value, len(values))
+		for i, value := range values {
+			slots[i] = e.const64(uint64(*value.Index()))
+		}
+		table := llvm.AddGlobal(e.p.mod, llvm.ArrayType(e.p.i64, len(slots)), "")
+		table.SetInitializer(llvm.ConstArray(e.p.i64, slots))
+		table.SetGlobalConstant(true)
+		table.SetLinkage(llvm.PrivateLinkage)
+		at := e.b.CreateInBoundsGEP(e.p.i64, table, []llvm.Value{e.enumOrdinal(args[0], members, stride)}, "")
+		address := e.call("zamrt_static", e.thread, e.b.CreateLoad(e.p.i64, at, ""))
+		e.b.CreateStore(e.b.CreatePtrToInt(address, e.p.i64, ""), out)
 	case "STD_ENUM_VALUES":
 		width, _ := fieldByteInfo(t)
 		if isAggregate(t) {
@@ -203,4 +216,14 @@ func (e *funcEmitter) emitEnumIntrinsic(x *syntax.ExprNAry, ft *syntax.TypeFunct
 		}
 	}
 	return e.const64(0), nil
+}
+
+// enumOrdinal answers where the enum value v stands among its enum's values:
+// its discriminant, the first word it points at when it has members, over
+// the stride its backing values lie at.
+func (e *funcEmitter) enumOrdinal(v llvm.Value, members bool, stride uint64) llvm.Value {
+	if members {
+		v = e.b.CreateLoad(e.p.i64, v, "")
+	}
+	return e.b.CreateUDiv(v, e.const64(stride), "")
 }

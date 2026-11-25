@@ -1,0 +1,37 @@
+import std("lang/Enums.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "RuneReader.zam";
+import "TokenKind.zam";
+import "Trie.zam";
+
+public namespace TrieTest {
+    // matches checks that trie matches source as far as path, which is the
+    // key want, or no key for null.
+    private fun void(Trie*, str, str, TokenKind$*) matches = (trie, source, path, want) {
+        var RuneReader* rr = RuneReader::New(source);
+        var (TokenKind$*, str, Err*) m = trie.Match(rr);
+        Assert::True(m.2 == null, source + " fails to match");
+        Assert::[str]Equal(path, m.1);
+        Assert::[uint]Equal(rr.Offset(), Strs::CharLen(path));
+        Assert::True(m.0 == want, source + " does not match the key it should");
+    }
+
+    public fun void(uint, str...) Symbols = (argC, argV) {
+        TrieTest::matches(Trie::Symbols(), ">>>=", ">>>", Enums::[TokenKind]Address(TokenKind::GreaterGreaterGreater));
+        TrieTest::matches(Trie::Symbols(), "<=>", "<=>", Enums::[TokenKind]Address(TokenKind::Spaceship));
+        TrieTest::matches(Trie::Symbols(), "<=x", "<=", Enums::[TokenKind]Address(TokenKind::LessEqual));
+        TrieTest::matches(Trie::Symbols(), "...", "...", Enums::[TokenKind]Address(TokenKind::PeriodPeriodPeriod));
+        TrieTest::matches(Trie::Symbols(), "..x", "..", null);
+        TrieTest::matches(Trie::Symbols(), "a", "", null);
+        TrieTest::matches(Trie::Symbols(), "", "", null);
+    }
+
+    public fun void(uint, str...) Keywords = (argC, argV) {
+        TrieTest::matches(Trie::Keywords(), "interface", "interface", Enums::[TokenKind]Address(TokenKind::Interface));
+        TrieTest::matches(Trie::Keywords(), "inter ", "inter", null);
+        TrieTest::matches(Trie::Keywords(), "intx", "int", Enums::[TokenKind]Address(TokenKind::Int));
+        TrieTest::matches(Trie::Keywords(), "pst", "pst", Enums::[TokenKind]Address(TokenKind::Posit));
+    }
+}

@@ -227,3 +227,69 @@ namespace Main {
 	want := positArithmetic(ten, tenth)[2]
 	assert.Equal(t, strconv.FormatUint(want, 10)+" "+strconv.FormatUint(tenth, 10)+"\n", stdout)
 }
+
+// TestPstsParseMatchesTheCompiler reads decimals with Psts::Parse as the
+// compiler reads posit literals: plain values, ones past either end of the
+// posits, the exact midpoints between neighboring posits, where a tie rounds
+// to even, and decimals just above them. Past what the compiler can read, it
+// saturates.
+func TestPstsParseMatchesTheCompiler(t *testing.T) {
+	t.Parallel()
+	literals := []string{
+		"0", "0.0", "1", "-1", "0.1", "1.5", "-2.25", "3.141592653589793238462643383279502884197169399",
+		"123456789012345678901234567890", "0.000000000000000000000000001",
+		"1e75", "1e-75", "1e100", "-1e100", "1e-100", "-1e-100",
+		"9.99e75", "1e76", "1e-76", "9e-77", "1e-77", "0e5", "-0.0", "1.", ".5",
+	}
+	rng := rand.New(rand.NewSource(1))
+	for range 60 {
+		bits := 1 + uint64(rng.Int63n(int64(base.PositMaxPos-1)))
+		mid := new(big.Float).SetPrec(1024).Add(positValue(bits), positValue(bits+1))
+		mid.Quo(mid, big.NewFloat(2))
+		text := mid.Text('e', 320)
+		above := strings.Replace(text, "e", "1e", 1)
+		literals = append(literals, text, above, "-"+text)
+		literals = append(literals, fmt.Sprintf("%d.%de%d", rng.Intn(10), rng.Int63(), rng.Intn(161)-80))
+	}
+
+	// Past where big.Float overflows or underflows, the compiler answers an
+	// error or zero, and Psts::Parse saturates as it does short of there.
+	extremes := map[string]uint64{
+		"1e1000000000":           base.PositMaxPos,
+		"-1e1000000000":          base.PositNaR + 1,
+		"1e-1000000000":          base.PositMinPos,
+		"1e99999999999999999999": base.PositMaxPos,
+	}
+	for literal := range extremes {
+		literals = append(literals, literal)
+	}
+
+	binary := compile(t, `import std("lang/Err.zam");
+import std("lang/Psts.zam");
+import std("io/local/File.zam");
+import m = std("math/Psts.zam");
+
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        for(var uint i = 0U; i < argC; i++) {
+            var (pst, Err*) p = m.Psts::Parse(argV[i]);
+            File::StdOut.WriteStr(Psts::ToBits(p.0){str} + "\n");
+        }
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary, literals...)
+	require.Zero(t, status, stderr)
+
+	var want strings.Builder
+	for _, literal := range literals {
+		bits, extreme := extremes[literal]
+		if !extreme {
+			var err error
+			bits, err = base.PositFromDecimal(literal)
+			require.NoError(t, err, literal)
+		}
+		fmt.Fprintf(&want, "%d\n", bits)
+	}
+	assert.Equal(t, want.String(), stdout)
+}

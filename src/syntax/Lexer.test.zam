@@ -1,0 +1,145 @@
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "Lexer.zam";
+import "Token.zam";
+
+public namespace LexerTest {
+    var char nul = '\0';
+
+    // tokens answers the tokens lexed from source, separated by |, and the
+    // error that ended them.
+    private fun (str, Err*)(str) tokens = (source) {
+        var Lexer.Iter* it = Lexer::New(source).Iter();
+        var str out = "";
+        var str sep = "";
+        for(var Lexer.Lexed* t = it.Next(); t != null; t = it.Next()) {
+            out = out + sep + t.token.Str();
+            sep = "|";
+        }
+        return (out, it.Err());
+    }
+
+    // kind answers the offset and kind of t.
+    private fun str(Token*) kind = (t) {
+        return t.offset{str} + " " + t.kind.text;
+    }
+
+    // lexes checks that source lexes whole to want.
+    private fun void(str, str) lexes = (source, want) {
+        var (str, Err*) got = LexerTest::tokens(source);
+        Assert::True(got.1 == null, source + " fails to lex");
+        Assert::[str]Equal(want, got.0);
+    }
+
+    // fails checks that source lexes to want, then fails with err.
+    private fun void(str, str, Err*) fails = (source, want, err) {
+        var (str, Err*) got = LexerTest::tokens(source);
+        Assert::[str]Equal(want, got.0);
+        Assert::True(got.1 == err, source + " does not fail with " + err.Err());
+    }
+
+    public fun void(uint, str...) Declaration = (argC, argV) {
+        LexerTest::lexes("public namespace X {}", "0 public|7 namespace|17 IDENTIFIER \"X\"|19 {|20 }");
+    }
+
+    public fun void(uint, str...) Identifiers = (argC, argV) {
+        LexerTest::lexes("intx int inter _ _a a_1", "0 IDENTIFIER \"intx\"|5 int|9 IDENTIFIER \"inter\"|15 UNDERSCORE|17 IDENTIFIER \"_a\"|20 IDENTIFIER \"a_1\"");
+    }
+
+    public fun void(uint, str...) Symbols = (argC, argV) {
+        LexerTest::lexes(">>>=<=>...<:", "0 >>>|3 =|4 <=>|7 ...|10 <:");
+        LexerTest::lexes("a /", "0 IDENTIFIER \"a\"|2 /");
+    }
+
+    public fun void(uint, str...) Comments = (argC, argV) {
+        var Lexer* l = Lexer::New("a // c\nb /* x\ny */ c // end");
+        Assert::[str]Equal("0 IDENTIFIER \"a\"", l.Next().0.Str());
+        Assert::[str]Equal("7 IDENTIFIER \"b\"", l.Next().0.Str());
+        Assert::[str]Equal("19 IDENTIFIER \"c\"", l.Next().0.Str());
+        Assert::[str]Equal("27 EOF", l.Next().0.Str());
+        Assert::[str]Equal("[0, 7, 14]", l.lineStarts{str});
+    }
+
+    public fun void(uint, str...) Ends = (argC, argV) {
+        var Lexer.Iter* it = Lexer::New("ab <=").Iter();
+        Assert::[uint]Equal(2U, it.Next().end);
+        Assert::[uint]Equal(5U, it.Next().end);
+        Assert::True(it.Next() == null, "a token past the end");
+        Assert::True(it.Err() == null, "the end of the source is an error");
+    }
+
+    public fun void(uint, str...) Integers = (argC, argV) {
+        LexerTest::lexes("12 7u 3U 0", "0 INT_LITERAL 12|3 UINT_LITERAL 7|6 UINT_LITERAL 3|9 INT_LITERAL 0");
+        LexerTest::lexes("18446744073709551615u", "0 UINT_LITERAL 18446744073709551615");
+        LexerTest::lexes("b.0.1", "0 IDENTIFIER \"b\"|1 .|2 INT_LITERAL 0|3 .|4 INT_LITERAL 1");
+    }
+
+    public fun void(uint, str...) Floats = (argC, argV) {
+        var Lexer* l = Lexer::New("1.5 2e3 2.5e-1 7E2 1.0u");
+        Assert::[flt]Equal(1.5, l.Next().0.value{flt});
+        Assert::[flt]Equal(2000.0, l.Next().0.value{flt});
+        Assert::[flt]Equal(0.25, l.Next().0.value{flt});
+        Assert::[flt]Equal(700.0, l.Next().0.value{flt});
+        Assert::[str]Equal("19 FLOAT_LITERAL", LexerTest::kind(l.Next().0));
+        Assert::[str]Equal("22 IDENTIFIER \"u\"", l.Next().0.Str());
+    }
+
+    public fun void(uint, str...) Posits = (argC, argV) {
+        var Lexer* l = Lexer::New("1.5p 2P 1e-3p 3up");
+        Assert::[pst]Equal(1.5P, l.Next().0.value{pst});
+        Assert::[pst]Equal(2P, l.Next().0.value{pst});
+        Assert::[pst]Equal(0.001P, l.Next().0.value{pst});
+        Assert::[str]Equal("14 UINT_LITERAL 3", l.Next().0.Str());
+        Assert::[str]Equal("16 IDENTIFIER \"p\"", l.Next().0.Str());
+    }
+
+    public fun void(uint, str...) Strings = (argC, argV) {
+        LexerTest::lexes("\"hi\" \"\"", "0 STRING_LITERAL \"hi\"|5 STRING_LITERAL \"\"");
+        LexerTest::lexes("\"a\\n\\t\\r\\\\\\\"\"", "0 STRING_LITERAL \"a\\n\\t\\r\\\\\\\"\"");
+        var Lexer* l = Lexer::New("\"\\u00e9\\U0001F600\\0\" x");
+        Assert::[str]Equal("é😀" + Strs::ToChars(&LexerTest::nul, 1U), l.Next().0.value{str});
+        Assert::[str]Equal("21 IDENTIFIER \"x\"", l.Next().0.Str());
+    }
+
+    public fun void(uint, str...) Chars = (argC, argV) {
+        var Lexer* l = Lexer::New("'a' '\\n' '\\'' '\"' '\\u00e9' 'é'");
+        Assert::[char]Equal('a', l.Next().0.value{char});
+        Assert::[char]Equal('\n', l.Next().0.value{char});
+        Assert::[char]Equal('\'', l.Next().0.value{char});
+        Assert::[char]Equal('"', l.Next().0.value{char});
+        Assert::[char]Equal('é', l.Next().0.value{char});
+        Assert::[char]Equal('é', l.Next().0.value{char});
+    }
+
+    public fun void(uint, str...) LinesInLiterals = (argC, argV) {
+        var Lexer* l = Lexer::New("\"a\nb\" '\n' c");
+        l.Next();
+        l.Next();
+        Assert::[str]Equal("10 IDENTIFIER \"c\"", l.Next().0.Str());
+        Assert::[str]Equal("[0, 3, 8]", l.lineStarts{str});
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        LexerTest::fails("a .. b", "0 IDENTIFIER \"a\"", Lexer.Errs::InvalidSymbol);
+        LexerTest::fails("a /* b", "0 IDENTIFIER \"a\"", Lexer.Errs::UnterminatedComment);
+        LexerTest::fails("\"abc", "", Lexer.Errs::UnterminatedStringLiteral);
+        LexerTest::fails("\"\\q\"", "", Lexer.Errs::InvalidEscapeSequence);
+        LexerTest::fails("\"\\'\"", "", Lexer.Errs::InvalidEscapeSequence);
+        LexerTest::fails("\"\\u12x4\"", "", Lexer.Errs::InvalidEscapeSequence);
+        LexerTest::fails("\"\\u12", "", Lexer.Errs::InvalidEscapeSequence);
+        LexerTest::fails("\"\\uD800\"", "", Lexer.Errs::InvalidUTF8);
+        LexerTest::fails("\"\\U00110000\"", "", Lexer.Errs::InvalidUTF8);
+        LexerTest::fails("''", "", Lexer.Errs::UnterminatedCharLiteral);
+        LexerTest::fails("'ab'", "", Lexer.Errs::UnterminatedCharLiteral);
+        LexerTest::fails("'a", "", Lexer.Errs::UnterminatedCharLiteral);
+        LexerTest::fails("'", "", Lexer.Errs::UnterminatedCharLiteral);
+        LexerTest::fails("'\\\"'", "", Lexer.Errs::InvalidEscapeSequence);
+        LexerTest::fails("1.", "", Lexer.Errs::InvalidFloat);
+        LexerTest::fails("1.x", "", Lexer.Errs::InvalidFloat);
+        LexerTest::fails("1..2", "", Lexer.Errs::InvalidFloat);
+        LexerTest::fails("1e", "", Lexer.Errs::InvalidFloat);
+        LexerTest::fails("18446744073709551616", "", Lexer.Errs::InvalidInt);
+        LexerTest::fails("1ep", "", Lexer.Errs::InvalidPosit);
+    }
+}

@@ -89,11 +89,11 @@ namespace Main {
 
     static fun void(str*, int) switches = (out, v) {
         switch (v) {
-            case (1): {
+            case (1) {
                 defer Main::add(out, "a");
                 continue;
             }
-            case (2): {
+            case (2) {
                 defer Main::add(out, "b");
             }
         } else {
