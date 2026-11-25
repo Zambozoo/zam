@@ -5,6 +5,8 @@ import (
 	"math"
 	"math/big"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -264,21 +266,29 @@ func TestPstsParseMatchesTheCompiler(t *testing.T) {
 		literals = append(literals, literal)
 	}
 
-	binary := compile(t, `import std("lang/Err.zam");
+	// The literals are read from a file, being too long together for a
+	// Windows command line.
+	input := filepath.Join(t.TempDir(), "literals")
+	require.NoError(t, os.WriteFile(input, []byte(strings.Join(literals, "\n")), 0o600))
+	binary := compile(t, `import std("lang/Arr.zam");
+import std("lang/Err.zam");
 import std("lang/Psts.zam");
+import std("lang/Strs.zam");
 import std("io/local/File.zam");
 import m = std("math/Psts.zam");
 
 namespace Main {
     fun void(uint, str...) main = (argC, argV) {
-        for(var uint i = 0U; i < argC; i++) {
-            var (pst, Err*) p = m.Psts::Parse(argV[i]);
+        var (File*, Err*) f = File::Open(argV[0]);
+        var Arr[str]* literals = Strs::Split(f.0.ReadAll().0, '\n'{byte});
+        for(var uint i = 0U; i < literals.Len(); i++) {
+            var (pst, Err*) p = m.Psts::Parse(literals.Get(i));
             File::StdOut.WriteStr(Psts::ToBits(p.0){str} + "\n");
         }
     }
 }
 `)
-	stdout, stderr, status := run(t, binary, literals...)
+	stdout, stderr, status := run(t, binary, input)
 	require.Zero(t, status, stderr)
 
 	var want strings.Builder
