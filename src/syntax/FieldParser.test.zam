@@ -36,7 +36,7 @@ public namespace FieldParserTest {
 
     // value reads source as a value of the enum E, backed by the primitive
     // written as backing or, for "", by nothing
-    private fun (Field.Enum*, Err*)(str, str) value = (source, backing) {
+    private fun (Field.Value*, Err*)(str, str) value = (source, backing) {
         var Token* name = Parser::New("E").Consume(TokenKind::Identifier).0;
         var Type* primitive = null;
         if(backing != "") {
@@ -102,17 +102,17 @@ public namespace FieldParserTest {
     }
 
     public fun void(uint, str...) EnumValues = (argC, argV) {
-        Assert::[str]Equal("(enum A 1)", FieldParserTest::value("A(1)", "int").0.Str());
-        Assert::[str]Equal("(enum A)", FieldParserTest::value("A", "").0.Str());
-        Assert::[str]Equal("(enum A.Init)", FieldParserTest::value("A.Init()", "").0.Str());
-        Assert::[str]Equal("(enum A.Init 1 2)", FieldParserTest::value("A.Init(1, 2)", "").0.Str());
+        Assert::[str]Equal("(value A 1)", FieldParserTest::value("A(1)", "int").0.Str());
+        Assert::[str]Equal("(value A)", FieldParserTest::value("A", "").0.Str());
+        Assert::[str]Equal("(value A.Init)", FieldParserTest::value("A.Init()", "").0.Str());
+        Assert::[str]Equal("(value A.Init 1 2)", FieldParserTest::value("A.Init(1, 2)", "").0.Str());
 
-        var (Field.Enum*, Err*) unwritten = FieldParserTest::value("A", "int");
-        Assert::[str]Equal("(enum A)", unwritten.0.Str());
+        var (Field.Value*, Err*) unwritten = FieldParserTest::value("A", "int");
+        Assert::[str]Equal("(value A)", unwritten.0.Str());
         Assert::[str]Equal("enum value E::A must be written with a int value: unexpected token: \"EOF\", expected \"(\"", unwritten.1.Err());
 
-        var (Field.Enum*, Err*) unbacked = FieldParserTest::value("A(1)", "");
-        Assert::[str]Equal("(enum A)", unbacked.0.Str());
+        var (Field.Value*, Err*) unbacked = FieldParserTest::value("A(1)", "");
+        Assert::[str]Equal("(value A)", unbacked.0.Str());
         Assert::[str]Equal("enum value E::A cannot be written with a value: E is not backed by a primitive", unbacked.1.Err());
     }
 }

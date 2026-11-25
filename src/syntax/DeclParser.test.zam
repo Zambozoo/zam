@@ -1,0 +1,118 @@
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "DeclParser.zam";
+import "Parser.zam";
+import "TokenKind.zam";
+import "ast/Decl.zam";
+
+public namespace DeclParserTest {
+    // parses checks that source reads whole as the declaration want, with no
+    // error recorded
+    private fun void(str, str) parses = (source, want) {
+        var Parser* p = Parser::New(source);
+        var (Decl*, Err*) d = DeclParser::Parse(p);
+        if(!Assert::True(d.1 == null, source + " fails to parse")) {
+            Assert::Fatal(d.1.Err());
+        }
+        Assert::[str]Equal(want, d.0.Str());
+        Assert::True(p.Peek().0.kind == TokenKind::EOF, source + " is not read whole");
+        for(var uint i = 0U; i < p.diagnostics.Len(); i++) {
+            Assert::True(false, p.diagnostics.Get(i).err.Err());
+        }
+    }
+
+    // fails checks that source fails to read as a declaration with an error
+    // containing want
+    private fun void(str, str) fails = (source, want) {
+        var (Decl*, Err*) d = DeclParser::Parse(Parser::New(source));
+        if(Assert::True(d.1 != null, source + " parses")) {
+            Assert::True(Strs::Contains(d.1.Err(), want), d.1.Err() + " does not contain " + want);
+        }
+    }
+
+    // reports checks that source reads whole as the declaration want, with
+    // one error recorded, containing message
+    private fun void(str, str, str) reports = (source, want, message) {
+        var Parser* p = Parser::New(source);
+        var (Decl*, Err*) d = DeclParser::Parse(p);
+        if(!Assert::True(d.1 == null, source + " fails to parse")) {
+            Assert::Fatal(d.1.Err());
+        }
+        Assert::[str]Equal(want, d.0.Str());
+        if(Assert::[uint]Equal(1U, p.diagnostics.Len())) {
+            var str got = p.diagnostics.Get(0U).err.Err();
+            Assert::True(Strs::Contains(got, message), got + " does not contain " + message);
+        }
+    }
+
+    public fun void(uint, str...) Objects = (argC, argV) {
+        DeclParserTest::parses("public class Box[T <: Obj*] <: Base* { var T value; public static fun Box[T]*(T) New = (v) null; }",
+            "(class public Box [(<: T (* Obj))] <: (* Base) (var T value) (fun public static (fun (* (generic Box T)) T) New (v) null))");
+        DeclParserTest::parses("class Chars~ { var char[~] chars; }", "(class Chars~ (var ([~] char) chars))");
+        DeclParserTest::parses("class Text~ <: Chars~* { fun int() Len = () 0; }", "(class Text~ <: (* (~ Chars)) (fun (fun int) Len () 0))");
+        DeclParserTest::parses("abstract Shape { virtual fun int() Area; class Square <: Shape* { fun int() Area = () 4; } }",
+            "(abstract Shape (fun virtual (fun int) Area) (class static Square <: (* Shape) (fun (fun int) Area () 4)))");
+        DeclParserTest::parses("struct Pair[A, B] { var A a; var B b; }", "(struct Pair [A B] (var A a) (var B b))");
+        DeclParserTest::parses("struct Bytes~ { var uint n; var byte[~] data; }", "(struct Bytes~ (var uint n) (var ([~] byte) data))");
+        DeclParserTest::parses("class C { class I {} var int I; }", "(class C (class static I) (var int I))");
+    }
+
+    public fun void(uint, str...) Scopes = (argC, argV) {
+        DeclParserTest::parses("interface Sized { fun uint() Len; static fun int() Zero = () 0; }",
+            "(interface Sized (fun virtual (fun uint) Len) (fun static (fun int) Zero () 0))");
+        DeclParserTest::parses("public namespace Main { fun void() main = () {} var int x; class C {} }",
+            "(namespace public Main (fun static (fun void) main () { }) (var static int x) (class static C))");
+    }
+
+    public fun void(uint, str...) Enums = (argC, argV) {
+        DeclParserTest::parses("enum Kind : int { enum Inner { A; } A(0), B(1); fun int() Twice = () 2; }",
+            "(enum Kind : int (enum static Inner (value A)) (value A 0) (value B 1) (fun (fun int) Twice () 2))");
+        DeclParserTest::parses("enum Planet { Earth.Init(1), Mars; var int n; }", "(enum Planet (value Earth.Init 1) (value Mars) (var int n))");
+        DeclParserTest::parses("enum E { ; }", "(enum E)");
+    }
+
+    public fun void(uint, str...) Aliases = (argC, argV) {
+        DeclParserTest::parses("public alias Twin[T] = Pair[T, T]*;", "(alias public Twin [T] = (* (generic Pair T T)))");
+        DeclParserTest::fails("alias Subtype <: int;", "alias Subtype is written with \"=\"; \"<:\" declares a subtype, which takes a class, abstract, struct or interface");
+        DeclParserTest::fails("alias Unended = int", "unexpected token: \"EOF\", expected \";\"");
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        DeclParserTest::fails("virtual class A {}", "classes cannot be virtual");
+        DeclParserTest::fails("virtual alias A = int;", "aliases cannot be virtual");
+        DeclParserTest::fails("class {}", "unexpected token: \"{\", expected \"IDENTIFIER\"");
+        DeclParserTest::fails("class NotPointer <: int {}", "base declaration type \"int\" is not a pointer to a resolvable type");
+        DeclParserTest::fails("class Unresolvable <: int* {}", "base declaration type \"(* int)\" is not a pointer to a resolvable type");
+        DeclParserTest::fails("enum Backed : void* { A; }", "enum Backed cannot be backed by (* void)");
+        DeclParserTest::fails("class Twice[T, T] {}", "duplicate generic \"T\"");
+        DeclParserTest::fails("enum Main {}", "parse abandoned after a recorded error");
+    }
+
+    public fun void(uint, str...) Reports = (argC, argV) {
+        DeclParserTest::reports("class C { static class H {} }", "(class C)", "redundant static modifier for declaration field");
+        DeclParserTest::reports("class C { var int x; var int x; }", "(class C (var int x))", "duplicate instance field \"x\"");
+        DeclParserTest::reports("class C { var int x; static fun void() x = () {} }", "(class C (var int x))", "duplicate static field \"x\"");
+        DeclParserTest::reports("class Tailless~ {}", "(class Tailless~)", "missing tailed field");
+        DeclParserTest::reports("struct TaillessStruct~ {}", "(struct TaillessStruct~)", "missing tailed field");
+        DeclParserTest::reports("class NotLast~ { var int[~] a; var int b; }", "(class NotLast~ (var ([~] int) a))", "tailed field \"a\" is not the last instance member");
+        DeclParserTest::reports("class Untailed <: Chars~* {}", "(class Untailed <: (* (~ Chars)))", "\"Untailed\" extends the tailed type \"(~ Chars)\", so it must be tailed itself");
+        DeclParserTest::reports("class Member~ <: Chars~* { var int m; }", "(class Member~ <: (* (~ Chars)) (var int m))",
+            "\"Member\" extends the tailed type \"(~ Chars)\", so instance member \"m\" has nowhere to lie: nothing follows an unsized tail");
+        DeclParserTest::reports("class V { virtual fun void() V; }", "(class V)", "virtual field \"V\" is not allowed in class");
+        DeclParserTest::reports("struct S { virtual fun void() V; }", "(struct S)", "virtual field \"V\" is not allowed in struct");
+        DeclParserTest::reports("enum E { A; virtual fun void() V; }", "(enum E (value A))", "virtual field \"V\" is not allowed in enum");
+        DeclParserTest::reports("interface I { var int x; }", "(interface I)", "instance member \"x\" is not allowed in interface");
+        DeclParserTest::reports("interface I { protected fun void() P; }", "(interface I)", "instance method \"P\" cannot be protected in interface");
+        DeclParserTest::reports("enum E { var int x; A; }", "(enum E (value A))", "field \"x\" of enum E must come after its values, as only declarations may come before them");
+        DeclParserTest::reports("enum Duplicate { A, A; }", "(enum Duplicate (value A))", "duplicate static field \"A\"");
+        DeclParserTest::reports("enum Unvalued { A(1); }", "(enum Unvalued (value A))", "enum value Unvalued::A cannot be written with a value: Unvalued is not backed by a primitive");
+    }
+
+    public fun void(uint, str...) Recovery = (argC, argV) {
+        DeclParserTest::reports("class C { var int a; var int = ; fun void() f = () {} }", "(class C (var int a) (fun (fun void) f () { }))",
+            "unexpected token: \"=\", expected \"IDENTIFIER\"");
+        DeclParserTest::reports("class C { fun void(int) f = () {} var int b; }", "(class C (fun (fun void int) f { }) (var int b))",
+            "method parameter length mismatch, expected 1, got 0");
+    }
+}

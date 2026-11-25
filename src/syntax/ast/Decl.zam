@@ -1,0 +1,146 @@
+import std("data/list/ArrList.zam");
+import "../Token.zam";
+import "Field.zam";
+import "Generic.zam";
+import "Modifier.zam";
+import "Type.zam";
+
+// Decl is a declaration as it is written
+public abstract Decl <: Field* {
+    // generics is the declaration's generic parameters, or null for none
+    public var ArrList[Generic*]* generics;
+    // fields is the fields in the order they are written
+    public var ArrList[Field*]* fields;
+
+    // init sets what every declaration is written with
+    fun void(Field.Kind, Token*, Modifier.Set, Token*) init = (kind, start, modifiers, name) {
+        this.kind = kind;
+        this.start = start;
+        this.modifiers = modifiers;
+        this.name = name;
+        this.fields = ArrList::[Field*]New(0U);
+    }
+
+    // header writes the parenthesis a declaration begins with
+    fun str(bool) header = (tailed) {
+        var str out = Field::open(this.start.kind.text, this.modifiers) + " " + this.name.value{str};
+        if(tailed) {
+            out = out + "~";
+        }
+        if(this.generics != null) {
+            out = out + " " + Generic::List(this.generics);
+        }
+        return out;
+    }
+
+    // body writes the fields after a space each
+    fun str() body = () {
+        var str out = "";
+        for(var uint i = 0U; i < this.fields.Len(); i++) {
+            out = out + " " + this.fields.Get(i).Str();
+        }
+        return out + ")";
+    }
+
+    // Object is a class or abstract
+    public class Object <: Decl* {
+        public var bool tailed;
+        // base is the type the declaration is a subtype of, or null for none
+        public var Type* base;
+
+        public static fun Object*(Field.Kind, Token*, Modifier.Set, Token*) New = (kind, start, modifiers, name) {
+            var Object* d = new(Object);
+            d.init(kind, start, modifiers, name);
+            return d;
+        }
+
+        public fun str() Str = () {
+            var str out = this.header(this.tailed);
+            if(this.base != null) {
+                out = out + " <: " + this.base.Str();
+            }
+            return out + this.body();
+        }
+    }
+
+    // Struct is a value laid out by its members
+    public class Struct <: Decl* {
+        public var bool tailed;
+
+        public static fun Struct*(Token*, Modifier.Set, Token*) New = (start, modifiers, name) {
+            var Struct* d = new(Struct);
+            d.init(Field.Kind::Struct, start, modifiers, name);
+            return d;
+        }
+
+        public fun str() Str = () {
+            return this.header(this.tailed) + this.body();
+        }
+    }
+
+    // Interface is the methods a type answers to
+    public class Interface <: Decl* {
+        public static fun Interface*(Token*, Modifier.Set, Token*) New = (start, modifiers, name) {
+            var Interface* d = new(Interface);
+            d.init(Field.Kind::Interface, start, modifiers, name);
+            return d;
+        }
+
+        public fun str() Str = () {
+            return this.header(false) + this.body();
+        }
+    }
+
+    // Namespace is static fields under a name
+    public class Namespace <: Decl* {
+        public static fun Namespace*(Token*, Modifier.Set, Token*) New = (start, modifiers, name) {
+            var Namespace* d = new(Namespace);
+            d.init(Field.Kind::Namespace, start, modifiers, name);
+            return d;
+        }
+
+        public fun str() Str = () {
+            return this.header(false) + this.body();
+        }
+    }
+
+    // Enum is a fixed set of values, among its other fields
+    public class Enum <: Decl* {
+        // primitive is the type the values are backed by, or null for none
+        public var Type* primitive;
+
+        public static fun Enum*(Token*, Modifier.Set, Token*) New = (start, modifiers, name) {
+            var Enum* d = new(Enum);
+            d.init(Field.Kind::Enum, start, modifiers, name);
+            return d;
+        }
+
+        public fun str() Str = () {
+            var str out = this.header(false);
+            if(this.primitive != null) {
+                out = out + " : " + this.primitive.Str();
+            }
+            return out + this.body();
+        }
+    }
+
+    // Alias is another name for a type
+    public class Alias <: Decl* {
+        // aliased is the type named, or null for one not read
+        public var Type* aliased;
+
+        public static fun Alias*(Token*, Modifier.Set, Token*) New = (start, modifiers, name) {
+            var Alias* d = new(Alias);
+            d.init(Field.Kind::Alias, start, modifiers, name);
+            return d;
+        }
+
+        public fun str() Str = () {
+            var str out = this.header(false);
+            if(this.aliased != null) {
+                out = out + " = " + this.aliased.Str();
+            }
+            return out + ")";
+        }
+    }
+}

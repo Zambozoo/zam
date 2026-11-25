@@ -11,7 +11,14 @@ public abstract Field {
     public enum Kind : int {
         Member(0),
         Method(1),
-        Enum(2);
+        Value(2),
+        Abstract(3),
+        Alias(4),
+        Class(5),
+        Enum(6),
+        Interface(7),
+        Namespace(8),
+        Struct(9);
     }
 
     public var Kind kind;
@@ -87,17 +94,17 @@ public abstract Field {
         }
     }
 
-    // Enum is a value of an enum
-    public class Enum <: Field* {
+    // Value is a value of an enum
+    public class Value <: Field* {
         // value is what the value is backed by, or null for an enum not backed by a primitive
         public var Expr* value;
         // init is the method the value is initialized by, or null for none
         public var Token* init;
         public var ArrList[Expr*]* arguments;
 
-        public static fun Enum*(Token*) New = (name) {
-            var Enum* f = new(Enum);
-            f.kind = Kind::Enum;
+        public static fun Value*(Token*) New = (name) {
+            var Value* f = new(Value);
+            f.kind = Kind::Value;
             f.start = name;
             f.modifiers = 0U;
             f.name = name;
@@ -105,7 +112,7 @@ public abstract Field {
         }
 
         public fun str() Str = () {
-            var str out = "(enum " + this.name.value{str};
+            var str out = "(value " + this.name.value{str};
             if(this.value != null) {
                 out = out + " " + this.value.Str();
             } else if(this.init != null) {

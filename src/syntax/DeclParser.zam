@@ -1,0 +1,530 @@
+import std("data/list/ArrList.zam");
+import std("data/set/TreeSet.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "FieldParser.zam";
+import "GenericParser.zam";
+import "Parser.zam";
+import "Token.zam";
+import "TokenKind.zam";
+import "TypeParser.zam";
+import "ast/Decl.zam";
+import "ast/Field.zam";
+import "ast/Generic.zam";
+import "ast/Modifier.zam";
+import "ast/Type.zam";
+
+// DeclParser reads declarations
+public namespace DeclParser {
+    namespace Errs {
+        public var Err*$ MissingTail = StrErr::New("missing tailed field");
+
+        public fun Err*(str) Virtual = (kinds) {
+            return StrErr::New(kinds + " cannot be virtual");
+        }
+
+        public fun Err*(Type*) BaseNotPointer = (base) {
+            return StrErr::New("base declaration type " + Strs::Quote(base.Str()) + " is not a pointer to a resolvable type");
+        }
+
+        public fun Err*(Token*, Type*) MustBeTailed = (name, tailed) {
+            return StrErr::New(Strs::Quote(name.value{str}) + " extends the tailed type " + Strs::Quote(tailed.Str()) + ", so it must be tailed itself");
+        }
+
+        public fun Err*(Token*, Type*, Token*) NoRoomAfterTail = (name, tailed, member) {
+            return StrErr::New(Strs::Quote(name.value{str}) + " extends the tailed type " + Strs::Quote(tailed.Str()) + ", so instance member " +
+                Strs::Quote(member.value{str}) + " has nowhere to lie: nothing follows an unsized tail");
+        }
+
+        public fun Err*(Token*) TailNotLast = (tailed) {
+            return StrErr::New("tailed field " + Strs::Quote(tailed.value{str}) + " is not the last instance member");
+        }
+
+        public fun Err*(Token*, str) VirtualField = (name, kind) {
+            return StrErr::New("virtual field " + Strs::Quote(name.value{str}) + " is not allowed in " + kind);
+        }
+
+        public fun Err*(Token*) InterfaceMember = (name) {
+            return StrErr::New("instance member " + Strs::Quote(name.value{str}) + " is not allowed in interface");
+        }
+
+        public fun Err*(Token*) ProtectedInterfaceMethod = (name) {
+            return StrErr::New("instance method " + Strs::Quote(name.value{str}) + " cannot be protected in interface");
+        }
+
+        public fun Err*(str, Token*) Duplicate = (scope, name) {
+            return StrErr::New("duplicate " + scope + " field " + Strs::Quote(name.value{str}));
+        }
+
+        public fun Err*(Token*, Type*) Unbackable = (name, primitive) {
+            return StrErr::New("enum " + name.value{str} + " cannot be backed by " + primitive.Str());
+        }
+
+        public fun Err*(Token*, Token*) FieldBeforeValues = (name, enumName) {
+            return StrErr::New("field " + Strs::Quote(name.value{str}) + " of enum " + enumName.value{str} +
+                " must come after its values, as only declarations may come before them");
+        }
+
+        public fun Err*(Token*, Token*) AliasSubtype = (name, op) {
+            return StrErr::New("alias " + name.value{str} + " is written with " + Strs::Quote(TokenKind::Equal.text) + "; " +
+                Strs::Quote(op.kind.text) + " declares a subtype, which takes a class, abstract, struct or interface");
+        }
+    }
+
+    var TreeSet[TokenKind]* declKindsSet;
+    var TreeSet[TokenKind]* backingsSet;
+    var TreeSet[TokenKind]* valueStartsSet;
+    var TreeSet[TokenKind]* valueEndsSet;
+
+    // Parse reads a declaration and the modifiers written before it
+    public fun (Decl*, Err*)(Parser*) Parse = (p) {
+        var (Modifier.Set, Err*) modifiers = FieldParser::Modifiers(p);
+        if(modifiers.1 != null) {
+            return (null, modifiers.1);
+        }
+        var (Token*, Err*) start = p.ConsumeAny(DeclParser::declKinds());
+        if(start.1 != null) {
+            return (null, start.1);
+        }
+        return DeclParser::Declaration(p, start.0, modifiers.0);
+    }
+
+    // Declaration reads the declaration its keyword start begins
+    fun (Decl*, Err*)(Parser*, Token*, Modifier.Set) Declaration = (p, start, modifiers) {
+        var Field.Kind kind = DeclParser::kind(start.kind);
+        if(Modifier::Virtual.In(modifiers)) {
+            return (null, Errs::Virtual(DeclParser::plural(kind)));
+        }
+        var (Token*, Err*) name = p.Consume(TokenKind::Identifier);
+        if(name.1 != null) {
+            return (null, name.1);
+        }
+        switch(kind) {
+            case (Field.Kind::Interface)
+                return DeclParser::interfaced(p, Decl.Interface::New(start, modifiers, name.0));
+            case (Field.Kind::Namespace)
+                return DeclParser::namespaced(p, Decl.Namespace::New(start, modifiers, name.0));
+            case (Field.Kind::Enum)
+                return DeclParser::enumerated(p, Decl.Enum::New(start, modifiers, name.0));
+            case (Field.Kind::Alias)
+                return DeclParser::aliased(p, Decl.Alias::New(start, modifiers, name.0));
+            case (Field.Kind::Struct)
+                return DeclParser::structure(p, Decl.Struct::New(start, modifiers, name.0));
+        }
+        return DeclParser::object(p, Decl.Object::New(kind, start, modifiers, name.0));
+    }
+
+    // object reads the rest of a class or abstract
+    fun (Decl*, Err*)(Parser*, Decl.Object*) object = (p, d) {
+        var (Token*, Err*) tilde = p.Match(TokenKind::Tilde);
+        if(tilde.1 != null) {
+            return (null, tilde.1);
+        }
+        d.tailed = tilde.0 != null;
+        var Err* err = DeclParser::generics(p, d);
+        if(err != null) {
+            return (null, err);
+        }
+        var (Token*, Err*) subtype = p.Match(TokenKind::Subtype);
+        if(subtype.1 != null) {
+            return (null, subtype.1);
+        } else if(subtype.0 != null) {
+            var (Type*, Err*) base = TypeParser::Parse(p);
+            if(base.1 != null) {
+                return (null, base.1);
+            } else if(!DeclParser::resolvablePointer(base.0)) {
+                return (null, Errs::BaseNotPointer(base.0));
+            }
+            d.base = base.0;
+        }
+        err = DeclParser::members(p, d, d.tailed, 0U);
+        if(err != null) {
+            return (null, err);
+        }
+
+        var bool baseTailed = false;
+        if(d.base != null) {
+            var Type.Tailed* tailed = d.base{Type.Wrapped*}.inner{Type.Tailed*};
+            if(tailed != null && !tailed.sized) {
+                baseTailed = true;
+                var Field* member = DeclParser::instanceMember(d);
+                if(!d.tailed) {
+                    p.ReportAt(Errs::MustBeTailed(d.name, tailed), d.name);
+                } else if(member != null) {
+                    p.ReportAt(Errs::NoRoomAfterTail(d.name, tailed, member.name), member.name);
+                }
+            }
+        }
+        if(d.tailed && !baseTailed && DeclParser::tail(d) == null) {
+            p.ReportAt(Errs::MissingTail, d.name);
+        }
+        return (d, null);
+    }
+
+    // structure reads the rest of a struct
+    fun (Decl*, Err*)(Parser*, Decl.Struct*) structure = (p, d) {
+        var (Token*, Err*) tilde = p.Match(TokenKind::Tilde);
+        if(tilde.1 != null) {
+            return (null, tilde.1);
+        }
+        d.tailed = tilde.0 != null;
+        var Err* err = DeclParser::generics(p, d);
+        if(err != null) {
+            return (null, err);
+        }
+        err = DeclParser::members(p, d, d.tailed, 0U);
+        if(err != null) {
+            return (null, err);
+        }
+        if(d.tailed && DeclParser::tail(d) == null) {
+            p.ReportAt(Errs::MissingTail, d.name);
+        }
+        return (d, null);
+    }
+
+    // interfaced reads the rest of an interface
+    fun (Decl*, Err*)(Parser*, Decl.Interface*) interfaced = (p, d) {
+        var Err* err = DeclParser::generics(p, d);
+        if(err != null) {
+            return (null, err);
+        }
+        err = DeclParser::members(p, d, false, Modifier::Virtual.Bit());
+        if(err != null) {
+            return (null, err);
+        }
+        return (d, null);
+    }
+
+    // namespaced reads the rest of a namespace
+    fun (Decl*, Err*)(Parser*, Decl.Namespace*) namespaced = (p, d) {
+        var Err* err = DeclParser::members(p, d, false, Modifier::Static.Bit());
+        if(err != null) {
+            return (null, err);
+        }
+        return (d, null);
+    }
+
+    // enumerated reads the rest of an enum
+    fun (Decl*, Err*)(Parser*, Decl.Enum*) enumerated = (p, d) {
+        var (Token*, Err*) colon = p.Match(TokenKind::Colon);
+        if(colon.1 != null) {
+            return (null, colon.1);
+        } else if(colon.0 != null) {
+            var (Type*, Err*) primitive = TypeParser::Parse(p);
+            if(primitive.1 != null) {
+                return (null, primitive.1);
+            }
+            var Type.Primitive* backing = primitive.0{Type.Primitive*};
+            if(backing == null || !DeclParser::backings().Contains(backing.start.kind)) {
+                return (null, Errs::Unbackable(d.name, primitive.0));
+            }
+            d.primitive = primitive.0;
+        }
+        var Err* err = p.Consume(TokenKind::LeftBrace).1;
+        if(err != null) {
+            return (null, err);
+        }
+
+        for {
+            var (Token*, Err*) next = p.Peek();
+            if(next.1 != null) {
+                return (null, next.1);
+            } else if(DeclParser::valueStarts().Contains(next.0.kind)) {
+                break;
+            }
+            var Parser.Recovery* r = p.Checkpoint();
+            var (Field*, Err*) f = FieldParser::Parse(p, false, 0U);
+            if(f.1 != null) {
+                var Err* stop = r.Recover(f.1);
+                if(stop != null) {
+                    return (null, stop);
+                }
+            }
+            if(f.0 == null) {
+                continue;
+            } else if(f.0{Decl*} == null) {
+                p.ReportAt(Errs::FieldBeforeValues(f.0.name, d.name), f.0.name);
+                continue;
+            }
+            DeclParser::admit(p, d, f.0);
+        }
+
+        for {
+            var (Token*, Err*) end = p.Match(TokenKind::SemiColon);
+            if(end.1 != null) {
+                return (null, end.1);
+            } else if(end.0 != null) {
+                break;
+            }
+            var Parser.Recovery* r = p.Checkpoint();
+            var (Field.Value*, Err*) value = FieldParser::EnumValue(p, d.name, d.primitive);
+            if(value.0 != null) {
+                DeclParser::admit(p, d, value.0);
+            }
+            var Err* failed = value.1;
+            var Token* separator = null;
+            if(failed == null) {
+                var (Token*, Err*) tok = p.ConsumeAny(DeclParser::valueEnds());
+                failed = tok.1;
+                separator = tok.0;
+            }
+            if(failed != null) {
+                var Err* stop = r.Recover(failed);
+                if(stop != null) {
+                    return (null, stop);
+                }
+                break;
+            } else if(separator.kind == TokenKind::SemiColon) {
+                break;
+            }
+        }
+
+        err = DeclParser::members(p, d, false, 0U);
+        if(err != null) {
+            return (null, err);
+        }
+        return (d, null);
+    }
+
+    // aliased reads the rest of an alias
+    fun (Decl*, Err*)(Parser*, Decl.Alias*) aliased = (p, d) {
+        var Err* err = DeclParser::generics(p, d);
+        if(err != null) {
+            return (d, err);
+        }
+        var (Token*, Err*) bound = p.MatchAny(TypeParser::bounds());
+        if(bound.1 != null) {
+            return (d, bound.1);
+        } else if(bound.0 != null) {
+            return (d, Errs::AliasSubtype(d.name, bound.0));
+        }
+        err = p.Consume(TokenKind::Equal).1;
+        if(err != null) {
+            return (d, err);
+        }
+        var (Type*, Err*) aliased = TypeParser::Parse(p);
+        if(aliased.1 != null) {
+            return (d, aliased.1);
+        }
+        d.aliased = aliased.0;
+        return (d, p.Consume(TokenKind::SemiColon).1);
+    }
+
+    // generics reads the generic parameters of d, if it is written with any
+    fun Err*(Parser*, Decl*) generics = (p, d) {
+        var (Token*, Err*) bracket = p.Match(TokenKind::LeftBracket);
+        if(bracket.1 != null) {
+            return bracket.1;
+        } else if(bracket.0 == null) {
+            return null;
+        }
+        var (ArrList[Generic*]*, Err*) generics = GenericParser::Parse(p);
+        if(generics.1 != null) {
+            return generics.1;
+        }
+        d.generics = generics.0;
+        return null;
+    }
+
+    // members reads the fields of d in braces, or after an enum's values
+    // through its closing brace
+    fun Err*(Parser*, Decl*, bool, Modifier.Set) members = (p, d, tailable, implied) {
+        if(d.kind != Field.Kind::Enum) {
+            var Err* err = p.Consume(TokenKind::LeftBrace).1;
+            if(err != null) {
+                return err;
+            }
+        }
+        for {
+            var (Token*, Err*) end = p.Match(TokenKind::RightBrace);
+            if(end.1 != null) {
+                return end.1;
+            } else if(end.0 != null) {
+                return null;
+            }
+            var Parser.Recovery* r = p.Checkpoint();
+            var (Field*, Err*) f = FieldParser::Parse(p, tailable, implied);
+            if(f.1 != null) {
+                var Err* stop = r.Recover(f.1);
+                if(stop != null) {
+                    return stop;
+                }
+            }
+            if(f.0 != null) {
+                DeclParser::admit(p, d, f.0);
+            }
+        }
+        return null;
+    }
+
+    // admit adds f to the fields of d, or reports why it cannot be one
+    fun void(Parser*, Decl*, Field*) admit = (p, d, f) {
+        var Err* err = DeclParser::check(d, f);
+        if(err != null) {
+            p.ReportAt(err, f.name);
+            return;
+        }
+        d.fields.AddLast(f);
+    }
+
+    // check answers why f cannot be a field of d, or null if it can
+    fun Err*(Decl*, Field*) check = (d, f) {
+        var bool nested = f{Decl*} != null;
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var Field* other = d.fields.Get(i);
+            if((other{Decl*} != null) == nested && other.name.value{str} == f.name.value{str}) {
+                if(DeclParser::held(f)) {
+                    return Errs::Duplicate("static", f.name);
+                }
+                return Errs::Duplicate("instance", f.name);
+            }
+        }
+        if(nested || DeclParser::held(f)) {
+            return null;
+        }
+
+        var bool virtualized = Modifier::Virtual.In(f.modifiers);
+        switch(d.kind) {
+            case (Field.Kind::Interface) {
+                if(f.kind != Field.Kind::Method) {
+                    return Errs::InterfaceMember(f.name);
+                } else if(Modifier::Protected.In(f.modifiers)) {
+                    return Errs::ProtectedInterfaceMethod(f.name);
+                }
+                return null;
+            }
+            case (Field.Kind::Enum) {
+                if(virtualized) {
+                    return Errs::VirtualField(f.name, "enum");
+                }
+                return null;
+            }
+            case (Field.Kind::Class) {
+                if(virtualized) {
+                    return Errs::VirtualField(f.name, "class");
+                }
+            }
+            case (Field.Kind::Struct) {
+                if(virtualized) {
+                    return Errs::VirtualField(f.name, "struct");
+                }
+            }
+        }
+        var Field.Member* tailed = DeclParser::tail(d);
+        if(tailed != null && f.kind == Field.Kind::Member) {
+            return Errs::TailNotLast(tailed.name);
+        }
+        return null;
+    }
+
+    // held reports whether f is held by its declaration rather than by an instance
+    fun bool(Field*) held = (f) {
+        return f.kind == Field.Kind::Value || Modifier::Static.In(f.modifiers);
+    }
+
+    // tail answers the instance member of d that is an unsized tail, or null for none
+    fun Field.Member*(Decl*) tail = (d) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var Field.Member* m = d.fields.Get(i){Field.Member*};
+            if(m != null && !Modifier::Static.In(m.modifiers) && (TypeParser::unsizedArray(m.declared) || TypeParser::unsizedTail(m.declared))) {
+                return m;
+            }
+        }
+        return null;
+    }
+
+    // instanceMember answers the first instance member of d, or null for none
+    fun Field*(Decl*) instanceMember = (d) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var Field* f = d.fields.Get(i);
+            if(f.kind == Field.Kind::Member && !Modifier::Static.In(f.modifiers)) {
+                return f;
+            }
+        }
+        return null;
+    }
+
+    // resolvablePointer reports whether t is a pointer to a type a declaration is named by
+    fun bool(Type*) resolvablePointer = (t) {
+        var Type.Wrapped* w = t{Type.Wrapped*};
+        if(w == null || w.wrap != Type.Wrap::Pointer) {
+            return false;
+        }
+        var Type.Kind kind = w.inner.kind;
+        return kind == Type.Kind::Reference || kind == Type.Kind::Generic || kind == Type.Kind::Tailed;
+    }
+
+    // kind answers the kind of declaration the keyword k begins
+    fun Field.Kind(TokenKind) kind = (k) {
+        switch(k) {
+            case (TokenKind::Abstract)
+                return Field.Kind::Abstract;
+            case (TokenKind::Alias)
+                return Field.Kind::Alias;
+            case (TokenKind::Enum)
+                return Field.Kind::Enum;
+            case (TokenKind::Interface)
+                return Field.Kind::Interface;
+            case (TokenKind::Namespace)
+                return Field.Kind::Namespace;
+            case (TokenKind::Struct)
+                return Field.Kind::Struct;
+        }
+        return Field.Kind::Class;
+    }
+
+    // plural answers what declarations of kind are called
+    fun str(Field.Kind) plural = (kind) {
+        switch(kind) {
+            case (Field.Kind::Abstract)
+                return "abstracts";
+            case (Field.Kind::Alias)
+                return "aliases";
+            case (Field.Kind::Enum)
+                return "enums";
+            case (Field.Kind::Interface)
+                return "interfaces";
+            case (Field.Kind::Namespace)
+                return "namespaces";
+            case (Field.Kind::Struct)
+                return "structs";
+        }
+        return "classes";
+    }
+
+    // declKinds answers the keywords a declaration begins with
+    fun TreeSet[TokenKind]*() declKinds = () {
+        if(DeclParser::declKindsSet == null) {
+            DeclParser::declKindsSet = TreeSet::[TokenKind]New(7U, TokenKind::Abstract, TokenKind::Alias, TokenKind::Class,
+                TokenKind::Enum, TokenKind::Interface, TokenKind::Namespace, TokenKind::Struct);
+        }
+        return DeclParser::declKindsSet;
+    }
+
+    // backings answers the primitives an enum may be backed by
+    fun TreeSet[TokenKind]*() backings = () {
+        if(DeclParser::backingsSet == null) {
+            DeclParser::backingsSet = TreeSet::[TokenKind]New(8U, TokenKind::Bool, TokenKind::Char, TokenKind::Byte,
+                TokenKind::Int, TokenKind::Uint, TokenKind::Float, TokenKind::Posit, TokenKind::String);
+        }
+        return DeclParser::backingsSet;
+    }
+
+    // valueStarts answers the tokens that end the declarations before an enum's values
+    fun TreeSet[TokenKind]*() valueStarts = () {
+        if(DeclParser::valueStartsSet == null) {
+            DeclParser::valueStartsSet = TreeSet::[TokenKind]New(4U, TokenKind::Identifier, TokenKind::SemiColon,
+                TokenKind::RightBrace, TokenKind::EOF);
+        }
+        return DeclParser::valueStartsSet;
+    }
+
+    // valueEnds answers the tokens that follow an enum value
+    fun TreeSet[TokenKind]*() valueEnds = () {
+        if(DeclParser::valueEndsSet == null) {
+            DeclParser::valueEndsSet = TreeSet::[TokenKind]New(2U, TokenKind::Comma, TokenKind::SemiColon);
+        }
+        return DeclParser::valueEndsSet;
+    }
+}

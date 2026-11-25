@@ -5,6 +5,7 @@ import std("lang/Enums.zam");
 import std("lang/Err.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
+import "DeclParser.zam";
 import "ExprParser.zam";
 import "GenericParser.zam";
 import "Parser.zam";
@@ -12,6 +13,7 @@ import "StmtParser.zam";
 import "Token.zam";
 import "TokenKind.zam";
 import "TypeParser.zam";
+import "ast/Decl.zam";
 import "ast/Expr.zam";
 import "ast/Field.zam";
 import "ast/Generic.zam";
@@ -28,6 +30,7 @@ public namespace FieldParser {
         public var Err*$ MethodNotFunction = StrErr::New("method type is not a function");
         public var Err*$ MissingBody = StrErr::New("non-virtual methods must have a body");
         public var Err*$ VirtualBody = StrErr::New("virtual methods cannot have a body");
+        public var Err*$ RedundantStatic = StrErr::New("redundant static modifier for declaration field");
 
         public fun Err*(Modifier) DuplicateModifier = (m) {
             return StrErr::New("duplicate modifier " + Strs::Quote(m{str}));
@@ -73,11 +76,18 @@ public namespace FieldParser {
             return (null, start.1);
         } else if(start.0.kind == TokenKind::Var) {
             return FieldParser::member(p, start.0, m, tailable && !Modifier::Static.In(m));
+        } else if(start.0.kind == TokenKind::Fun) {
+            if(Modifier::Virtual.In(implied) && !Modifier::Static.In(m)) {
+                m = m | Modifier::Virtual.Bit();
+            }
+            return FieldParser::method(p, start.0, m);
         }
-        if(Modifier::Virtual.In(implied) && !Modifier::Static.In(m)) {
-            m = m | Modifier::Virtual.Bit();
+
+        if(Modifier::Static.In(modifiers.0) && !Modifier::Static.In(implied)) {
+            return (null, Errs::RedundantStatic);
         }
-        return FieldParser::method(p, start.0, m);
+        var (Decl*, Err*) d = DeclParser::Declaration(p, start.0, m | Modifier::Static.Bit());
+        return (d.0, d.1);
     }
 
     // Modifiers reads the modifiers written before a field or declaration
@@ -104,12 +114,12 @@ public namespace FieldParser {
     }
 
     // EnumValue reads a value of the enum named enumName, backed by primitive or, for null, by nothing
-    public fun (Field.Enum*, Err*)(Parser*, Token*, Type*) EnumValue = (p, enumName, primitive) {
+    public fun (Field.Value*, Err*)(Parser*, Token*, Type*) EnumValue = (p, enumName, primitive) {
         var (Token*, Err*) name = p.Consume(TokenKind::Identifier);
         if(name.1 != null) {
             return (null, name.1);
         }
-        var Field.Enum* value = Field.Enum::New(name.0);
+        var Field.Value* value = Field.Value::New(name.0);
 
         if(primitive != null) {
             var Err* err = p.Consume(TokenKind::LeftParen).1;
@@ -344,7 +354,8 @@ public namespace FieldParser {
     // fieldKinds answers the keywords a field begins with
     fun TreeSet[TokenKind]*() fieldKinds = () {
         if(FieldParser::fieldKindsSet == null) {
-            FieldParser::fieldKindsSet = TreeSet::[TokenKind]New(2U, TokenKind::Var, TokenKind::Fun);
+            FieldParser::fieldKindsSet = TreeSet::[TokenKind]New(9U, TokenKind::Var, TokenKind::Fun, TokenKind::Abstract,
+                TokenKind::Alias, TokenKind::Class, TokenKind::Enum, TokenKind::Interface, TokenKind::Namespace, TokenKind::Struct);
         }
         return FieldParser::fieldKindsSet;
     }
