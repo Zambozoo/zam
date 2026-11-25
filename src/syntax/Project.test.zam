@@ -1,0 +1,46 @@
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "Project.zam";
+
+public namespace ProjectTest {
+    public fun void(uint, str...) Parse = (argC, argV) {
+        var (Project*, Err*) p = Project::Parse("/p/zam.yml",
+            "name: demo\nversion: 1.0.0\nnative:\n  links: [m]\n  files: [a.c, b.c]\ndependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: h1\n  other:\n    repo: example.com/other@v2\n");
+        if(!Assert::True(p.1 == null, "the project file does not parse")) {
+            Assert::Fatal(p.1.Err());
+        }
+        Assert::[str]Equal("demo", p.0.name);
+        Assert::[str]Equal("1.0.0", p.0.version);
+        Assert::[str]Equal("/p/zam.yml", p.0.path);
+        Assert::[uint]Equal(1U, p.0.links.Len());
+        Assert::[str]Equal("m", p.0.links.Get(0U));
+        Assert::[str]Equal("b.c", p.0.files.Get(1U));
+        Assert::[uint]Equal(2U, p.0.declared.Len());
+        Assert::[str]Equal("dep", p.0.declared.Get(0U).pkg);
+        Assert::[str]Equal("example.com/dep@v1", p.0.declared.Get(0U).repo);
+        Assert::[str]Equal("h1", p.0.declared.Get(0U).hash);
+        Assert::[str]Equal("", p.0.declared.Get(1U).hash);
+    }
+
+    public fun void(uint, str...) Empty = (argC, argV) {
+        var (Project*, Err*) p = Project::Parse("/p/zam.yml", "");
+        Assert::True(p.1 == null, "an empty project file does not parse");
+        Assert::[str]Equal("", p.0.name);
+        Assert::[uint]Equal(0U, p.0.declared.Len());
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        Assert::True(Project::Parse("/p/zam.yml", "name: [").1 != null, "a broken project file parses");
+        Assert::[str]Equal("project file is not a mapping", Project::Parse("/p/zam.yml", "- a").1.Err());
+        Assert::[str]Equal("project file field \"name\" is not a string", Project::Parse("/p/zam.yml", "name: [1, 2]").1.Err());
+        Assert::[str]Equal("project file field \"native.links\" is not a list", Project::Parse("/p/zam.yml", "native:\n  links: m").1.Err());
+        Assert::[str]Equal("project file field \"dependencies\" is not a mapping", Project::Parse("/p/zam.yml", "dependencies: [a]").1.Err());
+    }
+
+    public fun void(uint, str...) Implicit = (argC, argV) {
+        var Project* p = Project::Implicit("/p/Main.zam");
+        Assert::[str]Equal("Main", p.name);
+        Assert::[str]Equal("/p/zam.yml", p.path);
+        Assert::[str]Equal("std://", p.dependencies.Get("std").0);
+    }
+}

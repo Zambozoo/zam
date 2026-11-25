@@ -11,6 +11,7 @@ import std("lang/System.zam");
 import "cli/Command.zam";
 import "cli/LocalFiles.zam";
 import "cli/Verb.zam";
+import "syntax/LocalPackages.zam";
 import "syntax/LocalSources.zam";
 import "syntax/ProjectParser.zam";
 
@@ -80,7 +81,7 @@ namespace Main {
             var (str, Err*) root = stdRoot();
             onError(Step::Std, 1U, root.1);
             
-            var ProjectParser* parser = ProjectParser::New(LocalSources::New(root.0), r.0.maxThreads{uint});
+            var ProjectParser* parser = ProjectParser::New(LocalSources::New(root.0), LocalPackages::New(), r.0.maxThreads{uint}, r.0.noProject);
             var (ProjectParser.Program*, ArrList[Err*]*) program = parser.Parse(r.0.inputPath, Arr::[str]New(0U));
             onError(Step::Syntax, program.1.Len(), program.1.Arr().Arr()...);
         }

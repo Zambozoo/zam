@@ -1,4 +1,5 @@
 import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
 import std("lang/Arr.zam");
 import std("lang/Err.zam");
 import std("lang/StrErr.zam");
@@ -22,6 +23,10 @@ public namespace Resolver {
 
         public fun Err*(str) NoMatches = (path) {
             return StrErr::New("import " + Strs::Quote(path) + " matched no " + Path::Extension + " files");
+        }
+
+        public fun Err*(str, str) Leaves = (path, archive) {
+            return StrErr::New("import " + Strs::Quote(path) + " leaves " + archive);
         }
 
         public fun Err*(str) TestOnly = (path) {
@@ -141,7 +146,11 @@ public namespace Resolver {
     // path answers the path written names
     fun (str, Err*)(Project*, str, Token*, str) path = (project, from, pkg, written) {
         if(pkg == null) {
-            return (Path::Resolve(from, written), null);
+            var str resolved = Path::Resolve(from, written);
+            if(project.root != "" && !Path::IsStd(resolved) && !Paths::Contains(project.root, resolved)) {
+                return ("", Errs::Leaves(written, project.archive));
+            }
+            return (resolved, null);
         }
         var (str, bool) dir = project.dependencies.Get(pkg.value{str});
         if(!dir.1) {

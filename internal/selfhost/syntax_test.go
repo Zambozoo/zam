@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.yaml.in/yaml/v3"
 
 	"github.com/zambozoo/zam/internal/base"
 	"github.com/zambozoo/zam/internal/base/target"
@@ -64,23 +65,52 @@ var compiler = sync.OnceValues(func() (string, error) {
 })
 
 // TestSyntaxMatchesGo parses every program in the Go parser's testdata with
-// the compiler written in zam and with the Go one, without project files, and
-// expects the same errors from both.
+// the compiler written in zam and with the Go one, and expects the same errors
+// from both: every program without project files, and each one whose project
+// file declares no dependency, which the compiler written in zam cannot yet
+// fetch, with them.
 func TestSyntaxMatchesGo(t *testing.T) {
 	zam, err := compiler()
 	require.NoError(t, err)
 
-	entries, err := filepath.Glob(filepath.Join(root, "internal", "compiler", "0_syntax", "testdata", "*", "*", "Main.zam"))
+	testdata := filepath.Join(root, "internal", "compiler", "0_syntax", "testdata")
+	entries, err := filepath.Glob(filepath.Join(testdata, "*", "*", "Main.zam"))
 	require.NoError(t, err)
 	require.NotEmpty(t, entries)
 	for _, entry := range entries {
-		name, err := filepath.Rel(filepath.Join(root, "internal", "compiler", "0_syntax", "testdata"), filepath.Dir(entry))
+		name, err := filepath.Rel(testdata, filepath.Dir(entry))
 		require.NoError(t, err)
-		t.Run(filepath.ToSlash(name), func(t *testing.T) {
+		t.Run("no-project/"+filepath.ToSlash(name), func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, goErrors(t, entry), zamErrors(t, zam, entry))
+			assert.Equal(t, goErrors(t, entry, true), zamErrors(t, zam, entry, true))
+		})
+		if declaresDependencies(t, entry) {
+			continue
+		}
+		t.Run("project/"+filepath.ToSlash(name), func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, goErrors(t, entry, false), zamErrors(t, zam, entry, false))
 		})
 	}
+}
+
+// declaresDependencies reports whether the project file governing entry, if
+// there is one, declares a dependency.
+func declaresDependencies(t *testing.T, entry string) bool {
+	t.Helper()
+	manifest, err := (&base.FileProvider{}).ProjectFilePath(base.Path(entry))
+	if err != nil {
+		return false
+	}
+	source, err := os.ReadFile(string(manifest))
+	require.NoError(t, err)
+	var project struct {
+		Dependencies map[string]any `yaml:"dependencies"`
+	}
+	if yaml.Unmarshal(source, &project) != nil {
+		return false
+	}
+	return len(project.Dependencies) > 0
 }
 
 var (
@@ -89,6 +119,9 @@ var (
 	// modifiers matches the modifiers an error names, which Go writes as the
 	// raw bits of the set and in no fixed order.
 	modifiers = regexp.MustCompile(`^(duplicate modifier|modifier) ('[^']*'|"[a-z]+")( cannot be used with ('[^']*'|"[a-z]+"))?`)
+	// projectFile matches an error located at a project file, whose message
+	// is the YAML library's own.
+	projectFile = regexp.MustCompile(`(?s)^.* \((.*zam\.ya?ml)\)$`)
 	// position matches where an error is located.
 	position = regexp.MustCompile(`\[\d+:\d+\]\)$`)
 	// atField lists the errors located at the field or import they are about,
@@ -101,8 +134,10 @@ var (
 
 // normalized answers message without what the two parsers are meant to write
 // differently: the order the tokens an error expects are listed in, how
-// modifiers are named, and where an error about a field or import is located.
+// modifiers are named, where an error about a field or import is located, and
+// what an error reading a project file says.
 func normalized(message string) string {
+	message = projectFile.ReplaceAllString(message, "project file error ($1)")
 	message = alternatives.ReplaceAllStringFunc(message, func(match string) string {
 		list := strings.TrimPrefix(match, "expected one of ")
 		tokens := strings.Split(strings.Replace(list, ", or ", ", ", 1), ", ")
@@ -119,11 +154,11 @@ func normalized(message string) string {
 }
 
 // goErrors answers the errors the Go parser reports for the program entered
-// at entry, sorted.
-func goErrors(t *testing.T, entry string) []string {
+// at entry, sorted, without project files when noProject.
+func goErrors(t *testing.T, entry string, noProject bool) []string {
 	t.Helper()
 	files := &base.FileProvider{}
-	cmd, err := cli.New([]string{"zam", "build", "-n", entry}, files)
+	cmd, err := cli.New(arguments(entry, noProject), files)
 	require.NoError(t, err)
 	_, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	got := []string{}
@@ -135,11 +170,11 @@ func goErrors(t *testing.T, entry string) []string {
 }
 
 // zamErrors answers the errors the compiler at zam reports for the program
-// entered at entry, sorted.
-func zamErrors(t *testing.T, zam, entry string) []string {
+// entered at entry, sorted, without project files when noProject.
+func zamErrors(t *testing.T, zam, entry string, noProject bool) []string {
 	t.Helper()
 	var stderr bytes.Buffer
-	cmd := exec.Command(zam, "build", "-n", entry)
+	cmd := exec.Command(zam, arguments(entry, noProject)[1:]...)
 	cmd.Env = append(os.Environ(), "ZAM_STD="+filepath.Join(root, "internal", "std"))
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -162,4 +197,13 @@ func zamErrors(t *testing.T, zam, entry string) []string {
 	}
 	slices.Sort(got)
 	return got
+}
+
+// arguments answers the command line building entry, without project files
+// when noProject.
+func arguments(entry string, noProject bool) []string {
+	if noProject {
+		return []string{"zam", "build", "-n", entry}
+	}
+	return []string{"zam", "build", entry}
 }

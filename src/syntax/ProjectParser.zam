@@ -2,13 +2,18 @@ import std("data/list/ArrList.zam");
 import std("data/list/LinkList.zam");
 import std("data/map/TreeMap.zam");
 import std("data/set/HashSet.zam");
+import std("io/Paths.zam");
 import std("lang/Arr.zam");
 import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
 import std("sync/Cond.zam");
 import std("sync/Mutex.zam");
 import std("sync/WaitGroup.zam");
 import "FileParser.zam";
+import "PackageProvider.zam";
 import "Parser.zam";
+import "Path.zam";
 import "Project.zam";
 import "Resolver.zam";
 import "Source.zam";
@@ -19,15 +24,48 @@ import "ast/File.zam";
 
 // ProjectParser parses every file a program is made of on several threads
 public class ProjectParser {
-    // Program is every file parsed, by path, and the declaration of the entry file
+    namespace Errs {
+        public var Err*$ ReservedPackage = StrErr::New("\"std\" is a reserved package name");
+
+        public fun Err*(str) NoProjectFile = (path) {
+            return StrErr::New("project file missing for " + Path::Display(path));
+        }
+
+        public fun Err*(str) NoRepo = (pkg) {
+            return StrErr::New("dependency " + Strs::Quote(pkg) + " has no repo");
+        }
+
+        public fun Err*(str, Err*) Unfetched = (pkg, err) {
+            return StrErr::New("failed to fetch dependency " + Strs::Quote(pkg) + ": " + err.Err());
+        }
+
+        public fun Err*(str, str, str, str) Mismatch = (pkg, want, repo, got) {
+            return StrErr::New("dependency " + Strs::Quote(pkg) + " does not match its hash: the project file has " + want + ", " + repo + " has " + got);
+        }
+    }
+
+    // Program is every file parsed and every project they are in
     public class Program {
         public var TreeMap[str, Source*]* sources;
+        public var TreeMap[str, Project*]* projects;
         public var Decl* main;
     }
 
     var SourceProvider* provider;
+    var PackageProvider* packages;
     var uint threads;
-    var Project* project;
+    // noProject says local files are compiled as the entry's implicit project
+    var bool noProject;
+    var str entry;
+
+    // projectLock is held while a project is found or read
+    var Mutex* projectLock;
+    // projects is every project read, by the path of its project file
+    var TreeMap[str, Project*]* projects;
+    // unreadable is the project files that could not be read, already reported
+    var HashSet[str]* unreadable;
+    // fetched maps the directory each dependency was extracted to onto its repo@version
+    var TreeMap[str, str]* fetched;
 
     var Mutex* lock;
     var Cond* changed;
@@ -41,9 +79,15 @@ public class ProjectParser {
     // incomplete says a file could not be parsed at all
     var bool incomplete;
 
-    public static fun ProjectParser*(SourceProvider*, uint) New = (provider, threads) {
+    public static fun ProjectParser*(SourceProvider*, PackageProvider*, uint, bool) New = (provider, packages, threads, noProject) {
         var ProjectParser* p = new(ProjectParser);
         p.provider = provider;
+        p.packages = packages;
+        p.noProject = noProject;
+        p.projectLock = Mutex::New();
+        p.projects = TreeMap::[str, Project*]New(0U);
+        p.unreadable = HashSet::[str]New(0U);
+        p.fetched = TreeMap::[str, str]New(0U);
         p.threads = threads;
         if(p.threads == 0U) {
             p.threads = 1U;
@@ -59,7 +103,7 @@ public class ProjectParser {
 
     // Parse parses entry, the paths in extra, and every file they import
     public fun (Program*, ArrList[Err*]*)(str, Arr[str]*) Parse = (entry, extra) {
-        this.project = Project::Implicit(entry);
+        this.entry = entry;
         this.lock.Lock();
         this.add(entry);
         for(var uint i = 0U; i < extra.Len(); i++) {
@@ -79,6 +123,7 @@ public class ProjectParser {
         }
         var Program* program = new(Program);
         program.sources = this.sources;
+        program.projects = this.projects;
         program.main = this.sources.Get(entry).0.file.decl;
         return (program, this.errs);
     }
@@ -134,6 +179,13 @@ public class ProjectParser {
     // parse reads, parses and resolves the file at path
     fun (Source*, ArrList[Err*]*, bool)(str) parse = (path) {
         var ArrList[Err*]* errs = ArrList::[Err*]New(0U);
+        var (Project*, Err*) project = this.projectOf(path);
+        if(project.0 == null) {
+            if(project.1 != null) {
+                errs.AddLast(project.1);
+            }
+            return (null, errs, false);
+        }
         var (str, Err*) text = this.provider.Read(path);
         if(text.1 != null) {
             errs.AddLast(SourceErr::In(text.1, path));
@@ -155,10 +207,10 @@ public class ProjectParser {
 
         var Source* s = new(Source);
         s.path = path;
-        s.project = this.project;
+        s.project = project.0;
         s.file = file.0;
         s.lineStarts = p.LineStarts();
-        var (ArrList[Source.Resolved*]*, ArrList[Parser.Diagnostic*]*) resolved = Resolver::Resolve(this.provider, this.project, path, file.0, p.importBlocks);
+        var (ArrList[Source.Resolved*]*, ArrList[Parser.Diagnostic*]*) resolved = Resolver::Resolve(this.provider, project.0, path, file.0, p.importBlocks);
         s.imports = resolved.0;
         if(resolved.1.Len() > 0U) {
             file.0.brokenImports = true;
@@ -168,5 +220,95 @@ public class ProjectParser {
             errs.AddLast(SourceErr::At(d.err, path, s.lineStarts, d.token));
         }
         return (s, errs, file.1 == null);
+    }
+
+    // projectOf answers the project the file at path is in
+    fun (Project*, Err*)(str) projectOf = (path) {
+        this.projectLock.Lock();
+        defer this.projectLock.Unlock();
+        var (str, str, bool) at = this.fetchedRoot(path);
+        var str file = "";
+        var bool implicit = this.noProject && !Path::IsStd(path) && !at.2;
+        if(implicit) {
+            file = Project::Implicit(this.entry).path;
+        } else {
+            var (str, Err*) found = this.provider.ProjectFile(path);
+            if(found.1 != null) {
+                return (null, SourceErr::In(found.1, path));
+            } else if(at.2 && !Paths::Contains(at.1, found.0)) {
+                return (null, SourceErr::In(Errs::NoProjectFile(path), path));
+            }
+            file = found.0;
+        }
+
+        var (Project*, bool) known = this.projects.Get(file);
+        if(known.1) {
+            return (known.0, null);
+        } else if(this.unreadable.Contains(file)) {
+            return (null, null);
+        } else if(implicit) {
+            var Project* p = Project::Implicit(this.entry);
+            this.projects.Put(file, p);
+            return (p, null);
+        }
+        var (Project*, Err*) read = this.read(file);
+        if(read.1 != null) {
+            this.unreadable.Add(file);
+            return (null, SourceErr::In(read.1, file));
+        }
+        this.projects.Put(file, read.0);
+        return (read.0, null);
+    }
+
+    // read reads the project file at path and fetches the dependencies it declares
+    fun (Project*, Err*)(str) read = (path) {
+        var (str, Err*) text = this.provider.Read(path);
+        if(text.1 != null) {
+            return (null, text.1);
+        }
+        var (Project*, Err*) parsed = Project::Parse(path, text.0);
+        if(parsed.1 != null) {
+            return (null, parsed.1);
+        }
+        var Project* p = parsed.0;
+        for(var uint i = 0U; i < p.declared.Len(); i++) {
+            if(p.declared.Get(i).pkg == "std") {
+                return (null, Errs::ReservedPackage);
+            }
+        }
+
+        var (str, str, bool) at = this.fetchedRoot(path);
+        p.archive = at.0;
+        p.root = at.1;
+        for(var uint i = 0U; i < p.declared.Len(); i++) {
+            var Project.Dependency* d = p.declared.Get(i);
+            if(d.repo == "") {
+                return (null, Errs::NoRepo(d.pkg));
+            }
+            var (str, str, Err*) fetched = this.packages.Fetch(d.repo);
+            if(fetched.2 != null) {
+                return (null, Errs::Unfetched(d.pkg, fetched.2));
+            }
+            this.fetched.Put(fetched.0, d.repo);
+            if(d.hash != "" && d.hash != fetched.1) {
+                return (null, Errs::Mismatch(d.pkg, d.hash, d.repo, fetched.1));
+            }
+            p.dependencies.Put(d.pkg, fetched.0);
+        }
+        if(!Path::IsStd(path)) {
+            p.dependencies.Put("std", Path::Std);
+        }
+        return (p, null);
+    }
+
+    // fetchedRoot answers the repo@version and directory of the fetched dependency path lies in
+    fun (str, str, bool)(str) fetchedRoot = (path) {
+        var Arr[(str, str)]* all = this.fetched.Arr();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            if(Paths::Contains(all.Get(i).0, path)) {
+                return (all.Get(i).1, all.Get(i).0, true);
+            }
+        }
+        return ("", "", false);
     }
 }

@@ -1,17 +1,175 @@
+import std("codec/format/YAML.zam");
+import std("data/list/ArrList.zam");
 import std("data/map/TreeMap.zam");
+import std("io/Paths.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
 import "Path.zam";
 
-// Project is the files a program is made of
+// Project is the files a program is made of that share a project file
 public class Project {
+    namespace Errs {
+        public var Err*$ NotMapping = StrErr::New("project file is not a mapping");
+
+        public fun Err*(str, str) NotA = (field, kind) {
+            return StrErr::New("project file field " + Strs::Quote(field) + " is not a " + kind);
+        }
+    }
+
+    // Dependency is a dependency as the project file declares it
+    public class Dependency {
+        public var str pkg;
+        // repo is the repository and version, written repo@version
+        public var str repo;
+        public var str hash;
+    }
+
+    // path is the project file's, or the one an implicit project's would have
+    public var str path;
+    // archive is the repo@version a fetched project was fetched as, or "" for one on disk
+    public var str archive;
+    // root is the directory a fetched project was extracted to, or "" for one on disk
+    public var str root;
     public var str name;
+    public var str version;
+    public var ArrList[str]* links;
+    public var ArrList[str]* files;
+    // declared is the dependencies the project file declares
+    public var ArrList[Dependency*]* declared;
     // dependencies maps each package name to the directory it lies in
     public var TreeMap[str, str]* dependencies;
 
-    // Implicit answers the project of an entry file written without a project file
+    // FileNames is the names a project file is written under
+    public static var Arr[str]* FileNames = Arr::[str]New(2U, "zam.yml", "zam.yaml");
+
+    // Implicit answers the project of entry compiled without a project file
     public static fun Project*(str) Implicit = (entry) {
-        var Project* p = new(Project);
+        var Project* p = Project::empty(Paths::Join(Paths::Dir(entry), "zam.yml"));
         p.name = Path::FileName(entry);
-        p.dependencies = TreeMap::[str, str]New(1U, ("std", Path::Std));
+        p.dependencies.Put("std", Path::Std);
         return p;
+    }
+
+    // Parse answers the project the project file at path declares in text
+    public static fun (Project*, Err*)(str, str) Parse = (path, text) {
+        var (YAML*, Err*) document = YAML::Parse(text);
+        if(document.1 != null) {
+            return (null, document.1);
+        }
+        defer document.0.Delete();
+        var Project* p = Project::empty(path);
+        var YAML* root = document.0;
+        if(root.IsNull()) {
+            return (p, null);
+        } else if(root.Kind() != YAML.Kind::Map) {
+            return (null, Errs::NotMapping);
+        }
+
+        var (str, Err*) name = Project::scalar(root, "name");
+        if(name.1 != null) {
+            return (null, name.1);
+        }
+        p.name = name.0;
+        var (str, Err*) version = Project::scalar(root, "version");
+        if(version.1 != null) {
+            return (null, version.1);
+        }
+        p.version = version.0;
+
+        var (YAML*, bool) natives = root.Get("native");
+        if(natives.1 && !natives.0.IsNull()) {
+            if(natives.0.Kind() != YAML.Kind::Map) {
+                return (null, Errs::NotA("native", "mapping"));
+            }
+            var Err* err = Project::list(natives.0, "links", p.links);
+            if(err != null) {
+                return (null, err);
+            }
+            err = Project::list(natives.0, "files", p.files);
+            if(err != null) {
+                return (null, err);
+            }
+        }
+
+        var (YAML*, bool) dependencies = root.Get("dependencies");
+        if(dependencies.1 && !dependencies.0.IsNull()) {
+            if(dependencies.0.Kind() != YAML.Kind::Map) {
+                return (null, Errs::NotA("dependencies", "mapping"));
+            }
+            var Arr[str]* pkgs = dependencies.0.Keys();
+            for(var uint i = 0U; i < pkgs.Len(); i++) {
+                var YAML* entry = dependencies.0.Get(pkgs.Get(i)).0;
+                var Dependency* d = new(Dependency);
+                d.pkg = pkgs.Get(i);
+                d.repo = "";
+                d.hash = "";
+                if(!entry.IsNull()) {
+                    if(entry.Kind() != YAML.Kind::Map) {
+                        return (null, Errs::NotA("dependencies." + d.pkg, "mapping"));
+                    }
+                    var (str, Err*) repo = Project::scalar(entry, "repo");
+                    if(repo.1 != null) {
+                        return (null, repo.1);
+                    }
+                    d.repo = repo.0;
+                    var (str, Err*) hash = Project::scalar(entry, "hash");
+                    if(hash.1 != null) {
+                        return (null, hash.1);
+                    }
+                    d.hash = hash.0;
+                }
+                p.declared.AddLast(d);
+            }
+        }
+        return (p, null);
+    }
+
+    // empty answers a project of the project file at path declaring nothing
+    static fun Project*(str) empty = (path) {
+        var Project* p = new(Project);
+        p.path = path;
+        p.archive = "";
+        p.root = "";
+        p.name = "";
+        p.version = "";
+        p.links = ArrList::[str]New(0U);
+        p.files = ArrList::[str]New(0U);
+        p.declared = ArrList::[Dependency*]New(0U);
+        p.dependencies = TreeMap::[str, str]New(0U);
+        return p;
+    }
+
+    // scalar answers the text of the scalar under key in m, "" for none
+    static fun (str, Err*)(YAML*, str) scalar = (m, key) {
+        var (YAML*, bool) value = m.Get(key);
+        if(!value.1 || value.0.IsNull()) {
+            return ("", null);
+        }
+        var YAML.Kind kind = value.0.Kind();
+        if(kind == YAML.Kind::Seq || kind == YAML.Kind::Map) {
+            return ("", Errs::NotA(key, "string"));
+        }
+        return (value.0.AsStr(), null);
+    }
+
+    // list adds the scalars of the sequence under key in m to into
+    static fun Err*(YAML*, str, ArrList[str]*) list = (m, key, into) {
+        var (YAML*, bool) value = m.Get(key);
+        if(!value.1 || value.0.IsNull()) {
+            return null;
+        } else if(value.0.Kind() != YAML.Kind::Seq) {
+            return Errs::NotA("native." + key, "list");
+        }
+        for(var uint i = 0U; i < value.0.Len(); i++) {
+            var YAML* item = value.0.At(i);
+            var YAML.Kind kind = item.Kind();
+            if(kind == YAML.Kind::Seq || kind == YAML.Kind::Map) {
+                return Errs::NotA("native." + key, "list of strings");
+            }
+            into.AddLast(item.AsStr());
+        }
+        return null;
     }
 }

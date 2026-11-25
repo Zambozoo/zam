@@ -1,0 +1,19 @@
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+
+// LocalPackages fetches dependencies into the directory they are kept under
+public class LocalPackages {
+    namespace Errs {
+        public fun Err*(str) Unsupported = (ref) {
+            return StrErr::New("cannot fetch " + ref + ": fetching dependencies is not supported yet");
+        }
+    }
+
+    public static fun LocalPackages*() New = () {
+        return new(LocalPackages);
+    }
+
+    public fun (str, str, Err*)(str) Fetch = (ref) {
+        return ("", "", Errs::Unsupported(ref));
+    }
+}

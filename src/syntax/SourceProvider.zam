@@ -7,4 +7,6 @@ public interface SourceProvider {
     fun (str, Err*)(str) Read;
     // ListCodeFiles answers the paths of the source files directly in the directory dir, sorted by name
     fun (Arr[str]*, Err*)(str) ListCodeFiles;
+    // ProjectFile answers the path of the project file the file at path is governed by
+    fun (str, Err*)(str) ProjectFile;
 }

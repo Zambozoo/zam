@@ -1,0 +1,7 @@
+import std("lang/Err.zam");
+
+// PackageProvider fetches the dependencies projects declare
+public interface PackageProvider {
+    // Fetch answers the directory the dependency ref repo@version and the hash of what was fetched
+    fun (str, str, Err*)(str) Fetch;
+}

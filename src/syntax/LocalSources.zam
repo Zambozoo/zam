@@ -7,10 +7,15 @@ import std("lang/Err.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import "Path.zam";
+import "Project.zam";
 
 // LocalSources reads source files from the local file system
 public class LocalSources {
     namespace Errs {
+        public fun Err*(str) NoProjectFile = (path) {
+            return StrErr::New("project file missing for " + Path::Display(path));
+        }
+
         public fun Err*(str, Err*) Unlistable = (dir, err) {
             return StrErr::New("cannot list directory " + Strs::Quote(Path::Display(dir)) + ": " + err.Err());
         }
@@ -48,6 +53,27 @@ public class LocalSources {
             }
         }
         return (children.Arr(), null);
+    }
+
+    public fun (str, Err*)(str) ProjectFile = (path) {
+        if(Path::IsStd(path)) {
+            return (Path::Std + Project::FileNames.Get(0U), null);
+        }
+        var str dir = Paths::Dir(path);
+        for {
+            for(var uint i = 0U; i < Project::FileNames.Len(); i++) {
+                var str candidate = Paths::Join(dir, Project::FileNames.Get(i));
+                if(FS::Exists(candidate) && !FS::IsDir(candidate)) {
+                    return (candidate, null);
+                }
+            }
+            var str parent = Paths::Dir(dir);
+            if(parent == dir) {
+                break;
+            }
+            dir = parent;
+        }
+        return ("", Errs::NoProjectFile(path));
     }
 
     // local answers where path lies on the local file system

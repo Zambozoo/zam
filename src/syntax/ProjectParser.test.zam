@@ -7,6 +7,7 @@ import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import std("test/Assert.zam");
 import "Path.zam";
+import "Project.zam";
 import "ProjectParser.zam";
 import "Source.zam";
 
@@ -34,6 +35,41 @@ public namespace ProjectParserTest {
             }
             return (children.Arr(), null);
         }
+
+        fun (str, Err*)(str) ProjectFile = (path) {
+            if(Path::IsStd(path)) {
+                return ("std://zam.yml", null);
+            }
+            var str dir = Paths::Dir(path);
+            for {
+                for(var uint i = 0U; i < Project::FileNames.Len(); i++) {
+                    var str candidate = Paths::Join(dir, Project::FileNames.Get(i));
+                    if(this.files.Contains(candidate)) {
+                        return (candidate, null);
+                    }
+                }
+                var str parent = Paths::Dir(dir);
+                if(parent == dir) {
+                    return ("", StrErr::New("project file missing for " + path));
+                }
+                dir = parent;
+            }
+            return ("", null);
+        }
+    }
+
+    // MapPackages serves dependencies from a map of repo@version to the
+    // directory each is in, every one hashed h1
+    class MapPackages {
+        var TreeMap[str, str]* dirs;
+
+        fun (str, str, Err*)(str) Fetch = (ref) {
+            var (str, bool) dir = this.dirs.Get(ref);
+            if(!dir.1) {
+                return ("", "", StrErr::New("no repo " + ref));
+            }
+            return (dir.0, "h1", null);
+        }
     }
 
     // at answers where an error at pos in the file at path is said to be
@@ -55,11 +91,32 @@ public namespace ProjectParserTest {
         return files;
     }
 
-    // parse parses the program entered at /p/Main.zam on threads threads
+    // parse parses the program entered at /p/Main.zam on threads threads,
+    // without project files
     private fun (ProjectParser.Program*, ArrList[Err*]*)(TreeMap[str, str]*, uint) parse = (files, threads) {
+        return ProjectParserTest::parseIn(files, TreeMap::[str, str]New(0U), threads, true);
+    }
+
+    // parseIn parses the program entered at /p/Main.zam on threads threads,
+    // with the dependencies in packages and project files unless noProject
+    private fun (ProjectParser.Program*, ArrList[Err*]*)(TreeMap[str, str]*, TreeMap[str, str]*, uint, bool) parseIn = (files, packages, threads, noProject) {
         var MapSources* sources = new(MapSources);
         sources.files = files;
-        return ProjectParser::New(sources, threads).Parse("/p/Main.zam", Arr::[str]New(0U));
+        var MapPackages* fetcher = new(MapPackages);
+        fetcher.dirs = packages;
+        return ProjectParser::New(sources, fetcher, threads, noProject).Parse("/p/Main.zam", Arr::[str]New(0U));
+    }
+
+    // fails checks that files, with the dependencies in packages, leave no
+    // program on 1 and 4 threads, with the one error want
+    private fun void(TreeMap[str, str]*, TreeMap[str, str]*, str) fails = (files, packages, want) {
+        for(var uint threads = 1U; threads <= 4U; threads = threads + 3U) {
+            var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parseIn(files, packages, threads, false);
+            Assert::True(out.0 == null, "a program of a project not read");
+            if(Assert::[uint]Equal(1U, out.1.Len())) {
+                Assert::[str]Equal(want, out.1.Get(0U).Err());
+            }
+        }
     }
 
     // parses checks that files parse on 1 and 4 threads into sources at the
@@ -108,8 +165,9 @@ public namespace ProjectParserTest {
     }
 
     public fun void(uint, str...) Std = (argC, argV) {
-        ProjectParserTest::parses(ProjectParserTest::files(6U,
+        ProjectParserTest::parses(ProjectParserTest::files(8U,
             "/p/Main.zam", "import std(\"lang/X.zam\");\npublic namespace Main {}",
+            "std://zam.yml", "name: std",
             "std://lang/X.zam", "import \"Y.zam\";\nclass X {}",
             "std://lang/Y.zam", "class Y {}"),
             "/p/Main.zam std://lang/X.zam std://lang/Y.zam");
@@ -171,6 +229,83 @@ public namespace ProjectParserTest {
         if(Assert::[uint]Equal(2U, out.1.Len())) {
             Assert::[str]Equal("unexpected token: \"{\", expected \"IDENTIFIER\"" + ProjectParserTest::at("/p/Main.zam", "[2:7]"), out.1.Get(0U).Err());
             Assert::[str]Equal("no dependency \"pkg\" declared by project \"Main\"" + ProjectParserTest::at("/p/Main.zam", "[1:1]"), out.1.Get(1U).Err());
+        }
+    }
+
+    public fun void(uint, str...) Projects = (argC, argV) {
+        var TreeMap[str, str]* files = ProjectParserTest::files(10U,
+            "/p/zam.yml", "name: demo\ndependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: h1\n",
+            "/p/Main.zam", "import dep(\"Dep.zam\");\nimport std(\"lang/X.zam\");\npublic namespace Main {}",
+            "/deps/dep/zam.yml", "name: dep",
+            "/deps/dep/Dep.zam", "class Dep {}",
+            "std://zam.yml", "name: std");
+        files.Put("std://lang/X.zam", "class X {}");
+        var TreeMap[str, str]* packages = TreeMap::[str, str]New(1U, ("example.com/dep@v1", "/deps/dep"));
+        for(var uint threads = 1U; threads <= 4U; threads = threads + 3U) {
+            var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parseIn(files, packages, threads, false);
+            for(var uint i = 0U; i < out.1.Len(); i++) {
+                Assert::True(false, out.1.Get(i).Err());
+            }
+            if(!Assert::True(out.0 != null, "no program")) {
+                return;
+            }
+            Assert::[uint]Equal(3U, out.0.projects.Len());
+            var Project* demo = out.0.sources.Get("/p/Main.zam").0.project;
+            Assert::[str]Equal("demo", demo.name);
+            Assert::[str]Equal("/deps/dep", demo.dependencies.Get("dep").0);
+            Assert::[str]Equal("std://", demo.dependencies.Get("std").0);
+            var Project* dep = out.0.sources.Get("/deps/dep/Dep.zam").0.project;
+            Assert::[str]Equal("dep", dep.name);
+            Assert::[str]Equal("example.com/dep@v1", dep.archive);
+            Assert::[str]Equal("/deps/dep", dep.root);
+            var Project* library = out.0.sources.Get("std://lang/X.zam").0.project;
+            Assert::False(library.dependencies.Contains("std"), "std depends on itself");
+        }
+    }
+
+    public fun void(uint, str...) NoProject = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parseIn(ProjectParserTest::files(4U,
+            "/p/zam.yml", "name: [",
+            "/p/Main.zam", "public namespace Main {}"), TreeMap::[str, str]New(0U), 1U, true);
+        Assert::[uint]Equal(0U, out.1.Len());
+        Assert::[str]Equal("Main", out.0.sources.Get("/p/Main.zam").0.project.name);
+        Assert::[str]Equal("/p/zam.yml", out.0.sources.Get("/p/Main.zam").0.project.path);
+    }
+
+    public fun void(uint, str...) ProjectErrors = (argC, argV) {
+        var str main = "public namespace Main {}";
+        var TreeMap[str, str]* none = TreeMap::[str, str]New(0U);
+        var TreeMap[str, str]* packages = TreeMap::[str, str]New(2U, ("example.com/dep@v1", "/deps/dep"), ("example.com/rootless@v1", "/deps/rootless"));
+        ProjectParserTest::fails(ProjectParserTest::files(2U, "/p/Main.zam", main), none,
+            "project file missing for /p/Main.zam" + ProjectParserTest::at("/p/Main.zam", ""));
+        ProjectParserTest::fails(ProjectParserTest::files(4U, "/p/zam.yml", "name: [1, 2]", "/p/Main.zam", main), none,
+            "project file field \"name\" is not a string" + ProjectParserTest::at("/p/zam.yml", ""));
+        ProjectParserTest::fails(ProjectParserTest::files(4U, "/p/zam.yml", "dependencies:\n  std:\n    repo: example.com/dep@v1", "/p/Main.zam", main), packages,
+            "\"std\" is a reserved package name" + ProjectParserTest::at("/p/zam.yml", ""));
+        ProjectParserTest::fails(ProjectParserTest::files(4U, "/p/zam.yml", "dependencies:\n  dep:\n    hash: h1", "/p/Main.zam", main), packages,
+            "dependency \"dep\" has no repo" + ProjectParserTest::at("/p/zam.yml", ""));
+        ProjectParserTest::fails(ProjectParserTest::files(4U, "/p/zam.yml", "dependencies:\n  gone:\n    repo: example.com/gone@v1", "/p/Main.zam", main), packages,
+            "failed to fetch dependency \"gone\": no repo example.com/gone@v1" + ProjectParserTest::at("/p/zam.yml", ""));
+        ProjectParserTest::fails(ProjectParserTest::files(4U, "/p/zam.yml", "dependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: wrong", "/p/Main.zam", main), packages,
+            "dependency \"dep\" does not match its hash: the project file has wrong, example.com/dep@v1 has h1" + ProjectParserTest::at("/p/zam.yml", ""));
+        ProjectParserTest::fails(ProjectParserTest::files(8U,
+            "/zam.yml", "name: above",
+            "/p/zam.yml", "dependencies:\n  rootless:\n    repo: example.com/rootless@v1",
+            "/p/Main.zam", "import rootless(\"R.zam\");\n" + main,
+            "/deps/rootless/R.zam", "class R {}"), packages,
+            "project file missing for " + Path::Display("/deps/rootless/R.zam") + ProjectParserTest::at("/deps/rootless/R.zam", ""));
+    }
+
+    public fun void(uint, str...) Leaves = (argC, argV) {
+        var TreeMap[str, str]* packages = TreeMap::[str, str]New(1U, ("example.com/dep@v1", "/deps/dep"));
+        var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parseIn(ProjectParserTest::files(10U,
+            "/p/zam.yml", "dependencies:\n  dep:\n    repo: example.com/dep@v1",
+            "/p/Main.zam", "import dep(\"Dep.zam\");\npublic namespace Main {}",
+            "/deps/dep/zam.yml", "name: dep",
+            "/deps/dep/Dep.zam", "import \"../Outside.zam\";\nclass Dep {}",
+            "/deps/Outside.zam", "class Outside {}"), packages, 1U, false);
+        if(Assert::[uint]Equal(1U, out.1.Len())) {
+            Assert::[str]Equal("import \"../Outside.zam\" leaves example.com/dep@v1" + ProjectParserTest::at("/deps/dep/Dep.zam", "[1:1]"), out.1.Get(0U).Err());
         }
     }
 }
