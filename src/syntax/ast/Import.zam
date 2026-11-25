@@ -1,0 +1,40 @@
+import std("lang/Strs.zam");
+import "../Token.zam";
+
+// Import is a file or directory a file or block imports, as it is written
+public class Import {
+    // start is the import keyword, or the first token of a spec in braces
+    public var Token* start;
+    // name is the name the import is bound to, or null for none
+    public var Token* name;
+    // pkg is the dependency the path is in, or null for one beside the file
+    public var Token* pkg;
+    // path is the string literal the path is written as
+    public var Token* path;
+
+    public static fun Import*(Token*, Token*, Token*, Token*) New = (start, name, pkg, path) {
+        var Import* i = new(Import);
+        i.start = start;
+        i.name = name;
+        i.pkg = pkg;
+        i.path = path;
+        return i;
+    }
+
+    // IsGlob reports whether the import names the code files of a directory, written dir/* or *
+    public fun bool() IsGlob = () {
+        var str path = this.path.value{str};
+        return path == "*" || Strs::HasSuffix(path, "/*");
+    }
+
+    public fun str() Str = () {
+        var str out = "(import";
+        if(this.name != null) {
+            out = out + " " + this.name.value{str} + " =";
+        }
+        if(this.pkg != null) {
+            out = out + " " + this.pkg.value{str};
+        }
+        return out + " " + Strs::Quote(this.path.value{str}) + ")";
+    }
+}

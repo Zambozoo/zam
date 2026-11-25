@@ -2,6 +2,7 @@ import std("data/list/ArrList.zam");
 import std("lang/Strs.zam");
 import "../Token.zam";
 import "../TokenKind.zam";
+import "Stmt.zam";
 import "Type.zam";
 
 // Expr is an expression as it is written
@@ -23,7 +24,8 @@ public abstract Expr {
         New(13),
         Native(14),
         Async(15),
-        Wait(16);
+        Wait(16),
+        Lambda(17);
     }
 
     public var Kind kind;
@@ -377,6 +379,40 @@ public abstract Expr {
 
         public fun str() Str = () {
             return "(wait " + this.waited.Str() + ")";
+        }
+    }
+
+    // Lambda is a function written as a value: its type, the names of its
+    // parameters, _ for none, and its body
+    public class Lambda <: Expr* {
+        public var Type.Function* signature;
+        public var ArrList[Token*]* parameters;
+        public var Stmt* body;
+
+        public static fun Lambda*(Token*, Type.Function*, ArrList[Token*]*, Stmt*) New = (start, signature, parameters, body) {
+            var Lambda* e = new(Lambda);
+            e.kind = Kind::Lambda;
+            e.start = start;
+            e.signature = signature;
+            e.parameters = parameters;
+            e.body = body;
+            return e;
+        }
+
+        public fun str() Str = () {
+            var str names = "";
+            for(var uint i = 0U; i < this.parameters.Len(); i++) {
+                if(i > 0U) {
+                    names = names + " ";
+                }
+                var Token* name = this.parameters.Get(i);
+                if(name.kind == TokenKind::Underscore) {
+                    names = names + "_";
+                } else {
+                    names = names + name.value{str};
+                }
+            }
+            return "(lambda " + this.signature.Str() + " (" + names + ") " + this.body.Str() + ")";
         }
     }
 }

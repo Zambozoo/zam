@@ -196,7 +196,7 @@ public class HashTrieSet[A] {
     public fun bool(uint, A*) Add = (len, key) {
         var Node[A]* n = this.root;
         var uint i = 0U;
-        for(;;) {
+        for {
             if(i == len) {
                 var bool added = !n.end;
                 n.end = true;

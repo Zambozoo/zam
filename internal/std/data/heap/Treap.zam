@@ -133,7 +133,7 @@ public class Treap[A] {
     // rightmost otherwise, which a single write of its one child does.
     private fun void(bool) unlinkEnd = (first) {
         var Node[A]** link = &(this.root);
-        for(;;) {
+        for {
             var Node[A]* n = *link;
             if(first && n.left == null) {
                 *link = n.right;

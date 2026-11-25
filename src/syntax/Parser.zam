@@ -193,7 +193,7 @@ public class Parser {
     fun Err*() synchronize = () {
         var int depth = 0;
         var bool block = false;
-        for(;;) {
+        for {
             var (Token*, Err*) tok = this.Peek();
             if(tok.1 != null) {
                 return tok.1;

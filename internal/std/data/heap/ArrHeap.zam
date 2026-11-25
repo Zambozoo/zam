@@ -81,7 +81,7 @@ public class ArrHeap[A] {
 
     private fun void(uint) trickleDown = (i) {
         var bool min = this.minLevel(i);
-        for(;;) {
+        for {
             var uint first = 2U * i + 1U;
             if(first >= this.len) {
                 return;

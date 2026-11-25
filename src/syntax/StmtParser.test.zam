@@ -1,0 +1,109 @@
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "Parser.zam";
+import "StmtParser.zam";
+import "TokenKind.zam";
+import "ast/Stmt.zam";
+
+public namespace StmtParserTest {
+    // parses checks that source reads whole as the statement want, with no
+    // error recorded
+    private fun void(str, str) parses = (source, want) {
+        var Parser* p = Parser::New(source);
+        var (Stmt*, Err*) s = StmtParser::Parse(p);
+        if(!Assert::True(s.1 == null, source + " fails to parse")) {
+            Assert::Fatal(s.1.Err());
+        }
+        Assert::[str]Equal(want, s.0.Str());
+        Assert::True(p.Peek().0.kind == TokenKind::EOF, source + " is not read whole");
+        Assert::[uint]Equal(0U, p.diagnostics.Len());
+    }
+
+    // fails checks that source fails to read as a statement with an error
+    // containing want
+    private fun void(str, str) fails = (source, want) {
+        var (Stmt*, Err*) s = StmtParser::Parse(Parser::New(source));
+        if(Assert::True(s.1 != null, source + " parses")) {
+            Assert::True(Strs::Contains(s.1.Err(), want), s.1.Err() + " does not contain " + want);
+        }
+    }
+
+    public fun void(uint, str...) Expressions = (argC, argV) {
+        StmtParserTest::parses("x = 1;", "(= x 1)");
+        StmtParserTest::parses("return;", "(return)");
+        StmtParserTest::parses("return a, b;", "(return (tuple a b))");
+        StmtParserTest::parses("delete p;", "(delete p)");
+        StmtParserTest::parses("free p;", "(free p)");
+        StmtParserTest::parses("mark x;", "(mark x)");
+        StmtParserTest::parses("defer x();", "(defer (call x))");
+    }
+
+    public fun void(uint, str...) Jumps = (argC, argV) {
+        StmtParserTest::parses("break;", "(break)");
+        StmtParserTest::parses("continue outer;", "(continue outer)");
+        StmtParserTest::parses("label outer: for break outer;", "(label outer (for _ _ _ (break outer)))");
+    }
+
+    public fun void(uint, str...) Branches = (argC, argV) {
+        StmtParserTest::parses("if (a) b(); else c();", "(if a (call b) (call c))");
+        StmtParserTest::parses("if (a) if (b) c;", "(if a (if b c))");
+        StmtParserTest::parses("switch (x) { case (1, 2) a; case (3) { b; } } else c;", "(switch x (case 1 2 a) (case 3 { b }) c)");
+        StmtParserTest::parses("switch (x) { }", "(switch x)");
+    }
+
+    public fun void(uint, str...) Loops = (argC, argV) {
+        StmtParserTest::parses("for (var int i = 0; i < n; i++) f(i);", "(for (var int i 0) (< i n) (i ++) (call f i))");
+        StmtParserTest::parses("for {}", "(for _ _ _ { })");
+        StmtParserTest::parses("for {} else x;", "(for _ _ _ { } x)");
+        StmtParserTest::parses("for (x = 0; ; ) y;", "(for (= x 0) _ _ y)");
+    }
+
+    public fun void(uint, str...) Variables = (argC, argV) {
+        StmtParserTest::parses("var int x;", "(var int x)");
+        StmtParserTest::parses("var int* p = null;", "(var (* int) p null)");
+        StmtParserTest::parses("var int a, str _ = f();", "(unpack (int a) (str _) (call f))");
+    }
+
+    public fun void(uint, str...) Blocks = (argC, argV) {
+        StmtParserTest::parses("{ a; { b; } }", "{ a { b } }");
+        StmtParserTest::parses("{ a; import \"X.zam\"; b; }", "{ a (import \"X.zam\") b }");
+        StmtParserTest::parses("{ import m = std(\"m/P.zam\"); import { \"A.zam\"; pkg(\"b/*\"); } }",
+            "{ (import m = std \"m/P.zam\") (import \"A.zam\") (import pkg \"b/*\") }");
+    }
+
+    public fun void(uint, str...) Lambdas = (argC, argV) {
+        StmtParserTest::parses("f = lambda int(int, str): (a, _) { return a; };", "(= f (lambda (fun int int str) (a _) { (return a) }))");
+        StmtParserTest::parses("g(lambda void(): () { x++; });", "(call g (lambda (fun void) () { (x ++) }))");
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        StmtParserTest::fails("label x: if (a) b;", "unexpected token: \"if\", expected one of \"for\", or \"switch\"");
+        StmtParserTest::fails("x = lambda int: () y;", "lambda type must be a function type");
+        StmtParserTest::fails("x = lambda int(int): () y;", "lambda parameter length mismatch, expected 1, got 0");
+        StmtParserTest::fails("x", "unexpected token: \"EOF\", expected \";\"");
+        StmtParserTest::fails("{ a;", "parse abandoned after a recorded error");
+    }
+
+    public fun void(uint, str...) BlockRecovery = (argC, argV) {
+        var Parser* p = Parser::New("{ a; b c; var int x = ; d; }");
+        var (Stmt*, Err*) s = StmtParser::Parse(p);
+        if(!Assert::True(s.1 == null, "the block gives up")) {
+            Assert::Fatal(s.1.Err());
+        }
+        Assert::[str]Equal("{ a (var int x) d }", s.0.Str());
+        Assert::True(s.0{Stmt.Block*}.broken, "the block is not broken");
+        Assert::[uint]Equal(2U, p.diagnostics.Len());
+    }
+
+    public fun void(uint, str...) ImportRecovery = (argC, argV) {
+        var Parser* p = Parser::New("{ import std = \"x\"; import { \"a\" \"b\"; \"c\"; } }");
+        var (Stmt*, Err*) s = StmtParser::Parse(p);
+        if(!Assert::True(s.1 == null, "the block gives up")) {
+            Assert::Fatal(s.1.Err());
+        }
+        Assert::[str]Equal("{ (import \"c\") }", s.0.Str());
+        Assert::[uint]Equal(2U, p.diagnostics.Len());
+        Assert::[str]Equal("\"std\" is a reserved alias", p.diagnostics.Get(0U).err.Err());
+    }
+}

@@ -3,16 +3,23 @@ import std("data/set/TreeSet.zam");
 import std("lang/Err.zam");
 import std("lang/StrErr.zam");
 import "Parser.zam";
+import "StmtParser.zam";
 import "Token.zam";
 import "TokenKind.zam";
 import "TypeParser.zam";
 import "ast/Expr.zam";
+import "ast/Stmt.zam";
 import "ast/Type.zam";
 
 // ExprParser reads expressions
 public namespace ExprParser {
     namespace Errs {
         public var Err*$ AsyncNotCall = StrErr::New("async expression must be a call expression");
+        public var Err*$ LambdaNotFunction = StrErr::New("lambda type must be a function type");
+
+        public fun Err*(uint, uint) LambdaArity = (expected, got) {
+            return StrErr::New("lambda parameter length mismatch, expected " + expected{str} + ", got " + got{str});
+        }
     }
 
     var ArrList[TreeSet[TokenKind]*]* precedenceLevels;
@@ -22,6 +29,7 @@ public namespace ExprParser {
     var TreeSet[TokenKind]* fieldNamesSet;
     var TreeSet[TokenKind]* argumentEndsSet;
     var TreeSet[TokenKind]* typeArgumentEndsSet;
+    var TreeSet[TokenKind]* parameterNamesSet;
 
     // Parse reads an expression, a comma joining assignments into a tuple
     public fun (Expr*, Err*)(Parser*) Parse = (p) {
@@ -30,7 +38,7 @@ public namespace ExprParser {
             return first;
         }
         var ArrList[Expr*]* elements = null;
-        for(;;) {
+        for {
             var (Token*, Err*) comma = p.Match(TokenKind::Comma);
             if(comma.1 != null) {
                 return (null, comma.1);
@@ -116,7 +124,7 @@ public namespace ExprParser {
         }
         var TreeSet[TokenKind]* operators = ExprParser::precedence().Get(level);
         var Expr* e = first.0;
-        for(;;) {
+        for {
             var (Token*, Err*) operator = p.MatchAny(operators);
             if(operator.1 != null) {
                 return (null, operator.1);
@@ -245,6 +253,8 @@ public namespace ExprParser {
             return ExprParser::nativeCall(p, tok);
         } else if(kind == TokenKind::New) {
             return ExprParser::allocation(p, tok);
+        } else if(kind == TokenKind::Lambda) {
+            return ExprParser::lambdaValue(p, tok);
         } else if(kind == TokenKind::Type) {
             var Err* err = p.Consume(TokenKind::LeftParen).1;
             if(err != null) {
@@ -289,7 +299,7 @@ public namespace ExprParser {
     fun (Expr*, Err*)(Parser*, Token*) identifier = (p, start) {
         var ArrList[Token*]* ids = ArrList::[Token*]New(0U);
         ids.AddLast(start);
-        for(;;) {
+        for {
             var (Token*, Err*) period = p.Match(TokenKind::Period);
             if(period.1 != null) {
                 return (null, period.1);
@@ -321,7 +331,7 @@ public namespace ExprParser {
             return (null, bracket.1);
         } else if(bracket.0 != null) {
             arguments = ArrList::[Type*]New(0U);
-            for(;;) {
+            for {
                 var (Type*, Err*) argument = TypeParser::Parse(p);
                 if(argument.1 != null) {
                     return (null, argument.1);
@@ -359,7 +369,7 @@ public namespace ExprParser {
         } else if(empty.0 != null) {
             return (Expr.Call::New(callee, arguments), null);
         }
-        for(;;) {
+        for {
             var (Expr*, Err*) argument = ExprParser::ParseAssign(p);
             if(argument.1 != null) {
                 return argument;
@@ -432,6 +442,70 @@ public namespace ExprParser {
         return (Expr.New::Of(start, t.0, count, null), null);
     }
 
+    // lambdaValue reads a lambda expression
+    fun (Expr*, Err*)(Parser*, Token*) lambdaValue = (p, start) {
+        var (Type*, Err*) t = TypeParser::Parse(p);
+        if(t.1 != null) {
+            return (null, t.1);
+        }
+        var Type.Function* signature = t.0{Type.Function*};
+        if(signature == null) {
+            return (null, Errs::LambdaNotFunction);
+        }
+        var Err* err = p.Consume(TokenKind::Colon).1;
+        if(err != null) {
+            return (null, err);
+        }
+        err = p.Consume(TokenKind::LeftParen).1;
+        if(err != null) {
+            return (null, err);
+        }
+        var (ArrList[Token*]*, Err*) parameters = ExprParser::ParameterNames(p);
+        if(parameters.1 != null) {
+            return (null, parameters.1);
+        } else if(parameters.0.Len() != signature.parameters.Len()) {
+            return (null, Errs::LambdaArity(signature.parameters.Len(), parameters.0.Len()));
+        }
+        var (Stmt*, Err*) body = StmtParser::Parse(p);
+        if(body.1 != null) {
+            return (null, body.1);
+        }
+        return (Expr.Lambda::New(start, signature, parameters.0, body.0), null);
+    }
+
+    // ParameterNames reads the names of a function's parameters
+    fun (ArrList[Token*]*, Err*)(Parser*) ParameterNames = (p) {
+        var ArrList[Token*]* names = ArrList::[Token*]New(0U);
+        var (Token*, Err*) empty = p.Match(TokenKind::RightParen);
+        if(empty.1 != null) {
+            return (null, empty.1);
+        } else if(empty.0 != null) {
+            return (names, null);
+        }
+        for {
+            var (Token*, Err*) name = p.ConsumeAny(ExprParser::parameterNames());
+            if(name.1 != null) {
+                return (null, name.1);
+            }
+            names.AddLast(name.0);
+            var (Token*, Err*) end = p.ConsumeAny(ExprParser::argumentEnds());
+            if(end.1 != null) {
+                return (null, end.1);
+            } else if(end.0.kind == TokenKind::RightParen) {
+                return (names, null);
+            }
+        }
+        return (names, null);
+    }
+
+    // parameterNames answers the tokens a parameter is named by
+    fun TreeSet[TokenKind]*() parameterNames = () {
+        if(ExprParser::parameterNamesSet == null) {
+            ExprParser::parameterNamesSet = TreeSet::[TokenKind]New(2U, TokenKind::Identifier, TokenKind::Underscore);
+        }
+        return ExprParser::parameterNamesSet;
+    }
+
     // precedence answers the operators of each n-ary level, tightest first
     fun ArrList[TreeSet[TokenKind]*]*() precedence = () {
         if(ExprParser::precedenceLevels == null) {
@@ -475,7 +549,7 @@ public namespace ExprParser {
     // primaryKinds answers the tokens a primary begins with
     fun TreeSet[TokenKind]*() primaryKinds = () {
         if(ExprParser::primaryKindsSet == null) {
-            ExprParser::primaryKindsSet = TreeSet::[TokenKind]New(18U, TokenKind::IntLiteral, TokenKind::UintLiteral,
+            ExprParser::primaryKindsSet = TreeSet::[TokenKind]New(19U, TokenKind::Lambda, TokenKind::IntLiteral, TokenKind::UintLiteral,
                 TokenKind::FloatLiteral, TokenKind::PositLiteral, TokenKind::True, TokenKind::False,
                 TokenKind::CharLiteral, TokenKind::StringLiteral, TokenKind::Identifier, TokenKind::This,
                 TokenKind::Super, TokenKind::Null, TokenKind::Native, TokenKind::New, TokenKind::Type,

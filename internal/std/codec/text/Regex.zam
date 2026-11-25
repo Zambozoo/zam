@@ -542,7 +542,7 @@ public class Regex {
             }
             var uint start = this.ranges.Len();
             var bool first = true;
-            for(;;) {
+            for {
                 if(!this.More()) {
                     this.Fail("missing closing ]");
                     return null;

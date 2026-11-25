@@ -11,7 +11,7 @@ public namespace ParserTest {
     private fun (str, uint, Err*)(str) sequence = (source) {
         var Parser* p = Parser::New(source);
         var str names = "";
-        for(;;) {
+        for {
             var Token* next = p.Peek().0;
             if(next.kind == TokenKind::EOF || next.kind == TokenKind::RightBrace) {
                 return (names, p.diagnostics.Len(), null);

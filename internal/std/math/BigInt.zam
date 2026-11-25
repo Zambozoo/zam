@@ -407,7 +407,7 @@ public class BigInt {
             return n;
         }
         var BigInt* x = BigInt::FromUint(1U).Shl((n.BitLen() + 1U) / 2U);
-        for(;;) {
+        for {
             var BigInt* y = x.Add(n.Div(x)).Shr(1U);
             if(y.Cmp(x) >= 0) {
                 return x;

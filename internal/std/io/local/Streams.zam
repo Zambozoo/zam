@@ -16,7 +16,7 @@ public namespace Streams {
         var byte* chunk = new(byte, 16384U);
         defer free(chunk);
         out.1 = null;
-        for(;;) {
+        for {
             var (uint, Err*) p = s.Read(chunk, 16384U);
             if(p.1 != null) {
                 out.1 = p.1;
@@ -60,7 +60,7 @@ public namespace Streams {
         out.1 = null;
         var byte* chunk = new(byte, 16384U);
         defer free(chunk);
-        for(;;) {
+        for {
             var (uint, Err*) p = src.Read(chunk, 16384U);
             if(p.1 != null) {
                 out.1 = p.1;

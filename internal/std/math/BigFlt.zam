@@ -904,7 +904,7 @@ public class BigFlt {
             e10--;
         }
         var BigInt* q = null;
-        for(;;) {
+        for {
             var int k = digits{int} - 1 - e10;
             var BigInt* num = this.mant;
             var BigInt* den = BigFlt::small(1U);

@@ -213,7 +213,7 @@ public class HashTrieMap[A, B] {
     public fun bool(uint, A*, B) Put = (len, key, v) {
         var Node[A, B]* n = this.root;
         var uint i = 0U;
-        for(;;) {
+        for {
             if(i == len) {
                 var bool added = !n.hasValue;
                 n.val = v;

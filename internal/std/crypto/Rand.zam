@@ -35,7 +35,7 @@ public namespace Rand {
             System::Panic("Rand.UintN: n is 0");
         }
         var uint limit = (-1){uint} - (-1){uint} % n;
-        for(;;) {
+        for {
             var uint u = Rand::Uint();
             if(u < limit) {
                 return u % n;

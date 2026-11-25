@@ -61,7 +61,7 @@ public namespace TypeParser {
             return (t, null);
         }
 
-        for(;;) {
+        for {
             var (Token*, Err*) tok = p.MatchAny(TypeParser::postfixKinds());
             if(tok.1 != null) {
                 return (null, tok.1);
@@ -120,7 +120,7 @@ public namespace TypeParser {
 
         var ArrList[Token*]* ids = ArrList::[Token*]New(0U);
         ids.AddLast(start.0);
-        for(;;) {
+        for {
             var (Token*, Err*) period = p.Match(TokenKind::Period);
             if(period.1 != null) {
                 return (null, period.1);
@@ -178,7 +178,7 @@ public namespace TypeParser {
         }
 
         var ArrList[Type*]* arguments = ArrList::[Type*]New(0U);
-        for(;;) {
+        for {
             var (Type*, Err*) argument = TypeParser::parse(p, false);
             if(argument.1 != null) {
                 return argument;
@@ -263,7 +263,7 @@ public namespace TypeParser {
     // tuple reads the types of a tuple, two or more, and ')'
     fun (Type*, Err*)(Parser*, Token*) tuple = (p, start) {
         var ArrList[Type*]* types = ArrList::[Type*]New(0U);
-        for(;;) {
+        for {
             var (Type*, Err*) t = TypeParser::parse(p, false);
             if(t.1 != null) {
                 return t;

@@ -1,0 +1,460 @@
+import std("data/list/ArrList.zam");
+import std("data/set/TreeSet.zam");
+import std("lang/Err.zam");
+import "ExprParser.zam";
+import "ImportParser.zam";
+import "Parser.zam";
+import "Token.zam";
+import "TokenKind.zam";
+import "TypeParser.zam";
+import "ast/Expr.zam";
+import "ast/Import.zam";
+import "ast/Stmt.zam";
+import "ast/Type.zam";
+
+// StmtParser reads statements
+public namespace StmtParser {
+    var TreeSet[TokenKind]* keywordsSet;
+    var TreeSet[TokenKind]* loopsSet;
+    var TreeSet[TokenKind]* initsSet;
+    var TreeSet[TokenKind]* variableNamesSet;
+    var TreeSet[TokenKind]* variableEndsSet;
+    var TreeSet[TokenKind]* caseValueEndsSet;
+    var TreeSet[TokenKind]* caseStartsSet;
+
+    // Parse reads a statement
+    public fun (Stmt*, Err*)(Parser*) Parse = (p) {
+        var (Token*, Err*) keyword = p.MatchAny(StmtParser::keywords());
+        if(keyword.1 != null) {
+            return (null, keyword.1);
+        } else if(keyword.0 == null) {
+            return StmtParser::expression(p, p.Peek().0, Stmt.Kind::Expr);
+        }
+        var Token* start = keyword.0;
+        switch(start.kind) {
+            case (TokenKind::Break)
+                return StmtParser::jump(p, start, Stmt.Kind::Break);
+            case (TokenKind::Continue)
+                return StmtParser::jump(p, start, Stmt.Kind::Continue);
+            case (TokenKind::Delete)
+                return StmtParser::expression(p, start, Stmt.Kind::Delete);
+            case (TokenKind::Free)
+                return StmtParser::expression(p, start, Stmt.Kind::Free);
+            case (TokenKind::Mark)
+                return StmtParser::expression(p, start, Stmt.Kind::Mark);
+            case (TokenKind::Return)
+                return StmtParser::returning(p, start);
+            case (TokenKind::For)
+                return StmtParser::loop(p, start);
+            case (TokenKind::If)
+                return StmtParser::branch(p, start);
+            case (TokenKind::Switch)
+                return StmtParser::switching(p, start);
+            case (TokenKind::Label)
+                return StmtParser::labeled(p, start);
+            case (TokenKind::LeftBrace)
+                return StmtParser::Block(p, start);
+            case (TokenKind::Var)
+                return StmtParser::variable(p, start);
+        } else {
+            var (Stmt*, Err*) deferred = StmtParser::Parse(p);
+            if(deferred.1 != null) {
+                return (null, deferred.1);
+            }
+            return (Stmt.Defer::New(start, deferred.0), null);
+        }
+        return (null, null);
+    }
+
+    // Block reads the statements of a block
+    public fun (Stmt*, Err*)(Parser*, Token*) Block = (p, start) {
+        var ArrList[Stmt*]* statements = ArrList::[Stmt*]New(0U);
+        var bool broken = false;
+        for {
+            var (Token*, Err*) end = p.Match(TokenKind::RightBrace);
+            if(end.1 != null) {
+                return (null, end.1);
+            } else if(end.0 != null) {
+                break;
+            }
+
+            var (Token*, Err*) importing = p.Match(TokenKind::Import);
+            if(importing.1 != null) {
+                return (null, importing.1);
+            } else if(importing.0 != null) {
+                var (ArrList[Import*]*, bool, Err*) imports = ImportParser::Parse(p, importing.0);
+                if(imports.2 != null) {
+                    return (null, imports.2);
+                } else if(imports.0.Len() > 0U) {
+                    statements.AddLast(Stmt.Imports::New(importing.0, imports.0));
+                }
+                continue;
+            }
+
+            var Parser.Recovery* r = p.Checkpoint();
+            var (Stmt*, Err*) next = StmtParser::Parse(p);
+            if(next.0 != null) {
+                statements.AddLast(next.0);
+            }
+            if(next.1 != null) {
+                broken = true;
+                var Err* stop = r.Recover(next.1);
+                if(stop != null) {
+                    return (null, stop);
+                }
+            }
+        }
+        return (Stmt.Block::New(start, statements, broken), null);
+    }
+
+    // expression reads an expression and the ; after it
+    fun (Stmt*, Err*)(Parser*, Token*, Stmt.Kind) expression = (p, start, kind) {
+        var (Expr*, Err*) value = ExprParser::Parse(p);
+        if(value.1 != null) {
+            return (null, value.1);
+        }
+        var Err* err = p.Consume(TokenKind::SemiColon).1;
+        if(err != null) {
+            return (null, err);
+        }
+        return (Stmt.Value::New(kind, start, value.0), null);
+    }
+
+    // returning reads what a return returns, if anything, and the ; after it
+    fun (Stmt*, Err*)(Parser*, Token*) returning = (p, start) {
+        var (Token*, Err*) end = p.Match(TokenKind::SemiColon);
+        if(end.1 != null) {
+            return (null, end.1);
+        } else if(end.0 != null) {
+            return (Stmt.Value::New(Stmt.Kind::Return, start, null), null);
+        }
+        return StmtParser::expression(p, start, Stmt.Kind::Return);
+    }
+
+    // jump reads the label a break or continue names, if any, and the ; after
+    fun (Stmt*, Err*)(Parser*, Token*, Stmt.Kind) jump = (p, start, kind) {
+        var (Token*, Err*) target = p.Match(TokenKind::Identifier);
+        if(target.1 != null) {
+            return (null, target.1);
+        }
+        var Err* err = p.Consume(TokenKind::SemiColon).1;
+        if(err != null) {
+            return (null, err);
+        }
+        return (Stmt.Jump::New(kind, start, target.0), null);
+    }
+
+    // loop reads a for statement
+    fun (Stmt*, Err*)(Parser*, Token*) loop = (p, start) {
+        var Stmt* init = null;
+        var Expr* condition = null;
+        var Expr* step = null;
+        var (Token*, Err*) paren = p.Match(TokenKind::LeftParen);
+        if(paren.1 != null) {
+            return (null, paren.1);
+        } else if(paren.0 != null) {
+            var (Token*, Err*) begins = p.MatchAny(StmtParser::inits());
+            if(begins.1 != null) {
+                return (null, begins.1);
+            } else if(begins.0 == null) {
+                var (Stmt*, Err*) first = StmtParser::expression(p, p.Peek().0, Stmt.Kind::Expr);
+                if(first.1 != null) {
+                    return (null, first.1);
+                }
+                init = first.0;
+            } else if(begins.0.kind == TokenKind::Var) {
+                var (Stmt*, Err*) first = StmtParser::variable(p, begins.0);
+                if(first.1 != null) {
+                    return (null, first.1);
+                }
+                init = first.0;
+            }
+
+            var (Token*, Err*) noCondition = p.Match(TokenKind::SemiColon);
+            if(noCondition.1 != null) {
+                return (null, noCondition.1);
+            } else if(noCondition.0 == null) {
+                var (Expr*, Err*) written = ExprParser::Parse(p);
+                if(written.1 != null) {
+                    return (null, written.1);
+                }
+                condition = written.0;
+                var Err* err = p.Consume(TokenKind::SemiColon).1;
+                if(err != null) {
+                    return (null, err);
+                }
+            }
+
+            var (Token*, Err*) noStep = p.Match(TokenKind::RightParen);
+            if(noStep.1 != null) {
+                return (null, noStep.1);
+            } else if(noStep.0 == null) {
+                var (Expr*, Err*) written = ExprParser::Parse(p);
+                if(written.1 != null) {
+                    return (null, written.1);
+                }
+                step = written.0;
+                var Err* err = p.Consume(TokenKind::RightParen).1;
+                if(err != null) {
+                    return (null, err);
+                }
+            }
+        }
+
+        var (Stmt*, Err*) body = StmtParser::Parse(p);
+        if(body.1 != null) {
+            return (null, body.1);
+        }
+        var (Stmt*, Err*) otherwise = StmtParser::orElse(p);
+        if(otherwise.1 != null) {
+            return otherwise;
+        }
+        return (Stmt.For::New(start, init, condition, step, body.0, otherwise.0), null);
+    }
+
+    // branch reads an if statement
+    fun (Stmt*, Err*)(Parser*, Token*) branch = (p, start) {
+        var (Expr*, Err*) condition = StmtParser::parenthesized(p);
+        if(condition.1 != null) {
+            return (null, condition.1);
+        }
+        var (Stmt*, Err*) then = StmtParser::Parse(p);
+        if(then.1 != null) {
+            return (null, then.1);
+        }
+        var (Stmt*, Err*) otherwise = StmtParser::orElse(p);
+        if(otherwise.1 != null) {
+            return otherwise;
+        }
+        return (Stmt.If::New(start, condition.0, then.0, otherwise.0), null);
+    }
+
+    // switching reads a switch statement
+    fun (Stmt*, Err*)(Parser*, Token*) switching = (p, start) {
+        var (Expr*, Err*) subject = StmtParser::parenthesized(p);
+        if(subject.1 != null) {
+            return (null, subject.1);
+        }
+        var Err* err = p.Consume(TokenKind::LeftBrace).1;
+        if(err != null) {
+            return (null, err);
+        }
+        var ArrList[Stmt.Case*]* cases = ArrList::[Stmt.Case*]New(0U);
+        for {
+            var (Token*, Err*) next = p.ConsumeAny(StmtParser::caseStarts());
+            if(next.1 != null) {
+                return (null, next.1);
+            } else if(next.0.kind == TokenKind::RightBrace) {
+                break;
+            }
+            err = p.Consume(TokenKind::LeftParen).1;
+            if(err != null) {
+                return (null, err);
+            }
+            var ArrList[Expr*]* values = ArrList::[Expr*]New(0U);
+            for {
+                var (Expr*, Err*) value = ExprParser::ParseAssign(p);
+                if(value.1 != null) {
+                    return (null, value.1);
+                }
+                values.AddLast(value.0);
+                var (Token*, Err*) end = p.ConsumeAny(StmtParser::caseValueEnds());
+                if(end.1 != null) {
+                    return (null, end.1);
+                } else if(end.0.kind == TokenKind::RightParen) {
+                    break;
+                }
+            }
+            var (Stmt*, Err*) body = StmtParser::Parse(p);
+            if(body.1 != null) {
+                return (null, body.1);
+            }
+            cases.AddLast(Stmt.Case::New(next.0, values, body.0));
+        }
+        var (Stmt*, Err*) otherwise = StmtParser::orElse(p);
+        if(otherwise.1 != null) {
+            return otherwise;
+        }
+        return (Stmt.Switch::New(start, subject.0, cases, otherwise.0), null);
+    }
+
+    // labeled reads the name a label gives, the : after it, and the for or switch it names
+    fun (Stmt*, Err*)(Parser*, Token*) labeled = (p, start) {
+        var (Token*, Err*) name = p.Consume(TokenKind::Identifier);
+        if(name.1 != null) {
+            return (null, name.1);
+        }
+        var Err* err = p.Consume(TokenKind::Colon).1;
+        if(err != null) {
+            return (null, err);
+        }
+        var (Token*, Err*) named = p.ConsumeAny(StmtParser::loops());
+        if(named.1 != null) {
+            return (null, named.1);
+        }
+        var (Stmt*, Err*) target;
+        if(named.0.kind == TokenKind::For) {
+            target = StmtParser::loop(p, named.0);
+        } else {
+            target = StmtParser::switching(p, named.0);
+        }
+        if(target.1 != null) {
+            return target;
+        }
+        return (Stmt.Label::New(start, name.0, target.0), null);
+    }
+
+    // variable reads the variables a var declares
+    fun (Stmt*, Err*)(Parser*, Token*) variable = (p, start) {
+        var (Stmt.Variable*, Err*) first = StmtParser::binding(p, start);
+        if(first.1 != null) {
+            return (null, first.1);
+        }
+        var Stmt* s = first.0;
+        var Stmt.Unpack* unpack = null;
+        for {
+            var (Token*, Err*) comma = p.Match(TokenKind::Comma);
+            if(comma.1 != null) {
+                return (s, comma.1);
+            } else if(comma.0 == null) {
+                break;
+            }
+            if(unpack == null) {
+                var ArrList[Stmt.Variable*]* variables = ArrList::[Stmt.Variable*]New(0U);
+                variables.AddLast(first.0);
+                unpack = Stmt.Unpack::New(start, variables);
+                s = unpack;
+            }
+            var (Stmt.Variable*, Err*) next = StmtParser::binding(p, start);
+            if(next.1 != null) {
+                return (s, next.1);
+            }
+            unpack.variables.AddLast(next.0);
+        }
+
+        var (Token*, Err*) end = p.ConsumeAny(StmtParser::variableEnds());
+        if(end.1 != null) {
+            return (s, end.1);
+        } else if(end.0.kind == TokenKind::SemiColon) {
+            return (s, null);
+        }
+        var (Expr*, Err*) init = ExprParser::Parse(p);
+        if(init.1 != null) {
+            return (s, init.1);
+        }
+        var Err* err = p.Consume(TokenKind::SemiColon).1;
+        if(err != null) {
+            return (s, err);
+        }
+        if(unpack != null) {
+            unpack.init = init.0;
+        } else {
+            first.0.init = init.0;
+        }
+        return (s, null);
+    }
+
+    // binding reads the type and name of one variable a var declares
+    fun (Stmt.Variable*, Err*)(Parser*, Token*) binding = (p, start) {
+        var (Type*, Err*) declared = TypeParser::Parse(p);
+        if(declared.1 != null) {
+            return (null, declared.1);
+        }
+        var (Token*, Err*) name = p.ConsumeAny(StmtParser::variableNames());
+        if(name.1 != null) {
+            return (null, name.1);
+        }
+        return (Stmt.Variable::New(start, declared.0, name.0), null);
+    }
+
+    // parenthesized reads an expression in parentheses
+    fun (Expr*, Err*)(Parser*) parenthesized = (p) {
+        var Err* err = p.Consume(TokenKind::LeftParen).1;
+        if(err != null) {
+            return (null, err);
+        }
+        var (Expr*, Err*) e = ExprParser::Parse(p);
+        if(e.1 != null) {
+            return e;
+        }
+        err = p.Consume(TokenKind::RightParen).1;
+        if(err != null) {
+            return (null, err);
+        }
+        return e;
+    }
+
+    // orElse reads the statement after an else, or null for no else
+    fun (Stmt*, Err*)(Parser*) orElse = (p) {
+        var (Token*, Err*) otherwise = p.Match(TokenKind::Else);
+        if(otherwise.1 != null) {
+            return (null, otherwise.1);
+        } else if(otherwise.0 == null) {
+            return (null, null);
+        }
+        var (Stmt*, Err*) s = StmtParser::Parse(p);
+        if(s.1 != null) {
+            return (null, s.1);
+        }
+        return s;
+    }
+
+    // keywords answers the keywords a statement begins with
+    fun TreeSet[TokenKind]*() keywords = () {
+        if(StmtParser::keywordsSet == null) {
+            StmtParser::keywordsSet = TreeSet::[TokenKind]New(13U, TokenKind::Break, TokenKind::Continue,
+                TokenKind::Delete, TokenKind::Free, TokenKind::For, TokenKind::If, TokenKind::Switch,
+                TokenKind::Label, TokenKind::LeftBrace, TokenKind::Mark, TokenKind::Return, TokenKind::Var,
+                TokenKind::Defer);
+        }
+        return StmtParser::keywordsSet;
+    }
+
+    // loops answers the keywords a label may name
+    fun TreeSet[TokenKind]*() loops = () {
+        if(StmtParser::loopsSet == null) {
+            StmtParser::loopsSet = TreeSet::[TokenKind]New(2U, TokenKind::For, TokenKind::Switch);
+        }
+        return StmtParser::loopsSet;
+    }
+
+    // inits answers the tokens that begin what a for begins with, other than an expression
+    fun TreeSet[TokenKind]*() inits = () {
+        if(StmtParser::initsSet == null) {
+            StmtParser::initsSet = TreeSet::[TokenKind]New(2U, TokenKind::Var, TokenKind::SemiColon);
+        }
+        return StmtParser::initsSet;
+    }
+
+    // variableNames answers the tokens a variable is named by, _ for none
+    fun TreeSet[TokenKind]*() variableNames = () {
+        if(StmtParser::variableNamesSet == null) {
+            StmtParser::variableNamesSet = TreeSet::[TokenKind]New(2U, TokenKind::Identifier, TokenKind::Underscore);
+        }
+        return StmtParser::variableNamesSet;
+    }
+
+    // variableEnds answers the tokens that follow the variables a var declares
+    fun TreeSet[TokenKind]*() variableEnds = () {
+        if(StmtParser::variableEndsSet == null) {
+            StmtParser::variableEndsSet = TreeSet::[TokenKind]New(2U, TokenKind::Equal, TokenKind::SemiColon);
+        }
+        return StmtParser::variableEndsSet;
+    }
+
+    // caseValueEnds answers the tokens that follow a value of a case
+    fun TreeSet[TokenKind]*() caseValueEnds = () {
+        if(StmtParser::caseValueEndsSet == null) {
+            StmtParser::caseValueEndsSet = TreeSet::[TokenKind]New(2U, TokenKind::Comma, TokenKind::RightParen);
+        }
+        return StmtParser::caseValueEndsSet;
+    }
+
+    // caseStarts answers the tokens that begin a case, or end the cases
+    fun TreeSet[TokenKind]*() caseStarts = () {
+        if(StmtParser::caseStartsSet == null) {
+            StmtParser::caseStartsSet = TreeSet::[TokenKind]New(2U, TokenKind::Case, TokenKind::RightBrace);
+        }
+        return StmtParser::caseStartsSet;
+    }
+}

@@ -223,7 +223,7 @@ public class HTTP {
         public fun (uint, Err*)(byte*, uint) ReadBody = (buffer, count) {
             var (uint, Err*) out;
             out.1 = null;
-            for(;;) {
+            for {
                 native(STD_HTTP_BODY){void(uint, byte*, uint, uint*)}(this.parser, buffer, count, &(out.0));
                 if(out.0 > 0U || (this.state & 2) != 0) {
                     return out;
@@ -387,7 +387,7 @@ public class HTTP {
         // step runs the transfer, feeding it the request body, until it has
         // something for the reader, answering the state it reached.
         fun int() step = () {
-            for(;;) {
+            for {
                 var int state;
                 var str errStr;
                 native(STD_HTTP_STEP){void(uint, int*, str*)}(this.handle, &state, &errStr);
@@ -423,7 +423,7 @@ public class HTTP {
                 out.1 = StrErr::New("response body is closed");
                 return out;
             }
-            for(;;) {
+            for {
                 native(STD_HTTP_TAKE){void(uint, byte*, uint, uint*)}(this.handle, buffer, count, &(out.0));
                 if(out.0 > 0U) {
                     return out;
@@ -712,7 +712,7 @@ public class HTTP {
         // Serve accepts connections, each served on a thread of its own,
         // until the server is closed.
         public fun void() Serve = () {
-            for(;;) {
+            for {
                 var (Socket*, Err*) a = this.listener.Accept();
                 if(a.1 != null) {
                     return;
@@ -733,7 +733,7 @@ public class HTTP {
             var byte* b = new(byte, 16U);
             defer free(b);
             var uint i = 16U;
-            for(;;) {
+            for {
                 i--;
                 b[i] = d.0[n % 16U];
                 n = n / 16U;
@@ -848,7 +848,7 @@ public class HTTP {
             var HTTP.Conn* c = HTTP.Conn::New(s, sock, false);
             var HTTP.Response*(HTTP.Request*) handler = this.handler;
             var int served = 0;
-            for(;;) {
+            for {
                 var (bool, Err*) next = c.Next();
                 if(next.1 != null) {
                     this.respond(s, HTTP.Response::New(400U, next.1.Err() + "\n"), false, false, 11);

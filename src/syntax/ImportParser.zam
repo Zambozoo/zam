@@ -1,0 +1,115 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import "Parser.zam";
+import "Token.zam";
+import "TokenKind.zam";
+import "ast/Import.zam";
+
+// ImportParser reads import statements
+public namespace ImportParser {
+    namespace Errs {
+        // ReservedAlias is the alias that would hide the standard library
+        public var Err*$ ReservedAlias = StrErr::New("\"std\" is a reserved alias");
+    }
+
+    // Parse reads what follows the import keyword start
+    public fun (ArrList[Import*]*, bool, Err*)(Parser*, Token*) Parse = (p, start) {
+        var ArrList[Import*]* imports = ArrList::[Import*]New(0U);
+        var (Token*, Err*) brace = p.Match(TokenKind::LeftBrace);
+        if(brace.1 != null) {
+            return (null, false, brace.1);
+        } else if(brace.0 == null) {
+            var (Import*, Err*) one = ImportParser::spec(p, start);
+            if(one.1 != null) {
+                return (imports, false, one.1);
+            } else if(one.0 != null) {
+                imports.AddLast(one.0);
+            }
+            return (imports, true, null);
+        }
+
+        var bool whole = true;
+        for {
+            var (Token*, Err*) end = p.Match(TokenKind::RightBrace);
+            if(end.1 != null) {
+                return (null, false, end.1);
+            } else if(end.0 != null) {
+                return (imports, whole, null);
+            }
+            var Token* first = p.Peek().0;
+            var Parser.Recovery* r = p.Checkpoint();
+            var (Import*, Err*) next = ImportParser::spec(p, first);
+            if(next.1 != null) {
+                whole = false;
+                var Err* stop = r.Recover(next.1);
+                if(stop != null) {
+                    return (imports, false, stop);
+                }
+                continue;
+            } else if(next.0 != null) {
+                imports.AddLast(next.0);
+            } else {
+                whole = false;
+            }
+        }
+        return (imports, whole, null);
+    }
+
+    // spec reads one import
+    fun (Import*, Err*)(Parser*, Token*) spec = (p, start) {
+        var Token* bound = null;
+        var Token* pkg = null;
+        var (Token*, Err*) name = p.Match(TokenKind::Identifier);
+        if(name.1 != null) {
+            return (null, name.1);
+        } else if(name.0 != null) {
+            var (Token*, Err*) equal = p.Match(TokenKind::Equal);
+            if(equal.1 != null) {
+                return (null, equal.1);
+            } else if(equal.0 != null) {
+                bound = name.0;
+                var (Token*, Err*) named = p.Match(TokenKind::Identifier);
+                if(named.1 != null) {
+                    return (null, named.1);
+                }
+                pkg = named.0;
+            } else {
+                pkg = name.0;
+            }
+        }
+
+        var Token* path = null;
+        if(pkg != null) {
+            var Err* err = p.Consume(TokenKind::LeftParen).1;
+            if(err != null) {
+                return (null, err);
+            }
+            var (Token*, Err*) literal = p.Consume(TokenKind::StringLiteral);
+            if(literal.1 != null) {
+                return (null, literal.1);
+            }
+            path = literal.0;
+            err = p.Consume(TokenKind::RightParen).1;
+            if(err != null) {
+                return (null, err);
+            }
+        } else {
+            var (Token*, Err*) literal = p.Consume(TokenKind::StringLiteral);
+            if(literal.1 != null) {
+                return (null, literal.1);
+            }
+            path = literal.0;
+        }
+        var Err* err = p.Consume(TokenKind::SemiColon).1;
+        if(err != null) {
+            return (null, err);
+        }
+
+        if(bound != null && bound.value{str} == "std") {
+            p.ReportAt(Errs::ReservedAlias, start);
+            return (null, null);
+        }
+        return (Import::New(start, bound, pkg, path), null);
+    }
+}

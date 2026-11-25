@@ -126,7 +126,7 @@ public class Lexer {
 
     // whitespace advances past white space and comments
     fun Err*() whitespace = () {
-        for(;;) {
+        for {
             var (char, Err*) r = this.rr.Peek(0U);
             if(r.1 != null) {
                 return r.1;
@@ -168,7 +168,7 @@ public class Lexer {
 
     // lineComment advances past a comment running to the end of its line
     fun Err*() lineComment = () {
-        for(;;) {
+        for {
             var (char, Err*) c = this.rr.Peek(0U);
             if(c.1 != null) {
                 return c.1;
@@ -421,7 +421,7 @@ public class Lexer {
         var uint offset = this.rr.Offset();
         this.rr.Advance(1U);
         var ArrList[char]* value = ArrList::[char]New(0U);
-        for(;;) {
+        for {
             var (char, Err*) r = this.rr.Peek(0U);
             if(r.1 == RuneReader.Errs::EOF) {
                 out.1 = Errs::UnterminatedStringLiteral;
@@ -489,7 +489,7 @@ public class Lexer {
         }
         var bool keyword = match.0 != null;
         var str text = match.1;
-        for(;;) {
+        for {
             var (char, Err*) r = this.rr.Peek(0U);
             if(r.1 != null && r.1 != RuneReader.Errs::EOF) {
                 out.1 = r.1;

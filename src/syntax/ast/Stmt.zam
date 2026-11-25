@@ -1,0 +1,331 @@
+import std("data/list/ArrList.zam");
+import "../Token.zam";
+import "../TokenKind.zam";
+import "Expr.zam";
+import "Import.zam";
+import "Type.zam";
+
+// Stmt is a statement as it is written
+public abstract Stmt {
+    public enum Kind : int {
+        Expr(0),
+        Return(1),
+        Delete(2),
+        Free(3),
+        Mark(4),
+        Break(5),
+        Continue(6),
+        For(7),
+        If(8),
+        Switch(9),
+        Label(10),
+        Block(11),
+        Import(12),
+        Variable(13),
+        Unpack(14),
+        Defer(15);
+    }
+
+    public var Kind kind;
+    // start is the token the statement begins at
+    public var Token* start;
+
+    // optional writes s after a space, or nothing for none
+    static fun str(Stmt*) optional = (s) {
+        if(s == null) {
+            return "";
+        }
+        return " " + s.Str();
+    }
+
+    // Value is an expression or one a keyword returns, deletes, frees or marks
+    public class Value <: Stmt* {
+        // value is the expression, or null for a return of nothing
+        public var Expr* value;
+
+        public static fun Value*(Kind, Token*, Expr*) New = (kind, start, value) {
+            var Value* s = new(Value);
+            s.kind = kind;
+            s.start = start;
+            s.value = value;
+            return s;
+        }
+
+        public fun str() Str = () {
+            var str value = "";
+            if(this.value != null) {
+                value = this.value.Str();
+            }
+            if(this.kind == Kind::Expr) {
+                return value;
+            } else if(this.value == null) {
+                return "(" + this.start.kind.text + ")";
+            }
+            return "(" + this.start.kind.text + " " + value + ")";
+        }
+    }
+
+    // Jump is a break or continue
+    public class Jump <: Stmt* {
+        // target is the name of the loop or switch, or null for the innermost
+        public var Token* target;
+
+        public static fun Jump*(Kind, Token*, Token*) New = (kind, start, target) {
+            var Jump* s = new(Jump);
+            s.kind = kind;
+            s.start = start;
+            s.target = target;
+            return s;
+        }
+
+        public fun str() Str = () {
+            if(this.target == null) {
+                return "(" + this.start.kind.text + ")";
+            }
+            return "(" + this.start.kind.text + " " + this.target.value{str} + ")";
+        }
+    }
+
+    // For is a loop
+    public class For <: Stmt* {
+        public var Stmt* init;
+        public var Expr* condition;
+        public var Expr* step;
+        public var Stmt* body;
+        public var Stmt* otherwise;
+
+        public static fun For*(Token*, Stmt*, Expr*, Expr*, Stmt*, Stmt*) New = (start, init, condition, step, body, otherwise) {
+            var For* s = new(For);
+            s.kind = Kind::For;
+            s.start = start;
+            s.init = init;
+            s.condition = condition;
+            s.step = step;
+            s.body = body;
+            s.otherwise = otherwise;
+            return s;
+        }
+
+        public fun str() Str = () {
+            var str condition = "_";
+            if(this.condition != null) {
+                condition = this.condition.Str();
+            }
+            var str step = "_";
+            if(this.step != null) {
+                step = this.step.Str();
+            }
+            var str init = "_";
+            if(this.init != null) {
+                init = this.init.Str();
+            }
+            return "(for " + init + " " + condition + " " + step + " " + this.body.Str() + Stmt::optional(this.otherwise) + ")";
+        }
+    }
+
+    // If is a condition
+    public class If <: Stmt* {
+        public var Expr* condition;
+        public var Stmt* then;
+        public var Stmt* otherwise;
+
+        public static fun If*(Token*, Expr*, Stmt*, Stmt*) New = (start, condition, then, otherwise) {
+            var If* s = new(If);
+            s.kind = Kind::If;
+            s.start = start;
+            s.condition = condition;
+            s.then = then;
+            s.otherwise = otherwise;
+            return s;
+        }
+
+        public fun str() Str = () {
+            return "(if " + this.condition.Str() + " " + this.then.Str() + Stmt::optional(this.otherwise) + ")";
+        }
+    }
+
+    // Case is the values a case of a switch matches
+    public class Case {
+        public var Token* start;
+        public var ArrList[Expr*]* values;
+        public var Stmt* body;
+
+        public static fun Case*(Token*, ArrList[Expr*]*, Stmt*) New = (start, values, body) {
+            var Case* c = new(Case);
+            c.start = start;
+            c.values = values;
+            c.body = body;
+            return c;
+        }
+
+        public fun str() Str = () {
+            return "(case" + Expr::list(this.values) + " " + this.body.Str() + ")";
+        }
+    }
+
+    // Switch is a value, the cases tested against it in order
+    public class Switch <: Stmt* {
+        public var Expr* subject;
+        public var ArrList[Case*]* cases;
+        public var Stmt* otherwise;
+
+        public static fun Switch*(Token*, Expr*, ArrList[Case*]*, Stmt*) New = (start, subject, cases, otherwise) {
+            var Switch* s = new(Switch);
+            s.kind = Kind::Switch;
+            s.start = start;
+            s.subject = subject;
+            s.cases = cases;
+            s.otherwise = otherwise;
+            return s;
+        }
+
+        public fun str() Str = () {
+            var str out = "(switch " + this.subject.Str();
+            for(var uint i = 0U; i < this.cases.Len(); i++) {
+                out = out + " " + this.cases.Get(i).Str();
+            }
+            return out + Stmt::optional(this.otherwise) + ")";
+        }
+    }
+
+    // Label names the loop or switch it is written before
+    public class Label <: Stmt* {
+        public var Token* name;
+        public var Stmt* target;
+
+        public static fun Label*(Token*, Token*, Stmt*) New = (start, name, target) {
+            var Label* s = new(Label);
+            s.kind = Kind::Label;
+            s.start = start;
+            s.name = name;
+            s.target = target;
+            return s;
+        }
+
+        public fun str() Str = () {
+            return "(label " + this.name.value{str} + " " + this.target.Str() + ")";
+        }
+    }
+
+    // Block is statements in braces
+    public class Block <: Stmt* {
+        public var ArrList[Stmt*]* statements;
+        public var bool broken;
+
+        public static fun Block*(Token*, ArrList[Stmt*]*, bool) New = (start, statements, broken) {
+            var Block* s = new(Block);
+            s.kind = Kind::Block;
+            s.start = start;
+            s.statements = statements;
+            s.broken = broken;
+            return s;
+        }
+
+        public fun str() Str = () {
+            var str out = "{";
+            for(var uint i = 0U; i < this.statements.Len(); i++) {
+                out = out + " " + this.statements.Get(i).Str();
+            }
+            return out + " }";
+        }
+    }
+
+    // Imports is an import statement in a block
+    public class Imports <: Stmt* {
+        public var ArrList[Import*]* imports;
+
+        public static fun Imports*(Token*, ArrList[Import*]*) New = (start, imports) {
+            var Imports* s = new(Imports);
+            s.kind = Kind::Import;
+            s.start = start;
+            s.imports = imports;
+            return s;
+        }
+
+        public fun str() Str = () {
+            var str out = "";
+            for(var uint i = 0U; i < this.imports.Len(); i++) {
+                if(i > 0U) {
+                    out = out + " ";
+                }
+                out = out + this.imports.Get(i).Str();
+            }
+            return out;
+        }
+    }
+
+    // Variable is a variable declared by its type, name and initialization
+    public class Variable <: Stmt* {
+        public var Type* declared;
+        public var Token* name;
+        public var Expr* init;
+
+        public static fun Variable*(Token*, Type*, Token*) New = (start, declared, name) {
+            var Variable* s = new(Variable);
+            s.kind = Kind::Variable;
+            s.start = start;
+            s.declared = declared;
+            s.name = name;
+            return s;
+        }
+
+        // Name answers what the variable is named, _ for none
+        public fun str() Name = () {
+            if(this.name.kind == TokenKind::Underscore) {
+                return "_";
+            }
+            return this.name.value{str};
+        }
+
+        public fun str() Str = () {
+            var str out = "(var " + this.declared.Str() + " " + this.Name();
+            if(this.init != null) {
+                out = out + " " + this.init.Str();
+            }
+            return out + ")";
+        }
+    }
+
+    // Unpack is several variables declared at once
+    public class Unpack <: Stmt* {
+        public var ArrList[Variable*]* variables;
+        public var Expr* init;
+
+        public static fun Unpack*(Token*, ArrList[Variable*]*) New = (start, variables) {
+            var Unpack* s = new(Unpack);
+            s.kind = Kind::Unpack;
+            s.start = start;
+            s.variables = variables;
+            return s;
+        }
+
+        public fun str() Str = () {
+            var str out = "(unpack";
+            for(var uint i = 0U; i < this.variables.Len(); i++) {
+                var Variable* v = this.variables.Get(i);
+                out = out + " (" + v.declared.Str() + " " + v.Name() + ")";
+            }
+            if(this.init != null) {
+                out = out + " " + this.init.Str();
+            }
+            return out + ")";
+        }
+    }
+
+    // Defer is a statement run when control leaves the block
+    public class Defer <: Stmt* {
+        public var Stmt* deferred;
+
+        public static fun Defer*(Token*, Stmt*) New = (start, deferred) {
+            var Defer* s = new(Defer);
+            s.kind = Kind::Defer;
+            s.start = start;
+            s.deferred = deferred;
+            return s;
+        }
+
+        public fun str() Str = () {
+            return "(defer " + this.deferred.Str() + ")";
+        }
+    }
+}

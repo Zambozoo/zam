@@ -136,7 +136,7 @@ public class TreapPriorityQueue[A, B] {
     // rightmost otherwise, which a single write of its one child does.
     private fun void(bool) unlinkEnd = (first) {
         var Node[A, B]** link = &(this.root);
-        for(;;) {
+        for {
             var Node[A, B]* n = *link;
             if(first && n.left == null) {
                 *link = n.right;
