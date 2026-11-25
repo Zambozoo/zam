@@ -37,6 +37,21 @@ public abstract Type {
         return out;
     }
 
+    // Text writes the type as it is written in source
+    public virtual fun str() Text;
+
+    // texts writes types as they are written, separated by commas
+    static fun str(ArrList[Type*]*) texts = (types) {
+        var str out = "";
+        for(var uint i = 0U; i < types.Len(); i++) {
+            if(i > 0U) {
+                out = out + ", ";
+            }
+            out = out + types.Get(i).Text();
+        }
+        return out;
+    }
+
     // Primitive is a type named by its keyword: int, str, void and the rest
     public class Primitive <: Type* {
         public static fun Primitive*(Token*) New = (start) {
@@ -47,6 +62,10 @@ public abstract Type {
         }
 
         public fun str() Str = () {
+            return this.start.kind.text;
+        }
+
+        public fun str() Text = () {
             return this.start.kind.text;
         }
     }
@@ -68,6 +87,18 @@ public abstract Type {
 
         public fun str() Str = () {
             return "(" + this.wrap{str} + " " + this.inner.Str() + ")";
+        }
+
+        public fun str() Text = () {
+            switch(this.wrap) {
+                case (Wrap::Pointer)
+                    return this.inner.Text() + "*";
+                case (Wrap::Variadic)
+                    return this.inner.Text() + "...";
+                case (Wrap::Thread)
+                    return "thread[" + this.inner.Text() + "]";
+            }
+            return this.inner.Text() + "$";
         }
     }
 
@@ -94,6 +125,13 @@ public abstract Type {
             }
             return "([" + size + "] " + this.inner.Str() + ")";
         }
+
+        public fun str() Text = () {
+            if(this.sized) {
+                return this.inner.Text() + "[" + this.size{str} + "]";
+            }
+            return this.inner.Text() + "[~]";
+        }
     }
 
     // Tailed is a declaration with a tail, of a size or of any
@@ -119,6 +157,13 @@ public abstract Type {
             }
             return "(~" + size + " " + this.inner.Str() + ")";
         }
+
+        public fun str() Text = () {
+            if(this.sized) {
+                return this.inner.Text() + "~" + this.size{str};
+            }
+            return this.inner.Text() + "~";
+        }
     }
 
     // Tuple is two or more types held together
@@ -135,6 +180,10 @@ public abstract Type {
 
         public fun str() Str = () {
             return "(tuple" + Type::list(this.types) + ")";
+        }
+
+        public fun str() Text = () {
+            return "(" + Type::texts(this.types) + ")";
         }
     }
 
@@ -155,6 +204,10 @@ public abstract Type {
         public fun str() Str = () {
             return "(fun " + this.returns.Str() + Type::list(this.parameters) + ")";
         }
+
+        public fun str() Text = () {
+            return this.returns.Text() + "(" + Type::texts(this.parameters) + ")";
+        }
     }
 
     // Reference is a declaration named by a dotted path, or a generic
@@ -171,6 +224,17 @@ public abstract Type {
         }
 
         public fun str() Str = () {
+            var str out = "";
+            for(var uint i = 0U; i < this.ids.Len(); i++) {
+                if(i > 0U) {
+                    out = out + ".";
+                }
+                out = out + this.ids.Get(i).value{str};
+            }
+            return out;
+        }
+
+        public fun str() Text = () {
             var str out = "";
             for(var uint i = 0U; i < this.ids.Len(); i++) {
                 if(i > 0U) {
@@ -198,6 +262,10 @@ public abstract Type {
 
         public fun str() Str = () {
             return "(generic " + this.inner.Str() + Type::list(this.arguments) + ")";
+        }
+
+        public fun str() Text = () {
+            return this.inner.Text() + "[" + Type::texts(this.arguments) + "]";
         }
     }
 }

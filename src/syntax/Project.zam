@@ -1,0 +1,17 @@
+import std("data/map/TreeMap.zam");
+import "Path.zam";
+
+// Project is the files a program is made of
+public class Project {
+    public var str name;
+    // dependencies maps each package name to the directory it lies in
+    public var TreeMap[str, str]* dependencies;
+
+    // Implicit answers the project of an entry file written without a project file
+    public static fun Project*(str) Implicit = (entry) {
+        var Project* p = new(Project);
+        p.name = Path::FileName(entry);
+        p.dependencies = TreeMap::[str, str]New(1U, ("std", Path::Std));
+        return p;
+    }
+}

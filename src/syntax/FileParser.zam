@@ -52,27 +52,35 @@ public namespace FileParser {
             }
         }
 
+        var File* f = File::New(start.0, imports, !whole, null);
         var (Modifier.Set, Err*) modifiers = FieldParser::Modifiers(p);
         if(modifiers.1 != null) {
-            return (null, modifiers.1);
+            return FileParser::partial(p, f, modifiers.1);
         } else if((modifiers.0 | Modifier::Public.Bit()) != Modifier::Public.Bit()) {
-            return (null, Errs::NotPublic);
+            return FileParser::partial(p, f, Errs::NotPublic);
         }
         var (Token*, Err*) keyword = p.ConsumeAny(DeclParser::declKinds());
         if(keyword.1 != null) {
-            return (null, keyword.1);
+            return FileParser::partial(p, f, keyword.1);
         }
         var (Decl*, Err*) d = DeclParser::Declaration(p, keyword.0, modifiers.0);
+        f.decl = d.0;
         if(d.1 != null) {
-            return (null, d.1);
+            return FileParser::partial(p, f, d.1);
         }
 
         var (Token*, Err*) end = p.Peek();
         if(end.1 != null) {
-            return (null, end.1);
+            return FileParser::partial(p, f, end.1);
         } else if(end.0.kind != TokenKind::EOF) {
             p.Report(p.Unexpected(TreeSet::[TokenKind]New(1U, TokenKind::EOF)));
         }
-        return (File::New(start.0, imports, !whole, d.0), null);
+        return FileParser::partial(p, f, null);
+    }
+
+    // partial answers f, with what its blocks say of its imports, alongside err
+    fun (File*, Err*)(Parser*, File*, Err*) partial = (p, f, err) {
+        f.brokenImports = f.brokenImports || p.brokenImports;
+        return (f, err);
     }
 }

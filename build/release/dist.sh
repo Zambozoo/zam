@@ -1,7 +1,8 @@
 #!/bin/bash
 # Builds zam for version against the LLVM at prefix, as build/release/zam.sh does,
-# and archives it as a release publishes it for platform: a zip on Windows,
-# which scoop installs, and a gzipped tarball elsewhere. Prints the archive.
+# and archives it with the standard library's sources beside it in std as a
+# release publishes it for platform: a zip on Windows, which scoop installs, and
+# a gzipped tarball elsewhere. Prints the archive.
 #
 # usage: build/release/dist.sh <prefix> <version> <platform>
 set -euo pipefail
@@ -11,17 +12,22 @@ version=$2
 platform=$3
 cd "$(dirname "$0")/../.."
 
+# The directories internal/std/std.go embeds.
+rm -rf dist/std
+mkdir -p dist/std
+(cd internal/std && cp -R ./*.yml codec crypto data io lang math sync test ../../dist/std/)
+
 case $(uname -s) in
 MINGW* | MSYS*)
     ZAM_VERSION=$version build/release/zam.sh "$prefix" dist/zam.exe >&2
     archive=zam-$version-$platform.zip
     rm -f "$archive"
-    (cd dist && 7z a "../$archive" zam.exe >/dev/null)
+    (cd dist && 7z a "../$archive" zam.exe std >/dev/null)
     ;;
 *)
     ZAM_VERSION=$version build/release/zam.sh "$prefix" dist/zam >&2
     archive=zam-$version-$platform.tar.gz
-    tar -czf "$archive" -C dist zam
+    tar -czf "$archive" -C dist zam std
     ;;
 esac
 echo "$archive"

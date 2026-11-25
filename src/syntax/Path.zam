@@ -1,0 +1,106 @@
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+
+// Path works with the paths source files
+public namespace Path {
+    namespace Errs {
+        public fun Err*(str, str) Leaves = (p, root) {
+            return StrErr::New("path " + Strs::Quote(p) + " leaves " + Path::Display(root));
+        }
+    }
+
+    // Std is the scheme a path into the standard library begins with
+    public var str$ Std = "std://";
+    // Extension is what a source file's name ends with
+    public var str$ Extension = ".zam";
+    // TestExtension is what a test file's name ends with
+    public var str$ TestExtension = ".test.zam";
+
+    // Display answers p as the system writes it, a path into the standard library as it is
+    public fun str(str) Display = (p) {
+        if(Path::IsStd(p)) {
+            return p;
+        }
+        return FS::FromSlash(p);
+    }
+
+    // IsStd reports whether p is a path into the standard library
+    public fun bool(str) IsStd = (p) {
+        return Strs::HasPrefix(p, Path::Std);
+    }
+
+    // StdName answers the path into the standard library that p names
+    public fun str(str) StdName = (p) {
+        return Strs::Slice(p, Strs::ByteLen(Path::Std), Strs::ByteLen(p));
+    }
+
+    // Resolve answers the path rel names
+    public fun str(str, str) Resolve = (from, rel) {
+        if(Path::IsStd(rel)) {
+            return rel;
+        }
+        var str slashed = FS::ToSlash(rel);
+        if(Paths::IsAbs(slashed)) {
+            return Paths::Clean(Path::onVolume(slashed));
+        } else if(Path::IsStd(from)) {
+            return Path::Std + Path::stdClean(Paths::Join(Paths::Dir(Path::StdName(from)), slashed));
+        }
+        return Paths::Join(Paths::Dir(from), slashed);
+    }
+
+    // ResolveInto answers the path rel names inside the directory root
+    public fun (str, Err*)(str, str) ResolveInto = (root, rel) {
+        var str clean = Paths::Clean(FS::ToSlash(rel));
+        if(Paths::IsAbs(clean) || clean == ".." || Strs::HasPrefix(clean, "../")) {
+            return ("", Errs::Leaves(rel, root));
+        } else if(Path::IsStd(root)) {
+            return (Path::Std + Path::stdClean(Paths::Join(Path::StdName(root), clean)), null);
+        }
+        return (Paths::Join(root, clean), null);
+    }
+
+    // onVolume answers the rooted path p with the working directory's volume in front
+    fun str(str) onVolume = (p) {
+        if(FS::Separator != "\\" || Paths::Volume(p) != "") {
+            return p;
+        }
+        var (str, Err*) cwd = FS::Cwd();
+        if(cwd.1 != null) {
+            return p;
+        }
+        return Paths::Volume(FS::ToSlash(cwd.0)) + p;
+    }
+
+    // Child answers the path of the file name in the directory dir
+    public fun str(str, str) Child = (dir, name) {
+        if(Path::IsStd(dir)) {
+            return Path::Std + Path::stdClean(Paths::Join(Path::StdName(dir), name));
+        }
+        return Paths::Join(dir, name);
+    }
+
+    // IsTestFile reports whether p names a test file
+    public fun bool(str) IsTestFile = (p) {
+        return Strs::HasSuffix(p, Path::TestExtension);
+    }
+
+    // FileName answers the name of the file p names, without its extension
+    public fun str(str) FileName = (p) {
+        var str base = Paths::Base(p);
+        if(Strs::HasSuffix(base, Path::Extension)) {
+            return Strs::Slice(base, 0U, Strs::ByteLen(base) - Strs::ByteLen(Path::Extension));
+        }
+        return base;
+    }
+
+    // stdClean answers name for a path into the standard library, "" for its root
+    fun str(str) stdClean = (name) {
+        if(name == ".") {
+            return "";
+        }
+        return name;
+    }
+}

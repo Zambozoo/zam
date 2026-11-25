@@ -1,17 +1,30 @@
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
 import std("io/local/File.zam");
+import std("io/local/FS.zam");
 import std("lang/Arr.zam");
 import std("lang/Arrs.zam");
 import std("lang/Err.zam");
+import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import std("lang/System.zam");
 import "cli/Command.zam";
 import "cli/LocalFiles.zam";
+import "cli/Verb.zam";
+import "syntax/LocalSources.zam";
+import "syntax/ProjectParser.zam";
 
 namespace Main {
+    namespace Errs {
+        public var Err*$ NoStd = StrErr::New("cannot find the standard library: set ZAM_STD to its directory");
+    }
+
     private var str$ name = "zam";
 
     private enum Step : str {
-        Command("command");
+        Command("command"),
+        Std("std"),
+        Syntax("syntax");
     }
 
     fun Arr[str]*(uint, str...) asArgs = (argC, argV) {
@@ -23,22 +36,54 @@ namespace Main {
         return arr;
     }
 
-    fun void(Step, Err*) onError = (step, err) {
-        if(err == null) {
-            return;
+    // onError writes the n errs that are not null, and exits when there are any
+    fun void(Step, uint, Err*...) onError = (step, n, errs) {
+        var bool failed = false;
+        for(var uint i = 0U; i < n; i++) {
+            if(errs[i] != null) {
+                File::StdErr.WriteStr(Strs::Sprintf("[%s] %s\n", step, errs[i].Err()));
+                failed = true;
+            }
         }
+        if(failed) {
+            System::Exit(1);
+        }
+    }
 
-        var str$ msg = Strs::Sprintf("[%s] %s\n", step, err.Err());
-        File::StdErr.WriteStr(msg);
-        System::Exit(1);
+    // stdRoot answers the directory the standard library is read from
+    fun (str, Err*)() stdRoot = () {
+        var (str, bool) env = System::Env("ZAM_STD");
+        if(env.1 && env.0 != "") {
+            return (FS::ToSlash(env.0), null);
+        }
+        var (str, Err*) exe = System::Executable();
+        if(exe.1 != null) {
+            return ("", exe.1);
+        }
+        var str dir = Paths::Dir(FS::ToSlash(exe.0));
+        var Arr[str]* candidates = Arr::[str]New(2U, Paths::Join(dir, "std"), Paths::Join(dir, "../share/zam/std"));
+        for(var uint i = 0U; i < candidates.Len(); i++) {
+            if(FS::IsDir(candidates.Get(i))) {
+                return (candidates.Get(i), null);
+            }
+        }
+        return ("", Errs::NoStd);
     }
 
     fun void(uint, str...) main = (argC, argV) {
         var Arr[str]* args = asArgs(argC, argV...);
 
         var (Command*, Err*) r = Command::New(args, LocalFiles::New());
-        onError(Step::Command, r.1);
+        onError(Step::Command, 1U, r.1);
 
+        if(r.0.verb == Verb::Build || r.0.verb == Verb::Run) {
+            var (str, Err*) root = stdRoot();
+            onError(Step::Std, 1U, root.1);
+            
+            var ProjectParser* parser = ProjectParser::New(LocalSources::New(root.0), r.0.maxThreads{uint});
+            var (ProjectParser.Program*, ArrList[Err*]*) program = parser.Parse(r.0.inputPath, Arr::[str]New(0U));
+            onError(Step::Syntax, program.1.Len(), program.1.Arr().Arr()...);
+        }
         File::StdOut.WriteStr(r.0.Str() + "\n");
     }
 }

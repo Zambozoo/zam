@@ -1,0 +1,47 @@
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "Path.zam";
+
+public namespace PathTest {
+    public fun void(uint, str...) Resolve = (argC, argV) {
+        Assert::[str]Equal("/p/lib/A.zam", Path::Resolve("/p/Main.zam", "lib/A.zam"));
+        Assert::[str]Equal("/q/A.zam", Path::Resolve("/p/Main.zam", "../q/A.zam"));
+        Assert::[str]Equal("std://lang/Strs.zam", Path::Resolve("std://lang/Arr.zam", "Strs.zam"));
+        Assert::[str]Equal("std://codec/text/UTF8.zam", Path::Resolve("std://lang/Strs.zam", "../codec/text/UTF8.zam"));
+        Assert::[str]Equal("std://X.zam", Path::Resolve("/p/Main.zam", "std://X.zam"));
+    }
+
+    public fun void(uint, str...) Rooted = (argC, argV) {
+        var bool windows = FS::Separator == "\\";
+        var str volume = "";
+        if(windows) {
+            volume = Paths::Volume(FS::ToSlash(FS::Cwd().0));
+        }
+        Assert::[str]Equal(volume + "/abs/A.zam", Path::Resolve("/p/Main.zam", "/abs/../abs/A.zam"));
+        Assert::[str]Equal("D:/abs/A.zam", Path::Resolve("C:/p/Main.zam", "D:/abs/A.zam"));
+        if(windows) {
+            Assert::[str]Equal("C:/p/lib/A.zam", Path::Resolve("C:/p/Main.zam", "lib\\A.zam"));
+            Assert::[str]Equal(volume + "/abs/A.zam", Path::Resolve("C:/p/Main.zam", "\\abs\\A.zam"));
+        }
+    }
+
+    public fun void(uint, str...) ResolveInto = (argC, argV) {
+        Assert::[str]Equal("std://lang/Err.zam", Path::ResolveInto("std://", "lang/Err.zam").0);
+        Assert::[str]Equal("std://", Path::ResolveInto("std://", ".").0);
+        Assert::[str]Equal("/deps/x/A.zam", Path::ResolveInto("/deps/x", "./A.zam").0);
+        var (str, Err*) out = Path::ResolveInto("/deps/x", "../y/A.zam");
+        Assert::[str]Equal("path \"../y/A.zam\" leaves " + Path::Display("/deps/x"), out.1.Err());
+    }
+
+    public fun void(uint, str...) Names = (argC, argV) {
+        Assert::[str]Equal("std://lang/Err.zam", Path::Child("std://lang", "Err.zam"));
+        Assert::[str]Equal("std://Err.zam", Path::Child("std://", "Err.zam"));
+        Assert::[str]Equal("/p/Err.zam", Path::Child("/p", "Err.zam"));
+        Assert::[str]Equal("Err", Path::FileName("std://lang/Err.zam"));
+        Assert::[str]Equal("Err.test", Path::FileName("/p/Err.test.zam"));
+        Assert::True(Path::IsTestFile("/p/Err.test.zam"), "Err.test.zam is not a test file");
+        Assert::False(Path::IsTestFile("/p/Err.zam"), "Err.zam is a test file");
+    }
+}

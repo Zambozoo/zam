@@ -7,6 +7,7 @@ import std("lang/Strs.zam");
 import "Lexer.zam";
 import "Token.zam";
 import "TokenKind.zam";
+import "ast/Stmt.zam";
 
 // Parser reads a source's tokens one at a time and records the errors it recovers from
 public class Parser {
@@ -53,11 +54,16 @@ public class Parser {
     var bool lexFailed;
     // diagnostics is every error recovered from, in the order raised
     public var ArrList[Diagnostic*]* diagnostics;
+    // importBlocks is every block read that holds an import, in the order they end
+    public var ArrList[Stmt.Block*]* importBlocks;
+    // brokenImports says an import in a block failed to parse and was skipped
+    public var bool brokenImports;
 
     public static fun Parser*(str) New = (source) {
         var Parser* p = new(Parser);
         p.lexer = Lexer::New(source);
         p.diagnostics = ArrList::[Diagnostic*]New(0U);
+        p.importBlocks = ArrList::[Stmt.Block*]New(0U);
         return p;
     }
 

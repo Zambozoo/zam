@@ -10,6 +10,7 @@ public class File {
     public var ArrList[Import*]* imports;
     // brokenImports says an import failed to parse and was skipped
     public var bool brokenImports;
+    // decl is the file's declaration, or null for one not read
     public var Decl* decl;
 
     public static fun File*(Token*, ArrList[Import*]*, bool, Decl*) New = (start, imports, brokenImports, decl) {
@@ -26,6 +27,9 @@ public class File {
         for(var uint i = 0U; i < this.imports.Len(); i++) {
             out = out + " " + this.imports.Get(i).Str();
         }
-        return out + " " + this.decl.Str() + ")";
+        if(this.decl != null) {
+            out = out + " " + this.decl.Str();
+        }
+        return out + ")";
     }
 }

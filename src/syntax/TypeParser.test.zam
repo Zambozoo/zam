@@ -72,9 +72,9 @@ public namespace TypeParserTest {
     }
 
     public fun void(uint, str...) Errors = (argC, argV) {
-        TypeParserTest::fails("int$$", "type \"($ int)\" is already const");
-        TypeParserTest::fails("Chars~", "unsized tailed type \"(~ Chars)\" is not allowed");
-        TypeParserTest::fails("Chars~[4]", "unsized tailed type \"(~ Chars)\" must be a pointer type");
+        TypeParserTest::fails("int$$", "type \"int$\" is already const");
+        TypeParserTest::fails("Chars~", "unsized tailed type \"Chars~\" is not allowed");
+        TypeParserTest::fails("Chars~[4]", "unsized tailed type \"Chars~\" must be a pointer type");
         TypeParserTest::fails("(int)", "tuple type must have at least two elements, got 1");
         TypeParserTest::fails("Box[A <: B]", "bound \"<:\" cannot be written among type arguments");
         TypeParserTest::fails("int[~]", "unexpected token: \"~\", expected \"INT_LITERAL\"");

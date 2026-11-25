@@ -83,8 +83,8 @@ public namespace DeclParserTest {
         DeclParserTest::fails("virtual alias A = int;", "aliases cannot be virtual");
         DeclParserTest::fails("class {}", "unexpected token: \"{\", expected \"IDENTIFIER\"");
         DeclParserTest::fails("class NotPointer <: int {}", "base declaration type \"int\" is not a pointer to a resolvable type");
-        DeclParserTest::fails("class Unresolvable <: int* {}", "base declaration type \"(* int)\" is not a pointer to a resolvable type");
-        DeclParserTest::fails("enum Backed : void* { A; }", "enum Backed cannot be backed by (* void)");
+        DeclParserTest::fails("class Unresolvable <: int* {}", "base declaration type \"int*\" is not a pointer to a resolvable type");
+        DeclParserTest::fails("enum Backed : void* { A; }", "enum Backed cannot be backed by void*");
         DeclParserTest::fails("class Twice[T, T] {}", "duplicate generic \"T\"");
         DeclParserTest::fails("enum Main {}", "parse abandoned after a recorded error");
     }
@@ -96,9 +96,9 @@ public namespace DeclParserTest {
         DeclParserTest::reports("class Tailless~ {}", "(class Tailless~)", "missing tailed field");
         DeclParserTest::reports("struct TaillessStruct~ {}", "(struct TaillessStruct~)", "missing tailed field");
         DeclParserTest::reports("class NotLast~ { var int[~] a; var int b; }", "(class NotLast~ (var ([~] int) a))", "tailed field \"a\" is not the last instance member");
-        DeclParserTest::reports("class Untailed <: Chars~* {}", "(class Untailed <: (* (~ Chars)))", "\"Untailed\" extends the tailed type \"(~ Chars)\", so it must be tailed itself");
+        DeclParserTest::reports("class Untailed <: Chars~* {}", "(class Untailed <: (* (~ Chars)))", "\"Untailed\" extends the tailed type \"Chars~\", so it must be tailed itself");
         DeclParserTest::reports("class Member~ <: Chars~* { var int m; }", "(class Member~ <: (* (~ Chars)) (var int m))",
-            "\"Member\" extends the tailed type \"(~ Chars)\", so instance member \"m\" has nowhere to lie: nothing follows an unsized tail");
+            "\"Member\" extends the tailed type \"Chars~\", so instance member \"m\" has nowhere to lie: nothing follows an unsized tail");
         DeclParserTest::reports("class V { virtual fun void() V; }", "(class V)", "virtual field \"V\" is not allowed in class");
         DeclParserTest::reports("struct S { virtual fun void() V; }", "(struct S)", "virtual field \"V\" is not allowed in struct");
         DeclParserTest::reports("enum E { A; virtual fun void() V; }", "(enum E (value A))", "virtual field \"V\" is not allowed in enum");
@@ -106,6 +106,10 @@ public namespace DeclParserTest {
         DeclParserTest::reports("interface I { protected fun void() P; }", "(interface I)", "instance method \"P\" cannot be protected in interface");
         DeclParserTest::reports("enum E { var int x; A; }", "(enum E (value A))", "field \"x\" of enum E must come after its values, as only declarations may come before them");
         DeclParserTest::reports("enum Duplicate { A, A; }", "(enum Duplicate (value A))", "duplicate static field \"A\"");
+        DeclParserTest::reports("struct S { static fun str() Str = () \"\"; }", "(struct S (fun static (fun str) Str () \"\"))", "Str of S must be an instance method of type str()");
+        DeclParserTest::reports("struct S { fun int() Str = () 0; }", "(struct S (fun (fun int) Str () 0))", "Str of S must be an instance method of type str()");
+        DeclParserTest::reports("enum E { ; var str Str; }", "(enum E (var str Str))", "Str of E must be an instance method of type str()");
+        DeclParserTest::parses("struct S { fun str$() Str = () \"\"; }", "(struct S (fun (fun ($ str)) Str () \"\"))");
         DeclParserTest::reports("enum Unvalued { A(1); }", "(enum Unvalued (value A))", "enum value Unvalued::A cannot be written with a value: Unvalued is not backed by a primitive");
     }
 

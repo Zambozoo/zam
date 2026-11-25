@@ -1,0 +1,61 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import "Path.zam";
+import "Token.zam";
+
+// SourceErr is an error located in a source file
+public class SourceErr {
+    public var Err* err;
+    public var str path;
+    // line is the line the error is at, or 0 for none
+    public var uint line;
+    public var uint column;
+
+    // In answers err located at the file path alone
+    public static fun SourceErr*(Err*, str) In = (err, path) {
+        var SourceErr* e = new(SourceErr);
+        e.err = err;
+        e.path = path;
+        return e;
+    }
+
+    // At answers err located at tok in the file path, whose lines begin at lineStarts
+    public static fun SourceErr*(Err*, str, ArrList[uint]*, Token*) At = (err, path, lineStarts, tok) {
+        var SourceErr* e = SourceErr::In(err, path);
+        if(tok != null) {
+            var (uint, uint) at = SourceErr::Position(lineStarts, tok.offset);
+            e.line = at.0;
+            e.column = at.1;
+        }
+        return e;
+    }
+
+    // Position answers the line and column of offset, both from 1
+    public static fun (uint, uint)(ArrList[uint]*, uint) Position = (lineStarts, offset) {
+        var uint low = 0U;
+        var uint high = lineStarts.Len();
+        for(; low < high;) {
+            var uint mid = (low + high) / 2U;
+            if(lineStarts.Get(mid) > offset) {
+                high = mid;
+            } else {
+                low = mid + 1U;
+            }
+        }
+        if(low == 0U) {
+            return (1U, offset + 1U);
+        }
+        return (low, offset - lineStarts.Get(low - 1U) + 1U);
+    }
+
+    public fun str() Err = () {
+        if(this.line == 0U) {
+            return this.err.Err() + " (" + Path::Display(this.path) + ")";
+        }
+        return this.err.Err() + " (" + Path::Display(this.path) + "[" + this.line{str} + ":" + this.column{str} + "])";
+    }
+
+    public fun str() Str = () {
+        return this.Err();
+    }
+}

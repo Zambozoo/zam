@@ -1,0 +1,10 @@
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+
+// SourceProvider reads the source files a program is parsed from
+public interface SourceProvider {
+    // Read answers the source of the file at path
+    fun (str, Err*)(str) Read;
+    // ListCodeFiles answers the paths of the source files directly in the directory dir, sorted by name
+    fun (Arr[str]*, Err*)(str) ListCodeFiles;
+}

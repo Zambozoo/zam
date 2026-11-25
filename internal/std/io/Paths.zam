@@ -1,0 +1,146 @@
+import {
+    "../data/list/ArrList.zam";
+    "../lang/Arr.zam";
+    "../lang/Strs.zam";
+}
+
+// Paths works with slash-separated paths as strings, without touching any
+// file system. A path may begin with a Windows volume, a letter and a colon,
+// which is kept in front of whatever the rest of it cleans to.
+public namespace Paths {
+    // Clean returns the shortest path naming the same place as p: runs of
+    // slashes become one, . elements are dropped, and each .. drops the element
+    // before it. A rooted path stays rooted, a .. at the root is dropped, and
+    // an empty result is ".".
+    public static fun str(str) Clean = (p) {
+        var str volume = Paths::Volume(p);
+        if(volume != "") {
+            return volume + Paths::Clean(Strs::Slice(p, 2U, Strs::ByteLen(p)));
+        }
+        var bool rooted = Strs::HasPrefix(p, "/");
+        var Arr[str]* parts = Strs::Split(p, '/'{byte});
+        var ArrList[str]* kept = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < parts.Len(); i++) {
+            var str part = parts.Get(i);
+            if(part == "" || part == ".") {
+                continue;
+            } else if(part != "..") {
+                kept.AddLast(part);
+            } else if(kept.Len() > 0U && kept.Get(kept.Len() - 1U) != "..") {
+                kept.RemoveLast();
+            } else if(!rooted) {
+                kept.AddLast(part);
+            }
+        }
+
+        var str out = "";
+        for(var uint i = 0U; i < kept.Len(); i++) {
+            if(i > 0U) {
+                out = out + "/";
+            }
+            out = out + kept.Get(i);
+        }
+        if(rooted) {
+            return "/" + out;
+        } else if(out == "") {
+            return ".";
+        }
+        return out;
+    }
+
+    // Join returns a and b joined by a slash and cleaned. An empty element is
+    // left out.
+    public static fun str(str, str) Join = (a, b) {
+        if(a == "") {
+            if(b == "") {
+                return "";
+            }
+            return Paths::Clean(b);
+        } else if(b == "") {
+            return Paths::Clean(a);
+        }
+        return Paths::Clean(a + "/" + b);
+    }
+
+    // Dir returns all of p but its last element, cleaned, or "." for a p with
+    // no slash.
+    public static fun str(str) Dir = (p) {
+        var (uint, bool) slash = Paths::lastSlash(p);
+        if(!slash.1) {
+            return ".";
+        }
+        return Paths::Clean(Strs::Slice(p, 0U, slash.0 + 1U));
+    }
+
+    // Base returns the last element of p, ignoring trailing slashes: "." for
+    // an empty p and "/" for one of slashes alone.
+    public static fun str(str) Base = (p) {
+        if(p == "") {
+            return ".";
+        }
+        var uint end = Strs::ByteLen(p);
+        var (byte*, uint) bytes = Strs::ToBytes(p);
+        for {
+            if(end == 0U || bytes.0[end - 1U] != '/'{byte}) {
+                break;
+            }
+            end--;
+        }
+        if(end == 0U) {
+            return "/";
+        }
+        var str trimmed = Strs::Slice(p, 0U, end);
+        var (uint, bool) slash = Paths::lastSlash(trimmed);
+        if(!slash.1) {
+            return trimmed;
+        }
+        return Strs::Slice(trimmed, slash.0 + 1U, end);
+    }
+
+    // IsAbs reports whether p is rooted, after its volume if it has one.
+    public static fun bool(str) IsAbs = (p) {
+        var str volume = Paths::Volume(p);
+        return Strs::HasPrefix(Strs::Slice(p, Strs::ByteLen(volume), Strs::ByteLen(p)), "/");
+    }
+
+    // Volume returns the Windows volume p begins with, a letter and a colon, or
+    // "" for none.
+    public static fun str(str) Volume = (p) {
+        var (byte*, uint) bytes = Strs::ToBytes(p);
+        if(bytes.1 < 2U || bytes.0[1U] != ':'{byte}) {
+            return "";
+        }
+        var byte letter = bytes.0[0U];
+        if((letter >= 'a'{byte} && letter <= 'z'{byte}) || (letter >= 'A'{byte} && letter <= 'Z'{byte})) {
+            return Strs::Slice(p, 0U, 2U);
+        }
+        return "";
+    }
+
+    // Contains reports whether p names dir or a place inside it, once both are
+    // cleaned. A relative p is inside "." unless it climbs out of it.
+    public static fun bool(str, str) Contains = (dir, p) {
+        var str d = Paths::Clean(dir);
+        var str q = Paths::Clean(p);
+        if(Paths::IsAbs(d) != Paths::IsAbs(q)) {
+            return false;
+        } else if(d == "." || d == q) {
+            return q != ".." && !Strs::HasPrefix(q, "../");
+        } else if(d == "/") {
+            return true;
+        }
+        return Strs::HasPrefix(q, d + "/");
+    }
+
+    // lastSlash answers the byte offset of the last slash in p, and whether
+    // there is one.
+    private static fun (uint, bool)(str) lastSlash = (p) {
+        var (byte*, uint) bytes = Strs::ToBytes(p);
+        for(var uint i = bytes.1; i > 0U; i--) {
+            if(bytes.0[i - 1U] == '/'{byte}) {
+                return (i - 1U, true);
+            }
+        }
+        return (0U, false);
+    }
+}

@@ -1,0 +1,26 @@
+import std("data/list/ArrList.zam");
+import "Project.zam";
+import "ast/File.zam";
+import "ast/Import.zam";
+
+// Source is a parsed file and the paths its imports name
+public class Source {
+    // Resolved is an import and the paths it names
+    public class Resolved {
+        public var Import* imported;
+        public var ArrList[str]* paths;
+
+        public static fun Resolved*(Import*, ArrList[str]*) New = (imported, paths) {
+            var Resolved* r = new(Resolved);
+            r.imported = imported;
+            r.paths = paths;
+            return r;
+        }
+    }
+
+    public var str path;
+    public var Project* project;
+    public var File* file;
+    public var ArrList[uint]* lineStarts;
+    public var ArrList[Resolved*]* imports;
+}

@@ -1,0 +1,57 @@
+import std("io/Paths.zam");
+import std("test/Assert.zam");
+
+public namespace PathsTest {
+    public fun void(uint, str...) Clean = (argC, argV) {
+        Assert::[str]Equal(".", Paths::Clean(""));
+        Assert::[str]Equal("a/c", Paths::Clean("a//b/../c/."));
+        Assert::[str]Equal("../a", Paths::Clean("../a"));
+        Assert::[str]Equal("..", Paths::Clean("a/../.."));
+        Assert::[str]Equal("/a", Paths::Clean("/../a/"));
+        Assert::[str]Equal("/", Paths::Clean("/.."));
+        Assert::[str]Equal(".", Paths::Clean("a/.."));
+    }
+
+    public fun void(uint, str...) Volumes = (argC, argV) {
+        Assert::[str]Equal("C:/b", Paths::Clean("C:/a/../b"));
+        Assert::[str]Equal("C:/", Paths::Clean("C:/.."));
+        Assert::[str]Equal("C:.", Paths::Clean("C:"));
+        Assert::[str]Equal("C:/a", Paths::Dir("C:/a/B.zam"));
+        Assert::[str]Equal("C:/", Paths::Dir("C:/B.zam"));
+        Assert::[str]Equal("C:/a/b", Paths::Join("C:/a", "b"));
+        Assert::True(Paths::IsAbs("C:/a"), "C:/a is not absolute");
+        Assert::False(Paths::IsAbs("C:a"), "C:a is absolute");
+        Assert::[str]Equal("d:", Paths::Volume("d:/x"));
+        Assert::[str]Equal("", Paths::Volume("1:/x"));
+        Assert::True(Paths::Contains("C:/a", "C:/a/b"), "C:/a/b is not in C:/a");
+        Assert::False(Paths::Contains("C:/a", "D:/a/b"), "D:/a/b is in C:/a");
+    }
+
+    public fun void(uint, str...) Join = (argC, argV) {
+        Assert::[str]Equal("a/b", Paths::Join("a", "b"));
+        Assert::[str]Equal("a/c", Paths::Join("a/b", "../c"));
+        Assert::[str]Equal("b", Paths::Join("", "b"));
+        Assert::[str]Equal("", Paths::Join("", ""));
+    }
+
+    public fun void(uint, str...) DirAndBase = (argC, argV) {
+        Assert::[str]Equal("a/b", Paths::Dir("a/b/C.zam"));
+        Assert::[str]Equal(".", Paths::Dir("C.zam"));
+        Assert::[str]Equal("/", Paths::Dir("/C.zam"));
+        Assert::[str]Equal("C.zam", Paths::Base("a/b/C.zam"));
+        Assert::[str]Equal("b", Paths::Base("a/b//"));
+        Assert::[str]Equal("/", Paths::Base("//"));
+        Assert::[str]Equal(".", Paths::Base(""));
+    }
+
+    public fun void(uint, str...) Contains = (argC, argV) {
+        Assert::True(Paths::Contains("/a", "/a/b/c"), "/a/b/c is not in /a");
+        Assert::True(Paths::Contains("/a", "/a"), "/a is not in /a");
+        Assert::False(Paths::Contains("/a", "/ab"), "/ab is in /a");
+        Assert::False(Paths::Contains("/a", "/a/../b"), "/a/../b is in /a");
+        Assert::True(Paths::Contains("/", "/x"), "/x is not in /");
+        Assert::True(Paths::Contains(".", "a/b"), "a/b is not in .");
+        Assert::False(Paths::Contains(".", "../a"), "../a is in .");
+        Assert::False(Paths::Contains("a", "/a"), "/a is in a");
+    }
+}

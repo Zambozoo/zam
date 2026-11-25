@@ -1,5 +1,7 @@
 import {
     "../io/local/File.zam";
+    "Err.zam";
+    "StrErr.zam";
     "Strs.zam";
 }
 
@@ -68,6 +70,26 @@ public namespace System {
         var uint n;
         native(STD_SYSTEM_PROCESSOR_COUNT){void(uint*)}(&n);
         return n;
+    }
+
+    // Env answers the value of the environment variable name, and whether it
+    // is set.
+    public fun (str, bool)(str) Env = (name) {
+        var (str, bool) value;
+        native(STD_SYSTEM_ENV){void(str, str*, bool*)}(name, &(value.0), &(value.1));
+        return value;
+    }
+
+    // Executable answers the path of the running program, with its symbolic
+    // links resolved.
+    public fun (str, Err*)() Executable = () {
+        var str path;
+        var str errStr;
+        native(STD_SYSTEM_EXECUTABLE){void(str*, str*)}(&path, &errStr);
+        if(errStr != null) {
+            return ("", StrErr::New(errStr));
+        }
+        return (path, null);
     }
 
     // ThreadID reports the OS-level id of the calling thread as the raw bits

@@ -41,6 +41,10 @@ type Options struct {
 	// RuntimeCacheDir is where the compiled runtime is cached, under
 	// $ZAM_CACHE_DIR or else the user's cache directory when empty.
 	RuntimeCacheDir string
+	// ZigCacheDir is where Zig keeps its caches, over any the environment
+	// names. When empty, the environment's are used, or else ones under the
+	// runtime cache.
+	ZigCacheDir string
 	// Target is the platform a link is for, the host when unset.
 	Target target.Target
 }

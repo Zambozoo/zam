@@ -52,6 +52,7 @@ class Zam < Formula
 
   def install
     bin.install "zam"
+    pkgshare.install "std"
   end
 
   def caveats

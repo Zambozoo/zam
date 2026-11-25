@@ -70,6 +70,7 @@ public namespace StmtParser {
     public fun (Stmt*, Err*)(Parser*, Token*) Block = (p, start) {
         var ArrList[Stmt*]* statements = ArrList::[Stmt*]New(0U);
         var bool broken = false;
+        var bool imported = false;
         for {
             var (Token*, Err*) end = p.Match(TokenKind::RightBrace);
             if(end.1 != null) {
@@ -82,11 +83,20 @@ public namespace StmtParser {
             if(importing.1 != null) {
                 return (null, importing.1);
             } else if(importing.0 != null) {
+                var Parser.Recovery* r = p.Checkpoint();
                 var (ArrList[Import*]*, bool, Err*) imports = ImportParser::Parse(p, importing.0);
-                if(imports.2 != null) {
-                    return (null, imports.2);
-                } else if(imports.0.Len() > 0U) {
+                if(imports.0 != null && imports.0.Len() > 0U) {
                     statements.AddLast(Stmt.Imports::New(importing.0, imports.0));
+                    imported = true;
+                }
+                if(!imports.1) {
+                    p.brokenImports = true;
+                }
+                if(imports.2 != null) {
+                    var Err* stop = r.Recover(imports.2);
+                    if(stop != null) {
+                        return (null, stop);
+                    }
                 }
                 continue;
             }
@@ -104,7 +114,11 @@ public namespace StmtParser {
                 }
             }
         }
-        return (Stmt.Block::New(start, statements, broken), null);
+        var Stmt.Block* block = Stmt.Block::New(start, statements, broken);
+        if(imported) {
+            p.importBlocks.AddLast(block);
+        }
+        return (block, null);
     }
 
     // expression reads an expression and the ; after it

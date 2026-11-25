@@ -2533,7 +2533,7 @@ namespace Main {
 			require.NoError(t, err)
 			out := platform.Executable(filepath.Join(t.TempDir(), "out"))
 			require.NoError(t, build.LinkObject(object.Bytes, build.Options{
-				OutputPath: out, RuntimeCacheDir: t.TempDir(), Target: platform,
+				OutputPath: out, RuntimeCacheDir: t.TempDir(), ZigCacheDir: t.TempDir(), Target: platform,
 			}))
 
 			switch platform.OS {

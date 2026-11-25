@@ -26,18 +26,23 @@ const runtimeArchiveName = "libzamrt.a"
 type zig struct {
 	path string
 	// cacheDir is where Zig keeps its caches, unless the environment names
-	// others.
+	// others and forced is false.
 	cacheDir string
+	forced   bool
 	target   target.Target
 	pack     string
 }
 
-// newZig answers Zig compiling for t against pack, keeping its caches under
-// cacheDir, or nil when zig is not on PATH.
-func newZig(cacheDir string, t target.Target, pack string) *zig {
+// newZig answers Zig compiling for t against pack, keeping its caches in
+// zigCacheDir over the environment's, or else under cacheDir unless the
+// environment names others, or nil when zig is not on PATH.
+func newZig(cacheDir, zigCacheDir string, t target.Target, pack string) *zig {
 	path, err := exec.LookPath("zig")
 	if err != nil {
 		return nil
+	}
+	if zigCacheDir != "" {
+		return &zig{path: path, cacheDir: zigCacheDir, forced: true, target: t, pack: pack}
 	}
 	return &zig{path: path, cacheDir: filepath.Join(cacheDir, "zig"), target: t, pack: pack}
 }
@@ -47,7 +52,7 @@ func (z *zig) command(tool string, args ...string) *exec.Cmd {
 	cmd := exec.Command(z.path, append([]string{tool}, args...)...)
 	cmd.Env = os.Environ()
 	for _, variable := range []string{"ZIG_GLOBAL_CACHE_DIR", "ZIG_LOCAL_CACHE_DIR"} {
-		if os.Getenv(variable) == "" {
+		if z.forced || os.Getenv(variable) == "" {
 			cmd.Env = append(cmd.Env, variable+"="+z.cacheDir)
 		}
 	}
@@ -66,7 +71,13 @@ func (z *zig) cflags() []string {
 // the flags, so a change to any of them builds a fresh archive beside the old
 // one. Without Zig, the pack's own prebuilt runtime is answered.
 func RuntimeArchive(cacheDir string, t target.Target, pack string) (string, error) {
-	z := newZig(cacheDir, t, pack)
+	return runtimeArchive(cacheDir, "", t, pack)
+}
+
+// runtimeArchive is [RuntimeArchive] with Zig keeping its caches as
+// [newZig] says.
+func runtimeArchive(cacheDir, zigCacheDir string, t target.Target, pack string) (string, error) {
+	z := newZig(cacheDir, zigCacheDir, t, pack)
 	if z == nil {
 		prebuilt := filepath.Join(pack, "lib", runtimeArchiveName)
 		if _, err := os.Stat(prebuilt); err != nil {

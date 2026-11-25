@@ -99,7 +99,7 @@ func LinkObject(object []byte, opts Options) error {
 	if err != nil {
 		return err
 	}
-	archive, err := RuntimeArchive(cacheDir, t, pack)
+	archive, err := runtimeArchive(cacheDir, opts.ZigCacheDir, t, pack)
 	if err != nil {
 		return err
 	}
@@ -117,7 +117,7 @@ func LinkObject(object []byte, opts Options) error {
 	if err := os.WriteFile(objectPath, object, 0o600); err != nil {
 		return err
 	}
-	projectObjects, err := compileProjectNatives(opts, dir, newZig(cacheDir, t, pack), filepath.Dir(archive))
+	projectObjects, err := compileProjectNatives(opts, dir, newZig(cacheDir, opts.ZigCacheDir, t, pack), filepath.Dir(archive))
 	if err != nil {
 		return err
 	}

@@ -45,7 +45,7 @@ public namespace FieldParser {
         }
 
         public fun Err*(Token*, Token*, Type*, Err*) EnumValueUnwritten = (enumName, name, primitive, err) {
-            return StrErr::New("enum value " + enumName.value{str} + "::" + name.value{str} + " must be written with a " + primitive.Str() + " value: " + err.Err());
+            return StrErr::New("enum value " + enumName.value{str} + "::" + name.value{str} + " must be written with a " + primitive.Text() + " value: " + err.Err());
         }
 
         public fun Err*(Token*, Token*) EnumValueUnbacked = (enumName, name) {

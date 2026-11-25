@@ -25,15 +25,15 @@ public namespace DeclParser {
         }
 
         public fun Err*(Type*) BaseNotPointer = (base) {
-            return StrErr::New("base declaration type " + Strs::Quote(base.Str()) + " is not a pointer to a resolvable type");
+            return StrErr::New("base declaration type " + Strs::Quote(base.Text()) + " is not a pointer to a resolvable type");
         }
 
         public fun Err*(Token*, Type*) MustBeTailed = (name, tailed) {
-            return StrErr::New(Strs::Quote(name.value{str}) + " extends the tailed type " + Strs::Quote(tailed.Str()) + ", so it must be tailed itself");
+            return StrErr::New(Strs::Quote(name.value{str}) + " extends the tailed type " + Strs::Quote(tailed.Text()) + ", so it must be tailed itself");
         }
 
         public fun Err*(Token*, Type*, Token*) NoRoomAfterTail = (name, tailed, member) {
-            return StrErr::New(Strs::Quote(name.value{str}) + " extends the tailed type " + Strs::Quote(tailed.Str()) + ", so instance member " +
+            return StrErr::New(Strs::Quote(name.value{str}) + " extends the tailed type " + Strs::Quote(tailed.Text()) + ", so instance member " +
                 Strs::Quote(member.value{str}) + " has nowhere to lie: nothing follows an unsized tail");
         }
 
@@ -58,12 +58,16 @@ public namespace DeclParser {
         }
 
         public fun Err*(Token*, Type*) Unbackable = (name, primitive) {
-            return StrErr::New("enum " + name.value{str} + " cannot be backed by " + primitive.Str());
+            return StrErr::New("enum " + name.value{str} + " cannot be backed by " + primitive.Text());
         }
 
         public fun Err*(Token*, Token*) FieldBeforeValues = (name, enumName) {
             return StrErr::New("field " + Strs::Quote(name.value{str}) + " of enum " + enumName.value{str} +
                 " must come after its values, as only declarations may come before them");
+        }
+
+        public fun Err*(Token*) StrMethod = (name) {
+            return StrErr::New("Str of " + name.value{str} + " must be an instance method of type str()");
         }
 
         public fun Err*(Token*, Token*) AliasSubtype = (name, op) {
@@ -180,6 +184,7 @@ public namespace DeclParser {
         if(d.tailed && DeclParser::tail(d) == null) {
             p.ReportAt(Errs::MissingTail, d.name);
         }
+        DeclParser::strMethod(p, d);
         return (d, null);
     }
 
@@ -284,6 +289,7 @@ public namespace DeclParser {
         if(err != null) {
             return (null, err);
         }
+        DeclParser::strMethod(p, d);
         return (d, null);
     }
 
@@ -416,6 +422,32 @@ public namespace DeclParser {
             return Errs::TailNotLast(tailed.name);
         }
         return null;
+    }
+
+    // strMethod reports a Str of d, a struct or enum, that is not an instance method of type str()
+    fun void(Parser*, Decl*) strMethod = (p, d) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var Field* f = d.fields.Get(i);
+            if(f{Decl*} != null || f.name.value{str} != "Str") {
+                continue;
+            }
+            var Field.Method* m = f{Field.Method*};
+            if(DeclParser::held(f) || m == null || m.generics != null || !DeclParser::answersStr(m.signature)) {
+                p.ReportAt(Errs::StrMethod(d.name), f.name);
+            }
+            return;
+        }
+    }
+
+    // answersStr reports whether t takes nothing and answers a str
+    fun bool(Type.Function*) answersStr = (t) {
+        var Type* returns = t.returns;
+        var Type.Wrapped* w = returns{Type.Wrapped*};
+        if(w != null && w.wrap == Type.Wrap::Const) {
+            returns = w.inner;
+        }
+        var Type.Primitive* primitive = returns{Type.Primitive*};
+        return t.parameters.Len() == 0U && primitive != null && primitive.start.kind == TokenKind::String;
     }
 
     // held reports whether f is held by its declaration rather than by an instance

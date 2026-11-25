@@ -1,0 +1,172 @@
+import std("data/list/ArrList.zam");
+import std("data/list/LinkList.zam");
+import std("data/map/TreeMap.zam");
+import std("data/set/HashSet.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("sync/Cond.zam");
+import std("sync/Mutex.zam");
+import std("sync/WaitGroup.zam");
+import "FileParser.zam";
+import "Parser.zam";
+import "Project.zam";
+import "Resolver.zam";
+import "Source.zam";
+import "SourceErr.zam";
+import "SourceProvider.zam";
+import "ast/Decl.zam";
+import "ast/File.zam";
+
+// ProjectParser parses every file a program is made of on several threads
+public class ProjectParser {
+    // Program is every file parsed, by path, and the declaration of the entry file
+    public class Program {
+        public var TreeMap[str, Source*]* sources;
+        public var Decl* main;
+    }
+
+    var SourceProvider* provider;
+    var uint threads;
+    var Project* project;
+
+    var Mutex* lock;
+    var Cond* changed;
+    // queue is the paths found and not yet taken by a thread
+    var LinkList[str]* queue;
+    var HashSet[str]* seen;
+    // pending counts the paths found and not yet parsed
+    var uint pending;
+    var TreeMap[str, Source*]* sources;
+    var ArrList[Err*]* errs;
+    // incomplete says a file could not be parsed at all
+    var bool incomplete;
+
+    public static fun ProjectParser*(SourceProvider*, uint) New = (provider, threads) {
+        var ProjectParser* p = new(ProjectParser);
+        p.provider = provider;
+        p.threads = threads;
+        if(p.threads == 0U) {
+            p.threads = 1U;
+        }
+        p.lock = Mutex::New();
+        p.changed = Cond::New(p.lock);
+        p.queue = LinkList::[str]New(0U);
+        p.seen = HashSet::[str]New(0U);
+        p.sources = TreeMap::[str, Source*]New(0U);
+        p.errs = ArrList::[Err*]New(0U);
+        return p;
+    }
+
+    // Parse parses entry, the paths in extra, and every file they import
+    public fun (Program*, ArrList[Err*]*)(str, Arr[str]*) Parse = (entry, extra) {
+        this.project = Project::Implicit(entry);
+        this.lock.Lock();
+        this.add(entry);
+        for(var uint i = 0U; i < extra.Len(); i++) {
+            this.add(extra.Get(i));
+        }
+        this.lock.Unlock();
+
+        var WaitGroup* wg = WaitGroup::New();
+        wg.Add(this.threads{int});
+        for(var uint i = 0U; i < this.threads; i++) {
+            async(this.work(wg));
+        }
+        wg.Wait();
+
+        if(this.incomplete) {
+            return (null, this.errs);
+        }
+        var Program* program = new(Program);
+        program.sources = this.sources;
+        program.main = this.sources.Get(entry).0.file.decl;
+        return (program, this.errs);
+    }
+
+    // add queues path to be parsed unless it has been already, with the lock held
+    fun void(str) add = (path) {
+        if(this.seen.Add(path)) {
+            this.queue.AddLast(path);
+            this.pending++;
+            this.changed.Broadcast();
+        }
+    }
+
+    // work parses the paths queued until none is left to be found
+    fun void(WaitGroup*) work = (wg) {
+        defer wg.Done();
+        for {
+            this.lock.Lock();
+            for(; this.queue.Len() == 0U && this.pending > 0U;) {
+                this.changed.Wait();
+            }
+            if(this.queue.Len() == 0U) {
+                this.lock.Unlock();
+                return;
+            }
+            var str path = this.queue.RemoveFirst();
+            this.lock.Unlock();
+
+            var (Source*, ArrList[Err*]*, bool) parsed = this.parse(path);
+
+            this.lock.Lock();
+            for(var uint i = 0U; i < parsed.1.Len(); i++) {
+                this.errs.AddLast(parsed.1.Get(i));
+            }
+            if(!parsed.2) {
+                this.incomplete = true;
+            }
+            if(parsed.0 != null) {
+                this.sources.Put(path, parsed.0);
+                for(var uint i = 0U; i < parsed.0.imports.Len(); i++) {
+                    var ArrList[str]* paths = parsed.0.imports.Get(i).paths;
+                    for(var uint j = 0U; j < paths.Len(); j++) {
+                        this.add(paths.Get(j));
+                    }
+                }
+            }
+            this.pending--;
+            this.changed.Broadcast();
+            this.lock.Unlock();
+        }
+    }
+
+    // parse reads, parses and resolves the file at path
+    fun (Source*, ArrList[Err*]*, bool)(str) parse = (path) {
+        var ArrList[Err*]* errs = ArrList::[Err*]New(0U);
+        var (str, Err*) text = this.provider.Read(path);
+        if(text.1 != null) {
+            errs.AddLast(SourceErr::In(text.1, path));
+            return (null, errs, false);
+        }
+
+        var Parser* p = Parser::New(text.0);
+        var (File*, Err*) file = FileParser::Parse(p);
+        for(var uint i = 0U; i < p.diagnostics.Len(); i++) {
+            var Parser.Diagnostic* d = p.diagnostics.Get(i);
+            errs.AddLast(SourceErr::At(d.err, path, p.LineStarts(), d.token));
+        }
+        if(file.1 != null && file.1 != Parser.Errs::Recorded) {
+            errs.AddLast(SourceErr::At(file.1, path, p.LineStarts(), p.Peek().0));
+        }
+        if(file.0 == null) {
+            return (null, errs, false);
+        }
+
+        var Source* s = new(Source);
+        s.path = path;
+        s.project = this.project;
+        s.file = file.0;
+        s.lineStarts = p.LineStarts();
+        var (ArrList[Source.Resolved*]*, ArrList[Parser.Diagnostic*]*) resolved = Resolver::Resolve(this.provider, this.project, path, file.0, p.importBlocks);
+        s.imports = resolved.0;
+        if(resolved.1.Len() > 0U) {
+            file.0.brokenImports = true;
+        }
+        for(var uint i = 0U; i < resolved.1.Len(); i++) {
+            var Parser.Diagnostic* d = resolved.1.Get(i);
+            errs.AddLast(SourceErr::At(d.err, path, s.lineStarts, d.token));
+        }
+        return (s, errs, file.1 == null);
+    }
+}

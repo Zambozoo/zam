@@ -1,0 +1,16 @@
+import io = std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "Paths.zam";
+
+public namespace PathsTest {
+    public fun void(uint, str...) Parse = (argC, argV) {
+        Assert::[str]Equal("std://lang/Err.zam", Paths::Parse("std://lang/Err.zam").0);
+        Assert::[str]Equal("C:/a/Main.zam", Paths::Parse("C:/a/b/../Main.zam").0);
+        var str cwd = FS::ToSlash(FS::Cwd().0);
+        Assert::[str]Equal(io.Paths::Join(cwd, "x/Main.zam"), Paths::Parse("x/./Main.zam").0);
+        Assert::True(io.Paths::IsAbs(Paths::Parse("/r/Main.zam").0), "a rooted path is not absolute");
+        Assert::True(Strs::HasSuffix(Paths::Parse("/r/Main.zam").0, "/r/Main.zam"), "a rooted path loses its root");
+    }
+}

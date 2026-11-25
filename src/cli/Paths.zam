@@ -1,62 +1,28 @@
-import std("data/list/ArrList.zam");
+import io = std("io/Paths.zam");
 import std("io/local/FS.zam");
-import std("lang/Arr.zam");
 import std("lang/Err.zam");
 import std("lang/Strs.zam");
 
 // Paths reads the paths a command line is written with
 public namespace Paths {
     public static var str$ standardPrefix = "std://";
-    public static var char$ separator = '/';
-    public static var str$ dot = ".";
-    public static var str$ doubleDot = "..";
-    
+
+    // Parse answers the absolute slash path p names, written in the system's form
     public fun (str, Err*)(str) Parse = (p) {
         if(Strs::HasPrefix(p, standardPrefix)) {
             return (p, null);
         }
-        if(Strs::HasPrefix(p, separator{str})) {
-            return (Paths::Clean(p), null);
+        var str slashed = FS::ToSlash(p);
+        var bool windows = FS::Separator == "\\";
+        if(io.Paths::IsAbs(slashed) && (!windows || io.Paths::Volume(slashed) != "")) {
+            return (io.Paths::Clean(slashed), null);
         }
         var (str, Err*) cwd = FS::Cwd();
         if(cwd.1 != null) {
             return (null, cwd.1);
+        } else if(io.Paths::IsAbs(slashed)) {
+            return (io.Paths::Clean(io.Paths::Volume(FS::ToSlash(cwd.0)) + slashed), null);
         }
-        return (Paths::Clean(cwd.0 + separator + p), null);
-    }
-
-    // Clean answers the shortest path equivalent to p
-    public fun str(str) Clean = (p) {
-        var bool rooted = Strs::HasPrefix(p, separator{str});
-        var Arr[str]* parts = Strs::Split(p, separator{byte});
-        var ArrList[str]* kept = ArrList::[str]New(0U);
-        for(var uint i = 0U; i < parts.Len(); i++) {
-            var str part = parts.Get(i);
-            if(part == "" || part == dot) {
-                continue;
-            }
-            if(part == doubleDot) {
-                if(kept.Len() > 0U && kept.GetLast() != doubleDot) {
-                    kept.RemoveLast();
-                } else if(!rooted) {
-                    kept.AddLast(part);
-                }
-                continue;
-            }
-            kept.AddLast(part);
-        }
-        var str out = "";
-        var str sep = "";
-        for(var uint i = 0U; i < kept.Len(); i++) {
-            out = out + sep + kept.Get(i);
-            sep = "/";
-        }
-        if(rooted) {
-            return separator + out;
-        }
-        if(out == "") {
-            return dot;
-        }
-        return out;
+        return (io.Paths::Join(FS::ToSlash(cwd.0), slashed), null);
     }
 }

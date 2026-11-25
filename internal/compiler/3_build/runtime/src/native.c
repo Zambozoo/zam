@@ -18,7 +18,12 @@
 #include <windows.h>
 #include <bcrypt.h>
 #else
+#include <limits.h>
 #include <sys/random.h>
+#endif
+
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
 #endif
 
 #include "definition.h"
@@ -766,6 +771,53 @@ static void stdSystemProcessID(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
+// stdSystemEnv answers the value of the environment variable named by its
+// argument, and whether it is set.
+static void stdSystemEnv(ZamThread *thread) {
+    char *name = cString(thread, 0);
+    const char *value = getenv(name);
+    free(name);
+    if (value != NULL)
+        *(ZamWord *)zam_native_argument_pointer(thread, 1) = (ZamWord)zam_native_new_string(thread, value, strlen(value));
+    *(bool *)zam_native_argument_pointer(thread, 2) = value != NULL;
+    zam_native_return_void(thread);
+}
+
+// stdSystemExecutable answers the path of the running executable with its
+// symbolic links resolved.
+static void stdSystemExecutable(ZamThread *thread) {
+    ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
+#if defined(_WIN32)
+    char path[MAX_PATH + 1];
+    DWORD got = GetModuleFileNameA(NULL, path, sizeof path);
+    int failed = got == 0 || got >= sizeof path;
+    int err = failed ? ENAMETOOLONG : 0;
+    if (!failed)
+        *out = (ZamWord)zam_native_new_string(thread, path, got);
+#else
+    char found[PATH_MAX];
+    char resolved[PATH_MAX];
+    int failed = 0;
+    int err = 0;
+#if defined(__APPLE__)
+    uint32_t size = sizeof found;
+    if (_NSGetExecutablePath(found, &size) != 0) {
+        failed = 1;
+        err = ENAMETOOLONG;
+    }
+#else
+    strcpy(found, "/proc/self/exe");
+#endif
+    if (!failed && realpath(found, resolved) == NULL) {
+        failed = 1;
+        err = errno;
+    }
+    if (!failed)
+        *out = (ZamWord)zam_native_new_string(thread, resolved, strlen(resolved));
+#endif
+    finishErr(thread, 1, failed ? -1 : 0, err);
+}
+
 // stdSystemProcessorCount reports how many processors the system has online.
 static void stdSystemProcessorCount(ZamThread *thread) {
     ZamWord *out = (ZamWord *)zam_native_argument_pointer(thread, 0);
@@ -1349,6 +1401,8 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_SYSTEM_CALLER", stdSystemCaller},
     {"STD_SYSTEM_PROCESS_ID", stdSystemProcessID},
     {"STD_SYSTEM_PROCESSOR_COUNT", stdSystemProcessorCount},
+    {"STD_SYSTEM_ENV", stdSystemEnv},
+    {"STD_SYSTEM_EXECUTABLE", stdSystemExecutable},
     {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},
     {"STD_RAND_UINT", stdRandUint},
     {"STD_RAND_FLT", stdRandFlt},

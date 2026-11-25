@@ -59,6 +59,7 @@ namespace Main {
         s = s + " " + (FS::Chdir(dir) == null){str} + " " + (FS::WriteFile("rel.txt", "r") == null){str} + " " + FS::Exists(FS::Join(dir, "rel.txt")){str};
         s = s + " " + (FS::Cwd().1 == null){str} + " " + FS::Exists(FS::TempDir()){str} + "\n";
         s = s + FS::Join(FS::Join("", "p"), "q") + " " + FS::Join("p/", "q") + " " + FS::Separator + "\n";
+        s = s + FS::ToSlash(FS::Join("a", "b")) + " " + FS::FromSlash("a/b") + "\n";
         File::StdOut.WriteStr(s);
     }
 }
@@ -76,5 +77,6 @@ namespace Main {
 		"[line1][line2][last!] 10 yzabcdefgh 121 122\n"+
 		"[b, x.txt] true [b, y.txt] true true true false 0\n"+
 		"ping true true true true true true\n"+
-		"p"+sep+"q p/q "+sep+"\n", stdout)
+		"p"+sep+"q p/q "+sep+"\n"+
+		"a/b a"+sep+"b\n", stdout)
 }

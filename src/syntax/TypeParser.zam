@@ -12,15 +12,15 @@ import "ast/Type.zam";
 public namespace TypeParser {
     namespace Errs {
         public fun Err*(Type*) AlreadyConst = (t) {
-            return StrErr::New("type " + Strs::Quote(t.Str()) + " is already const");
+            return StrErr::New("type " + Strs::Quote(t.Text()) + " is already const");
         }
 
         public fun Err*(Type*) UnsizedTail = (t) {
-            return StrErr::New("unsized tailed type " + Strs::Quote(t.Str()) + " is not allowed");
+            return StrErr::New("unsized tailed type " + Strs::Quote(t.Text()) + " is not allowed");
         }
 
         public fun Err*(Type*) UnsizedTailNotPointer = (t) {
-            return StrErr::New("unsized tailed type " + Strs::Quote(t.Str()) + " must be a pointer type");
+            return StrErr::New("unsized tailed type " + Strs::Quote(t.Text()) + " must be a pointer type");
         }
 
         public fun Err*(Token*) BoundAmongArguments = (bound) {

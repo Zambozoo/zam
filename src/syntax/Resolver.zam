@@ -1,0 +1,189 @@
+import std("data/list/ArrList.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "Parser.zam";
+import "Path.zam";
+import "Project.zam";
+import "Source.zam";
+import "SourceProvider.zam";
+import "Token.zam";
+import "ast/File.zam";
+import "ast/Import.zam";
+import "ast/Stmt.zam";
+
+// Resolver answers the paths the imports of a file name
+public namespace Resolver {
+    namespace Errs {
+        public fun Err*(str, str) NoDependency = (pkg, project) {
+            return StrErr::New("no dependency " + Strs::Quote(pkg) + " declared by project " + Strs::Quote(project));
+        }
+
+        public fun Err*(str) NoMatches = (path) {
+            return StrErr::New("import " + Strs::Quote(path) + " matched no " + Path::Extension + " files");
+        }
+
+        public fun Err*(str) TestOnly = (path) {
+            return StrErr::New("test file " + Path::Display(path) + " can only be imported by a test file");
+        }
+
+        public fun Err*(str, str) Duplicate = (bound, path) {
+            return StrErr::New("duplicate import " + Strs::Quote(bound) + " of " + Strs::Quote(Path::Display(path)));
+        }
+
+        public fun Err*(str, str, str) Collides = (bound, path, other) {
+            return StrErr::New("duplicate import " + Strs::Quote(bound) + ": " + Strs::Quote(Path::Display(path)) + " collides with " + Strs::Quote(Path::Display(other)));
+        }
+    }
+
+    // Bound is a name an import binds and the path it names
+    class Bound {
+        var str id;
+        var str path;
+    }
+
+    // Resolve answers the imports of file
+    public fun (ArrList[Source.Resolved*]*, ArrList[Parser.Diagnostic*]*)(SourceProvider*, Project*, str, File*, ArrList[Stmt.Block*]*) Resolve = (provider, project, path, file, blocks) {
+        var ArrList[Source.Resolved*]* resolved = ArrList::[Source.Resolved*]New(0U);
+        var ArrList[Parser.Diagnostic*]* diagnostics = ArrList::[Parser.Diagnostic*]New(0U);
+        Resolver::scope(provider, project, path, file.imports, resolved, diagnostics);
+        for(var uint i = 0U; i < blocks.Len(); i++) {
+            var ArrList[Import*]* imports = ArrList::[Import*]New(0U);
+            var ArrList[Stmt*]* statements = blocks.Get(i).statements;
+            for(var uint j = 0U; j < statements.Len(); j++) {
+                var Stmt.Imports* s = statements.Get(j){Stmt.Imports*};
+                if(s != null) {
+                    for(var uint k = 0U; k < s.imports.Len(); k++) {
+                        imports.AddLast(s.imports.Get(k));
+                    }
+                }
+            }
+            Resolver::scope(provider, project, path, imports, resolved, diagnostics);
+        }
+        return (resolved, diagnostics);
+    }
+
+    // scope resolves imports that share one scope into resolved
+    fun void(SourceProvider*, Project*, str, ArrList[Import*]*, ArrList[Source.Resolved*]*, ArrList[Parser.Diagnostic*]*) scope = (provider, project, from, imports, resolved, diagnostics) {
+        var ArrList[Bound*]* bound = ArrList::[Bound*]New(0U);
+        for(var uint i = 0U; i < imports.Len(); i++) {
+            var Import* imported = imports.Get(i);
+            var (ArrList[str]*, Err*) paths = Resolver::paths(provider, project, from, imported);
+            if(paths.1 != null) {
+                diagnostics.AddLast(Resolver::diagnostic(paths.1, imported.start));
+                continue;
+            }
+            var ArrList[str]* kept = ArrList::[str]New(0U);
+            for(var uint j = 0U; j < paths.0.Len(); j++) {
+                var str path = paths.0.Get(j);
+                var Bound* b = new(Bound);
+                b.id = Resolver::id(imported, path);
+                b.path = path;
+                var Bound* other = Resolver::colliding(bound, b);
+                if(other == null) {
+                    bound.AddLast(b);
+                    kept.AddLast(path);
+                } else if(other.path == path) {
+                    diagnostics.AddLast(Resolver::diagnostic(Errs::Duplicate(Resolver::boundName(imported, path), path), imported.start));
+                } else {
+                    diagnostics.AddLast(Resolver::diagnostic(Errs::Collides(Resolver::boundName(imported, path), path, other.path), imported.start));
+                }
+            }
+            if(kept.Len() > 0U) {
+                resolved.AddLast(Source.Resolved::New(imported, kept));
+            }
+        }
+    }
+
+    // paths answers the paths imported names
+    fun (ArrList[str]*, Err*)(SourceProvider*, Project*, str, Import*) paths = (provider, project, from, imported) {
+        var str written = imported.path.value{str};
+        var ArrList[str]* paths = ArrList::[str]New(0U);
+        if(!imported.IsGlob()) {
+            var (str, Err*) path = Resolver::path(project, from, imported.pkg, written);
+            if(path.1 != null) {
+                return (null, path.1);
+            } else if(Path::IsTestFile(path.0) && !Path::IsTestFile(from)) {
+                return (null, Errs::TestOnly(path.0));
+            }
+            paths.AddLast(path.0);
+            return (paths, null);
+        }
+
+        var str dir = ".";
+        if(written != "*") {
+            dir = Strs::Slice(written, 0U, Strs::ByteLen(written) - 2U);
+        }
+        if(dir == "") {
+            dir = ".";
+        }
+        var (str, Err*) resolved = Resolver::path(project, from, imported.pkg, dir);
+        if(resolved.1 != null) {
+            return (null, resolved.1);
+        }
+        var (Arr[str]*, Err*) children = provider.ListCodeFiles(resolved.0);
+        if(children.1 != null) {
+            return (null, children.1);
+        }
+        for(var uint i = 0U; i < children.0.Len(); i++) {
+            var str child = children.0.Get(i);
+            if(!Path::IsTestFile(child) || Path::IsTestFile(from)) {
+                paths.AddLast(child);
+            }
+        }
+        if(paths.Len() == 0U) {
+            return (null, Errs::NoMatches(written));
+        }
+        return (paths, null);
+    }
+
+    // path answers the path written names
+    fun (str, Err*)(Project*, str, Token*, str) path = (project, from, pkg, written) {
+        if(pkg == null) {
+            return (Path::Resolve(from, written), null);
+        }
+        var (str, bool) dir = project.dependencies.Get(pkg.value{str});
+        if(!dir.1) {
+            return ("", Errs::NoDependency(pkg.value{str}, project.name));
+        }
+        return Path::ResolveInto(dir.0, written);
+    }
+
+    // colliding answers the name among bound that b would be reached by too, or null for none
+    fun Bound*(ArrList[Bound*]*, Bound*) colliding = (bound, b) {
+        for(var uint i = 0U; i < bound.Len(); i++) {
+            var Bound* other = bound.Get(i);
+            if(other.id == b.id && Path::FileName(other.path) == Path::FileName(b.path)) {
+                return other;
+            }
+        }
+        return null;
+    }
+
+    // id answers the name imported binds path under
+    fun str(Import*, str) id = (imported, path) {
+        if(imported.name != null) {
+            return imported.name.value{str};
+        } else if(imported.pkg != null) {
+            return imported.pkg.value{str};
+        }
+        return Path::FileName(path);
+    }
+
+    // boundName answers the name path is reached by through imported
+    fun str(Import*, str) boundName = (imported, path) {
+        if(imported.name != null || imported.pkg != null) {
+            return Resolver::id(imported, path) + "." + Path::FileName(path);
+        }
+        return Path::FileName(path);
+    }
+
+    // diagnostic answers err raised at tok
+    fun Parser.Diagnostic*(Err*, Token*) diagnostic = (err, tok) {
+        var Parser.Diagnostic* d = new(Parser.Diagnostic);
+        d.err = err;
+        d.token = tok;
+        return d;
+    }
+}

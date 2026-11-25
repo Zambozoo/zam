@@ -212,6 +212,29 @@ public namespace FS {
         return b{int} == '/'{int} || b{int} == Strs::ToBytes(FS::Separator).0[0]{int};
     }
 
+    // ToSlash returns p with each of the system's separators made a slash.
+    public static fun str(str) ToSlash = (p) {
+        return FS::replace(p, FS::Separator, "/");
+    }
+
+    // FromSlash returns p with each slash made the system's separator.
+    public static fun str(str) FromSlash = (p) {
+        return FS::replace(p, "/", FS::Separator);
+    }
+
+    // replace returns s with each byte of from, one byte long, made to.
+    private static fun str(str, str, str) replace = (s, from, to) {
+        if(from == to) {
+            return s;
+        }
+        var Arr[str]* parts = Strs::Split(s, Strs::ToBytes(from).0[0U]);
+        var str out = parts.Get(0U);
+        for(var uint i = 1U; i < parts.Len(); i++) {
+            out = out + to + parts.Get(i);
+        }
+        return out;
+    }
+
     // Join joins two paths with one separator between them. On Windows a
     // slash already ending a counts as one.
     public static fun str(str, str) Join = (a, b) {

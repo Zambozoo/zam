@@ -1,0 +1,28 @@
+import std("data/list/ArrList.zam");
+import std("lang/StrErr.zam");
+import std("test/Assert.zam");
+import "Path.zam";
+import "SourceErr.zam";
+
+public namespace SourceErrTest {
+    public fun void(uint, str...) Position = (argC, argV) {
+        var ArrList[uint]* starts = ArrList::[uint]New(3U, 0U, 5U, 9U);
+        var (uint, uint) first = SourceErr::Position(starts, 0U);
+        Assert::[uint]Equal(1U, first.0);
+        Assert::[uint]Equal(1U, first.1);
+        var (uint, uint) second = SourceErr::Position(starts, 7U);
+        Assert::[uint]Equal(2U, second.0);
+        Assert::[uint]Equal(3U, second.1);
+        var (uint, uint) last = SourceErr::Position(starts, 12U);
+        Assert::[uint]Equal(3U, last.0);
+        Assert::[uint]Equal(4U, last.1);
+    }
+
+    public fun void(uint, str...) Err = (argC, argV) {
+        Assert::[str]Equal("bad (" + Path::Display("/p/A.zam") + ")", SourceErr::In(StrErr::New("bad"), "/p/A.zam").Err());
+        var SourceErr* e = SourceErr::In(StrErr::New("bad"), "/p/A.zam");
+        e.line = 2U;
+        e.column = 7U;
+        Assert::[str]Equal("bad (" + Path::Display("/p/A.zam") + "[2:7])", e.Err());
+    }
+}

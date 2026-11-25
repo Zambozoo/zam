@@ -1,0 +1,60 @@
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
+import std("io/local/File.zam");
+import std("io/local/FS.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "Path.zam";
+
+// LocalSources reads source files from the local file system
+public class LocalSources {
+    namespace Errs {
+        public fun Err*(str, Err*) Unlistable = (dir, err) {
+            return StrErr::New("cannot list directory " + Strs::Quote(Path::Display(dir)) + ": " + err.Err());
+        }
+    }
+
+    var str stdRoot;
+
+    public static fun LocalSources*(str) New = (stdRoot) {
+        var LocalSources* s = new(LocalSources);
+        s.stdRoot = stdRoot;
+        return s;
+    }
+
+    public fun (str, Err*)(str) Read = (path) {
+        var (File*, Err*) f = File::Open(this.local(path));
+        if(f.1 != null) {
+            return ("", f.1);
+        }
+        var (str, Err*) source = f.0.ReadAll();
+        f.0.Close();
+        return source;
+    }
+
+    public fun (Arr[str]*, Err*)(str) ListCodeFiles = (dir) {
+        var str local = this.local(dir);
+        var (Arr[str]*, Err*) names = FS::ReadDir(local);
+        if(names.1 != null) {
+            return (null, Errs::Unlistable(dir, names.1));
+        }
+        var ArrList[str]* children = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < names.0.Len(); i++) {
+            var str name = names.0.Get(i);
+            if(Strs::HasSuffix(name, Path::Extension) && !FS::IsDir(Paths::Join(local, name))) {
+                children.AddLast(Path::Child(dir, name));
+            }
+        }
+        return (children.Arr(), null);
+    }
+
+    // local answers where path lies on the local file system
+    fun str(str) local = (path) {
+        if(Path::IsStd(path)) {
+            return Paths::Join(this.stdRoot, Path::StdName(path));
+        }
+        return path;
+    }
+}
