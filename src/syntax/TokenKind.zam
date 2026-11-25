@@ -114,8 +114,7 @@ public enum TokenKind {
     Underscore.Init("UNDERSCORE", Group::Other),
     EOF.Init("EOF", Group::Other);
 
-    // text is the source text of a symbol or keyword, and the kind's name
-    // otherwise
+    // text is the source text of a symbol or keyword
     public var str text;
     public var Group group;
 

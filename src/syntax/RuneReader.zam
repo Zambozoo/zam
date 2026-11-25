@@ -1,0 +1,125 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+
+// RuneReader decodes the UTF-8 of a source one char at a time
+public class RuneReader {
+    namespace Errs {
+        public var Err*$ EOF = StrErr::New("EOF");
+        public var Err*$ IncompleteUTF8 = StrErr::New("incomplete UTF-8 at end of input");
+        public var Err*$ InvalidUTF8 = StrErr::New("invalid UTF-8");
+    }
+
+    var byte* bytes;
+    var uint len;
+    // at is the byte the next char to decode starts at
+    var uint at;
+    // buf is the chars peeked at and not yet advanced past
+    var ArrList[char]* buf;
+    var uint offset;
+    var bool closed;
+
+    public static fun RuneReader*(str) New = (source) {
+        var RuneReader* rr = new(RuneReader);
+        var (byte*, uint) b = Strs::ToBytes(source);
+        rr.bytes = b.0;
+        rr.len = b.1;
+        rr.buf = ArrList::[char]New(0U);
+        return rr;
+    }
+
+    // Offset answers how many chars have been advanced past
+    public fun uint() Offset = () {
+        return this.offset;
+    }
+
+    // Peek answers the char i past the next one, or Errs::EOF
+    public fun (char, Err*)(uint) Peek = (i) {
+        var (char, Err*) out;
+        for(; this.buf.Len() <= i;) {
+            var uint before = this.buf.Len();
+            var Err* err = this.decode();
+            if(err != null) {
+                out.1 = err;
+                return out;
+            }
+            if(this.buf.Len() == before && this.closed) {
+                out.1 = Errs::EOF;
+                return out;
+            }
+        }
+        out.0 = this.buf.Get(i);
+        return out;
+    }
+
+    // Advance drops the next n chars, stopping at the end of the source
+    public fun void(uint) Advance = (n) {
+        for(var uint i = 0U; i < n; i++) {
+            if(this.buf.Len() == 0U) {
+                this.decode();
+            }
+            if(this.buf.Len() == 0U) {
+                return;
+            }
+            this.buf.RemoveFirst();
+            this.offset++;
+        }
+    }
+
+    // Close stops the reader decoding, leaving what it has peeked at
+    public fun void() Close = () {
+        this.closed = true;
+    }
+
+    // decode decodes the next char onto buf
+    fun Err*() decode = () {
+        if(this.closed) {
+            return null;
+        }
+        if(this.at >= this.len) {
+            this.closed = true;
+            return Errs::EOF;
+        }
+
+        var uint c = this.bytes[this.at]{uint};
+        var uint size = 1U;
+        var uint least = 0U;
+        if((c >= 128U && c < 194U) || c > 244U) {
+            this.closed = true;
+            return Errs::InvalidUTF8;
+        } else if(c >= 240U) {
+            size = 4U;
+            c = c & 7U;
+            least = 65536U;
+        } else if(c >= 224U) {
+            size = 3U;
+            c = c & 15U;
+            least = 2048U;
+        } else if(c >= 194U) {
+            size = 2U;
+            c = c & 31U;
+            least = 128U;
+        }
+        if(this.at + size > this.len) {
+            this.closed = true;
+            return Errs::IncompleteUTF8;
+        }
+        for(var uint k = 1U; k < size; k++) {
+            var uint next = this.bytes[this.at + k]{uint};
+            if((next & 192U) != 128U) {
+                this.closed = true;
+                return Errs::InvalidUTF8;
+            }
+            c = (c << 6U) | (next & 63U);
+        }
+        if(c < least || c > 1114111U || (c >= 55296U && c <= 57343U)) {
+            this.closed = true;
+            return Errs::InvalidUTF8;
+        }
+
+        this.at = this.at + size;
+        this.buf.AddLast(c{int}{char});
+        return null;
+    }
+}

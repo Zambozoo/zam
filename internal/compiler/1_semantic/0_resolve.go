@@ -59,12 +59,17 @@ func (r *referenceTypeResolverVisitor) VisitImport(i *syntax.Import) error {
 	return nil
 }
 
-// bindImport points i at the file it imports. An import written in a block is
-// not among its file's imports, so it is bound by the first reference that
+// bindImport points i at the file it imports, and records its path as
+// referring to that file's declaration. An import written in a block is not
+// among its file's imports, so it is bound by the first reference that
 // resolves through it instead.
 func (r *referenceTypeResolverVisitor) bindImport(i *syntax.Import) {
-	if i.ImportedFile == nil {
-		i.ImportedFile, _ = r.ast.CodeFiles.Get(i.Path) // syntax parsing passed, index is valid.
+	if i.ImportedFile != nil {
+		return
+	}
+	i.ImportedFile, _ = r.ast.CodeFiles.Get(i.Path) // syntax parsing passed, index is valid.
+	if i.ImportedFile != nil && i.ImportedFile.Decl != nil {
+		r.ast.References.Add(i.File, i.PathToken, syntax.TargetOf(i.ImportedFile.Decl), nil)
 	}
 }
 

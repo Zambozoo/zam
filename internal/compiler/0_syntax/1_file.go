@@ -59,6 +59,8 @@ type (
 		Alias *string
 		// Path is the path to the imported file.
 		Path base.Path
+		// PathToken is the string literal the path is written as.
+		PathToken *Token
 
 		// ImportedFile is the file that the import is importing.
 		ImportedFile *File
@@ -110,6 +112,11 @@ func newFile(parser SyntaxParser, path base.Path) (*File, error) {
 		BrokenImports: brokenImports,
 	}
 	*parser.File() = &f
+	for _, importStmts := range imports {
+		for _, importStmt := range importStmts {
+			importStmt.File = &f
+		}
+	}
 
 	modifiers, err := newModifiers(parser)
 	if err != nil {
@@ -266,7 +273,7 @@ func newImport(parser SyntaxParser, start *Token) ([]*Import, error) {
 		}
 	}
 
-	var pathStr string
+	var pathTok *Token
 	if pkg != nil {
 		if _, err := parser.Consume(TTLeftParen); err != nil {
 			return nil, err
@@ -275,7 +282,7 @@ func newImport(parser SyntaxParser, start *Token) ([]*Import, error) {
 		if err != nil {
 			return nil, err
 		}
-		pathStr = tok.Value.(string)
+		pathTok = tok
 		if _, err := parser.Consume(TTRightParen); err != nil {
 			return nil, err
 		}
@@ -284,14 +291,14 @@ func newImport(parser SyntaxParser, start *Token) ([]*Import, error) {
 		if err != nil {
 			return nil, err
 		}
-		pathStr = tok.Value.(string)
+		pathTok = tok
 	}
 
 	if _, err := parser.Consume(TTSemiColon); err != nil {
 		return nil, err
 	}
 
-	imports, err := resolveImport(parser, start, pkg, alias, pathStr)
+	imports, err := resolveImport(parser, start, pathTok, pkg, alias)
 	if err != nil {
 		return nil, &unresolvedImport{err: err}
 	}
@@ -310,7 +317,8 @@ func (u *unresolvedImport) Error() string {
 }
 
 // resolveImport answers the imports a whole import statement names.
-func resolveImport(parser SyntaxParser, start *Token, pkg, alias *string, pathStr string) ([]*Import, error) {
+func resolveImport(parser SyntaxParser, start, pathTok *Token, pkg, alias *string) ([]*Import, error) {
+	pathStr := pathTok.Value.(string)
 	// The std package is reachable like any other dependency, so pkg == "std"
 	// is a legitimate import now; what is still refused is naming a file or a
 	// different package under the alias `std`, since that would shadow the
@@ -321,7 +329,7 @@ func resolveImport(parser SyntaxParser, start *Token, pkg, alias *string, pathSt
 	}
 
 	if strings.HasSuffix(pathStr, globSuffix) || pathStr == "*" {
-		return newGlobImport(parser, start, pkg, alias, pathStr)
+		return newGlobImport(parser, start, pathTok, pkg, alias)
 	}
 
 	path, err := resolveImportPath(parser, pkg, pathStr)
@@ -334,9 +342,10 @@ func resolveImport(parser SyntaxParser, start *Token, pkg, alias *string, pathSt
 		Start: start,
 		File:  *parser.File(),
 
-		Package: pkg,
-		Alias:   alias,
-		Path:    path,
+		Package:   pkg,
+		Alias:     alias,
+		Path:      path,
+		PathToken: pathTok,
 	}}, nil
 }
 
@@ -382,7 +391,8 @@ func resolveImportPath(parser SyntaxParser, pkg *string, pathStr string) (base.P
 // file is reached through it by its own name. A glob that matches nothing is
 // refused for the same reason naming a missing file is: the import claims a dependency that the next build will not find, and
 // catching it here keeps the mistake close to its source.
-func newGlobImport(parser SyntaxParser, start *Token, pkg, alias *string, pathStr string) ([]*Import, error) {
+func newGlobImport(parser SyntaxParser, start, pathTok *Token, pkg, alias *string) ([]*Import, error) {
+	pathStr := pathTok.Value.(string)
 	dirPathStr := strings.TrimSuffix(pathStr, globSuffix)
 	if dirPathStr == "" || pathStr == "*" {
 		dirPathStr = "."
@@ -408,9 +418,10 @@ func newGlobImport(parser SyntaxParser, start *Token, pkg, alias *string, pathSt
 			Start: start,
 			File:  *parser.File(),
 
-			Package: pkg,
-			Alias:   alias,
-			Path:    child,
+			Package:   pkg,
+			Alias:     alias,
+			Path:      child,
+			PathToken: pathTok,
 		})
 	}
 	return imports, nil

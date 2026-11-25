@@ -88,6 +88,19 @@ func TestServerAnswersQuestionsAboutNames(t *testing.T) {
 		assert.Len(t, locations, 2, "without the declaration")
 	})
 
+	t.Run("hover on an import outlines the imported declaration", func(t *testing.T) {
+		hover := c.call(protocol.MethodTextDocumentHover, protocol.HoverParams{TextDocumentPositionParams: at(0, 10)}).(*protocol.Hover)
+		content := hover.Contents.(protocol.MarkupContent)
+		assert.Equal(t, "```zam\nnamespace Other {\n    static fun int() g\n}\n```", content.Value)
+		assert.Equal(t, rangeOf(0, 7, 0, 18), *hover.Range)
+	})
+
+	t.Run("definition of an import", func(t *testing.T) {
+		location := c.call(protocol.MethodTextDocumentDefinition, protocol.DefinitionParams{TextDocumentPositionParams: at(0, 10)}).(protocol.Location)
+		assert.Equal(t, otherURI, location.URI)
+		assert.Equal(t, rangeOf(0, 10, 0, 15), location.Range)
+	})
+
 	t.Run("nothing under the cursor", func(t *testing.T) {
 		assert.Nil(t, c.call(protocol.MethodTextDocumentDefinition, protocol.DefinitionParams{TextDocumentPositionParams: at(1, 0)}))
 	})

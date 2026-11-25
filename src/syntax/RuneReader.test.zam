@@ -1,0 +1,65 @@
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "RuneReader.zam";
+
+public namespace RuneReaderTest {
+    // bytes answers the str whose UTF-8 is the n bytes bs.
+    private fun str(uint, uint...) bytes = (n, bs) {
+        var byte* b = new(byte, n);
+        for(var uint i = 0U; i < n; i++) {
+            b[i] = bs[i]{byte};
+        }
+        return Strs::FromBytes(b, n);
+    }
+
+    // fails checks that peeking at the first char of source fails with want,
+    // and that the reader is at its end after.
+    private fun void(str, Err*, str) fails = (source, want, name) {
+        var RuneReader* rr = RuneReader::New(source);
+        Assert::True(rr.Peek(0U).1 == want, name + " is not " + want.Err());
+        Assert::True(rr.Peek(0U).1 == RuneReader.Errs::EOF, name + " leaves the reader open");
+    }
+
+    public fun void(uint, str...) PeekAndAdvance = (argC, argV) {
+        var RuneReader* rr = RuneReader::New("aé😀b");
+        Assert::[char]Equal('😀', rr.Peek(2U).0);
+        Assert::[char]Equal('a', rr.Peek(0U).0);
+        rr.Advance(2U);
+        Assert::[uint]Equal(2U, rr.Offset());
+        Assert::[char]Equal('😀', rr.Peek(0U).0);
+        Assert::[char]Equal('b', rr.Peek(1U).0);
+        rr.Advance(1U);
+        Assert::[char]Equal('b', rr.Peek(0U).0);
+        Assert::[uint]Equal(3U, rr.Offset());
+    }
+
+    public fun void(uint, str...) EOF = (argC, argV) {
+        var RuneReader* rr = RuneReader::New("a");
+        Assert::True(rr.Peek(1U).1 == RuneReader.Errs::EOF, "peeking past the end is not EOF");
+        Assert::True(rr.Peek(1U).1 == RuneReader.Errs::EOF, "peeking past the end twice is not EOF");
+        Assert::[char]Equal('a', rr.Peek(0U).0);
+        rr.Advance(5U);
+        Assert::[uint]Equal(1U, rr.Offset());
+        Assert::True(RuneReader::New("").Peek(0U).1 == RuneReader.Errs::EOF, "an empty source is not at EOF");
+    }
+
+    public fun void(uint, str...) Malformed = (argC, argV) {
+        RuneReaderTest::fails(RuneReaderTest::bytes(1U, 128U), RuneReader.Errs::InvalidUTF8, "a continuation byte first");
+        RuneReaderTest::fails(RuneReaderTest::bytes(2U, 192U, 128U), RuneReader.Errs::InvalidUTF8, "an overlong lead byte");
+        RuneReaderTest::fails(RuneReaderTest::bytes(1U, 245U), RuneReader.Errs::InvalidUTF8, "a lead byte past U+10FFFF");
+        RuneReaderTest::fails(RuneReaderTest::bytes(3U, 226U, 40U, 161U), RuneReader.Errs::InvalidUTF8, "a bad continuation");
+        RuneReaderTest::fails(RuneReaderTest::bytes(3U, 224U, 128U, 128U), RuneReader.Errs::InvalidUTF8, "an overlong three bytes");
+        RuneReaderTest::fails(RuneReaderTest::bytes(3U, 237U, 160U, 128U), RuneReader.Errs::InvalidUTF8, "a surrogate");
+        RuneReaderTest::fails(RuneReaderTest::bytes(4U, 244U, 144U, 128U, 128U), RuneReader.Errs::InvalidUTF8, "a code point past U+10FFFF");
+        RuneReaderTest::fails(RuneReaderTest::bytes(2U, 226U, 130U), RuneReader.Errs::IncompleteUTF8, "a char cut off at the end");
+    }
+
+    public fun void(uint, str...) MalformedAfterGood = (argC, argV) {
+        var RuneReader* rr = RuneReader::New(RuneReaderTest::bytes(2U, 97U, 128U));
+        Assert::[char]Equal('a', rr.Peek(0U).0);
+        Assert::True(rr.Peek(1U).1 == RuneReader.Errs::InvalidUTF8, "a bad second char is not invalid");
+        Assert::[char]Equal('a', rr.Peek(0U).0);
+        Assert::True(rr.Peek(1U).1 == RuneReader.Errs::EOF, "the reader is open after a bad char");
+    }
+}

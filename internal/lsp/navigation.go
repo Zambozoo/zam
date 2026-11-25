@@ -133,7 +133,8 @@ func (s *server) locationOf(path base.Path, name *syntax.Token) (protocol.Locati
 }
 
 // rangeOf returns the range of a name written in a file. A name is an
-// identifier, so its length is that of its value.
+// identifier, so its length is that of its value, or the string literal an
+// import's path is written as, which is lexed again for where it ends.
 func (s *server) rangeOf(path base.Path, name *syntax.Token) (protocol.Range, bool) {
 	source, err := s.files.read(path)
 	if err != nil {
@@ -142,7 +143,13 @@ func (s *server) rangeOf(path base.Path, name *syntax.Token) (protocol.Range, bo
 	t := newText(source)
 	start := int(name.Offset)
 	end := start
-	if value, ok := name.Value.(string); ok {
+	if name.Kind == syntax.TTStringLiteral {
+		tokens, _ := syntax.Lex(io.NopCloser(strings.NewReader(source)))
+		i := sort.Search(len(tokens), func(i int) bool { return tokens[i].Offset >= name.Offset })
+		if i < len(tokens) && tokens[i].Offset == name.Offset {
+			end = int(tokens[i].End)
+		}
+	} else if value, ok := name.Value.(string); ok {
 		end += len([]rune(value))
 	}
 	return protocol.Range{Start: t.position(start), End: t.position(end)}, true

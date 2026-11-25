@@ -1,0 +1,20 @@
+import std("lang/Chars.zam");
+import std("test/Assert.zam");
+
+public namespace CharsTest {
+    public fun void(uint, str...) IsLetter = (argC, argV) {
+        Assert::True(Chars::IsLetter('a') && Chars::IsLetter('z') && Chars::IsLetter('A') && Chars::IsLetter('Z'), "the ends of each case are letters");
+        Assert::False(Chars::IsLetter('@') || Chars::IsLetter('[') || Chars::IsLetter('`') || Chars::IsLetter('{'), "the chars around each case are letters");
+        Assert::False(Chars::IsLetter('_') || Chars::IsLetter('0') || Chars::IsLetter('é'), "_, 0 or é is a letter");
+    }
+
+    public fun void(uint, str...) IsDigit = (argC, argV) {
+        Assert::True(Chars::IsDigit('0') && Chars::IsDigit('9'), "0 and 9 are digits");
+        Assert::False(Chars::IsDigit('/') || Chars::IsDigit(':') || Chars::IsDigit('a'), "/, : or a is a digit");
+    }
+
+    public fun void(uint, str...) IsSpace = (argC, argV) {
+        Assert::True(Chars::IsSpace(' ') && Chars::IsSpace('\t') && Chars::IsSpace('\n') && Chars::IsSpace('\r'), "space, tab, line feed and carriage return are spaces");
+        Assert::False(Chars::IsSpace(8{char}) || Chars::IsSpace(14{char}) || Chars::IsSpace('a'), "the chars around the control spaces are spaces");
+    }
+}
