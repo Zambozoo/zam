@@ -1193,6 +1193,55 @@ namespace Main {
 	assert.Equal(t, "red true false true 200\n", output)
 }
 
+// TestNativeEnumMethodsCallMethodsOfThis calls, from a method of an enum backed
+// by a primitive and of one with members, another method of this.
+func TestNativeEnumMethodsCallMethodsOfThis(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    enum Flag : str {
+        A("a"), B("b"), C("c");
+
+        fun uint() Bit = () {
+            return 1U << Enums::[Flag]Ordinal(*this);
+        }
+
+        fun bool(uint) In = (set) {
+            return (set & this.Bit()) != 0U;
+        }
+    }
+
+    enum Planet {
+        Earth.Init("home"),
+        Mars.Init("red");
+
+        var str note;
+
+        fun void(str) Init = (n) {
+            this.note = n;
+        }
+
+        fun str() Note = () {
+            return this.note;
+        }
+
+        fun str() Loud = () {
+            return this.Note() + "!";
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var uint set = Flag::A.Bit() | Flag::C.Bit();
+        File::StdOut.WriteStr(Flag::A.In(set){str} + " " + Flag::B.In(set){str} + " " + Flag::C.In(set){str} + " " + Planet::Mars.Loud() + "\n");
+    }
+}
+`)
+	assert.Zero(t, status, output)
+	assert.Equal(t, "true false true red!\n", output)
+}
+
 // TestNativeSwitchesOnValuesTheRuntimeCompares switches on a str and on a
 // tuple, whose cases are compared by their contents, a case value built as
 // it is tested.

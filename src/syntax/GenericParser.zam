@@ -1,0 +1,105 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "Parser.zam";
+import "Token.zam";
+import "TokenKind.zam";
+import "TypeParser.zam";
+import "ast/Generic.zam";
+import "ast/Type.zam";
+
+// GenericParser reads the generic parameters a declaration or method is declared with
+public namespace GenericParser {
+    namespace Errs {
+        public fun Err*(str) Duplicate = (name) {
+            return StrErr::New("duplicate generic " + Strs::Quote(name));
+        }
+
+        public fun Err*(str) EnumFromBelow = (name) {
+            return StrErr::New("generic " + Strs::Quote(name) + " can only be bounded to enums from above, as <: enum");
+        }
+    }
+
+    // Parse reads what follows the [ the parameters are written in, through the ]
+    public fun (ArrList[Generic*]*, Err*)(Parser*) Parse = (p) {
+        var ArrList[Generic*]* generics = ArrList::[Generic*]New(0U);
+        for {
+            var (Token*, Err*) name = p.Consume(TokenKind::Identifier);
+            if(name.1 != null) {
+                return (null, name.1);
+            }
+            var str id = name.0.value{str};
+            for(var uint i = 0U; i < generics.Len(); i++) {
+                if(generics.Get(i).name.value{str} == id) {
+                    return (null, Errs::Duplicate(id));
+                }
+            }
+
+            var (Generic*, Err*) g = GenericParser::bound(p, name.0);
+            if(g.1 != null) {
+                return (null, g.1);
+            }
+            generics.AddLast(g.0);
+
+            var (Token*, Err*) end = p.ConsumeAny(TypeParser::argumentEnds());
+            if(end.1 != null) {
+                return (null, end.1);
+            } else if(end.0.kind == TokenKind::RightBracket) {
+                break;
+            }
+        }
+        return (generics, null);
+    }
+
+    // bound reads the bound of the generic parameter name, if it has one
+    fun (Generic*, Err*)(Parser*, Token*) bound = (p, name) {
+        var (Token*, Err*) op = p.MatchAny(TypeParser::bounds());
+        if(op.1 != null) {
+            return (null, op.1);
+        } else if(op.0 == null) {
+            return (Generic::New(name, Generic.Bound::None, null), null);
+        }
+
+        var (Token*, Err*) enumerated = p.Match(TokenKind::Enum);
+        if(enumerated.1 != null) {
+            return (null, enumerated.1);
+        } else if(enumerated.0 != null) {
+            if(op.0.kind != TokenKind::Subtype) {
+                return (null, Errs::EnumFromBelow(name.value{str}));
+            }
+            return (Generic::New(name, Generic.Bound::Enum, null), null);
+        }
+
+        var Generic.Bound kind = Generic.Bound::Lower;
+        if(op.0.kind == TokenKind::Subtype) {
+            kind = Generic.Bound::Upper;
+        }
+        var ArrList[Type*]* bounds = ArrList::[Type*]New(0U);
+        var (Token*, Err*) bracket = p.Match(TokenKind::LeftBracket);
+        if(bracket.1 != null) {
+            return (null, bracket.1);
+        } else if(bracket.0 == null) {
+            var (Type*, Err*) t = TypeParser::Parse(p);
+            if(t.1 != null) {
+                return (null, t.1);
+            }
+            bounds.AddLast(t.0);
+            return (Generic::New(name, kind, bounds), null);
+        }
+        for {
+            var (Type*, Err*) t = TypeParser::Parse(p);
+            if(t.1 != null) {
+                return (null, t.1);
+            }
+            bounds.AddLast(t.0);
+            var (Token*, Err*) end = p.ConsumeAny(TypeParser::argumentEnds());
+            if(end.1 != null) {
+                return (null, end.1);
+            } else if(end.0.kind == TokenKind::RightBracket) {
+                break;
+            }
+        }
+        return (Generic::New(name, kind, bounds), null);
+    }
+}

@@ -1,0 +1,48 @@
+import std("data/list/ArrList.zam");
+import "../Token.zam";
+import "Type.zam";
+
+// Generic is a generic parameter as it is declared: its name and its bound
+public class Generic {
+    // Bound is how a generic parameter is bounded
+    public enum Bound : str {
+        None(""),
+        Upper("<:"),
+        Lower(":>"),
+        Enum("<: enum");
+    }
+
+    public var Token* name;
+    public var Bound bound;
+    // bounds is the types an upper or lower bound names
+    public var ArrList[Type*]* bounds;
+
+    public static fun Generic*(Token*, Bound, ArrList[Type*]*) New = (name, bound, bounds) {
+        var Generic* g = new(Generic);
+        g.name = name;
+        g.bound = bound;
+        g.bounds = bounds;
+        return g;
+    }
+
+    public fun str() Str = () {
+        if(this.bound == Bound::None) {
+            return this.name.value{str};
+        } else if(this.bound == Bound::Enum) {
+            return "(<: " + this.name.value{str} + " enum)";
+        }
+        return "(" + this.bound{str} + " " + this.name.value{str} + Type::list(this.bounds) + ")";
+    }
+
+    // List writes generics in brackets
+    public static fun str(ArrList[Generic*]*) List = (generics) {
+        var str out = "[";
+        for(var uint i = 0U; i < generics.Len(); i++) {
+            if(i > 0U) {
+                out = out + " ";
+            }
+            out = out + generics.Get(i).Str();
+        }
+        return out + "]";
+    }
+}

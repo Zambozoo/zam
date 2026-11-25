@@ -1615,6 +1615,12 @@ func memberEnum(t syntax.Type) (*syntax.DeclEnum, bool) {
 // its discriminant.
 var kindEnum = syntax.TypeKindReference
 
+// isEnumValue reports whether t is a value of an enum, with or without members.
+func isEnumValue(t syntax.Type) bool {
+	kind, err := valueKind(t)
+	return err == nil && (kind == kindEnum || kind == kindMemberEnum)
+}
+
 // rooted reports whether a value of t is a reference the collector visits.
 func rooted(t syntax.Type) bool {
 	kind, err := valueKind(t)
@@ -3755,7 +3761,7 @@ func (e *funcEmitter) methodTarget(object syntax.Expr, decl syntax.Decl, method 
 		if _, ok := objectDecl(e.ground(object.ResolvedType())); !ok {
 			if w, isPointer := syntax.StripConst(e.ground(object.ResolvedType())).(*syntax.TypeWrapped); !isPointer || w.Kind() != syntax.TypeKindPointer {
 				return fail(unsupported("methods of %s", e.ground(object.ResolvedType())))
-			} else if _, isStruct := structDecl(w.Type); !isStruct {
+			} else if _, isStruct := structDecl(w.Type); !isStruct && !isEnumValue(w.Type) {
 				return fail(unsupported("methods of %s", e.ground(object.ResolvedType())))
 			}
 		}

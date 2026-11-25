@@ -41,6 +41,23 @@ public abstract Expr {
         return out;
     }
 
+    // parameters writes the names of a function's parameters in parentheses, _ for none
+    static fun str(ArrList[Token*]*) parameters = (names) {
+        var str out = "(";
+        for(var uint i = 0U; i < names.Len(); i++) {
+            if(i > 0U) {
+                out = out + " ";
+            }
+            var Token* name = names.Get(i);
+            if(name.kind == TokenKind::Underscore) {
+                out = out + "_";
+            } else {
+                out = out + name.value{str};
+            }
+        }
+        return out + ")";
+    }
+
     // Symbol is a literal, a name, or this, super or null
     public class Symbol <: Expr* {
         public static fun Symbol*(Token*) New = (start) {
@@ -400,19 +417,7 @@ public abstract Expr {
         }
 
         public fun str() Str = () {
-            var str names = "";
-            for(var uint i = 0U; i < this.parameters.Len(); i++) {
-                if(i > 0U) {
-                    names = names + " ";
-                }
-                var Token* name = this.parameters.Get(i);
-                if(name.kind == TokenKind::Underscore) {
-                    names = names + "_";
-                } else {
-                    names = names + name.value{str};
-                }
-            }
-            return "(lambda " + this.signature.Str() + " (" + names + ") " + this.body.Str() + ")";
+            return "(lambda " + this.signature.Str() + " " + Expr::parameters(this.parameters) + " " + this.body.Str() + ")";
         }
     }
 }

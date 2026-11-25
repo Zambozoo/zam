@@ -1,0 +1,118 @@
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "FieldParser.zam";
+import "Parser.zam";
+import "Token.zam";
+import "TokenKind.zam";
+import "TypeParser.zam";
+import "ast/Field.zam";
+import "ast/Modifier.zam";
+import "ast/Stmt.zam";
+import "ast/Type.zam";
+
+public namespace FieldParserTest {
+    // parses checks that source reads whole as the field want, given the
+    // modifiers implied, with no error recorded
+    private fun void(str, Modifier.Set, str) parses = (source, implied, want) {
+        var Parser* p = Parser::New(source);
+        var (Field*, Err*) f = FieldParser::Parse(p, true, implied);
+        if(!Assert::True(f.1 == null, source + " fails to parse")) {
+            Assert::Fatal(f.1.Err());
+        }
+        Assert::[str]Equal(want, f.0.Str());
+        Assert::True(p.Peek().0.kind == TokenKind::EOF, source + " is not read whole");
+        Assert::[uint]Equal(0U, p.diagnostics.Len());
+    }
+
+    // fails checks that source fails to read as a field, given the modifiers
+    // implied, with an error containing want
+    private fun void(str, Modifier.Set, str) fails = (source, implied, want) {
+        var (Field*, Err*) f = FieldParser::Parse(Parser::New(source), true, implied);
+        if(Assert::True(f.1 != null, source + " parses")) {
+            Assert::True(Strs::Contains(f.1.Err(), want), f.1.Err() + " does not contain " + want);
+        }
+    }
+
+    // value reads source as a value of the enum E, backed by the primitive
+    // written as backing or, for "", by nothing
+    private fun (Field.Enum*, Err*)(str, str) value = (source, backing) {
+        var Token* name = Parser::New("E").Consume(TokenKind::Identifier).0;
+        var Type* primitive = null;
+        if(backing != "") {
+            primitive = TypeParser::Parse(Parser::New(backing)).0;
+        }
+        return FieldParser::EnumValue(Parser::New(source), name, primitive);
+    }
+
+    public fun void(uint, str...) Members = (argC, argV) {
+        FieldParserTest::parses("var int x;", 0U, "(var int x)");
+        FieldParserTest::parses("public static var int* p = null;", 0U, "(var public static (* int) p null)");
+        FieldParserTest::parses("private var int x = 1;", 0U, "(var private int x 1)");
+        FieldParserTest::parses("var int[~] tail;", 0U, "(var ([~] int) tail)");
+        FieldParserTest::parses("var int x;", Modifier::Static.Bit(), "(var static int x)");
+    }
+
+    public fun void(uint, str...) Methods = (argC, argV) {
+        FieldParserTest::parses("public fun int(int) F = (x) { return x; }", 0U, "(fun public (fun int int) F (x) { (return x) })");
+        FieldParserTest::parses("virtual fun int() F;", 0U, "(fun virtual (fun int) F)");
+        FieldParserTest::parses("fun void(int, str) G = (_, s) s;", 0U, "(fun (fun void int str) G (_ s) s)");
+        FieldParserTest::parses("public static fun[T <: Obj*, U :> [A, B], E <: enum, V] T(T) Id = (x) x;", 0U,
+            "(fun public static [(<: T (* Obj)) (:> U A B) (<: E enum) V] (fun T T) Id (x) x)");
+    }
+
+    public fun void(uint, str...) Implied = (argC, argV) {
+        FieldParserTest::parses("fun void() G;", Modifier::Virtual.Bit(), "(fun virtual (fun void) G)");
+        FieldParserTest::parses("static fun void() H = () {}", Modifier::Virtual.Bit(), "(fun static (fun void) H () { })");
+        FieldParserTest::parses("fun void() G = () {}", Modifier::Static.Bit(), "(fun static (fun void) G () { })");
+        FieldParserTest::parses("static var int x;", Modifier::Static.Bit(), "(var static int x)");
+    }
+
+    public fun void(uint, str...) Modifiers = (argC, argV) {
+        FieldParserTest::fails("public public var int x;", 0U, "duplicate modifier \"public\"");
+        FieldParserTest::fails("public private var int x;", 0U, "modifier \"public\" cannot be used with \"private\"");
+        FieldParserTest::fails("static virtual fun void() f;", 0U, "modifier \"static\" cannot be used with \"virtual\"");
+        FieldParserTest::fails("protected static var int x;", 0U, "modifier \"protected\" cannot be used with \"static\"");
+        FieldParserTest::fails("virtual fun void() f;", Modifier::Static.Bit(), "modifier \"static\" cannot be used with \"virtual\"");
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        FieldParserTest::fails("virtual var int x;", 0U, "virtual variable is not allowed");
+        FieldParserTest::fails("static var int[~] tail;", 0U, "unexpected token: \"~\"");
+        FieldParserTest::fails("virtual fun[T] T() f;", 0U, "virtual methods cannot be generic");
+        FieldParserTest::fails("fun[T] T() f = () x;", 0U, "instance methods cannot be generic");
+        FieldParserTest::fails("static fun[T, T] T() f = () x;", 0U, "duplicate generic \"T\"");
+        FieldParserTest::fails("static fun[T :> enum] T() f = () x;", 0U, "generic \"T\" can only be bounded to enums from above, as <: enum");
+        FieldParserTest::fails("fun int f;", 0U, "method type is not a function");
+        FieldParserTest::fails("fun void() f;", 0U, "non-virtual methods must have a body");
+        FieldParserTest::fails("virtual fun void() f = () {}", 0U, "virtual methods cannot have a body");
+        FieldParserTest::fails("fun void(int) f = () {}", 0U, "method parameter length mismatch, expected 1, got 0");
+        FieldParserTest::fails("var int x", 0U, "unexpected token: \"EOF\", expected \";\"");
+    }
+
+    public fun void(uint, str...) Partial = (argC, argV) {
+        var (Field*, Err*) member = FieldParser::Parse(Parser::New("var int x = ;"), false, 0U);
+        Assert::True(member.1 != null, "the member parses");
+        Assert::[str]Equal("(var int x)", member.0.Str());
+
+        var (Field*, Err*) method = FieldParser::Parse(Parser::New("fun void(int) f = () {}"), false, 0U);
+        Assert::True(method.1 != null, "the method parses");
+        Assert::[str]Equal("(fun (fun void int) f { })", method.0.Str());
+        Assert::True(method.0{Field.Method*}.body{Stmt.Block*}.broken, "the body is not broken");
+    }
+
+    public fun void(uint, str...) EnumValues = (argC, argV) {
+        Assert::[str]Equal("(enum A 1)", FieldParserTest::value("A(1)", "int").0.Str());
+        Assert::[str]Equal("(enum A)", FieldParserTest::value("A", "").0.Str());
+        Assert::[str]Equal("(enum A.Init)", FieldParserTest::value("A.Init()", "").0.Str());
+        Assert::[str]Equal("(enum A.Init 1 2)", FieldParserTest::value("A.Init(1, 2)", "").0.Str());
+
+        var (Field.Enum*, Err*) unwritten = FieldParserTest::value("A", "int");
+        Assert::[str]Equal("(enum A)", unwritten.0.Str());
+        Assert::[str]Equal("enum value E::A must be written with a int value: unexpected token: \"EOF\", expected \"(\"", unwritten.1.Err());
+
+        var (Field.Enum*, Err*) unbacked = FieldParserTest::value("A(1)", "");
+        Assert::[str]Equal("(enum A)", unbacked.0.Str());
+        Assert::[str]Equal("enum value E::A cannot be written with a value: E is not backed by a primitive", unbacked.1.Err());
+    }
+}

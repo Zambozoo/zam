@@ -1,0 +1,351 @@
+import std("data/list/ArrList.zam");
+import std("data/set/TreeSet.zam");
+import std("lang/Arr.zam");
+import std("lang/Enums.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "ExprParser.zam";
+import "GenericParser.zam";
+import "Parser.zam";
+import "StmtParser.zam";
+import "Token.zam";
+import "TokenKind.zam";
+import "TypeParser.zam";
+import "ast/Expr.zam";
+import "ast/Field.zam";
+import "ast/Generic.zam";
+import "ast/Modifier.zam";
+import "ast/Stmt.zam";
+import "ast/Type.zam";
+
+// FieldParser reads the modifiers and fields of declarations
+public namespace FieldParser {
+    namespace Errs {
+        public var Err*$ VirtualVariable = StrErr::New("virtual variable is not allowed");
+        public var Err*$ VirtualGeneric = StrErr::New("virtual methods cannot be generic");
+        public var Err*$ InstanceGeneric = StrErr::New("instance methods cannot be generic");
+        public var Err*$ MethodNotFunction = StrErr::New("method type is not a function");
+        public var Err*$ MissingBody = StrErr::New("non-virtual methods must have a body");
+        public var Err*$ VirtualBody = StrErr::New("virtual methods cannot have a body");
+
+        public fun Err*(Modifier) DuplicateModifier = (m) {
+            return StrErr::New("duplicate modifier " + Strs::Quote(m{str}));
+        }
+
+        public fun Err*(Modifier, Modifier) ModifierCollision = (m, other) {
+            return StrErr::New("modifier " + Strs::Quote(m{str}) + " cannot be used with " + Strs::Quote(other{str}));
+        }
+
+        public fun Err*(uint, uint) MethodArity = (expected, got) {
+            return StrErr::New("method parameter length mismatch, expected " + expected{str} + ", got " + got{str});
+        }
+
+        public fun Err*(Token*, Token*, Type*, Err*) EnumValueUnwritten = (enumName, name, primitive, err) {
+            return StrErr::New("enum value " + enumName.value{str} + "::" + name.value{str} + " must be written with a " + primitive.Str() + " value: " + err.Err());
+        }
+
+        public fun Err*(Token*, Token*) EnumValueUnbacked = (enumName, name) {
+            return StrErr::New("enum value " + enumName.value{str} + "::" + name.value{str} + " cannot be written with a value: " + enumName.value{str} + " is not backed by a primitive");
+        }
+    }
+
+    var TreeSet[TokenKind]* modifierKindsSet;
+    var TreeSet[TokenKind]* fieldKindsSet;
+
+    // Parse reads a field, given the modifiers implied by the declaration it is in
+    public fun (Field*, Err*)(Parser*, bool, Modifier.Set) Parse = (p, tailable, implied) {
+        var (Modifier.Set, Err*) modifiers = FieldParser::Modifiers(p);
+        if(modifiers.1 != null) {
+            return (null, modifiers.1);
+        }
+        var Modifier.Set m = modifiers.0;
+        if(Modifier::Static.In(implied) && !Modifier::Static.In(m)) {
+            m = m | Modifier::Static.Bit();
+            var Err* err = FieldParser::collisions(m);
+            if(err != null) {
+                return (null, err);
+            }
+        }
+
+        var (Token*, Err*) start = p.ConsumeAny(FieldParser::fieldKinds());
+        if(start.1 != null) {
+            return (null, start.1);
+        } else if(start.0.kind == TokenKind::Var) {
+            return FieldParser::member(p, start.0, m, tailable && !Modifier::Static.In(m));
+        }
+        if(Modifier::Virtual.In(implied) && !Modifier::Static.In(m)) {
+            m = m | Modifier::Virtual.Bit();
+        }
+        return FieldParser::method(p, start.0, m);
+    }
+
+    // Modifiers reads the modifiers written before a field or declaration
+    public fun (Modifier.Set, Err*)(Parser*) Modifiers = (p) {
+        var Modifier.Set modifiers = 0U;
+        for {
+            var (Token*, Err*) tok = p.MatchAny(FieldParser::modifierKinds());
+            if(tok.1 != null) {
+                return (0U, tok.1);
+            } else if(tok.0 == null) {
+                break;
+            }
+            var Modifier m = FieldParser::modifier(tok.0.kind);
+            if(m.In(modifiers)) {
+                return (0U, Errs::DuplicateModifier(m));
+            }
+            modifiers = modifiers | m.Bit();
+        }
+        var Err* err = FieldParser::collisions(modifiers);
+        if(err != null) {
+            return (0U, err);
+        }
+        return (modifiers, null);
+    }
+
+    // EnumValue reads a value of the enum named enumName, backed by primitive or, for null, by nothing
+    public fun (Field.Enum*, Err*)(Parser*, Token*, Type*) EnumValue = (p, enumName, primitive) {
+        var (Token*, Err*) name = p.Consume(TokenKind::Identifier);
+        if(name.1 != null) {
+            return (null, name.1);
+        }
+        var Field.Enum* value = Field.Enum::New(name.0);
+
+        if(primitive != null) {
+            var Err* err = p.Consume(TokenKind::LeftParen).1;
+            if(err != null) {
+                return (value, Errs::EnumValueUnwritten(enumName, name.0, primitive, err));
+            }
+            var (Expr*, Err*) backing = ExprParser::Parse(p);
+            if(backing.1 != null) {
+                return (value, backing.1);
+            }
+            err = p.Consume(TokenKind::RightParen).1;
+            if(err != null) {
+                return (value, err);
+            }
+            value.value = backing.0;
+            return (value, null);
+        }
+
+        var (Token*, Err*) paren = p.Match(TokenKind::LeftParen);
+        if(paren.1 != null) {
+            return (value, paren.1);
+        } else if(paren.0 != null) {
+            return (value, Errs::EnumValueUnbacked(enumName, name.0));
+        }
+        var (Token*, Err*) period = p.Match(TokenKind::Period);
+        if(period.1 != null) {
+            return (value, period.1);
+        } else if(period.0 == null) {
+            return (value, null);
+        }
+
+        var (Token*, Err*) init = p.Consume(TokenKind::Identifier);
+        if(init.1 != null) {
+            return (value, init.1);
+        }
+        var Err* err = p.Consume(TokenKind::LeftParen).1;
+        if(err != null) {
+            return (value, err);
+        }
+        var ArrList[Expr*]* arguments = ArrList::[Expr*]New(0U);
+        var (Token*, Err*) empty = p.Match(TokenKind::RightParen);
+        if(empty.1 != null) {
+            return (value, empty.1);
+        } else if(empty.0 == null) {
+            for {
+                var (Expr*, Err*) argument = ExprParser::ParseAssign(p);
+                if(argument.1 != null) {
+                    return (value, argument.1);
+                }
+                arguments.AddLast(argument.0);
+                var (Token*, Err*) end = p.ConsumeAny(ExprParser::argumentEnds());
+                if(end.1 != null) {
+                    return (value, end.1);
+                } else if(end.0.kind == TokenKind::RightParen) {
+                    break;
+                }
+            }
+        }
+        value.init = init.0;
+        value.arguments = arguments;
+        return (value, null);
+    }
+
+    // collisions answers the error for the first pair of modifiers that cannot be written together
+    fun Err*(Modifier.Set) collisions = (modifiers) {
+        var Arr[Modifier]* all = Enums::[Modifier]All();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            if(!all.Get(i).In(modifiers)) {
+                continue;
+            }
+            for(var uint j = 0U; j < all.Len(); j++) {
+                if(all.Get(j).In(modifiers) && FieldParser::collides(all.Get(i), all.Get(j))) {
+                    return Errs::ModifierCollision(all.Get(i), all.Get(j));
+                }
+            }
+        }
+        return null;
+    }
+
+    // collides reports whether m cannot be written with other
+    fun bool(Modifier, Modifier) collides = (m, other) {
+        switch(m) {
+            case (Modifier::Public)
+                return other == Modifier::Private || other == Modifier::Protected;
+            case (Modifier::Private)
+                return other == Modifier::Public || other == Modifier::Protected;
+            case (Modifier::Protected)
+                return other == Modifier::Public || other == Modifier::Private || other == Modifier::Static;
+            case (Modifier::Static)
+                return other == Modifier::Virtual || other == Modifier::Protected;
+        }
+        return other == Modifier::Static;
+    }
+
+    // modifier answers the modifier kind writes
+    fun Modifier(TokenKind) modifier = (kind) {
+        switch(kind) {
+            case (TokenKind::Public)
+                return Modifier::Public;
+            case (TokenKind::Private)
+                return Modifier::Private;
+            case (TokenKind::Protected)
+                return Modifier::Protected;
+            case (TokenKind::Static)
+                return Modifier::Static;
+        }
+        return Modifier::Virtual;
+    }
+
+    // member reads a variable after its var
+    fun (Field*, Err*)(Parser*, Token*, Modifier.Set, bool) member = (p, start, modifiers, tailable) {
+        if(Modifier::Virtual.In(modifiers)) {
+            return (null, Errs::VirtualVariable);
+        }
+        var (Type*, Err*) declared;
+        if(tailable) {
+            declared = TypeParser::ParseTailable(p);
+        } else {
+            declared = TypeParser::Parse(p);
+        }
+        if(declared.1 != null) {
+            return (null, declared.1);
+        }
+        var (Token*, Err*) name = p.Consume(TokenKind::Identifier);
+        if(name.1 != null) {
+            return (null, name.1);
+        }
+        var Field.Member* f = Field.Member::New(start, modifiers, declared.0, name.0);
+
+        var (Token*, Err*) equal = p.Match(TokenKind::Equal);
+        if(equal.1 != null) {
+            return (f, equal.1);
+        } else if(equal.0 == null) {
+            return (f, p.Consume(TokenKind::SemiColon).1);
+        }
+        var (Expr*, Err*) init = ExprParser::Parse(p);
+        if(init.1 != null) {
+            return (f, init.1);
+        }
+        var Err* err = p.Consume(TokenKind::SemiColon).1;
+        if(err != null) {
+            return (f, err);
+        }
+        f.init = init.0;
+        return (f, null);
+    }
+
+    // method reads a function after its fun
+    fun (Field*, Err*)(Parser*, Token*, Modifier.Set) method = (p, start, modifiers) {
+        var Field.Method* f = Field.Method::New(start, modifiers);
+        var (Token*, Err*) bracket = p.Match(TokenKind::LeftBracket);
+        if(bracket.1 != null) {
+            return (null, bracket.1);
+        } else if(bracket.0 != null) {
+            if(Modifier::Virtual.In(modifiers)) {
+                return (null, Errs::VirtualGeneric);
+            } else if(!Modifier::Static.In(modifiers)) {
+                return (null, Errs::InstanceGeneric);
+            }
+            var (ArrList[Generic*]*, Err*) generics = GenericParser::Parse(p);
+            if(generics.1 != null) {
+                return (null, generics.1);
+            }
+            f.generics = generics.0;
+        }
+
+        var (Type*, Err*) t = TypeParser::Parse(p);
+        if(t.1 != null) {
+            return (null, t.1);
+        }
+        f.signature = t.0{Type.Function*};
+        if(f.signature == null) {
+            return (null, Errs::MethodNotFunction);
+        }
+        var (Token*, Err*) name = p.Consume(TokenKind::Identifier);
+        if(name.1 != null) {
+            return (null, name.1);
+        }
+        f.name = name.0;
+
+        var (Token*, Err*) equal = p.Match(TokenKind::Equal);
+        if(equal.1 != null) {
+            return FieldParser::broken(f, equal.1);
+        } else if(equal.0 == null) {
+            var Err* err = p.Consume(TokenKind::SemiColon).1;
+            if(err != null) {
+                return FieldParser::broken(f, err);
+            } else if(!Modifier::Virtual.In(modifiers)) {
+                return FieldParser::broken(f, Errs::MissingBody);
+            }
+            return (f, null);
+        } else if(Modifier::Virtual.In(modifiers)) {
+            return (null, Errs::VirtualBody);
+        }
+
+        var Err* err = p.Consume(TokenKind::LeftParen).1;
+        if(err != null) {
+            return FieldParser::broken(f, err);
+        }
+        var (ArrList[Token*]*, Err*) parameters = ExprParser::ParameterNames(p);
+        if(parameters.1 != null) {
+            return FieldParser::broken(f, parameters.1);
+        } else if(parameters.0.Len() != f.signature.parameters.Len()) {
+            return FieldParser::broken(f, Errs::MethodArity(f.signature.parameters.Len(), parameters.0.Len()));
+        }
+        f.parameters = parameters.0;
+        var (Stmt*, Err*) body = StmtParser::Parse(p);
+        if(body.1 != null) {
+            return FieldParser::broken(f, body.1);
+        }
+        f.body = body.0;
+        return (f, null);
+    }
+
+    // broken keeps f, with an empty broken body for none read, alongside err
+    fun (Field*, Err*)(Field.Method*, Err*) broken = (f, err) {
+        if(f.body == null) {
+            f.body = Stmt.Block::New(f.name, ArrList::[Stmt*]New(0U), true);
+        }
+        return (f, err);
+    }
+
+    // modifierKinds answers the tokens that write a modifier
+    fun TreeSet[TokenKind]*() modifierKinds = () {
+        if(FieldParser::modifierKindsSet == null) {
+            FieldParser::modifierKindsSet = TreeSet::[TokenKind]New(5U, TokenKind::Public, TokenKind::Private,
+                TokenKind::Protected, TokenKind::Static, TokenKind::Virtual);
+        }
+        return FieldParser::modifierKindsSet;
+    }
+
+    // fieldKinds answers the keywords a field begins with
+    fun TreeSet[TokenKind]*() fieldKinds = () {
+        if(FieldParser::fieldKindsSet == null) {
+            FieldParser::fieldKindsSet = TreeSet::[TokenKind]New(2U, TokenKind::Var, TokenKind::Fun);
+        }
+        return FieldParser::fieldKindsSet;
+    }
+}

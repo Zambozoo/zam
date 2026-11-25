@@ -1,0 +1,39 @@
+import std("lang/Arr.zam");
+import std("lang/Enums.zam");
+
+// Modifier is a keyword written before a field that says who sees it and how it is bound
+public enum Modifier : str {
+    // Set is the modifiers a field is written with, a bit for each
+    public alias Set = uint;
+
+    Public("public"),
+    Private("private"),
+    Protected("protected"),
+    Static("static"),
+    Virtual("virtual");
+
+    // Names writes the modifiers in set in the order they are declared
+    public static fun str(Set) Names = (set) {
+        var str out = "";
+        var Arr[Modifier]* all = Enums::[Modifier]All();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            if(all.Get(i).In(set)) {
+                if(out != "") {
+                    out = out + " ";
+                }
+                out = out + all.Get(i){str};
+            }
+        }
+        return out;
+    }
+
+    // Bit answers the bit the modifier takes in a set
+    public fun Set() Bit = () {
+        return 1U << Enums::[Modifier]Ordinal(*this);
+    }
+
+    // In reports whether the modifier is in set
+    public fun bool(Set) In = (set) {
+        return (set & this.Bit()) != 0U;
+    }
+}

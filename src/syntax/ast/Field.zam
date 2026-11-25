@@ -1,0 +1,117 @@
+import std("data/list/ArrList.zam");
+import "../Token.zam";
+import "Expr.zam";
+import "Generic.zam";
+import "Modifier.zam";
+import "Stmt.zam";
+import "Type.zam";
+
+// Field is a member of a declaration as it is written
+public abstract Field {
+    public enum Kind : int {
+        Member(0),
+        Method(1),
+        Enum(2);
+    }
+
+    public var Kind kind;
+    // start is the token the field begins at
+    public var Token* start;
+    public var Modifier.Set modifiers;
+    public var Token* name;
+
+    // open writes the parenthesis a field begins with, its keyword and its modifiers
+    static fun str(str, Modifier.Set) open = (keyword, modifiers) {
+        if(modifiers == 0U) {
+            return "(" + keyword;
+        }
+        return "(" + keyword + " " + Modifier::Names(modifiers);
+    }
+
+    // Member is a variable
+    public class Member <: Field* {
+        public var Type* declared;
+        // init is the expression the member is initialized to, or null for none
+        public var Expr* init;
+
+        public static fun Member*(Token*, Modifier.Set, Type*, Token*) New = (start, modifiers, declared, name) {
+            var Member* f = new(Member);
+            f.kind = Kind::Member;
+            f.start = start;
+            f.modifiers = modifiers;
+            f.declared = declared;
+            f.name = name;
+            return f;
+        }
+
+        public fun str() Str = () {
+            var str out = Field::open("var", this.modifiers) + " " + this.declared.Str() + " " + this.name.value{str};
+            if(this.init != null) {
+                out = out + " " + this.init.Str();
+            }
+            return out + ")";
+        }
+    }
+
+    // Method is a function
+    public class Method <: Field* {
+        // generics is the method's generic parameters, or null for none
+        public var ArrList[Generic*]* generics;
+        public var Type.Function* signature;
+        // parameters is the names of the parameters, _ for none, or null for no body
+        public var ArrList[Token*]* parameters;
+        // body is the statement the method runs, or null for none
+        public var Stmt* body;
+
+        public static fun Method*(Token*, Modifier.Set) New = (start, modifiers) {
+            var Method* f = new(Method);
+            f.kind = Kind::Method;
+            f.start = start;
+            f.modifiers = modifiers;
+            return f;
+        }
+
+        public fun str() Str = () {
+            var str out = Field::open("fun", this.modifiers);
+            if(this.generics != null) {
+                out = out + " " + Generic::List(this.generics);
+            }
+            out = out + " " + this.signature.Str() + " " + this.name.value{str};
+            if(this.parameters != null) {
+                out = out + " " + Expr::parameters(this.parameters);
+            }
+            if(this.body != null) {
+                out = out + " " + this.body.Str();
+            }
+            return out + ")";
+        }
+    }
+
+    // Enum is a value of an enum
+    public class Enum <: Field* {
+        // value is what the value is backed by, or null for an enum not backed by a primitive
+        public var Expr* value;
+        // init is the method the value is initialized by, or null for none
+        public var Token* init;
+        public var ArrList[Expr*]* arguments;
+
+        public static fun Enum*(Token*) New = (name) {
+            var Enum* f = new(Enum);
+            f.kind = Kind::Enum;
+            f.start = name;
+            f.modifiers = 0U;
+            f.name = name;
+            return f;
+        }
+
+        public fun str() Str = () {
+            var str out = "(enum " + this.name.value{str};
+            if(this.value != null) {
+                out = out + " " + this.value.Str();
+            } else if(this.init != null) {
+                out = out + "." + this.init.value{str} + Expr::list(this.arguments);
+            }
+            return out + ")";
+        }
+    }
+}
