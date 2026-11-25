@@ -1193,6 +1193,85 @@ namespace Main {
 	assert.Equal(t, "red true false true 200\n", output)
 }
 
+// TestNativeSwitchesOnValuesTheRuntimeCompares switches on a str and on a
+// tuple, whose cases are compared by their contents, a case value built as
+// it is tested.
+func TestNativeSwitchesOnValuesTheRuntimeCompares(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    static fun str(str) name = (s) {
+        switch(s) {
+            case ("a", "b")
+                return "early";
+            case ("c" + 1{str})
+                return "built";
+        } else {
+            return "none";
+        }
+        return "";
+    }
+
+    static fun str((int, str)) pair = (p) {
+        switch(p) {
+            case ((1, "x"))
+                return "one";
+            case ((2, "y"))
+                return "two";
+        } else {
+            return "other";
+        }
+        return "";
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        File::StdOut.WriteStr(Main::name("b") + " " + Main::name("c1") + " " + Main::name("z") + " ");
+        File::StdOut.WriteStr(Main::pair((2, "y")) + " " + Main::pair((2, "x")) + "\n");
+    }
+}
+`)
+	assert.Zero(t, status, output)
+	assert.Equal(t, "early built none two other\n", output)
+}
+
+// TestNativeSwitchesOnPointers switches on a pointer to something other than
+// an object by its address, as == compares one, null among the cases.
+func TestNativeSwitchesOnPointers(t *testing.T) {
+	t.Parallel()
+	output, status := runNative(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    static fun str(int*, int*, int*) which = (p, a, b) {
+        switch(p) {
+            case (null)
+                return "null";
+            case (a)
+                return "a";
+            case (b)
+                return "b";
+        } else {
+            return "other";
+        }
+        return "";
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int* a = new(int, 1U);
+        var int* b = new(int, 1U);
+        var int* c = new(int, 1U);
+        *a = 1;
+        *c = 1;
+        File::StdOut.WriteStr(Main::which(null, a, b) + " " + Main::which(a, a, b) + " " + Main::which(b, a, b) + " " + Main::which(c, a, b) + "\n");
+    }
+}
+`)
+	assert.Zero(t, status, output)
+	assert.Equal(t, "null a b other\n", output)
+}
+
 // TestNativeTrapsWhatItCannotCompile compiles a method native compilation
 // cannot compile yet as a trap, says so in the object, and ends the program
 // saying why only once the method is called. One the program cannot reach is

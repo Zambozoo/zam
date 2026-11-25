@@ -17,8 +17,12 @@ public class FlagSet {
             return StrErr::New("unknown flag: --" + name);
         }
 
-        public fun Err*(str, str) FlagNeedsArgument = (name, shorts) {
-            return StrErr::New("flag needs an argument: --" + name + " or -" + shorts);
+        public fun Err*(str) FlagNeedsArgument = (name) {
+            return StrErr::New("flag needs an argument: --" + name);
+        }
+
+        public fun Err*(str, str) ShorthandNeedsArgument = (c, shorts) {
+            return StrErr::New("flag needs an argument: '" + c + "' in -" + shorts);
         }
 
         public fun Err*(str, str) UnknownShorthandFlag = (c, shorts) {
@@ -177,7 +181,7 @@ public class FlagSet {
                 value = args.Get(i);
                 i = i + 1U;
             } else {
-                return (i, false, Errs::FlagNeedsArgument(name, ""));
+                return (i, false, Errs::FlagNeedsArgument(name));
             }
         }
         var Err* err = this.set(f, value);
@@ -218,7 +222,7 @@ public class FlagSet {
                 i = i + 1U;
                 shorts = "";
             } else {
-                return (i, false, Errs::FlagNeedsArgument(c, shorts));
+                return (i, false, Errs::ShorthandNeedsArgument(c, shorts));
             }
             var Err* err = this.set(f, value);
             if(err != null) {

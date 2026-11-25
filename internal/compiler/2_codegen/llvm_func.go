@@ -2054,7 +2054,14 @@ func (e *funcEmitter) emitSwitch(s *syntax.StmtSwitch) error {
 	typ := e.ground(s.Expr.ResolvedType())
 	kind, err := primitiveKind(typ)
 	enumKind, enumErr := valueKind(typ)
+	byRuntime := false
 	if err != nil && enumErr == nil && (enumKind == kindEnum || enumKind == kindMemberEnum) {
+		kind, err = syntax.TypeKindUint, nil
+	} else if err != nil && comparedByRuntime(typ) {
+		byRuntime, err = true, nil
+	} else if err != nil && enumErr == nil && enumKind == syntax.TypeKindPointer {
+		// A pointer to anything but an object is told apart by its address,
+		// as == tells it.
 		kind, err = syntax.TypeKindUint, nil
 	}
 	if err != nil {
@@ -2072,6 +2079,13 @@ func (e *funcEmitter) emitSwitch(s *syntax.StmtSwitch) error {
 		return err
 	}
 	value = discriminant(value)
+	// A value compared through the runtime is held in a slot of its own, so
+	// that it stays rooted while each case value is computed.
+	held := uint64(0)
+	if byRuntime {
+		held = e.declareLocal("", typ)
+		e.store(e.slotPlace(held, typ), value)
+	}
 
 	bodies := make([]llvm.BasicBlock, len(s.Cases))
 	for i := range s.Cases {
@@ -2087,8 +2101,17 @@ func (e *funcEmitter) emitSwitch(s *syntax.StmtSwitch) error {
 				return err
 			}
 			v = discriminant(v)
+			var matches llvm.Value
+			if byRuntime {
+				id := e.p.typeID(typ)
+				left := e.wordsOf(e.load(e.slotPlace(held, typ)), typ)
+				matches = e.b.CreateICmp(llvm.IntNE, e.call("zamrt_eq", e.thread, id, left, id, e.wordsOf(v, typ)),
+					llvm.ConstInt(e.ctx.Int8Type(), 0, false), "")
+			} else {
+				matches = e.equal(kind, value, v)
+			}
 			next := e.ctx.AddBasicBlock(e.fn, "switch.test")
-			e.b.CreateCondBr(e.equal(kind, value, v), bodies[i], next)
+			e.b.CreateCondBr(matches, bodies[i], next)
 			e.b.SetInsertPointAtEnd(next)
 		}
 	}
@@ -3026,13 +3049,10 @@ func (e *funcEmitter) emitComparison(x *syntax.ExprNAry) (llvm.Value, error) {
 	if len(x.Exprs) != 2 {
 		return llvm.Value{}, unsupported("a chain of %d comparisons", len(x.Exprs)-1)
 	}
-	if kind, err := valueKind(e.ground(x.Exprs[0].ResolvedType())); err == nil && (kind == syntax.TypeKindString || kind == syntax.TypeKindTuple || kind == kindStruct || kind == syntax.TypeKindType || kind == syntax.TypeKindArray || kind == syntax.TypeKindFunction || kind == syntax.TypeKindThread || kind == kindInstance || kind == syntax.TypeKindAny || kind == kindMemberEnum) {
+	if comparedByRuntime(e.ground(x.Exprs[0].ResolvedType())) {
 		return e.emitRuntimeComparison(x)
 	}
 	if kind, err := valueKind(e.ground(x.Exprs[0].ResolvedType())); err == nil && (kind == syntax.TypeKindPointer || kind == kindEnum) {
-		if _, ok := objectDecl(e.ground(x.Exprs[0].ResolvedType())); ok {
-			return e.emitRuntimeComparison(x)
-		}
 		return e.emitPointerComparison(x)
 	}
 	kind, err := primitiveKind(e.ground(x.Exprs[0].ResolvedType()))
@@ -3109,6 +3129,25 @@ func (e *funcEmitter) emitPointerComparison(x *syntax.ExprNAry) (llvm.Value, err
 		syntax.ExprKindGreaterThanOrEqual: llvm.IntUGE,
 	}
 	return e.b.CreateZExt(e.b.CreateICmp(predicates[x.Kind()], left, right, ""), e.p.i64, ""), nil
+}
+
+// comparedByRuntime reports whether values of t compare through the runtime,
+// by their contents or by the Eq and Cmp of the instances they point at,
+// rather than as words.
+func comparedByRuntime(t syntax.Type) bool {
+	kind, err := valueKind(t)
+	if err != nil {
+		return false
+	}
+	switch kind {
+	case syntax.TypeKindString, syntax.TypeKindTuple, kindStruct, syntax.TypeKindType, syntax.TypeKindArray,
+		syntax.TypeKindFunction, syntax.TypeKindThread, kindInstance, syntax.TypeKindAny, kindMemberEnum:
+		return true
+	case syntax.TypeKindPointer, kindEnum:
+		_, ok := objectDecl(t)
+		return ok
+	}
+	return false
 }
 
 // emitRuntimeComparison compares two values through the runtime, by their

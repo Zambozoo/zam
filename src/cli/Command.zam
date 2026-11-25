@@ -70,7 +70,7 @@ public class Command {
         }
 
         public fun Err*(str) InputFileNotFound = (path) {
-            return StrErr::New("input file not found: " + Strs::Quote(path));
+            return StrErr::New("input file not found: " + path);
         }
     }
 
