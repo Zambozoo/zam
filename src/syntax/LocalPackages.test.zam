@@ -1,0 +1,98 @@
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("io/local/Process.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "LocalPackages.zam";
+import "PackageArchive.zam";
+
+public namespace LocalPackagesTest {
+    // git runs git with args in dir as a user committing without signing
+    private fun void(str, Arr[str]*) git = (dir, args) {
+        var Arr[str]* argv = Arr::[str]New(args.Len() + 9U, new(str, args.Len() + 9U)...);
+        var Arr[str]* config = Arr::[str]New(9U, "git", "-c", "user.name=zam", "-c", "user.email=zam@example.com", "-c", "commit.gpgsign=false", "-c", "tag.gpgsign=false");
+        for(var uint i = 0U; i < config.Len(); i++) {
+            argv.Set(i, config.Get(i));
+        }
+        for(var uint i = 0U; i < args.Len(); i++) {
+            argv.Set(i + 9U, args.Get(i));
+        }
+        var (Process.Result, Err*) run = Process::Run(dir, argv, Arr::[str]New(0U));
+        if(run.1 != null) {
+            Assert::Fatal(run.1.Err());
+        } else if(run.0.code != 0) {
+            Assert::Fatal(run.0.output);
+        }
+    }
+
+    // repo answers a new repository in dir holding Dep.zam and a zam.yml,
+    // tagged v1
+    private fun str(str) repo = (dir) {
+        var str repo = Paths::Join(dir, "repo");
+        FS::MakeDirs(Paths::Join(repo, "lib"));
+        FS::WriteFile(Paths::Join(repo, "zam.yml"), "name: dep\n");
+        FS::WriteFile(Paths::Join(repo, "lib/Dep.zam"), "class Dep {}\n");
+        LocalPackagesTest::git(repo, Arr::[str]New(2U, "init", "-q"));
+        LocalPackagesTest::git(repo, Arr::[str]New(2U, "add", "."));
+        LocalPackagesTest::git(repo, Arr::[str]New(4U, "commit", "-q", "-m", "initial"));
+        LocalPackagesTest::git(repo, Arr::[str]New(2U, "tag", "v1"));
+        return repo;
+    }
+
+    // url answers the file URL of dir
+    private fun str(str) url = (dir) {
+        if(Paths::Volume(dir) != "") {
+            return "file:///" + dir;
+        }
+        return "file://" + dir;
+    }
+
+    public fun void(uint, str...) Fetch = (argC, argV) {
+        var str dir = FS::MakeTempDir(FS::ToSlash(FS::TempDir()), "zam-packages-").0;
+        defer PackageArchive::RemoveReadOnly(dir);
+        var str source = LocalPackagesTest::url(LocalPackagesTest::repo(dir));
+        var str root = Paths::Join(dir, "pkg");
+
+        var LocalPackages* packages = LocalPackages::NewWithRemote(root, lambda str(str): (repo) {
+            return source;
+        });
+        var (str, str, Err*) fetched = packages.Fetch("example.com/dep@v1");
+        if(!Assert::True(fetched.2 == null, "the dependency is not fetched")) {
+            Assert::Fatal(fetched.2.Err());
+        }
+        Assert::[str]Equal(Paths::Join(root, "example.com/dep@v1"), fetched.0);
+        Assert::[str]Equal("class Dep {}\n", FS::ReadFile(Paths::Join(fetched.0, "lib/Dep.zam")).0);
+        Assert::False(FS::Exists(Paths::Join(fetched.0, ".git")), "git's own files are fetched");
+        Assert::[str]Equal(PackageArchive::Hash(Paths::Join(root, "example.com/dep@v1.tar.zst")).0, fetched.1);
+        Assert::True(Strs::HasPrefix(fetched.1, "h1:"), fetched.1 + " is not an h1 hash");
+
+        var LocalPackages* cached = LocalPackages::NewWithRemote(root, lambda str(str): (repo) {
+            return "file:///nowhere";
+        });
+        var (str, str, Err*) again = cached.Fetch("example.com/dep@v1");
+        Assert::True(again.2 == null, "a fetched dependency is fetched again");
+        Assert::[str]Equal(fetched.1, again.1);
+
+        var (str, str, Err*) gone = cached.Fetch("example.com/gone@v1");
+        if(Assert::True(gone.2 != null, "a missing repository is fetched")) {
+            Assert::True(Strs::HasPrefix(gone.2.Err(), "cannot fetch example.com/gone@v1: git fetch: exit status "), gone.2.Err());
+        }
+        Assert::False(FS::Exists(Paths::Join(root, "example.com/gone@v1.tar.zst")), "a failed fetch leaves an archive");
+
+        Assert::True(packages.Clean() == null, "the root is not removed");
+        Assert::False(FS::Exists(root), "the root is left");
+    }
+
+    public fun void(uint, str...) Refs = (argC, argV) {
+        var LocalPackages* packages = LocalPackages::New("/nowhere");
+        Assert::[str]Equal("dependency \"example.com/dep\" has no version: write repo@version", packages.Fetch("example.com/dep").2.Err());
+        Assert::[str]Equal("dependency \"dep@v1\" has an invalid repository \"dep\"", packages.Fetch("dep@v1").2.Err());
+        Assert::[str]Equal("dependency \"example.com/../x@v1\" has an invalid repository \"example.com/../x\"", packages.Fetch("example.com/../x@v1").2.Err());
+        Assert::[str]Equal("dependency \"-x.com/dep@v1\" has an invalid repository \"-x.com/dep\"", packages.Fetch("-x.com/dep@v1").2.Err());
+        Assert::[str]Equal("dependency \"example.com/dep@-v\" has an invalid version \"-v\"", packages.Fetch("example.com/dep@-v").2.Err());
+        Assert::[str]Equal("dependency \"example.com/dep@v..1\" has an invalid version \"v..1\"", packages.Fetch("example.com/dep@v..1").2.Err());
+        Assert::[str]Equal("dependency \"example.com/dep@abc1234\" names an abbreviated commit: use a tag or the full commit", packages.Fetch("example.com/dep@abc1234").2.Err());
+    }
+}

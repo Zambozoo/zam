@@ -20,6 +20,7 @@
 #else
 #include <limits.h>
 #include <sys/random.h>
+#include <sys/wait.h>
 #endif
 
 #if defined(__APPLE__)
@@ -437,6 +438,324 @@ static void stdFsTempDir(ZamThread *thread) {
     zam_native_return_void(thread);
 }
 
+// stdFsIsLink answers whether path names a symbolic link, or on Windows any
+// reparse point, rather than what one points at.
+static void stdFsIsLink(ZamThread *thread) {
+    char *path = cString(thread, 0);
+    zam_native_block_begin(thread);
+#if defined(_WIN32)
+    DWORD attributes = GetFileAttributesA(path);
+    bool link = attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+#else
+    struct stat st;
+    bool link = lstat(path, &st) == 0 && S_ISLNK(st.st_mode);
+#endif
+    zam_native_block_end(thread);
+    free(path);
+    *(bool *)zam_native_argument_pointer(thread, 1) = link;
+    zam_native_return_void(thread);
+}
+
+// splitStrings answers the count NUL-separated strings of the zam string at
+// wordIndex as a NULL-terminated array of C strings, which freeStrings frees.
+static char **splitStrings(ZamThread *thread, uint64_t wordIndex, size_t count) {
+    const ZamString *s = stringArgument(thread, wordIndex);
+    char **out = calloc(count + 1, sizeof *out);
+    if (out == NULL)
+        zam_native_panic(thread, "out of memory for a command");
+    size_t start = 0;
+    for (size_t i = 0; i < count; i++) {
+        size_t end = start;
+        while (end < s->length && s->bytes[end] != '\0')
+            end++;
+        out[i] = malloc(end - start + 1);
+        if (out[i] == NULL)
+            zam_native_panic(thread, "out of memory for a command");
+        memcpy(out[i], s->bytes + start, end - start);
+        out[i][end - start] = '\0';
+        start = end + 1;
+    }
+    return out;
+}
+
+static void freeStrings(char **strings) {
+    for (size_t i = 0; strings[i] != NULL; i++)
+        free(strings[i]);
+    free(strings);
+}
+
+// processOutput collects what a process writes.
+typedef struct ProcessOutput {
+    char *bytes;
+    size_t length;
+    size_t cap;
+} ProcessOutput;
+
+static void processOutputAppend(ZamThread *thread, ProcessOutput *out, const char *bytes, size_t n) {
+    if (out->length + n > out->cap) {
+        size_t cap = out->cap == 0 ? 4096 : out->cap;
+        while (cap < out->length + n)
+            cap *= 2;
+        char *grown = realloc(out->bytes, cap);
+        if (grown == NULL)
+            zam_native_panic(thread, "out of memory for a process's output");
+        out->bytes = grown;
+        out->cap = cap;
+    }
+    memcpy(out->bytes + out->length, bytes, n);
+    out->length += n;
+}
+
+#if defined(_WIN32)
+// appendQuoted writes arg to out as the C runtime splits a command line back
+// into arguments: in quotes when it has spaces, tabs or quotes or is empty,
+// with backslashes doubled where they come before a quote.
+static void appendQuoted(ZamThread *thread, ProcessOutput *out, const char *arg) {
+    if (arg[0] != '\0' && strpbrk(arg, " \t\"") == NULL) {
+        processOutputAppend(thread, out, arg, strlen(arg));
+        return;
+    }
+    processOutputAppend(thread, out, "\"", 1);
+    for (const char *p = arg;; p++) {
+        size_t backslashes = 0;
+        while (*p == '\\') {
+            backslashes++;
+            p++;
+        }
+        if (*p == '\0') {
+            for (size_t i = 0; i < backslashes * 2; i++)
+                processOutputAppend(thread, out, "\\", 1);
+            break;
+        }
+        size_t written = *p == '"' ? backslashes * 2 + 1 : backslashes;
+        for (size_t i = 0; i < written; i++)
+            processOutputAppend(thread, out, "\\", 1);
+        processOutputAppend(thread, out, p, 1);
+    }
+    processOutputAppend(thread, out, "\"", 1);
+}
+
+// sameName reports whether the environment entry entry sets the variable
+// that the entry extra sets, as Windows compares their names: ignoring case.
+static bool sameName(const char *entry, const char *extra) {
+    const char *equals = strchr(extra, '=');
+    size_t n = equals == NULL ? strlen(extra) : (size_t)(equals - extra);
+    return _strnicmp(entry, extra, n) == 0 && entry[n] == '=';
+}
+#else
+extern char **environ;
+
+// sameName reports whether the environment entry entry sets the variable
+// that the entry extra sets.
+static bool sameName(const char *entry, const char *extra) {
+    const char *equals = strchr(extra, '=');
+    size_t n = equals == NULL ? strlen(extra) : (size_t)(equals - extra);
+    return strncmp(entry, extra, n) == 0 && entry[n] == '=';
+}
+
+// findProgram answers the path name is run from: name itself when it holds a
+// slash, else the first executable of that name in a directory of $PATH, or
+// NULL for none. The caller frees it.
+static char *findProgram(const char *name) {
+    if (strchr(name, '/') != NULL)
+        return strdup(name);
+    const char *path = getenv("PATH");
+    if (path == NULL)
+        path = "/usr/bin:/bin";
+    size_t nameLength = strlen(name);
+    for (const char *dir = path;;) {
+        const char *end = strchr(dir, ':');
+        size_t dirLength = end == NULL ? strlen(dir) : (size_t)(end - dir);
+        char *candidate = malloc(dirLength + nameLength + 2);
+        if (candidate == NULL)
+            return NULL;
+        if (dirLength == 0) {
+            memcpy(candidate, name, nameLength + 1);
+        } else {
+            memcpy(candidate, dir, dirLength);
+            candidate[dirLength] = '/';
+            memcpy(candidate + dirLength + 1, name, nameLength + 1);
+        }
+        if (access(candidate, X_OK) == 0)
+            return candidate;
+        free(candidate);
+        if (end == NULL)
+            return NULL;
+        dir = end + 1;
+    }
+}
+#endif
+
+// stdProcessRun runs the program argv[0] names with the arguments after it, in
+// the directory dir or this one for "", with the variables of env set over the
+// environment, and answers what it wrote to its stdout and stderr together and
+// the code it exited with: 128 and the signal for one a signal ended. argv and
+// env are NUL-separated, argc and envc strings long.
+static void stdProcessRun(ZamThread *thread) {
+    char *dir = cString(thread, 0);
+    size_t argc = (size_t)zam_native_argument(thread, 2);
+    size_t envc = (size_t)zam_native_argument(thread, 4);
+    char **argv = splitStrings(thread, 1, argc);
+    char **extra = splitStrings(thread, 3, envc);
+    ZamWord *outputOut = (ZamWord *)zam_native_argument_pointer(thread, 5);
+    ZamInt *codeOut = (ZamInt *)zam_native_argument_pointer(thread, 6);
+    ProcessOutput output = {0};
+    int code = 0;
+    int err = 0;
+
+    zam_native_block_begin(thread);
+#if defined(_WIN32)
+    ProcessOutput command = {0};
+    for (size_t i = 0; i < argc; i++) {
+        if (i > 0)
+            processOutputAppend(thread, &command, " ", 1);
+        appendQuoted(thread, &command, argv[i]);
+    }
+    processOutputAppend(thread, &command, "", 1);
+
+    ProcessOutput environment = {0};
+    char *inherited = GetEnvironmentStringsA();
+    for (char *entry = inherited; entry != NULL && *entry != '\0'; entry += strlen(entry) + 1) {
+        bool replaced = false;
+        for (size_t i = 0; i < envc && !replaced; i++)
+            replaced = sameName(entry, extra[i]);
+        if (!replaced)
+            processOutputAppend(thread, &environment, entry, strlen(entry) + 1);
+    }
+    if (inherited != NULL)
+        FreeEnvironmentStringsA(inherited);
+    for (size_t i = 0; i < envc; i++)
+        processOutputAppend(thread, &environment, extra[i], strlen(extra[i]) + 1);
+    processOutputAppend(thread, &environment, "\0", 2);
+
+    SECURITY_ATTRIBUTES inherit = {sizeof inherit, NULL, TRUE};
+    HANDLE readEnd, writeEnd;
+    if (!CreatePipe(&readEnd, &writeEnd, &inherit, 0)) {
+        err = windowsErrno(GetLastError());
+    } else {
+        SetHandleInformation(readEnd, HANDLE_FLAG_INHERIT, 0);
+        STARTUPINFOA startup;
+        memset(&startup, 0, sizeof startup);
+        startup.cb = sizeof startup;
+        startup.dwFlags = STARTF_USESTDHANDLES;
+        startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+        startup.hStdOutput = writeEnd;
+        startup.hStdError = writeEnd;
+        PROCESS_INFORMATION process;
+        BOOL started = CreateProcessA(NULL, command.bytes, NULL, NULL, TRUE, 0, environment.bytes,
+                                      dir[0] == '\0' ? NULL : dir, &startup, &process);
+        DWORD startErr = GetLastError();
+        CloseHandle(writeEnd);
+        if (!started) {
+            err = windowsErrno(startErr);
+        } else {
+            char chunk[16384];
+            DWORD got;
+            while (ReadFile(readEnd, chunk, sizeof chunk, &got, NULL) && got > 0)
+                processOutputAppend(thread, &output, chunk, got);
+            WaitForSingleObject(process.hProcess, INFINITE);
+            DWORD exitCode = 0;
+            GetExitCodeProcess(process.hProcess, &exitCode);
+            code = (int)exitCode;
+            CloseHandle(process.hProcess);
+            CloseHandle(process.hThread);
+        }
+        CloseHandle(readEnd);
+    }
+    free(command.bytes);
+    free(environment.bytes);
+#else
+    size_t inheritedCount = 0;
+    while (environ[inheritedCount] != NULL)
+        inheritedCount++;
+    char **envp = calloc(inheritedCount + envc + 1, sizeof *envp);
+    size_t envpCount = 0;
+    for (size_t i = 0; i < inheritedCount; i++) {
+        bool replaced = false;
+        for (size_t j = 0; j < envc && !replaced; j++)
+            replaced = sameName(environ[i], extra[j]);
+        if (!replaced)
+            envp[envpCount++] = environ[i];
+    }
+    for (size_t i = 0; i < envc; i++)
+        envp[envpCount++] = extra[i];
+
+    char *program = findProgram(argv[0]);
+    int outPipe[2];
+    int execPipe[2];
+    if (program == NULL) {
+        err = ENOENT;
+    } else if (pipe(outPipe) != 0) {
+        err = errno;
+    } else if (pipe(execPipe) != 0) {
+        err = errno;
+        close(outPipe[0]);
+        close(outPipe[1]);
+    } else {
+        fcntl(outPipe[0], F_SETFD, FD_CLOEXEC);
+        fcntl(execPipe[0], F_SETFD, FD_CLOEXEC);
+        fcntl(execPipe[1], F_SETFD, FD_CLOEXEC);
+        pid_t pid = fork();
+        if (pid == 0) {
+            // Only async-signal-safe calls between fork and exec.
+            int childErr = 0;
+            if (dir[0] != '\0' && chdir(dir) != 0)
+                childErr = errno;
+            if (childErr == 0 && (dup2(outPipe[1], 1) < 0 || dup2(outPipe[1], 2) < 0))
+                childErr = errno;
+            if (childErr == 0) {
+                execve(program, argv, envp);
+                childErr = errno;
+            }
+            ssize_t ignored = write(execPipe[1], &childErr, sizeof childErr);
+            (void)ignored;
+            _exit(127);
+        }
+        int forkErr = errno;
+        close(outPipe[1]);
+        close(execPipe[1]);
+        if (pid < 0) {
+            err = forkErr;
+        } else {
+            int childErr = 0;
+            if (read(execPipe[0], &childErr, sizeof childErr) == sizeof childErr)
+                err = childErr;
+            char chunk[16384];
+            ssize_t got;
+            while ((got = read(outPipe[0], chunk, sizeof chunk)) != 0) {
+                if (got < 0) {
+                    if (errno == EINTR)
+                        continue;
+                    break;
+                }
+                processOutputAppend(thread, &output, chunk, (size_t)got);
+            }
+            int status = 0;
+            while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+            }
+            if (WIFEXITED(status))
+                code = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status))
+                code = 128 + WTERMSIG(status);
+        }
+        close(outPipe[0]);
+        close(execPipe[0]);
+    }
+    free(program);
+    free(envp);
+#endif
+    zam_native_block_end(thread);
+
+    if (err == 0)
+        *outputOut = (ZamWord)zam_native_new_string(thread, output.bytes == NULL ? "" : output.bytes, output.length);
+    *codeOut = code;
+    free(output.bytes);
+    free(dir);
+    freeStrings(argv);
+    freeStrings(extra);
+    finishErr(thread, 7, err == 0 ? 0 : -1, err);
+}
+
 static void stdPipeInit(ZamThread *thread) {
     ZamInt *readOut = (ZamInt *)zam_native_argument_pointer(thread, 0);
     ZamInt *writeOut = (ZamInt *)zam_native_argument_pointer(thread, 1);
@@ -780,6 +1099,20 @@ static void stdSystemEnv(ZamThread *thread) {
     if (value != NULL)
         *(ZamWord *)zam_native_argument_pointer(thread, 1) = (ZamWord)zam_native_new_string(thread, value, strlen(value));
     *(bool *)zam_native_argument_pointer(thread, 2) = value != NULL;
+    zam_native_return_void(thread);
+}
+
+// stdSystemOS answers the operating system the program was built for, as Go
+// names it.
+static void stdSystemOS(ZamThread *thread) {
+#if defined(_WIN32)
+    const char *os = "windows";
+#elif defined(__APPLE__)
+    const char *os = "darwin";
+#else
+    const char *os = "linux";
+#endif
+    *(ZamWord *)zam_native_argument_pointer(thread, 0) = (ZamWord)zam_native_new_string(thread, os, strlen(os));
     zam_native_return_void(thread);
 }
 
@@ -1383,6 +1716,8 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_FS_SEPARATOR", stdFsSeparator},
     {"STD_FS_TEMP_DIR", stdFsTempDir},
     {"STD_PIPE_INIT", stdPipeInit},
+    {"STD_PROCESS_RUN", stdProcessRun},
+    {"STD_FS_IS_LINK", stdFsIsLink},
     {"STD_STRS_FROM_BYTES", stdStrsFromBytes},
     {"STD_STRS_BYTE_LEN", stdStrsByteLen},
     {"STD_STRS_PARSE_FLT", stdStrsParseFlt},
@@ -1403,6 +1738,7 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_SYSTEM_PROCESSOR_COUNT", stdSystemProcessorCount},
     {"STD_SYSTEM_ENV", stdSystemEnv},
     {"STD_SYSTEM_EXECUTABLE", stdSystemExecutable},
+    {"STD_SYSTEM_OS", stdSystemOS},
     {"STD_SYSTEM_THREAD_ID", stdSystemThreadID},
     {"STD_RAND_UINT", stdRandUint},
     {"STD_RAND_FLT", stdRandFlt},

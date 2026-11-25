@@ -186,3 +186,55 @@ namespace Main {
 	assert.Equal(t, 67, status)
 	assert.Contains(t, stderr, "the mutex is already held by this thread")
 }
+
+// TestSingleFlight shares one call between the calls made with its key while
+// it runs, runs a call with another key at once, and runs a key again once its
+// call has returned. The running call waits until both others are waiting on
+// it, so nothing depends on how the threads are scheduled.
+func TestSingleFlight(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+import std("sync/*");
+
+namespace Main {
+    static var SingleFlight[int]* flights = null;
+    static var Atomic[int]* joined = null;
+    static var thread[(int, bool)] b;
+    static var thread[(int, bool)] c;
+    static var (int, bool) other;
+
+    static fun (int, bool)(str) join = (key) {
+        return Main::flights.Do(key, lambda int(): () {
+            Main::joined.Set(Main::joined.Load() + 1);
+            return 100;
+        });
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        Main::flights = SingleFlight::[int]New();
+        Main::joined = Atomic::[int]New(0);
+        var (int, bool) led = Main::flights.Do("a", lambda int(): () {
+            Main::b = async(Main::join("a"));
+            Main::c = async(Main::join("a"));
+            for(; Main::flights.Waiting("a") < 2U;) {
+            }
+            Main::other = Main::flights.Do("b", lambda int(): () {
+                return 7;
+            });
+            return 42;
+        });
+        var (int, bool) gotB = wait(Main::b);
+        var (int, bool) gotC = wait(Main::c);
+        var str s = led.0{str} + " " + led.1{str} + " " + gotB.0{str} + " " + gotB.1{str} + " " + gotC.0{str} + " " + gotC.1{str};
+        s = s + " " + Main::other.0{str} + " " + Main::other.1{str} + " " + Main::joined.Load(){str};
+        var (int, bool) again = Main::join("a");
+        s = s + " " + again.0{str} + " " + again.1{str} + " " + Main::joined.Load(){str} + " " + Main::flights.Waiting("a"){str} + "\n";
+        File::StdOut.WriteStr(s);
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "42 false 42 true 42 true 7 false 0 100 false 1 0\n", stdout)
+}

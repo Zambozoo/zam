@@ -1,19 +1,229 @@
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("io/local/Process.zam");
+import std("lang/Arr.zam");
 import std("lang/Err.zam");
 import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("sync/SingleFlight.zam");
+import "PackageArchive.zam";
 
-// LocalPackages fetches dependencies into the directory they are kept under
+// LocalPackages fetches dependencies from their git repositories into the directory they are kept under
 public class LocalPackages {
     namespace Errs {
-        public fun Err*(str) Unsupported = (ref) {
-            return StrErr::New("cannot fetch " + ref + ": fetching dependencies is not supported yet");
+        public fun Err*(str) NoVersion = (ref) {
+            return StrErr::New("dependency " + Strs::Quote(ref) + " has no version: write repo@version");
+        }
+
+        public fun Err*(str, str) BadRepo = (ref, repo) {
+            return StrErr::New("dependency " + Strs::Quote(ref) + " has an invalid repository " + Strs::Quote(repo));
+        }
+
+        public fun Err*(str, str) BadVersion = (ref, version) {
+            return StrErr::New("dependency " + Strs::Quote(ref) + " has an invalid version " + Strs::Quote(version));
+        }
+
+        public fun Err*(str) ShortCommit = (ref) {
+            return StrErr::New("dependency " + Strs::Quote(ref) + " names an abbreviated commit: use a tag or the full commit");
+        }
+
+        public fun Err*(str, str, Err*) Wrapped = (what, subject, err) {
+            return StrErr::New(what + " " + subject + ": " + err.Err());
+        }
+
+        public fun Err*(str, int, str) Git = (command, code, output) {
+            return StrErr::New("git " + command + ": exit status " + code{str} + ": " + Strs::TrimSpace(output));
         }
     }
 
-    public static fun LocalPackages*() New = () {
-        return new(LocalPackages);
+    // ArchiveExtension is what a dependency's archive is named with
+    public static var str$ ArchiveExtension = ".tar.zst";
+
+    var str root;
+    // remote answers the URL a repository is fetched from
+    var str(str) remote;
+    // fetches runs the fetches of one ref made at once as one
+    var SingleFlight[(str, str, Err*)]* fetches;
+
+    // New answers a provider keeping dependencies under root
+    public static fun LocalPackages*(str) New = (root) {
+        return LocalPackages::NewWithRemote(root, lambda str(str): (repo) {
+            return "https://" + repo + ".git";
+        });
     }
 
+    // NewWithRemote answers a provider keeping dependencies under root
+    public static fun LocalPackages*(str, str(str)) NewWithRemote = (root, remote) {
+        var LocalPackages* p = new(LocalPackages);
+        p.root = root;
+        p.remote = remote;
+        p.fetches = SingleFlight::[(str, str, Err*)]New();
+        return p;
+    }
+
+    // Root answers the directory dependencies are kept under
+    public fun str() Root = () {
+        return this.root;
+    }
+
+    // Clean removes every dependency kept under the root
+    public fun Err*() Clean = () {
+        return PackageArchive::RemoveReadOnly(this.root);
+    }
+
+    // Fetch answers the directory the dependency ref, written repo@version, is extracted to, and the hash of its files
     public fun (str, str, Err*)(str) Fetch = (ref) {
-        return ("", "", Errs::Unsupported(ref));
+        var (str, str, Err*) parsed = LocalPackages::parseRef(ref);
+        if(parsed.2 != null) {
+            return ("", "", parsed.2);
+        }
+        var LocalPackages* self = this;
+        return this.fetches.Do(ref, lambda (str, str, Err*)(): () {
+            return self.fetch(ref, parsed.0, parsed.1);
+        }).0;
+    }
+
+    // fetch fetches version of repo, which ref writes, unless it is kept already
+    fun (str, str, Err*)(str, str, str) fetch = (ref, repo, version) {
+        var str dir = Paths::Join(this.root, repo + "@" + version);
+        var str archive = dir + LocalPackages::ArchiveExtension;
+        if(!FS::Exists(archive)) {
+            var Err* err = this.download(repo, version, archive);
+            if(err != null) {
+                return ("", "", Errs::Wrapped("cannot fetch", ref, err));
+            }
+        }
+        var (str, Err*) hash = PackageArchive::Hash(archive);
+        if(hash.1 != null) {
+            return ("", "", Errs::Wrapped("cannot read", archive, hash.1));
+        }
+        if(!FS::Exists(dir)) {
+            var Err* err = PackageArchive::Extract(archive, dir);
+            if(err != null) {
+                return ("", "", Errs::Wrapped("cannot extract", archive, err));
+            }
+        }
+        return (dir, hash.0, null);
+    }
+
+    // download fetches version of repo and writes it to archive
+    fun Err*(str, str, str) download = (repo, version, archive) {
+        var str parent = Paths::Dir(archive);
+        var Err* err = FS::MakeDirs(parent);
+        if(err != null) {
+            return err;
+        }
+        var (str, Err*) work = FS::MakeTempDir(parent, ".fetch-");
+        if(work.1 != null) {
+            return work.1;
+        }
+        defer PackageArchive::RemoveReadOnly(work.0);
+
+        var str tree = Paths::Join(work.0, "tree");
+        err = FS::MakeDir(tree);
+        if(err != null) {
+            return err;
+        }
+        err = LocalPackages::git(tree, Arr::[str]New(2U, "init", "-q"));
+        if(err == null) {
+            err = LocalPackages::git(tree, Arr::[str]New(6U, "fetch", "-q", "--depth", "1", this.remote(repo), version));
+        }
+        if(err == null) {
+            err = LocalPackages::git(tree, Arr::[str]New(3U, "checkout", "-q", "FETCH_HEAD"));
+        }
+        if(err != null) {
+            return err;
+        }
+
+        var str pending = Paths::Join(work.0, "archive");
+        err = PackageArchive::Pack(tree, pending);
+        if(err != null) {
+            return err;
+        }
+        return FS::Rename(pending, archive);
+    }
+
+    // git runs git with args in dir
+    static fun Err*(str, Arr[str]*) git = (dir, args) {
+        var ArrList[str]* argv = ArrList::[str]New(3U, "git", "-c", "core.autocrlf=false");
+        for(var uint i = 0U; i < args.Len(); i++) {
+            argv.AddLast(args.Get(i));
+        }
+        var (Process.Result, Err*) run = Process::Run(dir, argv.Arr(), Arr::[str]New(1U, "GIT_TERMINAL_PROMPT=0"));
+        if(run.1 != null) {
+            return run.1;
+        } else if(run.0.code != 0) {
+            return Errs::Git(args.Get(0U), run.0.code, run.0.output);
+        }
+        return null;
+    }
+
+    // parseRef splits ref into its repository and version
+    static fun (str, str, Err*)(str) parseRef = (ref) {
+        var (byte*, uint) b = Strs::ToBytes(ref);
+        var uint at = b.1;
+        for(var uint i = b.1; i > 0U; i--) {
+            if(b.0[i - 1U] == '@'{byte}) {
+                at = i - 1U;
+                break;
+            }
+        }
+        if(at == b.1) {
+            return ("", "", Errs::NoVersion(ref));
+        }
+        var str repo = Strs::Slice(ref, 0U, at);
+        var str version = Strs::Slice(ref, at + 1U, b.1);
+
+        var Arr[str]* elements = Strs::Split(repo, '/'{byte});
+        var bool validRepo = elements.Len() >= 2U;
+        for(var uint i = 0U; validRepo && i < elements.Len(); i++) {
+            var str element = elements.Get(i);
+            validRepo = element != "" && element != "." && element != ".." && LocalPackages::all(element, "._~-");
+        }
+        if(validRepo) {
+            validRepo = LocalPackages::alphanumeric(Strs::ToBytes(repo).0[0U]);
+        }
+        if(!validRepo) {
+            return ("", "", Errs::BadRepo(ref, repo));
+        }
+
+        if(version == "" || !LocalPackages::alphanumeric(Strs::ToBytes(version).0[0U]) || !LocalPackages::all(version, "._+-") || Strs::Contains(version, "..")) {
+            return ("", "", Errs::BadVersion(ref, version));
+        } else if(LocalPackages::shortCommit(version)) {
+            return ("", "", Errs::ShortCommit(ref));
+        }
+        return (repo, version, null);
+    }
+
+    // all reports whether every byte of s is alphanumeric or one of extra
+    static fun bool(str, str) all = (s, extra) {
+        var (byte*, uint) b = Strs::ToBytes(s);
+        for(var uint i = 0U; i < b.1; i++) {
+            if(!LocalPackages::alphanumeric(b.0[i]) && !Strs::Contains(extra, Strs::FromBytes(&(b.0[i]), 1U))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // alphanumeric reports whether c is an ASCII letter or digit
+    static fun bool(byte) alphanumeric = (c) {
+        return (c >= 'a'{byte} && c <= 'z'{byte}) || (c >= 'A'{byte} && c <= 'Z'{byte}) || (c >= '0'{byte} && c <= '9'{byte});
+    }
+
+    // shortCommit reports whether version reads as an abbreviated commit
+    static fun bool(str) shortCommit = (version) {
+        var (byte*, uint) b = Strs::ToBytes(version);
+        if(b.1 < 7U || b.1 > 39U) {
+            return false;
+        }
+        for(var uint i = 0U; i < b.1; i++) {
+            var byte c = b.0[i];
+            if(!((c >= '0'{byte} && c <= '9'{byte}) || (c >= 'a'{byte} && c <= 'f'{byte}))) {
+                return false;
+            }
+        }
+        return true;
     }
 }

@@ -3,6 +3,8 @@ import {
     "../../lang/Err.zam";
     "../../lang/StrErr.zam";
     "../../lang/Strs.zam";
+    "../../codec/text/Hex.zam";
+    "../../crypto/Rand.zam";
     "../../lang/time/Time.zam";
     "File.zam";
 }
@@ -24,6 +26,31 @@ public namespace FS {
             return null;
         }
         return StrErr::New(msg);
+    }
+
+    // IsLink reports whether path names a symbolic link itself, or on Windows
+    // any reparse point.
+    public static fun bool(str) IsLink = (path) {
+        var bool link;
+        native(STD_FS_IS_LINK){void(str, bool*)}(path, &link);
+        return link;
+    }
+
+    // MakeTempDir makes a new directory in dir named prefix and random
+    // characters, and returns its path.
+    public static fun (str, Err*)(str, str) MakeTempDir = (dir, prefix) {
+        var Err* last = null;
+        for(var uint attempt = 0U; attempt < 100U; attempt++) {
+            var Arr[byte]* random = Rand::Bytes(8U);
+            var str path = FS::Join(dir, prefix + Hex::Encode(random.Arr(), random.Len()));
+            last = FS::MakeDir(path);
+            if(last == null) {
+                return (path, null);
+            } else if(!FS::Exists(path)) {
+                return ("", last);
+            }
+        }
+        return ("", last);
     }
 
     // Stat describes what lies at path, following symbolic links.

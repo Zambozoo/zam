@@ -9,4 +9,6 @@ public interface SourceProvider {
     fun (Arr[str]*, Err*)(str) ListCodeFiles;
     // ProjectFile answers the path of the project file the file at path is governed by
     fun (str, Err*)(str) ProjectFile;
+    // Write replaces the file at path with text
+    fun Err*(str, str) Write;
 }

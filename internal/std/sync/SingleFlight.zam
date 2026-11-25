@@ -1,0 +1,64 @@
+import {
+    "../data/map/TreeMap.zam";
+    "Latch.zam";
+    "Mutex.zam";
+}
+
+// Calls that, made with one key while one of them is running, run once and
+// share what it answers. A key is forgotten once its call returns, so a later
+// call runs again.
+public class SingleFlight[A] {
+    var Mutex* m;
+    // calls holds, for each key with a call running, what its waiters wait
+    // on, where its answer is left and how many are waiting.
+    var TreeMap[str, (Latch*, A*, uint*)]* calls;
+
+    public static fun[A] SingleFlight[A]*() New = () {
+        var SingleFlight[A]* s = new(SingleFlight[A]);
+        s.Init();
+        return s;
+    }
+
+    public fun void() Init = () {
+        this.m = Mutex::New();
+        this.calls = TreeMap::[str, (Latch*, A*, uint*)]New(0U);
+    }
+
+    // Do runs f and answers what it answers, unless a call with key is
+    // already running, in which case it waits for that call and answers what
+    // it answered. The bool says the answer is one another call ran for.
+    public fun (A, bool)(str, A()) Do = (key, f) {
+        this.m.Lock();
+        var ((Latch*, A*, uint*), bool) running = this.calls.Get(key);
+        if(running.1) {
+            *(running.0.2) = *(running.0.2) + 1U;
+            this.m.Unlock();
+            running.0.0.Wait();
+            return (*(running.0.1), true);
+        }
+        var Latch* done = Latch::New(1U);
+        var A* answer = new(A, 1U);
+        var uint* waiting = new(uint, 1U);
+        this.calls.Put(key, (done, answer, waiting));
+        this.m.Unlock();
+
+        *answer = f();
+        this.m.Lock();
+        this.calls.Remove(key);
+        this.m.Unlock();
+        done.CountDown();
+        return (*answer, false);
+    }
+
+    // Waiting answers how many calls are waiting on the call running with key,
+    // or 0 for none running.
+    public fun uint(str) Waiting = (key) {
+        this.m.Lock();
+        defer this.m.Unlock();
+        var ((Latch*, A*, uint*), bool) running = this.calls.Get(key);
+        if(!running.1) {
+            return 0U;
+        }
+        return *(running.0.2);
+    }
+}

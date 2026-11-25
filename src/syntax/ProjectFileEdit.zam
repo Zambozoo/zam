@@ -1,0 +1,320 @@
+import std("codec/format/YAML.zam");
+import std("data/list/ArrList.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "Project.zam";
+
+// ProjectFileEdit sets the dependencies of a project file as it is written
+public namespace ProjectFileEdit {
+    namespace Errs {
+        public fun Err*(str) NotMapping = (key) {
+            return StrErr::New(Strs::Quote(key) + " is not a mapping");
+        }
+
+        public fun Err*(str) Unterminated = (key) {
+            return StrErr::New(Strs::Quote(key) + " is a flow mapping with no end");
+        }
+    }
+
+    // SetDependencies answers text with the repo and hash of each of deps that has one set on the dependency of the same name
+    public fun (str, Err*)(str, ArrList[Project.Dependency*]*) SetDependencies = (text, deps) {
+        var ArrList[str]* lines = ProjectFileEdit::lines(text);
+        var int section = ProjectFileEdit::key(lines, 0U, lines.Len(), 0U, "dependencies");
+        if(section < 0) {
+            if(lines.Len() > 0U && lines.Get(lines.Len() - 1U) == "") {
+                lines.RemoveLast();
+            }
+            lines.AddLast("dependencies:");
+            lines.AddLast("");
+            section = (lines.Len() - 2U){int};
+        }
+        if(ProjectFileEdit::isFlow(lines.Get(section{uint}))) {
+            var (ArrList[str]*, Err*) edited = ProjectFileEdit::flow(lines, section{uint}, "dependencies", deps, true);
+            if(edited.1 != null) {
+                return ("", edited.1);
+            }
+            return (ProjectFileEdit::joined(edited.0, ProjectFileEdit::newline(text)), null);
+        }
+        var Err* err = ProjectFileEdit::mapping(lines, section{uint}, "dependencies");
+        if(err != null) {
+            return ("", err);
+        }
+
+        for(var uint i = 0U; i < deps.Len(); i++) {
+            var Project.Dependency* d = deps.Get(i);
+            var uint start = section{uint} + 1U;
+            var uint end = ProjectFileEdit::blockEnd(lines, start, 0U);
+            var uint indent = ProjectFileEdit::childIndent(lines, start, end, 2U);
+            var int entry = ProjectFileEdit::key(lines, start, end, indent, d.pkg);
+            if(entry < 0) {
+                lines.Add(end, ProjectFileEdit::spaces(indent) + d.pkg + ":");
+                entry = end{int};
+            }
+            if(ProjectFileEdit::isFlow(lines.Get(entry{uint}))) {
+                var (ArrList[str]*, Err*) edited = ProjectFileEdit::flow(lines, entry{uint}, "dependency " + d.pkg, ArrList::[Project.Dependency*]New(1U, d), false);
+                if(edited.1 != null) {
+                    return ("", edited.1);
+                }
+                lines = edited.0;
+                continue;
+            }
+            err = ProjectFileEdit::mapping(lines, entry{uint}, "dependency " + d.pkg);
+            if(err != null) {
+                return ("", err);
+            }
+            if(d.repo != "") {
+                ProjectFileEdit::set(lines, entry{uint}, indent, "repo", d.repo);
+            }
+            if(d.hash != "") {
+                ProjectFileEdit::set(lines, entry{uint}, indent, "hash", d.hash);
+            }
+        }
+
+        return (ProjectFileEdit::joined(lines, ProjectFileEdit::newline(text)), null);
+    }
+
+    // flow answers lines with the flow mapping that is the value of the line at
+    // i, which key names, given each of deps: as its dependencies when whole,
+    // or else as the fields of the one dependency it is
+    fun (ArrList[str]*, Err*)(ArrList[str]*, uint, str, ArrList[Project.Dependency*]*, bool) flow = (lines, i, key, deps, whole) {
+        var str text = ProjectFileEdit::joined(lines, "\n");
+        var uint start = 0U;
+        for(var uint j = 0U; j < i; j++) {
+            start = start + Strs::ByteLen(lines.Get(j)) + 1U;
+        }
+        var (uint, bool) colon = Strs::Index(lines.Get(i), ":");
+        var (uint, bool) brace = Strs::Index(Strs::Slice(lines.Get(i), colon.0, Strs::ByteLen(lines.Get(i))), "{");
+        start = start + colon.0 + brace.0;
+        var (uint, bool) end = ProjectFileEdit::flowEnd(text, start);
+        if(!end.1) {
+            return (null, Errs::Unterminated(key));
+        }
+
+        var (YAML*, Err*) parsed = YAML::Parse(Strs::Slice(text, start, end.0));
+        if(parsed.1 != null) {
+            return (null, parsed.1);
+        }
+        var YAML* m = parsed.0;
+        defer m.Delete();
+        if(m.Kind() != YAML.Kind::Map) {
+            return (null, Errs::NotMapping(key));
+        }
+        for(var uint j = 0U; j < deps.Len(); j++) {
+            var Project.Dependency* d = deps.Get(j);
+            if(!whole) {
+                ProjectFileEdit::fields(m, d);
+                continue;
+            }
+            var (YAML*, bool) entry = m.Get(d.pkg);
+            var YAML* fields = YAML::NewMap();
+            if(entry.1 && !entry.0.IsNull()) {
+                if(entry.0.Kind() != YAML.Kind::Map) {
+                    return (null, Errs::NotMapping("dependency " + d.pkg));
+                }
+                fields = entry.0;
+            }
+            ProjectFileEdit::fields(fields, d);
+            m.Set(d.pkg, fields);
+        }
+
+        var str encoded = ProjectFileEdit::oneLine(Strs::TrimSpace(m.Encode()));
+        return (ProjectFileEdit::lines(Strs::Slice(text, 0U, start) + encoded + Strs::Slice(text, end.0, Strs::ByteLen(text))), null);
+    }
+
+    // fields sets the repo and hash d has set on the mapping m
+    fun void(YAML*, Project.Dependency*) fields = (m, d) {
+        if(d.repo != "") {
+            m.Set("repo", YAML::NewStr(d.repo));
+        }
+        if(d.hash != "") {
+            m.Set("hash", YAML::NewStr(d.hash));
+        }
+    }
+
+    // flowEnd answers the offset just past the flow collection
+    fun (uint, bool)(str, uint) flowEnd = (text, start) {
+        var (byte*, uint) b = Strs::ToBytes(text);
+        var uint depth = 0U;
+        for(var uint i = start; i < b.1; i++) {
+            var byte c = b.0[i];
+            if(c == '"'{byte}) {
+                for(i++; i < b.1 && b.0[i] != '"'{byte}; i++) {
+                    if(b.0[i] == '\\'{byte}) {
+                        i++;
+                    }
+                }
+            } else if(c == '\''{byte}) {
+                for(i++; i < b.1; i++) {
+                    if(b.0[i] == '\''{byte}) {
+                        if(i + 1U < b.1 && b.0[i + 1U] == '\''{byte}) {
+                            i++;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            } else if(c == '#'{byte} && (i == 0U || b.0[i - 1U] == ' '{byte} || b.0[i - 1U] == '\n'{byte})) {
+                for(; i < b.1 && b.0[i] != '\n'{byte}; i++) {
+                }
+            } else if(c == '{'{byte} || c == '['{byte}) {
+                depth++;
+            } else if(c == '}'{byte} || c == ']'{byte}) {
+                depth--;
+                if(depth == 0U) {
+                    return (i + 1U, true);
+                }
+            }
+        }
+        return (0U, false);
+    }
+
+    // oneLine answers s with each line break, and the indentation after it
+    fun str(str) oneLine = (s) {
+        var Arr[str]* parts = Strs::Split(s, '\n'{byte});
+        var str out = parts.Get(0U);
+        for(var uint i = 1U; i < parts.Len(); i++) {
+            out = out + " " + Strs::TrimSpace(parts.Get(i));
+        }
+        return out;
+    }
+
+    // isFlow reports whether the line written key holds a flow mapping
+    fun bool(str) isFlow = (line) {
+        return Strs::HasPrefix(ProjectFileEdit::value(line), "{");
+    }
+
+    // newline answers the line break text is written with
+    fun str(str) newline = (text) {
+        if(Strs::Contains(text, "\r\n")) {
+            return "\r\n";
+        }
+        return "\n";
+    }
+
+    // joined answers lines joined by newline
+    fun str(ArrList[str]*, str) joined = (lines, newline) {
+        var str out = "";
+        for(var uint i = 0U; i < lines.Len(); i++) {
+            if(i > 0U) {
+                out = out + newline;
+            }
+            out = out + lines.Get(i);
+        }
+        return out;
+    }
+
+    // set sets key under the entry at line entry, indented by indent, to value
+    fun void(ArrList[str]*, uint, uint, str, str) set = (lines, entry, indent, key, value) {
+        var uint start = entry + 1U;
+        var uint end = ProjectFileEdit::blockEnd(lines, start, indent);
+        var uint fieldIndent = ProjectFileEdit::childIndent(lines, start, end, indent + 2U);
+        var str line = ProjectFileEdit::spaces(fieldIndent) + key + ": " + value;
+        var int field = ProjectFileEdit::key(lines, start, end, fieldIndent, key);
+        if(field < 0) {
+            lines.Add(end, line);
+        } else {
+            lines.Set(field{uint}, line);
+        }
+    }
+
+    // mapping answers why the line at i, written key
+    fun Err*(ArrList[str]*, uint, str) mapping = (lines, i, key) {
+        var str line = lines.Get(i);
+        var str value = ProjectFileEdit::value(line);
+        if(value == "") {
+            return null;
+        } else if(value == "~" || value == "null") {
+            var (uint, bool) colon = Strs::Index(line, ":");
+            lines.Set(i, Strs::Slice(line, 0U, colon.0 + 1U));
+            return null;
+        }
+        return Errs::NotMapping(key);
+    }
+
+    // key answers the line in [start, end) indented by indent that writes name:
+    fun int(ArrList[str]*, uint, uint, uint, str) key = (lines, start, end, indent, name) {
+        for(var uint i = start; i < end; i++) {
+            var str line = lines.Get(i);
+            if(ProjectFileEdit::indentOf(line) == indent && Strs::HasPrefix(Strs::Slice(line, indent, Strs::ByteLen(line)), name + ":")) {
+                var str rest = Strs::Slice(line, indent + Strs::ByteLen(name) + 1U, Strs::ByteLen(line));
+                if(rest == "" || Strs::HasPrefix(rest, " ") || Strs::HasPrefix(rest, "\t")) {
+                    return i{int};
+                }
+            }
+        }
+        return -1;
+    }
+
+    // blockEnd answers the first line from start that is written
+    fun uint(ArrList[str]*, uint, uint) blockEnd = (lines, start, indent) {
+        var uint last = start;
+        for(var uint i = start; i < lines.Len(); i++) {
+            var str line = lines.Get(i);
+            if(ProjectFileEdit::blank(line)) {
+                continue;
+            } else if(ProjectFileEdit::indentOf(line) <= indent) {
+                return last;
+            }
+            last = i + 1U;
+        }
+        return last;
+    }
+
+    // childIndent answers the indentation of the first written line in [start, end)
+    fun uint(ArrList[str]*, uint, uint, uint) childIndent = (lines, start, end, otherwise) {
+        for(var uint i = start; i < end; i++) {
+            if(!ProjectFileEdit::blank(lines.Get(i))) {
+                return ProjectFileEdit::indentOf(lines.Get(i));
+            }
+        }
+        return otherwise;
+    }
+
+    // value answers what follows the first colon of line, without its comment
+    fun str(str) value = (line) {
+        var (uint, bool) colon = Strs::Index(line, ":");
+        var str rest = Strs::TrimSpace(Strs::Slice(line, colon.0 + 1U, Strs::ByteLen(line)));
+        var (uint, bool) comment = Strs::Index(rest, "#");
+        if(comment.1 && (comment.0 == 0U || Strs::Slice(rest, comment.0 - 1U, comment.0) == " ")) {
+            rest = Strs::TrimSpace(Strs::Slice(rest, 0U, comment.0));
+        }
+        return rest;
+    }
+
+    // blank reports whether line writes nothing but space or a comment
+    fun bool(str) blank = (line) {
+        var str trimmed = Strs::TrimSpace(line);
+        return trimmed == "" || Strs::HasPrefix(trimmed, "#");
+    }
+
+    // indentOf answers how many spaces line begins with
+    fun uint(str) indentOf = (line) {
+        var (byte*, uint) b = Strs::ToBytes(line);
+        var uint n = 0U;
+        for(; n < b.1 && b.0[n] == ' '{byte};) {
+            n++;
+        }
+        return n;
+    }
+
+    // spaces answers n spaces
+    fun str(uint) spaces = (n) {
+        return Strs::Repeat(" ", n);
+    }
+
+    // lines answers the lines of text, without their line breaks
+    fun ArrList[str]*(str) lines = (text) {
+        var Arr[str]* split = Strs::Split(text, '\n'{byte});
+        var ArrList[str]* lines = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < split.Len(); i++) {
+            var str line = split.Get(i);
+            if(Strs::HasSuffix(line, "\r")) {
+                line = Strs::Slice(line, 0U, Strs::ByteLen(line) - 1U);
+            }
+            lines.AddLast(line);
+        }
+        return lines;
+    }
+}

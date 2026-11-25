@@ -80,6 +80,14 @@ public namespace System {
         return value;
     }
 
+    // OS answers the operating system the program was built for: "darwin",
+    // "linux" or "windows".
+    public fun str() OS = () {
+        var str os;
+        native(STD_SYSTEM_OS){void(str*)}(&os);
+        return os;
+    }
+
     // Executable answers the path of the running program, with its symbolic
     // links resolved.
     public fun (str, Err*)() Executable = () {

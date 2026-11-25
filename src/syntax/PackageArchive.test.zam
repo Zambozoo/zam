@@ -1,0 +1,80 @@
+import std("codec/archive/Archive.zam");
+import std("codec/archive/TAR.zam");
+import std("codec/compress/ZSTD.zam");
+import std("io/Paths.zam");
+import std("io/local/File.zam");
+import std("io/local/FS.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "PackageArchive.zam";
+
+public namespace PackageArchiveTest {
+    // tree answers a new directory holding a.txt, dir/b.zam and a .git directory
+    private fun str() tree = () {
+        var str dir = FS::MakeTempDir(FS::ToSlash(FS::TempDir()), "zam-archive-").0;
+        FS::MakeDirs(Paths::Join(dir, "tree/dir"));
+        FS::MakeDirs(Paths::Join(dir, "tree/.git"));
+        FS::WriteFile(Paths::Join(dir, "tree/a.txt"), "a");
+        FS::WriteFile(Paths::Join(dir, "tree/dir/b.zam"), "b");
+        FS::WriteFile(Paths::Join(dir, "tree/.git/HEAD"), "ref");
+        return dir;
+    }
+
+    // written writes entries, compressed, to archive
+    private fun void(str, Arr[Archive.Entry*]*) written = (archive, entries) {
+        var Arr[byte]* tar = TAR::Write(entries).0;
+        var Arr[byte]* compressed = ZSTD::Compress(tar.Arr(), tar.Len(), 3);
+        var File* f = File::Create(archive).0;
+        f.Write(compressed.Arr(), compressed.Len());
+        f.Close();
+    }
+
+    public fun void(uint, str...) PackAndHash = (argC, argV) {
+        var str dir = PackageArchiveTest::tree();
+        defer PackageArchive::RemoveReadOnly(dir);
+        var str archive = Paths::Join(dir, "out.tar.zst");
+        var Err* err = PackageArchive::Pack(Paths::Join(dir, "tree"), archive);
+        if(!Assert::True(err == null, "the tree does not pack")) {
+            Assert::Fatal(err.Err());
+        }
+        var (Arr[Archive.Entry*]*, Err*) entries = PackageArchive::Entries(archive);
+        Assert::[uint]Equal(2U, entries.0.Len());
+        Assert::[str]Equal("a.txt", entries.0.Get(0U).name);
+        Assert::[str]Equal("dir/b.zam", entries.0.Get(1U).name);
+        Assert::[str]Equal("h1:YL8/01d9KbQ/AhPcOnUjtb72xaDbW/Zvdxr2HrQyjTQ=", PackageArchive::Hash(archive).0);
+    }
+
+    public fun void(uint, str...) Extract = (argC, argV) {
+        var str dir = PackageArchiveTest::tree();
+        defer PackageArchive::RemoveReadOnly(dir);
+        var str archive = Paths::Join(dir, "out.tar.zst");
+        PackageArchive::Pack(Paths::Join(dir, "tree"), archive);
+        var str out = Paths::Join(dir, "out");
+        var Err* err = PackageArchive::Extract(archive, out);
+        if(!Assert::True(err == null, "the archive does not extract")) {
+            Assert::Fatal(err.Err());
+        }
+        Assert::[str]Equal("b", FS::ReadFile(Paths::Join(out, "dir/b.zam")).0);
+        Assert::False(FS::Exists(Paths::Join(out, ".git")), "git's own files are extracted");
+        Assert::True(FS::WriteFile(Paths::Join(out, "a.txt"), "x") != null, "an extracted file is writable");
+        Assert::True(PackageArchive::Extract(archive, out) == null, "extracting again fails");
+    }
+
+    public fun void(uint, str...) Refused = (argC, argV) {
+        var str dir = PackageArchiveTest::tree();
+        defer PackageArchive::RemoveReadOnly(dir);
+        var str escape = Paths::Join(dir, "escape.tar.zst");
+        PackageArchiveTest::written(escape, Arr::[Archive.Entry*]New(1U, Archive.Entry::File("../Escape.zam", Arr::[byte]New(0U))));
+        Assert::[str]Equal("entry \"../Escape.zam\" leaves the archive", PackageArchive::Entries(escape).1.Err());
+
+        var str twice = Paths::Join(dir, "twice.tar.zst");
+        PackageArchiveTest::written(twice, Arr::[Archive.Entry*]New(2U, Archive.Entry::File("A.zam", Arr::[byte]New(0U)), Archive.Entry::File("A.zam", Arr::[byte]New(0U))));
+        Assert::[str]Equal("entry \"A.zam\" appears twice", PackageArchive::Entries(twice).1.Err());
+
+        var str directory = Paths::Join(dir, "dir.tar.zst");
+        PackageArchiveTest::written(directory, Arr::[Archive.Entry*]New(1U, Archive.Entry::Dir("d/")));
+        Assert::[str]Equal("entry \"d/\" is not a regular file", PackageArchive::Entries(directory).1.Err());
+    }
+}

@@ -9,16 +9,21 @@ import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import std("sync/Cond.zam");
 import std("sync/Mutex.zam");
+import std("sync/SingleFlight.zam");
 import std("sync/WaitGroup.zam");
 import "FileParser.zam";
+import "Lexer.zam";
 import "PackageProvider.zam";
 import "Parser.zam";
 import "Path.zam";
+import "ProjectFileEdit.zam";
 import "Project.zam";
 import "Resolver.zam";
 import "Source.zam";
 import "SourceErr.zam";
 import "SourceProvider.zam";
+import "Token.zam";
+import "TokenKind.zam";
 import "ast/Decl.zam";
 import "ast/File.zam";
 
@@ -29,6 +34,34 @@ public class ProjectParser {
 
         public fun Err*(str) NoProjectFile = (path) {
             return StrErr::New("project file missing for " + Path::Display(path));
+        }
+
+        public fun Err*(Err*) Unrecorded = (err) {
+            return StrErr::New("cannot record dependency hashes: " + err.Err());
+        }
+
+        public fun Err*(str) Reserved = (name) {
+            return StrErr::New(Strs::Quote(name) + " is a reserved package name");
+        }
+
+        public fun Err*(str) InvalidName = (name) {
+            return StrErr::New(Strs::Quote(name) + " is not a valid package name: name it with --as");
+        }
+
+        public fun Err*(str) NamedTwice = (name) {
+            return StrErr::New("package " + Strs::Quote(name) + " is named by more than one dependency");
+        }
+
+        public fun Err*(str, Err*) NotAdded = (ref, err) {
+            return StrErr::New("failed to fetch " + ref + ": " + err.Err());
+        }
+
+        public fun Err*(str) NoDependencyFile = (pkg) {
+            return StrErr::New("dependency " + Strs::Quote(pkg) + " has no project file");
+        }
+
+        public fun Err*(str, Err*) In = (path, err) {
+            return StrErr::New(Path::Display(path) + ": " + err.Err());
         }
 
         public fun Err*(str) NoRepo = (pkg) {
@@ -56,10 +89,16 @@ public class ProjectParser {
     var uint threads;
     // noProject says local files are compiled as the entry's implicit project
     var bool noProject;
+    // writeProject says the hashes a local project file lacks are recorded in it
+    var bool writeProject;
     var str entry;
 
-    // projectLock is held while a project is found or read
+    // projectLock guards projects and unreadable
     var Mutex* projectLock;
+    // loads runs the loads of one project file made at once as one
+    var SingleFlight[(Project*, Err*)]* loads;
+    // fetchedLock guards fetched
+    var Mutex* fetchedLock;
     // projects is every project read, by the path of its project file
     var TreeMap[str, Project*]* projects;
     // unreadable is the project files that could not be read, already reported
@@ -79,12 +118,15 @@ public class ProjectParser {
     // incomplete says a file could not be parsed at all
     var bool incomplete;
 
-    public static fun ProjectParser*(SourceProvider*, PackageProvider*, uint, bool) New = (provider, packages, threads, noProject) {
+    public static fun ProjectParser*(SourceProvider*, PackageProvider*, uint, bool, bool) New = (provider, packages, threads, noProject, writeProject) {
         var ProjectParser* p = new(ProjectParser);
         p.provider = provider;
         p.packages = packages;
+        p.writeProject = writeProject;
         p.noProject = noProject;
         p.projectLock = Mutex::New();
+        p.loads = SingleFlight::[(Project*, Err*)]New();
+        p.fetchedLock = Mutex::New();
         p.projects = TreeMap::[str, Project*]New(0U);
         p.unreadable = HashSet::[str]New(0U);
         p.fetched = TreeMap::[str, str]New(0U);
@@ -224,8 +266,6 @@ public class ProjectParser {
 
     // projectOf answers the project the file at path is in
     fun (Project*, Err*)(str) projectOf = (path) {
-        this.projectLock.Lock();
-        defer this.projectLock.Unlock();
         var (str, str, bool) at = this.fetchedRoot(path);
         var str file = "";
         var bool implicit = this.noProject && !Path::IsStd(path) && !at.2;
@@ -241,22 +281,50 @@ public class ProjectParser {
             file = found.0;
         }
 
-        var (Project*, bool) known = this.projects.Get(file);
-        if(known.1) {
+        var (Project*, Err*, bool) known = this.known(file);
+        if(known.2) {
             return (known.0, null);
-        } else if(this.unreadable.Contains(file)) {
-            return (null, null);
-        } else if(implicit) {
-            var Project* p = Project::Implicit(this.entry);
-            this.projects.Put(file, p);
-            return (p, null);
         }
-        var (Project*, Err*) read = this.read(file);
+        var ProjectParser* self = this;
+        var ((Project*, Err*), bool) loaded = this.loads.Do(file, lambda (Project*, Err*)(): () {
+            return self.load(file, implicit);
+        });
+        if(loaded.1) {
+            return (loaded.0.0, null);
+        }
+        return loaded.0;
+    }
+
+    // known answers the project read from the project file at path, and whether it has been read
+    fun (Project*, Err*, bool)(str) known = (path) {
+        this.projectLock.Lock();
+        defer this.projectLock.Unlock();
+        var (Project*, bool) known = this.projects.Get(path);
+        if(known.1) {
+            return (known.0, null, true);
+        }
+        return (null, null, this.unreadable.Contains(path));
+    }
+
+    // load reads the project file at path, or makes the entry's implicit project and records which
+    fun (Project*, Err*)(str, bool) load = (path, implicit) {
+        var (Project*, Err*, bool) known = this.known(path);
+        if(known.2) {
+            return (known.0, null);
+        }
+        var (Project*, Err*) read;
+        if(implicit) {
+            read = (Project::Implicit(this.entry), null);
+        } else {
+            read = this.read(path);
+        }
+        this.projectLock.Lock();
+        defer this.projectLock.Unlock();
         if(read.1 != null) {
-            this.unreadable.Add(file);
-            return (null, SourceErr::In(read.1, file));
+            this.unreadable.Add(path);
+            return (null, SourceErr::In(read.1, path));
         }
-        this.projects.Put(file, read.0);
+        this.projects.Put(path, read.0);
         return (read.0, null);
     }
 
@@ -280,20 +348,45 @@ public class ProjectParser {
         var (str, str, bool) at = this.fetchedRoot(path);
         p.archive = at.0;
         p.root = at.1;
+        var ArrList[Project.Dependency*]* missing = ArrList::[Project.Dependency*]New(0U);
+        for(var uint i = 0U; i < p.declared.Len(); i++) {
+            if(p.declared.Get(i).repo == "") {
+                return (null, Errs::NoRepo(p.declared.Get(i).pkg));
+            }
+        }
+        var ArrList[thread[(str, str, Err*)]]* fetches = ArrList::[thread[(str, str, Err*)]]New(0U);
+        for(var uint i = 0U; i < p.declared.Len(); i++) {
+            fetches.AddLast(async(this.packages.Fetch(p.declared.Get(i).repo)));
+        }
+        var ArrList[(str, str, Err*)]* results = ArrList::[(str, str, Err*)]New(0U);
+        for(var uint i = 0U; i < fetches.Len(); i++) {
+            results.AddLast(wait(fetches.Get(i)));
+        }
         for(var uint i = 0U; i < p.declared.Len(); i++) {
             var Project.Dependency* d = p.declared.Get(i);
-            if(d.repo == "") {
-                return (null, Errs::NoRepo(d.pkg));
-            }
-            var (str, str, Err*) fetched = this.packages.Fetch(d.repo);
+            var (str, str, Err*) fetched = results.Get(i);
             if(fetched.2 != null) {
                 return (null, Errs::Unfetched(d.pkg, fetched.2));
             }
+            this.fetchedLock.Lock();
             this.fetched.Put(fetched.0, d.repo);
-            if(d.hash != "" && d.hash != fetched.1) {
+            this.fetchedLock.Unlock();
+            if(d.hash == "") {
+                var Project.Dependency* hashed = new(Project.Dependency);
+                hashed.pkg = d.pkg;
+                hashed.repo = "";
+                hashed.hash = fetched.1;
+                missing.AddLast(hashed);
+            } else if(d.hash != fetched.1) {
                 return (null, Errs::Mismatch(d.pkg, d.hash, d.repo, fetched.1));
             }
             p.dependencies.Put(d.pkg, fetched.0);
+        }
+        if(this.writeProject && p.root == "" && missing.Len() > 0U) {
+            var Err* err = this.setDependencies(path, missing);
+            if(err != null) {
+                return (null, Errs::Unrecorded(err));
+            }
         }
         if(!Path::IsStd(path)) {
             p.dependencies.Put("std", Path::Std);
@@ -303,6 +396,8 @@ public class ProjectParser {
 
     // fetchedRoot answers the repo@version and directory of the fetched dependency path lies in
     fun (str, str, bool)(str) fetchedRoot = (path) {
+        this.fetchedLock.Lock();
+        defer this.fetchedLock.Unlock();
         var Arr[(str, str)]* all = this.fetched.Arr();
         for(var uint i = 0U; i < all.Len(); i++) {
             if(Paths::Contains(all.Get(i).0, path)) {
@@ -310,5 +405,100 @@ public class ProjectParser {
             }
         }
         return ("", "", false);
+    }
+
+    // Get adds each of refs to the project file at projectFile
+    public fun Err*(str, Arr[str]*, str) Get = (projectFile, refs, named) {
+        this.writeProject = true;
+        if(refs.Len() > 0U) {
+            var ArrList[Project.Dependency*]* added = ArrList::[Project.Dependency*]New(0U);
+            for(var uint i = 0U; i < refs.Len(); i++) {
+                var str ref = refs.Get(i);
+                var str name = named;
+                if(name == "") {
+                    name = Paths::Base(Strs::Split(ref, '@'{byte}).Get(0U));
+                }
+                var Err* invalid = ProjectParser::checkPackageName(name);
+                if(invalid != null) {
+                    return invalid;
+                }
+                for(var uint j = 0U; j < added.Len(); j++) {
+                    if(added.Get(j).pkg == name) {
+                        return Errs::NamedTwice(name);
+                    }
+                }
+                var (str, str, Err*) fetched = this.packages.Fetch(ref);
+                if(fetched.2 != null) {
+                    return Errs::NotAdded(ref, fetched.2);
+                }
+                var Project.Dependency* d = new(Project.Dependency);
+                d.pkg = name;
+                d.repo = ref;
+                d.hash = fetched.1;
+                added.AddLast(d);
+            }
+            var Err* err = this.setDependencies(projectFile, added);
+            if(err != null) {
+                return err;
+            }
+        }
+        return this.visit(projectFile, HashSet::[str]New(0U));
+    }
+
+    // visit reads the project file at path and every one its dependencies
+    fun Err*(str, HashSet[str]*) visit = (path, visited) {
+        if(!visited.Add(path)) {
+            return null;
+        }
+        var (Project*, Err*) project = this.read(path);
+        if(project.1 != null) {
+            return Errs::In(path, project.1);
+        }
+        var Arr[(str, str)]* dependencies = project.0.dependencies.Arr();
+        for(var uint i = 0U; i < dependencies.Len(); i++) {
+            var str dir = dependencies.Get(i).1;
+            if(Path::IsStd(dir)) {
+                continue;
+            }
+            var (str, Err*) file = this.provider.ProjectFile(Paths::Join(dir, Project::FileNames.Get(0U)));
+            if(file.1 != null || !Paths::Contains(dir, file.0)) {
+                return Errs::NoDependencyFile(dependencies.Get(i).0);
+            }
+            var Err* err = this.visit(file.0, visited);
+            if(err != null) {
+                return err;
+            }
+        }
+        return null;
+    }
+
+    // setDependencies sets deps on the dependencies of the project file at path
+    fun Err*(str, ArrList[Project.Dependency*]*) setDependencies = (path, deps) {
+        var (str, Err*) text = this.provider.Read(path);
+        if(text.1 != null) {
+            return text.1;
+        }
+        var (str, Err*) edited = ProjectFileEdit::SetDependencies(text.0, deps);
+        if(edited.1 != null) {
+            return edited.1;
+        }
+        return this.provider.Write(path, edited.0);
+    }
+
+    // checkPackageName refuses a package name an import could not be written with
+    static fun Err*(str) checkPackageName = (name) {
+        if(name == "std") {
+            return Errs::Reserved(name);
+        }
+        var Lexer* lexer = Lexer::New(name);
+        var (Token*, Err*) first = lexer.Next();
+        if(first.1 != null || first.0.kind != TokenKind::Identifier || first.0.value{str} != name) {
+            return Errs::InvalidName(name);
+        }
+        var (Token*, Err*) second = lexer.Next();
+        if(second.1 != null || second.0.kind != TokenKind::EOF) {
+            return Errs::InvalidName(name);
+        }
+        return null;
     }
 }

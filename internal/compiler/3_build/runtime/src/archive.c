@@ -66,6 +66,7 @@ typedef struct ArchiveEntry {
     int64_t mode;
     int64_t modTime;
     bool isDir;
+    bool isFile;
     CodecBuffer data;
 } ArchiveEntry;
 
@@ -124,6 +125,7 @@ static void stdArchiveRead(ZamThread *thread) {
         entry->mode = archive_entry_perm(header) & 07777;
         entry->modTime = (int64_t)archive_entry_mtime(header);
         entry->isDir = (archive_entry_filetype(header) & 0170000) == AE_IFDIR;
+        entry->isFile = (archive_entry_filetype(header) & 0170000) == AE_IFREG;
         char chunk[16384];
         ssize_t read;
         while ((read = archive_read_data(a, chunk, sizeof chunk)) > 0)
@@ -167,7 +169,8 @@ static void stdArchiveEntry(ZamThread *thread) {
     *(ZamInt *)zam_native_argument_pointer(thread, 3) = entry->mode;
     *(ZamInt *)zam_native_argument_pointer(thread, 4) = entry->modTime;
     codec_write_bool(thread, 5, entry->isDir);
-    *(ZamInt *)zam_native_argument_pointer(thread, 6) = (ZamInt)entry->data.length;
+    codec_write_bool(thread, 6, entry->isFile);
+    *(ZamInt *)zam_native_argument_pointer(thread, 7) = (ZamInt)entry->data.length;
     zam_native_return_void(thread);
 }
 

@@ -25,6 +25,9 @@ public namespace Archive {
         // modTime is the last modification, to the second.
         public var Time modTime;
         public var bool isDir;
+        // isFile says the entry is a regular file, rather than a directory, a
+        // link or anything else.
+        public var bool isFile;
 
         // File makes a file entry with permission bits 0644.
         public static fun Archive.Entry*(str, Arr[byte]*) File = (name, data) {
@@ -34,6 +37,7 @@ public namespace Archive {
             e.mode = 420;
             e.modTime = Time::FromUnix(0, 0);
             e.isDir = false;
+            e.isFile = true;
             return e;
         }
 
@@ -45,6 +49,7 @@ public namespace Archive {
             e.mode = 493;
             e.modTime = Time::FromUnix(0, 0);
             e.isDir = true;
+            e.isFile = false;
             return e;
         }
     }
@@ -67,7 +72,7 @@ public namespace Archive {
             var Archive.Entry* e = new(Archive.Entry);
             var int size;
             var int modTime;
-            native(STD_ARCHIVE_ENTRY){void(uint, int, str*, int*, int*, bool*, int*)}(list, i, &(e.name), &(e.mode), &modTime, &(e.isDir), &size);
+            native(STD_ARCHIVE_ENTRY){void(uint, int, str*, int*, int*, bool*, bool*, int*)}(list, i, &(e.name), &(e.mode), &modTime, &(e.isDir), &(e.isFile), &size);
             e.modTime = Time::FromUnix(modTime, 0);
             e.data = null;
             if(!e.isDir) {

@@ -1,0 +1,52 @@
+import {
+    "../../lang/Arr.zam";
+    "../../lang/Err.zam";
+    "../../lang/StrErr.zam";
+    "../../lang/Strs.zam";
+}
+
+// Running other programs
+public namespace Process {
+    // What a program wrote and the code it exited with
+    public struct Result {
+        // output is what the program wrote to its stdout and stderr together.
+        public var str output;
+        // code is the program's exit code, or 128 and the signal for one a
+        // signal ended.
+        public var int code;
+    }
+
+    // Run runs the program argv names first, found on the PATH unless it names
+    // a path, with the arguments after it, in the directory dir, or this one
+    // for "", with each NAME=value of env set over this one's environment, and
+    // waits for it to exit. The error is for a program that could not be run,
+    // not for one that exited with a code other than 0.
+    public static fun (Process.Result, Err*)(str, Arr[str]*, Arr[str]*) Run = (dir, argv, env) {
+        var Process.Result result;
+        result.output = "";
+        result.code = 0;
+        if(argv.Len() == 0U) {
+            return (result, StrErr::New("no program to run"));
+        }
+        var str errStr;
+        native(STD_PROCESS_RUN){void(str, str, uint, str, uint, str*, int*, str*)}(dir, Process::joined(argv), argv.Len(), Process::joined(env), env.Len(), &(result.output), &(result.code), &errStr);
+        if(errStr != null) {
+            return (result, StrErr::New("cannot run " + argv.Get(0U) + ": " + errStr));
+        }
+        return (result, null);
+    }
+
+    // joined answers strs separated by NUL bytes.
+    private static fun str(Arr[str]*) joined = (strs) {
+        var byte zero = 0{byte};
+        var str separator = Strs::FromBytes(&zero, 1U);
+        var str out = "";
+        for(var uint i = 0U; i < strs.Len(); i++) {
+            if(i > 0U) {
+                out = out + separator;
+            }
+            out = out + strs.Get(i);
+        }
+        return out;
+    }
+}

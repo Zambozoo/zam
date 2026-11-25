@@ -201,3 +201,46 @@ namespace Main {
 	assert.Equal(t, []string{"d/", "d/a.txt", "tool"}, names)
 	assert.Equal(t, want, got)
 }
+
+// TestArchiveEntryKinds reads a tar holding a file, a directory and a symbolic
+// link, of which only the file is a regular file.
+func TestArchiveEntryKinds(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var plain bytes.Buffer
+	tw := tar.NewWriter(&plain)
+	for _, header := range []*tar.Header{
+		{Name: "file", Mode: 0o644, Size: 2, Typeflag: tar.TypeReg},
+		{Name: "dir/", Mode: 0o755, Typeflag: tar.TypeDir},
+		{Name: "link", Mode: 0o777, Linkname: "file", Typeflag: tar.TypeSymlink},
+	} {
+		require.NoError(t, tw.WriteHeader(header))
+		if header.Typeflag == tar.TypeReg {
+			_, err := tw.Write([]byte("hi"))
+			require.NoError(t, err)
+		}
+	}
+	require.NoError(t, tw.Close())
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "in.tar"), plain.Bytes(), 0o600))
+
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+import std("codec/archive/*");
+
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        var (byte*, uint) b = Strs::ToBytes(FS::ReadFile(FS::Join(argV[0], "in.tar")).0);
+        var Arr[Archive.Entry*]* entries = TAR::Read(b.0, b.1).0;
+        var str s = "";
+        for(var uint i = 0U; i < entries.Len(); i++) {
+            s = s + entries.Get(i).name + " " + entries.Get(i).isFile{str} + " " + entries.Get(i).isDir{str} + "\n";
+        }
+        s = s + Archive.Entry::File("x", null).isFile{str} + " " + Archive.Entry::Dir("y/").isFile{str} + "\n";
+        File::StdOut.WriteStr(s);
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary, dir)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "file true false\ndir/ false true\nlink false false\ntrue false\n", stdout)
+}

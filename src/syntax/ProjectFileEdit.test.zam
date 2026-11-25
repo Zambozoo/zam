@@ -1,0 +1,54 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "Project.zam";
+import "ProjectFileEdit.zam";
+
+public namespace ProjectFileEditTest {
+    // set answers text with the dependency pkg given repo and hash, either "" for unset
+    private fun (str, Err*)(str, str, str, str) set = (text, pkg, repo, hash) {
+        var Project.Dependency* d = new(Project.Dependency);
+        d.pkg = pkg;
+        d.repo = repo;
+        d.hash = hash;
+        var ArrList[Project.Dependency*]* deps = ArrList::[Project.Dependency*]New(1U, d);
+        return ProjectFileEdit::SetDependencies(text, deps);
+    }
+
+    public fun void(uint, str...) Hashes = (argC, argV) {
+        Assert::[str]Equal("name: x # the name\ndependencies:\n  # a comment\n  dep:\n    repo: example.com/dep@v1\n    hash: h1:abc\n  other:\n    repo: o@v1\n",
+            ProjectFileEditTest::set("name: x # the name\ndependencies:\n  # a comment\n  dep:\n    repo: example.com/dep@v1\n  other:\n    repo: o@v1\n", "dep", "", "h1:abc").0);
+        Assert::[str]Equal("dependencies:\n  dep:\n    hash: new\n    repo: r@v1\n",
+            ProjectFileEditTest::set("dependencies:\n  dep:\n    hash: old\n    repo: r@v1\n", "dep", "", "new").0);
+        Assert::[str]Equal("dependencies:\n    dep:\n        repo: r@v1\n        hash: h\n",
+            ProjectFileEditTest::set("dependencies:\n    dep:\n        repo: r@v1\n", "dep", "", "h").0);
+        Assert::[str]Equal("dependencies:\r\n  dep:\r\n    repo: r@v1\r\n    hash: h\r\n",
+            ProjectFileEditTest::set("dependencies:\r\n  dep:\r\n    repo: r@v1\r\n", "dep", "", "h").0);
+    }
+
+    public fun void(uint, str...) Adds = (argC, argV) {
+        Assert::[str]Equal("name: x\ndependencies:\n  dep:\n    repo: r@v1\n    hash: h\n",
+            ProjectFileEditTest::set("name: x\n", "dep", "r@v1", "h").0);
+        Assert::[str]Equal("name: x\ndependencies:\n  a:\n    repo: a@v1\n  dep:\n    repo: r@v1\n    hash: h\nversion: 1\n",
+            ProjectFileEditTest::set("name: x\ndependencies:\n  a:\n    repo: a@v1\nversion: 1\n", "dep", "r@v1", "h").0);
+        Assert::[str]Equal("dependencies:\n  dep:\n    repo: r@v1\n",
+            ProjectFileEditTest::set("dependencies: ~\n", "dep", "r@v1", "").0);
+    }
+
+    public fun void(uint, str...) Flow = (argC, argV) {
+        Assert::[str]Equal("dependencies: {dep: {repo: r@v1, hash: h}} # kept\nname: x\n",
+            ProjectFileEditTest::set("dependencies: {dep: {repo: r@v1}} # kept\nname: x\n", "dep", "", "h").0);
+        Assert::[str]Equal("dependencies: {a: {repo: a@v1}, dep: {repo: r@v1, hash: h}}\n",
+            ProjectFileEditTest::set("dependencies: {\n  a: {repo: a@v1}\n}\n", "dep", "r@v1", "h").0);
+        Assert::[str]Equal("dependencies:\n  dep: {repo: r@v1, hash: h}\n  other:\n    repo: o@v1\n",
+            ProjectFileEditTest::set("dependencies:\n  dep: {repo: r@v1}\n  other:\n    repo: o@v1\n", "dep", "", "h").0);
+        Assert::[str]Equal("dependencies: {dep: {repo: \"a, b\", hash: h}}\n",
+            ProjectFileEditTest::set("dependencies: {dep: {repo: \"a, b\"}}\n", "dep", "", "h").0);
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        Assert::[str]Equal("\"dependencies\" is not a mapping", ProjectFileEditTest::set("dependencies: 1\n", "dep", "", "h").1.Err());
+        Assert::[str]Equal("\"dependencies\" is a flow mapping with no end", ProjectFileEditTest::set("dependencies: {dep: {repo: r\n", "dep", "", "h").1.Err());
+        Assert::[str]Equal("\"dependency dep\" is not a mapping", ProjectFileEditTest::set("dependencies: {dep: 1}\n", "dep", "", "h").1.Err());
+    }
+}

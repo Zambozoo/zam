@@ -36,6 +36,11 @@ public namespace ProjectParserTest {
             return (children.Arr(), null);
         }
 
+        fun Err*(str, str) Write = (path, text) {
+            this.files.Put(path, text);
+            return null;
+        }
+
         fun (str, Err*)(str) ProjectFile = (path) {
             if(Path::IsStd(path)) {
                 return ("std://zam.yml", null);
@@ -104,7 +109,7 @@ public namespace ProjectParserTest {
         sources.files = files;
         var MapPackages* fetcher = new(MapPackages);
         fetcher.dirs = packages;
-        return ProjectParser::New(sources, fetcher, threads, noProject).Parse("/p/Main.zam", Arr::[str]New(0U));
+        return ProjectParser::New(sources, fetcher, threads, noProject, false).Parse("/p/Main.zam", Arr::[str]New(0U));
     }
 
     // fails checks that files, with the dependencies in packages, leave no
@@ -307,5 +312,60 @@ public namespace ProjectParserTest {
         if(Assert::[uint]Equal(1U, out.1.Len())) {
             Assert::[str]Equal("import \"../Outside.zam\" leaves example.com/dep@v1" + ProjectParserTest::at("/deps/dep/Dep.zam", "[1:1]"), out.1.Get(0U).Err());
         }
+    }
+
+    // parser answers a parser of files, with the dependencies in packages,
+    // recording missing hashes
+    private fun ProjectParser*(TreeMap[str, str]*, TreeMap[str, str]*) parser = (files, packages) {
+        var MapSources* sources = new(MapSources);
+        sources.files = files;
+        var MapPackages* fetcher = new(MapPackages);
+        fetcher.dirs = packages;
+        return ProjectParser::New(sources, fetcher, 1U, false, true);
+    }
+
+    public fun void(uint, str...) RecordsHashes = (argC, argV) {
+        var TreeMap[str, str]* files = ProjectParserTest::files(8U,
+            "/p/zam.yml", "name: demo\ndependencies:\n  dep:\n    repo: example.com/dep@v1\n",
+            "/p/Main.zam", "import dep(\"Dep.zam\");\npublic namespace Main {}",
+            "/deps/dep/zam.yml", "dependencies:\n  inner:\n    repo: example.com/inner@v1\n",
+            "/deps/dep/Dep.zam", "class Dep {}");
+        files.Put("/deps/inner/zam.yml", "name: inner");
+        var TreeMap[str, str]* packages = TreeMap::[str, str]New(2U, ("example.com/dep@v1", "/deps/dep"), ("example.com/inner@v1", "/deps/inner"));
+        var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parser(files, packages).Parse("/p/Main.zam", Arr::[str]New(0U));
+        for(var uint i = 0U; i < out.1.Len(); i++) {
+            Assert::True(false, out.1.Get(i).Err());
+        }
+        Assert::[str]Equal("name: demo\ndependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: h1\n", files.Get("/p/zam.yml").0);
+        Assert::[str]Equal("dependencies:\n  inner:\n    repo: example.com/inner@v1\n", files.Get("/deps/dep/zam.yml").0);
+    }
+
+    public fun void(uint, str...) Get = (argC, argV) {
+        var TreeMap[str, str]* files = ProjectParserTest::files(6U,
+            "/p/zam.yml", "name: demo # the demo\n",
+            "/deps/dep/zam.yml", "dependencies:\n  inner:\n    repo: example.com/inner@v1\n",
+            "/deps/inner/zam.yml", "name: inner");
+        var TreeMap[str, str]* packages = TreeMap::[str, str]New(2U, ("example.com/dep@v1", "/deps/dep"), ("example.com/inner@v1", "/deps/inner"));
+        var Err* err = ProjectParserTest::parser(files, packages).Get("/p/zam.yml", Arr::[str]New(1U, "example.com/dep@v1"), "");
+        if(!Assert::True(err == null, "the dependency is not added")) {
+            Assert::Fatal(err.Err());
+        }
+        Assert::[str]Equal("name: demo # the demo\ndependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: h1\n", files.Get("/p/zam.yml").0);
+
+        var Err* named = ProjectParserTest::parser(files, packages).Get("/p/zam.yml", Arr::[str]New(1U, "example.com/dep@v1"), "lib");
+        Assert::True(named == null, "the dependency is not added under a name");
+        Assert::True(Strs::Contains(files.Get("/p/zam.yml").0, "  lib:\n    repo: example.com/dep@v1\n    hash: h1\n"), files.Get("/p/zam.yml").0);
+    }
+
+    public fun void(uint, str...) GetErrors = (argC, argV) {
+        var TreeMap[str, str]* files = ProjectParserTest::files(2U, "/p/zam.yml", "name: demo\n");
+        var TreeMap[str, str]* packages = TreeMap::[str, str]New(1U, ("example.com/dep@v1", "/deps/dep"));
+        var ProjectParser* p = ProjectParserTest::parser(files, packages);
+        Assert::[str]Equal("\"std\" is a reserved package name", p.Get("/p/zam.yml", Arr::[str]New(1U, "example.com/dep@v1"), "std").Err());
+        Assert::[str]Equal("\"class\" is not a valid package name: name it with --as", p.Get("/p/zam.yml", Arr::[str]New(1U, "example.com/class@v1"), "").Err());
+        Assert::[str]Equal("\"go-x\" is not a valid package name: name it with --as", p.Get("/p/zam.yml", Arr::[str]New(1U, "example.com/go-x@v1"), "").Err());
+        Assert::[str]Equal("package \"dep\" is named by more than one dependency", p.Get("/p/zam.yml", Arr::[str]New(2U, "example.com/dep@v1", "example.com/dep@v1"), "").Err());
+        Assert::[str]Equal("failed to fetch example.com/gone@v1: no repo example.com/gone@v1", p.Get("/p/zam.yml", Arr::[str]New(1U, "example.com/gone@v1"), "").Err());
+        Assert::[str]Equal("dependency \"dep\" has no project file", p.Get("/p/zam.yml", Arr::[str]New(1U, "example.com/dep@v1"), "").Err());
     }
 }

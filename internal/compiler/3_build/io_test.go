@@ -1,6 +1,8 @@
 package build_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,4 +81,68 @@ namespace Main {
 		"ping true true true true true true\n"+
 		"p"+sep+"q p/q "+sep+"\n"+
 		"a/b a"+sep+"b\n", stdout)
+}
+
+// TestProcess runs programs: one writing to stdout and stderr and exiting with
+// a code, one in a directory of its own with a variable set, and one that does
+// not exist. It also finds a symbolic link and makes temporary directories.
+func TestProcess(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	link := filepath.Join(dir, "link")
+	canLink := os.Symlink(dir, link) == nil
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        var str dir = argV[0];
+        var bool windows = FS::Separator == "\\";
+        var Arr[str]* none = Arr::[str]New(0U, new(str, 0U)...);
+        var Arr[str]* writes = Arr::[str]New(3U, "sh", "-c", "printf out; printf err >&2; exit 3");
+        var Arr[str]* where = Arr::[str]New(3U, "sh", "-c", "printf \"$ZAM_PROCESS_TEST \"; pwd -P");
+        if(windows) {
+            writes = Arr::[str]New(3U, "cmd", "/c", "echo out& echo err 1>&2& exit 3");
+            where = Arr::[str]New(3U, "cmd", "/c", "echo %ZAM_PROCESS_TEST%& cd");
+        }
+        var (Process.Result, Err*) a = Process::Run("", writes, none);
+        var str s = (a.1 == null){str} + " " + a.0.code{str} + " " + Strs::TrimSpace(a.0.output) + "\n";
+        var (Process.Result, Err*) b = Process::Run(dir, where, Arr::[str]New(1U, "ZAM_PROCESS_TEST=set"));
+        s = s + (b.1 == null){str} + " " + b.0.code{str} + " " + Strs::TrimSpace(b.0.output) + "\n";
+        var (Process.Result, Err*) c = Process::Run("", Arr::[str]New(1U, "zam-no-such-program"), none);
+        s = s + (c.1 != null){str} + "\n";
+
+        s = s + FS::IsLink(FS::Join(dir, "link")){str} + " " + FS::IsLink(dir){str} + "\n";
+        var (str, Err*) one = FS::MakeTempDir(dir, ".t-");
+        var (str, Err*) two = FS::MakeTempDir(dir, ".t-");
+        s = s + (one.1 == null && two.1 == null){str} + " " + (one.0 != two.0){str} + " " + FS::IsDir(one.0){str} + " " + Strs::HasPrefix(one.0, FS::Join(dir, ".t-")){str} + "\n";
+        s = s + System::OS() + "\n";
+        File::StdOut.WriteStr(s);
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary, dir)
+	require.Zero(t, status, stderr)
+	resolved, err := filepath.EvalSymlinks(dir)
+	require.NoError(t, err)
+	written, where := "outerr", "set "+resolved
+	if testTarget().OS == target.Windows {
+		written, where = "out\r\nerr", "set\r\n"+dir
+	}
+	links := "false false"
+	if canLink {
+		links = "true false"
+	}
+	assert.Equal(t, "true 3 "+written+"\n"+"true 0 "+where+"\n"+"true\n"+links+"\n"+"true true true true\n"+goos(testTarget())+"\n", stdout)
+}
+
+// goos answers the operating system t is for, as Go names it.
+func goos(t target.Target) string {
+	switch t.OS {
+	case target.Windows:
+		return "windows"
+	case target.MacOS:
+		return "darwin"
+	}
+	return "linux"
 }

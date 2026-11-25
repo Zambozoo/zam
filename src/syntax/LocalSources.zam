@@ -55,6 +55,10 @@ public class LocalSources {
         return (children.Arr(), null);
     }
 
+    public fun Err*(str, str) Write = (path, text) {
+        return FS::WriteFile(this.local(path), text);
+    }
+
     public fun (str, Err*)(str) ProjectFile = (path) {
         if(Path::IsStd(path)) {
             return (Path::Std + Project::FileNames.Get(0U), null);
