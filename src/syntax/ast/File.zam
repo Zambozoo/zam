@@ -1,0 +1,31 @@
+import std("data/list/ArrList.zam");
+import "../Token.zam";
+import "Decl.zam";
+import "Import.zam";
+
+// File is a source file as it is written: its imports and its declaration
+public class File {
+    // start is the token the file begins at
+    public var Token* start;
+    public var ArrList[Import*]* imports;
+    // brokenImports says an import failed to parse and was skipped
+    public var bool brokenImports;
+    public var Decl* decl;
+
+    public static fun File*(Token*, ArrList[Import*]*, bool, Decl*) New = (start, imports, brokenImports, decl) {
+        var File* f = new(File);
+        f.start = start;
+        f.imports = imports;
+        f.brokenImports = brokenImports;
+        f.decl = decl;
+        return f;
+    }
+
+    public fun str() Str = () {
+        var str out = "(file";
+        for(var uint i = 0U; i < this.imports.Len(); i++) {
+            out = out + " " + this.imports.Get(i).Str();
+        }
+        return out + " " + this.decl.Str() + ")";
+    }
+}

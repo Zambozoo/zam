@@ -1,0 +1,57 @@
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "FileParser.zam";
+import "Parser.zam";
+import "ast/File.zam";
+
+public namespace FileParserTest {
+    // fails checks that source fails to read as a file with an error
+    // containing want
+    private fun void(str, str) fails = (source, want) {
+        var (File*, Err*) f = FileParser::Parse(Parser::New(source));
+        if(Assert::True(f.1 != null, source + " parses")) {
+            Assert::True(Strs::Contains(f.1.Err(), want), f.1.Err() + " does not contain " + want);
+        }
+    }
+
+    public fun void(uint, str...) Files = (argC, argV) {
+        var Parser* p = Parser::New("import std(\"lang/Err.zam\");\nimport { \"A.zam\"; m = pkg(\"b/*\"); }\npublic namespace Main { }\n");
+        var (File*, Err*) f = FileParser::Parse(p);
+        if(!Assert::True(f.1 == null, "the file fails to parse")) {
+            Assert::Fatal(f.1.Err());
+        }
+        Assert::[str]Equal("(file (import std \"lang/Err.zam\") (import \"A.zam\") (import m = pkg \"b/*\") (namespace public Main))", f.0.Str());
+        Assert::False(f.0.brokenImports, "the imports are broken");
+        Assert::[uint]Equal(0U, p.diagnostics.Len());
+
+        var (File*, Err*) bare = FileParser::Parse(Parser::New("class A {}"));
+        Assert::[str]Equal("(file (class A))", bare.0.Str());
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        FileParserTest::fails("static namespace Main {}", "a top-level declaration can only be public");
+        FileParserTest::fails("var int x;", "unexpected token: \"var\", expected one of");
+        FileParserTest::fails("import \"A.zam\";", "unexpected token: \"EOF\", expected one of");
+    }
+
+    public fun void(uint, str...) Trailing = (argC, argV) {
+        var Parser* p = Parser::New("class A {} class B {}");
+        var (File*, Err*) f = FileParser::Parse(p);
+        Assert::[str]Equal("(file (class A))", f.0.Str());
+        if(Assert::[uint]Equal(1U, p.diagnostics.Len())) {
+            Assert::[str]Equal("unexpected token: \"class\", expected \"EOF\"", p.diagnostics.Get(0U).err.Err());
+        }
+    }
+
+    public fun void(uint, str...) ImportRecovery = (argC, argV) {
+        var Parser* p = Parser::New("import \"a\" \"b\";\nimport std = \"x\";\nimport \"c\";\nclass A {}");
+        var (File*, Err*) f = FileParser::Parse(p);
+        if(!Assert::True(f.1 == null, "the file gives up")) {
+            Assert::Fatal(f.1.Err());
+        }
+        Assert::[str]Equal("(file (import \"c\") (class A))", f.0.Str());
+        Assert::True(f.0.brokenImports, "the imports are not broken");
+        Assert::[uint]Equal(2U, p.diagnostics.Len());
+    }
+}

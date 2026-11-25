@@ -1,0 +1,78 @@
+import std("data/list/ArrList.zam");
+import std("data/set/TreeSet.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import "DeclParser.zam";
+import "FieldParser.zam";
+import "ImportParser.zam";
+import "Parser.zam";
+import "Token.zam";
+import "TokenKind.zam";
+import "ast/Decl.zam";
+import "ast/File.zam";
+import "ast/Import.zam";
+import "ast/Modifier.zam";
+
+// FileParser reads source files
+public namespace FileParser {
+    namespace Errs {
+        public var Err*$ NotPublic = StrErr::New("a top-level declaration can only be public");
+    }
+
+    // Parse reads a file
+    public fun (File*, Err*)(Parser*) Parse = (p) {
+        var (Token*, Err*) start = p.Peek();
+        if(start.1 != null) {
+            return (null, start.1);
+        }
+
+        var ArrList[Import*]* imports = ArrList::[Import*]New(0U);
+        var bool whole = true;
+        for {
+            var (Token*, Err*) importing = p.Match(TokenKind::Import);
+            if(importing.1 != null) {
+                return (null, importing.1);
+            } else if(importing.0 == null) {
+                break;
+            }
+            var Parser.Recovery* r = p.Checkpoint();
+            var (ArrList[Import*]*, bool, Err*) read = ImportParser::Parse(p, importing.0);
+            if(read.0 != null) {
+                for(var uint i = 0U; i < read.0.Len(); i++) {
+                    imports.AddLast(read.0.Get(i));
+                }
+            }
+            whole = whole && read.1;
+            if(read.2 != null) {
+                whole = false;
+                var Err* stop = r.Recover(read.2);
+                if(stop != null) {
+                    return (null, stop);
+                }
+            }
+        }
+
+        var (Modifier.Set, Err*) modifiers = FieldParser::Modifiers(p);
+        if(modifiers.1 != null) {
+            return (null, modifiers.1);
+        } else if((modifiers.0 | Modifier::Public.Bit()) != Modifier::Public.Bit()) {
+            return (null, Errs::NotPublic);
+        }
+        var (Token*, Err*) keyword = p.ConsumeAny(DeclParser::declKinds());
+        if(keyword.1 != null) {
+            return (null, keyword.1);
+        }
+        var (Decl*, Err*) d = DeclParser::Declaration(p, keyword.0, modifiers.0);
+        if(d.1 != null) {
+            return (null, d.1);
+        }
+
+        var (Token*, Err*) end = p.Peek();
+        if(end.1 != null) {
+            return (null, end.1);
+        } else if(end.0.kind != TokenKind::EOF) {
+            p.Report(p.Unexpected(TreeSet::[TokenKind]New(1U, TokenKind::EOF)));
+        }
+        return (File::New(start.0, imports, !whole, d.0), null);
+    }
+}
