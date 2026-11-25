@@ -1,0 +1,112 @@
+import io = std("io/Paths.zam");
+import std("data/list/ArrList.zam");
+import std("data/set/HashSet.zam");
+import std("data/sort/Sort.zam");
+import std("io/local/FS.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "../cli/Paths.zam";
+import "../syntax/Path.zam";
+
+// TestFiles finds the test files the targets of zam test name
+public namespace TestFiles {
+    namespace Errs {
+        public fun Err*(str) Missing = (target) {
+            return StrErr::New(target + " does not exist");
+        }
+
+        public fun Err*(str) NotTestable = (target) {
+            return StrErr::New(target + " is not a directory or a " + Path::TestExtension + " file");
+        }
+
+        public fun Err*(str, Err*) Unlistable = (dir, err) {
+            return StrErr::New("cannot list test files in " + Strs::Quote(Path::Display(dir)) + ": " + err.Err());
+        }
+    }
+
+    // RecursiveSuffix ends a target naming every directory beneath it too
+    public var str$ RecursiveSuffix = "/...";
+
+    // Resolve answers the test files targets name
+    public fun (ArrList[str]*, Err*)(Arr[str]*) Resolve = (targets) {
+        var ArrList[str]* paths = ArrList::[str]New(0U);
+        var HashSet[str]* seen = HashSet::[str]New(0U);
+        for(var uint i = 0U; i < targets.Len(); i++) {
+            var str target = targets.Get(i);
+            var str dir = FS::ToSlash(target);
+            var bool recursive = Strs::HasSuffix(dir, TestFiles::RecursiveSuffix);
+            if(recursive) {
+                dir = Strs::Slice(dir, 0U, Strs::ByteLen(dir) - Strs::ByteLen(TestFiles::RecursiveSuffix));
+            }
+            if(dir == "") {
+                dir = ".";
+            }
+            var (str, Err*) path = Paths::Parse(dir);
+            if(path.1 != null) {
+                return (null, path.1);
+            } else if(!FS::Exists(path.0)) {
+                return (null, Errs::Missing(target));
+            }
+
+            var ArrList[str]* found = ArrList::[str]New(0U);
+            if(FS::IsDir(path.0)) {
+                var (ArrList[str]*, Err*) listed = TestFiles::List(path.0, recursive);
+                if(listed.1 != null) {
+                    return (null, listed.1);
+                }
+                found = listed.0;
+            } else if(recursive || !Path::IsTestFile(path.0)) {
+                return (null, Errs::NotTestable(target));
+            } else {
+                found.AddLast(path.0);
+            }
+            for(var uint j = 0U; j < found.Len(); j++) {
+                if(seen.Add(found.Get(j))) {
+                    paths.AddLast(found.Get(j));
+                }
+            }
+        }
+        return (paths, null);
+    }
+
+    // List answers the test files in dir, sorted, and those in the directories beneath it when recursive
+    public fun (ArrList[str]*, Err*)(str, bool) List = (dir, recursive) {
+        var ArrList[str]* files = ArrList::[str]New(0U);
+        var Err* err = TestFiles::walk(dir, recursive, files);
+        if(err != null) {
+            return (null, Errs::Unlistable(dir, err));
+        }
+        var Arr[str]* sorted = files.Arr();
+        Sort::[str]SortArr(sorted);
+        var ArrList[str]* out = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < sorted.Len(); i++) {
+            out.AddLast(sorted.Get(i));
+        }
+        return (out, null);
+    }
+
+    // walk adds the test files in dir to files, and those beneath it when recursive
+    fun Err*(str, bool, ArrList[str]*) walk = (dir, recursive, files) {
+        var (Arr[str]*, Err*) names = FS::ReadDir(dir);
+        if(names.1 != null) {
+            return names.1;
+        }
+        for(var uint i = 0U; i < names.0.Len(); i++) {
+            var str name = names.0.Get(i);
+            var str path = io.Paths::Join(dir, name);
+            if(!FS::IsLink(path) && FS::IsDir(path)) {
+                if(recursive && !Strs::HasPrefix(name, ".")) {
+                    var Err* err = TestFiles::walk(path, recursive, files);
+                    if(err != null) {
+                        return err;
+                    }
+                }
+            } else if(Path::IsTestFile(name)) {
+                files.AddLast(path);
+            }
+        }
+        return null;
+    }
+}

@@ -1,9 +1,29 @@
 import std("lang/Arr.zam");
 import std("lang/Err.zam");
+import std("lang/Iter.zam");
 import std("lang/Strs.zam");
 import std("test/Assert.zam");
 
 public namespace StrsTest {
+    // splits answers the runs Strs::Splits gives for s and sep, each in brackets
+    private fun str(str, byte) splits = (s, sep) {
+        var Iter[str]* runs = Strs::Splits(s, sep);
+        var str out = "";
+        for(var (str, bool) next = runs.Next(); next.1; next = runs.Next()) {
+            out = out + "[" + next.0 + "]";
+        }
+        Assert::False(runs.Next().1, "the runs go on after they end");
+        return out;
+    }
+
+    public fun void(uint, str...) Splits = (argC, argV) {
+        Assert::[str]Equal("[a][b][c]", StrsTest::splits("a/b/c", '/'{byte}));
+        Assert::[str]Equal("[][a][][b][]", StrsTest::splits("/a//b/", '/'{byte}));
+        Assert::[str]Equal("[]", StrsTest::splits("", '/'{byte}));
+        Assert::[str]Equal("[abc]", StrsTest::splits("abc", '/'{byte}));
+        Assert::[str]Equal("[a][é]", StrsTest::splits("a,é", ','{byte}));
+    }
+
     public fun void(uint, str...) Slice = (argC, argV) {
         Assert::[str]Equal("ell", Strs::Slice("hello", 1U, 4U));
         Assert::[str]Equal("", Strs::Slice("hello", 5U, 5U));

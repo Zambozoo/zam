@@ -2,6 +2,7 @@ import std("data/list/ArrList.zam");
 import std("data/set/TreeSet.zam");
 import std("lang/Arr.zam");
 import std("lang/Err.zam");
+import std("lang/Iter.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import "Lexer.zam";
@@ -123,18 +124,20 @@ public class Parser {
 
     // Unexpected answers the error where one of kinds was wanted
     public fun Err*(TreeSet[TokenKind]*) Unexpected = (kinds) {
-        var Arr[TokenKind]* wanted = kinds.Arr();
-        var str expected = Strs::Quote(wanted.Get(0U).text);
-        if(wanted.Len() > 1U) {
+        var Iter[TokenKind]* wanted = kinds.Iter();
+        var str expected = "";
+        if(kinds.Len() > 1U) {
             expected = "one of ";
-            for(var uint i = 0U; i < wanted.Len(); i++) {
-                if(i == wanted.Len() - 1U) {
-                    expected = expected + ", or ";
-                } else if(i > 0U) {
-                    expected = expected + ", ";
-                }
-                expected = expected + Strs::Quote(wanted.Get(i).text);
+        }
+        var uint i = 0U;
+        for(var (TokenKind, bool) next = wanted.Next(); next.1; next = wanted.Next()) {
+            if(i > 0U && i == kinds.Len() - 1U) {
+                expected = expected + ", or ";
+            } else if(i > 0U) {
+                expected = expected + ", ";
             }
+            expected = expected + Strs::Quote(next.0.text);
+            i++;
         }
         return Errs::UnexpectedToken(this.current.kind, expected);
     }

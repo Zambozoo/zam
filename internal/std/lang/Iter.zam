@@ -1,0 +1,6 @@
+// Iter steps through values one at a time, as the iterators of the data
+// structures and strings do
+public interface Iter[A] {
+    // Next answers the next value, and false once there are none left.
+    fun (A, bool)() Next;
+}

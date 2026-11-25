@@ -5,6 +5,7 @@ import std("data/set/HashSet.zam");
 import std("io/Paths.zam");
 import std("lang/Arr.zam");
 import std("lang/Err.zam");
+import std("lang/Iter.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import std("sync/Cond.zam");
@@ -398,10 +399,10 @@ public class ProjectParser {
     fun (str, str, bool)(str) fetchedRoot = (path) {
         this.fetchedLock.Lock();
         defer this.fetchedLock.Unlock();
-        var Arr[(str, str)]* all = this.fetched.Arr();
-        for(var uint i = 0U; i < all.Len(); i++) {
-            if(Paths::Contains(all.Get(i).0, path)) {
-                return (all.Get(i).1, all.Get(i).0, true);
+        var Iter[(str, str)]* all = this.fetched.Iter();
+        for(var ((str, str), bool) next = all.Next(); next.1; next = all.Next()) {
+            if(Paths::Contains(next.0.0, path)) {
+                return (next.0.1, next.0.0, true);
             }
         }
         return ("", "", false);
@@ -416,7 +417,12 @@ public class ProjectParser {
                 var str ref = refs.Get(i);
                 var str name = named;
                 if(name == "") {
-                    name = Paths::Base(Strs::Split(ref, '@'{byte}).Get(0U));
+                    var (uint, bool) at = Strs::Index(ref, "@");
+                    var str repo = ref;
+                    if(at.1) {
+                        repo = Strs::Slice(ref, 0U, at.0);
+                    }
+                    name = Paths::Base(repo);
                 }
                 var Err* invalid = ProjectParser::checkPackageName(name);
                 if(invalid != null) {
@@ -454,15 +460,15 @@ public class ProjectParser {
         if(project.1 != null) {
             return Errs::In(path, project.1);
         }
-        var Arr[(str, str)]* dependencies = project.0.dependencies.Arr();
-        for(var uint i = 0U; i < dependencies.Len(); i++) {
-            var str dir = dependencies.Get(i).1;
+        var Iter[(str, str)]* dependencies = project.0.dependencies.Iter();
+        for(var ((str, str), bool) next = dependencies.Next(); next.1; next = dependencies.Next()) {
+            var str dir = next.0.1;
             if(Path::IsStd(dir)) {
                 continue;
             }
             var (str, Err*) file = this.provider.ProjectFile(Paths::Join(dir, Project::FileNames.Get(0U)));
             if(file.1 != null || !Paths::Contains(dir, file.0)) {
-                return Errs::NoDependencyFile(dependencies.Get(i).0);
+                return Errs::NoDependencyFile(next.0.0);
             }
             var Err* err = this.visit(file.0, visited);
             if(err != null) {

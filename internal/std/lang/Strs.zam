@@ -38,6 +38,40 @@ public namespace Strs {
 
     // Iter visits the code points of the str's UTF-8 as Chars decodes them,
     // one at a time.
+    // Splits answers the runs of s between each sep byte one at a time, as
+    // Split does without holding them all, so an empty s is one empty run.
+    public static fun Splits*(str, byte) Splits = (s, sep) {
+        var Splits* it = new(Splits);
+        it.s = s;
+        it.sep = sep;
+        it.start = 0U;
+        it.done = false;
+        return it;
+    }
+
+    private class Splits {
+        var str s;
+        var byte sep;
+        var uint start;
+        var bool done;
+
+        public fun (str, bool)() Next = () {
+            if(this.done) {
+                return ("", false);
+            }
+            var (byte*, uint) b = Strs::ToBytes(this.s);
+            for(var uint i = this.start; i < b.1; i++) {
+                if(b.0[i] == this.sep) {
+                    var str run = Strs::FromBytes(&(b.0[this.start]), i - this.start);
+                    this.start = i + 1U;
+                    return (run, true);
+                }
+            }
+            this.done = true;
+            return (Strs::FromBytes(&(b.0[this.start]), b.1 - this.start), true);
+        }
+    }
+
     public static fun Iter*(str) Iter = (s) {
         var Iter* it = new(Iter);
         it.s = s;

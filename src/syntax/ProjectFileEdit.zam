@@ -2,6 +2,7 @@ import std("codec/format/YAML.zam");
 import std("data/list/ArrList.zam");
 import std("lang/Arr.zam");
 import std("lang/Err.zam");
+import std("lang/Iter.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import "Project.zam";
@@ -75,9 +76,7 @@ public namespace ProjectFileEdit {
         return (ProjectFileEdit::joined(lines, ProjectFileEdit::newline(text)), null);
     }
 
-    // flow answers lines with the flow mapping that is the value of the line at
-    // i, which key names, given each of deps: as its dependencies when whole,
-    // or else as the fields of the one dependency it is
+    // flow answers lines with the flow mapping that is the value of the line at i
     fun (ArrList[str]*, Err*)(ArrList[str]*, uint, str, ArrList[Project.Dependency*]*, bool) flow = (lines, i, key, deps, whole) {
         var str text = ProjectFileEdit::joined(lines, "\n");
         var uint start = 0U;
@@ -172,10 +171,10 @@ public namespace ProjectFileEdit {
 
     // oneLine answers s with each line break, and the indentation after it
     fun str(str) oneLine = (s) {
-        var Arr[str]* parts = Strs::Split(s, '\n'{byte});
-        var str out = parts.Get(0U);
-        for(var uint i = 1U; i < parts.Len(); i++) {
-            out = out + " " + Strs::TrimSpace(parts.Get(i));
+        var Iter[str]* parts = Strs::Splits(s, '\n'{byte});
+        var str out = parts.Next().0;
+        for(var (str, bool) next = parts.Next(); next.1; next = parts.Next()) {
+            out = out + " " + Strs::TrimSpace(next.0);
         }
         return out;
     }
@@ -306,10 +305,10 @@ public namespace ProjectFileEdit {
 
     // lines answers the lines of text, without their line breaks
     fun ArrList[str]*(str) lines = (text) {
-        var Arr[str]* split = Strs::Split(text, '\n'{byte});
+        var Iter[str]* split = Strs::Splits(text, '\n'{byte});
         var ArrList[str]* lines = ArrList::[str]New(0U);
-        for(var uint i = 0U; i < split.Len(); i++) {
-            var str line = split.Get(i);
+        for(var (str, bool) next = split.Next(); next.1; next = split.Next()) {
+            var str line = next.0;
             if(Strs::HasSuffix(line, "\r")) {
                 line = Strs::Slice(line, 0U, Strs::ByteLen(line) - 1U);
             }

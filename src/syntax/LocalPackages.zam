@@ -4,6 +4,7 @@ import std("io/local/FS.zam");
 import std("io/local/Process.zam");
 import std("lang/Arr.zam");
 import std("lang/Err.zam");
+import std("lang/Iter.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import std("sync/SingleFlight.zam");
@@ -175,12 +176,15 @@ public class LocalPackages {
         var str repo = Strs::Slice(ref, 0U, at);
         var str version = Strs::Slice(ref, at + 1U, b.1);
 
-        var Arr[str]* elements = Strs::Split(repo, '/'{byte});
-        var bool validRepo = elements.Len() >= 2U;
-        for(var uint i = 0U; validRepo && i < elements.Len(); i++) {
-            var str element = elements.Get(i);
+        var Iter[str]* elements = Strs::Splits(repo, '/'{byte});
+        var uint count = 0U;
+        var bool validRepo = true;
+        for(var (str, bool) next = elements.Next(); validRepo && next.1; next = elements.Next()) {
+            var str element = next.0;
             validRepo = element != "" && element != "." && element != ".." && LocalPackages::all(element, "._~-");
+            count++;
         }
+        validRepo = validRepo && count >= 2U;
         if(validRepo) {
             validRepo = LocalPackages::alphanumeric(Strs::ToBytes(repo).0[0U]);
         }

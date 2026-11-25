@@ -1,0 +1,56 @@
+import io = std("io/Paths.zam");
+import std("data/list/ArrList.zam");
+import std("io/local/FS.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "TestFiles.zam";
+
+public namespace TestFilesTest {
+    // tree answers a new directory of test files, one beside others, one in
+    // a subdirectory and one in a directory whose name begins with a dot
+    private fun str() tree = () {
+        var str dir = FS::MakeTempDir(FS::ToSlash(FS::TempDir()), "zam-tests-").0;
+        FS::MakeDirs(io.Paths::Join(dir, "sub"));
+        FS::MakeDirs(io.Paths::Join(dir, ".hidden"));
+        FS::WriteFile(io.Paths::Join(dir, "B.test.zam"), "");
+        FS::WriteFile(io.Paths::Join(dir, "A.test.zam"), "");
+        FS::WriteFile(io.Paths::Join(dir, "Main.zam"), "");
+        FS::WriteFile(io.Paths::Join(dir, "sub/C.test.zam"), "");
+        FS::WriteFile(io.Paths::Join(dir, ".hidden/D.test.zam"), "");
+        return dir;
+    }
+
+    // names answers the paths of files relative to dir, joined by spaces
+    private fun str(str, ArrList[str]*) names = (dir, files) {
+        var str out = "";
+        for(var uint i = 0U; i < files.Len(); i++) {
+            if(i > 0U) {
+                out = out + " ";
+            }
+            out = out + Strs::Slice(files.Get(i), Strs::ByteLen(dir) + 1U, Strs::ByteLen(files.Get(i)));
+        }
+        return out;
+    }
+
+    public fun void(uint, str...) Resolve = (argC, argV) {
+        var str dir = TestFilesTest::tree();
+        defer FS::RemoveAll(dir);
+        Assert::[str]Equal("A.test.zam B.test.zam", TestFilesTest::names(dir, TestFiles::Resolve(Arr::[str]New(1U, dir)).0));
+        Assert::[str]Equal("A.test.zam B.test.zam sub/C.test.zam", TestFilesTest::names(dir, TestFiles::Resolve(Arr::[str]New(1U, dir + "/...")).0));
+        Assert::[str]Equal("sub/C.test.zam A.test.zam B.test.zam",
+            TestFilesTest::names(dir, TestFiles::Resolve(Arr::[str]New(3U, io.Paths::Join(dir, "sub/C.test.zam"), dir, io.Paths::Join(dir, "A.test.zam"))).0));
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        var str dir = TestFilesTest::tree();
+        defer FS::RemoveAll(dir);
+        var str missing = io.Paths::Join(dir, "Missing.test.zam");
+        Assert::[str]Equal(missing + " does not exist", TestFiles::Resolve(Arr::[str]New(1U, missing)).1.Err());
+        var str main = io.Paths::Join(dir, "Main.zam");
+        Assert::[str]Equal(main + " is not a directory or a .test.zam file", TestFiles::Resolve(Arr::[str]New(1U, main)).1.Err());
+        var str file = io.Paths::Join(dir, "A.test.zam") + "/...";
+        Assert::[str]Equal(file + " is not a directory or a .test.zam file", TestFiles::Resolve(Arr::[str]New(1U, file)).1.Err());
+    }
+}

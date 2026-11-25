@@ -16,6 +16,7 @@ import "syntax/LocalPackages.zam";
 import "syntax/LocalSources.zam";
 import "syntax/PackageArchive.zam";
 import "syntax/Path.zam";
+import "test/TestFiles.zam";
 import "syntax/ProjectParser.zam";
 
 namespace Main {
@@ -31,7 +32,8 @@ namespace Main {
         Std("std"),
         Syntax("syntax"),
         Get("get"),
-        Clean("clean");
+        Clean("clean"),
+        Test("test");
     }
 
     fun Arr[str]*(uint, str...) asArgs = (argC, argV) {
@@ -165,7 +167,7 @@ namespace Main {
             System::Exit(0);
         }
 
-        if(r.0.verb == Verb::Get || r.0.verb == Verb::Build || r.0.verb == Verb::Run) {
+        if(r.0.verb == Verb::Get || r.0.verb == Verb::Build || r.0.verb == Verb::Run || r.0.verb == Verb::Test) {
             var (str, Err*) root = stdRoot();
             onError(Step::Std, 1U, root.1);
             var (str, Err*) pkg = packages();
@@ -182,8 +184,21 @@ namespace Main {
                 System::Exit(0);
             }
 
+            var str entry = r.0.inputPath;
+            var Arr[str]* extra = Arr::[str]New(0U);
+            if(r.0.verb == Verb::Test) {
+                var (ArrList[str]*, Err*) tests = TestFiles::Resolve(r.0.testTargets);
+                onError(Step::Test, 1U, tests.1);
+                if(tests.0.Len() == 0U) {
+                    File::StdOut.WriteStr("no test files\n");
+                    System::Exit(0);
+                }
+                entry = tests.0.RemoveFirst();
+                extra = tests.0.Arr();
+            }
+
             var ProjectParser* parser = ProjectParser::New(sources, fetcher, r.0.maxThreads{uint}, r.0.noProject, r.0.writeProject);
-            var (ProjectParser.Program*, ArrList[Err*]*) program = parser.Parse(r.0.inputPath, Arr::[str]New(0U));
+            var (ProjectParser.Program*, ArrList[Err*]*) program = parser.Parse(entry, extra);
             onError(Step::Syntax, program.1.Len(), program.1.Arr().Arr()...);
         }
         File::StdOut.WriteStr(r.0.Str() + "\n");

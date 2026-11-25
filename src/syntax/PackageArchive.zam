@@ -5,6 +5,7 @@ import std("codec/text/Base64.zam");
 import std("codec/text/Hex.zam");
 import std("crypto/hash/SHA256.zam");
 import std("data/list/ArrList.zam");
+import std("data/map/TreeMap.zam");
 import std("data/set/HashSet.zam");
 import std("data/sort/Sort.zam");
 import std("io/Paths.zam");
@@ -12,6 +13,7 @@ import std("io/local/File.zam");
 import std("io/local/FS.zam");
 import std("lang/Arr.zam");
 import std("lang/Err.zam");
+import std("lang/Iter.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 
@@ -104,17 +106,16 @@ public namespace PackageArchive {
         if(entries.1 != null) {
             return ("", entries.1);
         }
-        var Arr[str]* names = Arr::[str]New(entries.0.Len(), new(str, entries.0.Len())...);
+        var TreeMap[str, str]* sums = TreeMap::[str, str]New(0U);
         for(var uint i = 0U; i < entries.0.Len(); i++) {
             var Archive.Entry* e = entries.0.Get(i);
             var Arr[byte]* sum = SHA256::Sum(e.data.Arr(), e.data.Len());
-            names.Set(i, e.name + "\n" + Hex::Encode(sum.Arr(), sum.Len()));
+            sums.Put(e.name, Hex::Encode(sum.Arr(), sum.Len()));
         }
-        Sort::[str]SortArr(names);
         var str lines = "";
-        for(var uint i = 0U; i < names.Len(); i++) {
-            var Arr[str]* parts = Strs::Split(names.Get(i), '\n'{byte});
-            lines = lines + parts.Get(1U) + "  " + parts.Get(0U) + "\n";
+        var Iter[(str, str)]* sorted = sums.Iter();
+        for(var ((str, str), bool) next = sorted.Next(); next.1; next = sorted.Next()) {
+            lines = lines + next.0.1 + "  " + next.0.0 + "\n";
         }
         var (byte*, uint) b = Strs::ToBytes(lines);
         var Arr[byte]* total = SHA256::Sum(b.0, b.1);

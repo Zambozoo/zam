@@ -3,6 +3,7 @@ import std("data/map/TreeMap.zam");
 import std("io/Paths.zam");
 import std("lang/Arr.zam");
 import std("lang/Err.zam");
+import std("lang/Iter.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import std("test/Assert.zam");
@@ -26,9 +27,9 @@ public namespace ProjectParserTest {
 
         fun (Arr[str]*, Err*)(str) ListCodeFiles = (dir) {
             var ArrList[str]* children = ArrList::[str]New(0U);
-            var Arr[(str, str)]* all = this.files.Arr();
-            for(var uint i = 0U; i < all.Len(); i++) {
-                var str path = all.Get(i).0;
+            var Iter[(str, str)]* all = this.files.Iter();
+            for(var ((str, str), bool) next = all.Next(); next.1; next = all.Next()) {
+                var str path = next.0.0;
                 if(Paths::Dir(path) == Paths::Clean(dir) && Strs::HasSuffix(path, Path::Extension)) {
                     children.AddLast(path);
                 }
@@ -136,12 +137,12 @@ public namespace ProjectParserTest {
                 return;
             }
             var str got = "";
-            var Arr[(str, Source*)]* sources = out.0.sources.Arr();
-            for(var uint i = 0U; i < sources.Len(); i++) {
-                if(i > 0U) {
+            var Iter[(str, Source*)]* sources = out.0.sources.Iter();
+            for(var ((str, Source*), bool) next = sources.Next(); next.1; next = sources.Next()) {
+                if(got != "") {
                     got = got + " ";
                 }
-                got = got + sources.Get(i).0;
+                got = got + next.0.0;
             }
             Assert::[str]Equal(want, got);
         }

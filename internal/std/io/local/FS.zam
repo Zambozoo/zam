@@ -1,6 +1,7 @@
 import {
     "../../lang/Arr.zam";
     "../../lang/Err.zam";
+    "../../lang/Iter.zam";
     "../../lang/StrErr.zam";
     "../../lang/Strs.zam";
     "../../codec/text/Hex.zam";
@@ -254,10 +255,10 @@ public namespace FS {
         if(from == to) {
             return s;
         }
-        var Arr[str]* parts = Strs::Split(s, Strs::ToBytes(from).0[0U]);
-        var str out = parts.Get(0U);
-        for(var uint i = 1U; i < parts.Len(); i++) {
-            out = out + to + parts.Get(i);
+        var Iter[str]* parts = Strs::Splits(s, Strs::ToBytes(from).0[0U]);
+        var str out = parts.Next().0;
+        for(var (str, bool) next = parts.Next(); next.1; next = parts.Next()) {
+            out = out + to + next.0;
         }
         return out;
     }
