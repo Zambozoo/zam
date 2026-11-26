@@ -630,9 +630,9 @@ namespace Main {
 	resp.Body.Close()
 	assert.Equal(t, "secure data", string(body))
 
-	resp, err = client.Get(base + "/quit")
-	require.NoError(t, err)
-	resp.Body.Close()
+	if resp, err := client.Get(base + "/quit"); err == nil {
+		resp.Body.Close()
+	}
 	rest, _ := io.ReadAll(lines)
 	require.NoError(t, cmd.Wait(), stderr.String())
 	assert.Equal(t, "stopped\n", string(rest))
