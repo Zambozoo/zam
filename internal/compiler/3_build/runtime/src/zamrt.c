@@ -311,6 +311,10 @@ typedef struct Spawn {
     ZamTypeID resultType;
 } Spawn;
 
+// spawnStackBytes is the stack a spawned thread runs on, what Linux and macOS
+// give a main thread.
+static const size_t spawnStackBytes = 8 * 1024 * 1024;
+
 // spawnMain runs a spawned call to its end. Its result is left on the thread's
 // operand stack, rooted there until the thread is waited on.
 static void *spawnMain(void *arg) {
@@ -362,7 +366,14 @@ void *zamrt_spawn(ZamThread *thread, const ZamWord *threadType, ZamEntry entry, 
     vm->main.next = spawned;
     pthread_mutex_unlock(&vm->threadLock);
 
-    if (pthread_create(&spawned->systemThread, NULL, spawnMain, spawn) != 0)
+    // A spawned thread gets the stack a main thread gets, rather than the
+    // platform's default for threads, which musl keeps to 128KB.
+    pthread_attr_t attr;
+    if (pthread_attr_init(&attr) != 0 || pthread_attr_setstacksize(&attr, spawnStackBytes) != 0)
+        zam_die(ZAMEXIT_PANIC, "failed to size a system thread's stack\n");
+    int spawnErr = pthread_create(&spawned->systemThread, &attr, spawnMain, spawn);
+    pthread_attr_destroy(&attr);
+    if (spawnErr != 0)
         zam_die(ZAMEXIT_PANIC, "failed to spawn a system thread\n");
     return spawned;
 }
