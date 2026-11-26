@@ -72,6 +72,8 @@ jobs:
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+          # A restored cache can keep manifests whose artifacts it trimmed, which links fail on.
+          use-cache: false
 
       # Linux tests in the image, with its own LLVM, so the release's LLVM is
       # fetched there only once they are done, for the binary check.

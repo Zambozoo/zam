@@ -23,7 +23,7 @@ import (
 
 // runPorted is the programs of the codegen corpus the compiler written in zam
 // is expected to build into ones that run as Go's builds do.
-var runPorted = map[string]bool{"empty": true}
+var runPorted = map[string]bool{"empty": true, "arithmetic": true}
 
 // runResult is what running a program left behind.
 type runResult struct {

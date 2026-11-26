@@ -46,6 +46,8 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
+          # A restored cache can keep manifests whose artifacts it trimmed, which links fail on.
+          use-cache: false
 
       - if: steps.cache.outputs.cache-hit != 'true' && runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y ninja-build

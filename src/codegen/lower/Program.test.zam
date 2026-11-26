@@ -50,8 +50,31 @@ public namespace ProgramTest {
     }
 
     public fun void(uint, str...) Traps = (argC, argV) {
-        var str text = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) { var int x = 1; }\n").Text();
+        var str text = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) { var str s = \"a\"; }\n").Text();
         Assert::True(Strs::Contains(text, "@zamrt_unsupported(ptr %p0, ptr @zam.text."), text);
-        Assert::True(Strs::Contains(text, "Main.main: a statement of this kind"), text);
+        Assert::True(Strs::Contains(text, "Main.main: a string literal"), text);
+    }
+
+    public fun void(uint, str...) Arithmetic = (argC, argV) {
+        var Module* m = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        var int x = argC{int} + 2;\n" +
+            "        var int y = x / 3;\n" +
+            "        var bool b = y < x && x != 0;\n" +
+            "        var flt f = y{flt} * 1.5;\n" +
+            "        x++;\n" +
+            "    }\n");
+        var str text = m.Text();
+        Assert::True(!Strs::Contains(text, "Main.main: "), text);
+        Assert::True(Strs::Contains(text, "sdiv i64 "), text);
+        Assert::True(Strs::Contains(text, "@zamrt_panic(ptr %p0, i32 0)"), text);
+        Assert::True(Strs::Contains(text, "icmp slt i64 "), text);
+        Assert::True(Strs::Contains(text, "fmul double "), text);
+
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            m.triple = host.0.triple;
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir());
+            Assert::True(object.1 == null, "the module does not compile");
+        }
     }
 }

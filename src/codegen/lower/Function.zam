@@ -1,4 +1,5 @@
 import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
 import std("lang/Strs.zam");
 import "../../syntax/SourceErr.zam";
 import "../../syntax/Token.zam";
@@ -11,6 +12,7 @@ import "../ir/IrType.zam";
 import "../ir/Module.zam";
 import "../ir/Value.zam";
 import "../Layout.zam";
+import "Expressions.zam";
 import "Program.zam";
 
 // Function compiles one function
@@ -19,6 +21,12 @@ public class Function {
     static var uint$ headerWords = 3U;
     // lineWord is the word of a frame its line is
     static var uint$ lineWord = 2U;
+
+    // Local is a local's slot and type
+    class Local {
+        var uint slot;
+        var Type* ty;
+    }
 
     var Program* p;
     var Module.Function* fn;
@@ -39,6 +47,13 @@ public class Function {
     var uint returnSlot;
     // reason is what the function could not compile, or "" while it can
     var str reason;
+    // locals maps the token declaring each local onto it
+    var HashMap[Token*, Local*]* locals;
+    // self is the receiver, or null for a function with none
+    var Local* self;
+    // bindings substitutes the type arguments of the instantiation being compiled, or is null for code that is not generic
+    var HashMap[ast.Generic*, Type*]* bindings;
+    var Expressions* x;
 
     // New starts the body of fn, compiled in decl
     public static fun Function*(Program*, Module.Function*, ast.Decl*) New = (p, fn, decl) {
@@ -48,7 +63,9 @@ public class Function {
         e.decl = decl;
         e.roots = ArrList::[Value*]New(0U);
         e.reason = "";
+        e.locals = HashMap::[Token*, Local*]New(0U);
         e.b = Builder::New(fn);
+        e.x = Expressions::New(e);
         e.entry = fn.AddBlock();
         e.body = fn.AddBlock();
         e.b.At(e.entry);
@@ -73,21 +90,25 @@ public class Function {
         var Value* args = this.fn.params.Get(2U);
         var uint word = 0U;
         if(receiver != null) {
-            this.copyArgument(args, word, receiver);
+            this.self = this.copyArgument(args, word, null, receiver);
             word++;
         }
         for(var uint i = 0U; i < t.parameters.Len() && this.reason == ""; i++) {
             var Type* bound = Function::bound(t.parameters.Get(i));
-            if(this.p.layout.FieldInfo(bound).0 > Layout::Word) {
+            if(!this.x.Held(bound)) {
                 this.Unsupported("parameter of type " + bound.Text());
                 return;
             }
-            this.copyArgument(args, word, bound);
+            var Token* name = null;
+            if(names != null && i < names.Len()) {
+                name = names.Get(i);
+            }
+            this.copyArgument(args, word, name, bound);
             word++;
         }
         this.p.Call(this.b, "zamrt_safepoint", ArrList::[Value*]New(1U, this.threadValue()));
         if(t.returns.kind != Type.Kind::Primitive || t.returns{Type.Primitive*}.keyword != TokenKind::Void) {
-            if(this.p.layout.FieldInfo(t.returns).0 > Layout::Word) {
+            if(!this.x.Held(t.returns)) {
                 this.Unsupported("a return of type " + t.returns.Text());
                 return;
             }
@@ -160,20 +181,54 @@ public class Function {
         switch(s.kind) {
             case (ast.Stmt.Kind::Block) {
                 var ArrList[ast.Stmt*]* statements = s{ast.Stmt.Block*}.statements;
-                for(var uint i = 0U; i < statements.Len() && !this.b.Terminated(); i++) {
+                for(var uint i = 0U; i < statements.Len() && this.reason == ""; i++) {
+                    if(this.b.Terminated()) {
+                        this.b.At(this.fn.AddBlock());
+                    }
                     this.stmt(statements.Get(i));
                 }
             }
+            case (ast.Stmt.Kind::Variable)
+                this.variable(s{ast.Stmt.Variable*});
             case (ast.Stmt.Kind::Return) {
-                if(s{ast.Stmt.Value*}.value != null) {
-                    this.Unsupported("a return of a value");
-                    return;
+                var ast.Expr* value = s{ast.Stmt.Value*}.value;
+                if(value != null && this.returns == null) {
+                    this.x.Of(value);
+                } else if(value != null) {
+                    this.b.Store(this.x.As(value, this.returns), this.slot(this.returnSlot), false, 0U);
                 }
                 this.fallthrough();
             }
+            case (ast.Stmt.Kind::Expr)
+                this.x.Of(s{ast.Stmt.Value*}.value);
         } else {
             this.Unsupported("a statement of this kind");
         }
+    }
+
+    // variable declares the local v, holding what it is initialized to
+    fun void(ast.Stmt.Variable*) variable = (v) {
+        var Type* t = this.ground(this.p.model.TypeOf(v.declared));
+        if(!this.x.Held(t)) {
+            this.Unsupported("a local of type " + t.Text());
+            return;
+        }
+        var Value* value = null;
+        if(v.init != null) {
+            value = this.x.As(v.init, t);
+        }
+        var uint slot = this.declare(v.name, t);
+        if(value != null) {
+            this.b.Store(value, this.slot(slot), false, 0U);
+        }
+    }
+
+    // ground answers t with the type arguments of the instantiation being compiled substituted for its generic parameters
+    fun Type*(Type*) ground = (t) {
+        if(t == null || this.bindings == null) {
+            return t;
+        }
+        return t.Instantiate(this.bindings, null);
     }
 
     // at records that the function is at the line tok lies on, for a trace to find
@@ -196,11 +251,26 @@ public class Function {
         this.b.RetVoid();
     }
 
-    // copyArgument copies the argument word at word of args into a slot of a local of type t
-    fun void(Value*, uint, Type*) copyArgument = (args, word, t) {
+    // copyArgument copies the argument word at word of args into a slot of a local of type t declared at name, answering the local
+    fun Local*(Value*, uint, Token*, Type*) copyArgument = (args, word, name, t) {
         var Value* from = this.b.Gep(IrType::Int(64U), args, ArrList::[Value*]New(1U, Program::Word(word)), true);
         var Value* value = this.b.Load(IrType::Int(64U), from, false, 0U);
-        this.b.Store(value, this.slot(this.local(t)), false, 0U);
+        var Local* local = new(Local);
+        local.slot = this.declare(name, t);
+        local.ty = t;
+        this.b.Store(value, this.slot(local.slot), false, 0U);
+        return local;
+    }
+
+    // declare gives a local of type t declared at name a slot of its own, binding name to it unless it is null or _
+    fun uint(Token*, Type*) declare = (name, t) {
+        var Local* local = new(Local);
+        local.slot = this.local(t);
+        local.ty = t;
+        if(name != null && name.kind != TokenKind::Underscore) {
+            this.locals.Put(name, local);
+        }
+        return local.slot;
     }
 
     // local gives a local of type t a slot of its own, rooted when t is one the collector visits

@@ -1,0 +1,767 @@
+import std("data/list/ArrList.zam");
+import std("lang/Flts.zam");
+import std("lang/Psts.zam");
+import "../../syntax/Token.zam";
+import "../../syntax/TokenKind.zam";
+import ast = "../../syntax/ast/*";
+import "../../semantic/Members.zam";
+import "../../semantic/Model.zam";
+import "../../semantic/Type.zam";
+import "../ir/Builder.zam";
+import "../ir/IrType.zam";
+import "../ir/Module.zam";
+import "../ir/Value.zam";
+import "../Layout.zam";
+import "Function.zam";
+import "Program.zam";
+
+// Expressions lowers the expressions of the function it compiles, each to the word it comes to
+class Expressions {
+    // Kind is how a value of a type is held and operated on
+    enum Kind : int {
+        Other(0),
+        Int(1),
+        Uint(2),
+        Bool(3),
+        Char(4),
+        Byte(5),
+        Float(6),
+        Posit(7),
+        Pointer(8),
+        Enum(9),
+        Closure(10),
+        Thread(11),
+        String(12),
+        Any(13),
+        Aggregate(14);
+    }
+
+    // Place is somewhere a value lies: its address, its type, and how many bytes of it there are
+    class Place {
+        var Value* address;
+        var Type* ty;
+        var uint width;
+    }
+
+    // positOne is the posit 1
+    static var uint$ positOne = 4611686018427387904U;
+
+    var Function* e;
+    var Program* p;
+    var Builder* b;
+
+    static fun Expressions*(Function*) New = (e) {
+        var Expressions* x = new(Expressions);
+        x.e = e;
+        x.p = e.p;
+        x.b = e.b;
+        return x;
+    }
+
+    // Held reports whether a local, a parameter or a result of t is a word this can lower
+    fun bool(Type*) Held = (t) {
+        var Kind k = this.kindOf(t);
+        return k != Kind::Other && k != Kind::Aggregate;
+    }
+
+    // Of lowers x
+    fun Value*(ast.Expr*) Of = (x) {
+        if(this.e.reason != "") {
+            return Program::Word(0U);
+        }
+        switch(x.kind) {
+            case (ast.Expr.Kind::Symbol)
+                return this.symbol(x);
+            case (ast.Expr.Kind::NAry)
+                return this.nary(x{ast.Expr.NAry*});
+            case (ast.Expr.Kind::Unary)
+                return this.unary(x{ast.Expr.Unary*});
+            case (ast.Expr.Kind::Ternary)
+                return this.ternary(x{ast.Expr.Ternary*});
+            case (ast.Expr.Kind::Cast) {
+                var ast.Expr.Cast* c = x{ast.Expr.Cast*};
+                return this.As(c.inner, this.e.ground(this.p.model.TypeOf(c.to)));
+            }
+        }
+        return this.unsupported("an expression of this kind");
+    }
+
+    // As lowers x converted to target
+    fun Value*(ast.Expr*, Type*) As = (x, target) {
+        var Value* v = this.Of(x);
+        if(this.e.reason != "") {
+            return v;
+        }
+        return this.convert(v, this.typeOf(x), target);
+    }
+
+    // Condition lowers x, a bool, to a bit
+    fun Value*(ast.Expr*) Condition = (x) {
+        return this.b.ICmp("ne", this.Of(x), Program::Word(0U));
+    }
+
+    fun Value*(ast.Expr*) symbol = (x) {
+        var Token* tok = x.start;
+        switch(tok.kind) {
+            case (TokenKind::IntLiteral, TokenKind::UintLiteral)
+                return Program::Word(tok.value{uint});
+            case (TokenKind::PositLiteral)
+                return Program::Word(Psts::ToBits(tok.value{pst}));
+            case (TokenKind::FloatLiteral)
+                return Program::Word(Flts::ToBits(tok.value{flt}));
+            case (TokenKind::CharLiteral)
+                return Program::Word(tok.value{char}{int}{uint});
+            case (TokenKind::True)
+                return Program::Word(1U);
+            case (TokenKind::False, TokenKind::Null)
+                return Program::Word(0U);
+            case (TokenKind::This, TokenKind::Super) {
+                if(this.e.self == null) {
+                    return this.unsupported("this outside an instance method");
+                }
+                return this.b.Load(IrType::Int(64U), this.e.slot(this.e.self.slot), false, 0U);
+            }
+            case (TokenKind::StringLiteral)
+                return this.unsupported("a string literal");
+            case (TokenKind::Identifier) {
+                var Place* pl = this.place(x);
+                if(pl == null) {
+                    return Program::Word(0U);
+                }
+                return this.load(pl);
+            }
+        }
+        return this.unsupported("a " + tok.kind.text + " expression");
+    }
+
+    // place answers where x names, or null where it names what this cannot lower yet
+    fun Place*(ast.Expr*) place = (x) {
+        if(x.kind == ast.Expr.Kind::Unary && x{ast.Expr.Unary*}.operator == TokenKind::Star) {
+            this.e.Unsupported("a dereference");
+            return null;
+        } else if(x.kind != ast.Expr.Kind::Symbol || x.start.kind != TokenKind::Identifier) {
+            this.e.Unsupported("assigning to an expression of this kind");
+            return null;
+        }
+        var Model.Binding* binding = this.p.model.Binding(x);
+        if(binding == null || binding.kind != Model.Binding.Kind::Local) {
+            this.e.Unsupported("name " + x.start.value{str});
+            return null;
+        }
+        var (Function.Local*, bool) local = this.e.locals.Get(binding.at);
+        if(!local.1) {
+            this.e.Unsupported("captured name " + x.start.value{str});
+            return null;
+        }
+        var Place* pl = new(Place);
+        pl.address = this.e.slot(local.0.slot);
+        pl.ty = local.0.ty;
+        pl.width = Layout::Word;
+        return pl;
+    }
+
+    // load reads the word at pl, zero-extending a narrow one
+    fun Value*(Place*) load = (pl) {
+        if(pl.width == Layout::Word) {
+            return this.b.Load(IrType::Int(64U), pl.address, false, 0U);
+        }
+        return this.zext(this.b.Load(IrType::Int(pl.width * 8U), pl.address, false, 0U));
+    }
+
+    // store writes the word v to pl, truncating it to a narrow one
+    fun void(Place*, Value*) store = (pl, v) {
+        if(pl.width == Layout::Word) {
+            this.b.Store(v, pl.address, false, 0U);
+            return;
+        }
+        this.b.Store(this.b.Cast("trunc", v, IrType::Int(pl.width * 8U)), pl.address, false, 0U);
+    }
+
+    fun Value*(ast.Expr.NAry*) nary = (x) {
+        switch(x.operator) {
+            case (TokenKind::Equal) {
+                var Place* pl = this.place(x.operands.Get(0U));
+                if(pl == null) {
+                    return Program::Word(0U);
+                }
+                var Value* v = this.As(x.operands.Get(1U), pl.ty);
+                this.store(pl, v);
+                return v;
+            }
+            case (TokenKind::AndAnd, TokenKind::OrOr)
+                return this.logical(x);
+            case (TokenKind::EqualEqual, TokenKind::BangEqual, TokenKind::Less, TokenKind::Greater, TokenKind::LessEqual, TokenKind::GreaterEqual)
+                return this.comparison(x);
+            case (TokenKind::Spaceship)
+                return this.spaceship(x);
+            case (TokenKind::Plus, TokenKind::Minus, TokenKind::Star, TokenKind::Slash, TokenKind::Percent, TokenKind::And, TokenKind::Or, TokenKind::Caret, TokenKind::LessLess, TokenKind::GreaterGreater, TokenKind::GreaterGreaterGreater)
+                return this.binary(x);
+        }
+        return this.unsupported("the " + x.operator.text + " operator");
+    }
+
+    fun Value*(ast.Expr.Unary*) unary = (x) {
+        switch(x.operator) {
+            case (TokenKind::PlusPlus, TokenKind::MinusMinus)
+                return this.step(x);
+            case (TokenKind::Minus, TokenKind::Bang, TokenKind::Tilde)
+                return this.negation(x);
+            case (TokenKind::And) {
+                var Place* pl = this.place(x.operand);
+                if(pl == null) {
+                    return Program::Word(0U);
+                }
+                return this.b.Cast("ptrtoint", pl.address, IrType::Int(64U));
+            }
+            case (TokenKind::Star)
+                return this.unsupported("a dereference");
+        }
+        return this.unsupported("the " + x.operator.text + " operator");
+    }
+
+    fun Value*(ast.Expr.Unary*) step = (x) {
+        var Place* pl = this.place(x.operand);
+        if(pl == null) {
+            return Program::Word(0U);
+        }
+        var Kind k = this.kindOf(pl.ty);
+        if(!Expressions::primitive(k)) {
+            return this.unsupported("a value of type " + pl.ty.Text());
+        }
+        var Value* old = this.load(pl);
+        var bool up = x.operator == TokenKind::PlusPlus;
+        var Value* stepped = null;
+        if(k == Kind::Float) {
+            stepped = this.fromFloat(this.b.Binary(up ? "fadd" : "fsub", this.toFloat(old), Value::Double(1.0)));
+        } else if(k == Kind::Posit) {
+            stepped = this.p.Call(this.b, up ? "zam_posit_add" : "zam_posit_sub", ArrList::[Value*]New(2U, old, Program::Word(Expressions::positOne)));
+        } else {
+            stepped = this.narrow(this.b.Binary(up ? "add" : "sub", old, Program::Word(1U)), k);
+        }
+        this.store(pl, stepped);
+        if(x.postfix) {
+            return old;
+        }
+        return stepped;
+    }
+
+    // logical lowers a chain of && or ||, which evaluates each operand only while the ones before it have not decided the answer
+    fun Value*(ast.Expr.NAry*) logical = (x) {
+        var bool isOr = x.operator == TokenKind::OrOr;
+        var Value* decided = Value::New(IrType::Int(1U), isOr ? "true" : "false");
+        var Module.Block* end = this.e.fn.AddBlock();
+        var ArrList[Value*]* values = ArrList::[Value*]New(0U);
+        var ArrList[Module.Block*]* blocks = ArrList::[Module.Block*]New(0U);
+        for(var uint i = 0U; i < x.operands.Len(); i++) {
+            var Value* v = this.Condition(x.operands.Get(i));
+            if(i + 1U == x.operands.Len()) {
+                values.AddLast(v);
+                blocks.AddLast(this.b.Block());
+                this.b.Br(end);
+                break;
+            }
+            var Module.Block* next = this.e.fn.AddBlock();
+            values.AddLast(decided);
+            blocks.AddLast(this.b.Block());
+            if(isOr) {
+                this.b.CondBr(v, end, next);
+            } else {
+                this.b.CondBr(v, next, end);
+            }
+            this.b.At(next);
+        }
+        this.b.At(end);
+        var Module.Instr* phi = this.b.Phi(IrType::Int(1U));
+        for(var uint i = 0U; i < values.Len(); i++) {
+            Builder::Incoming(phi, values.Get(i), blocks.Get(i));
+        }
+        return this.zext(Builder::PhiValue(phi));
+    }
+
+    fun Value*(ast.Expr.Ternary*) ternary = (x) {
+        var Type* t = this.typeOf(x);
+        if(this.kindOf(t) == Kind::Aggregate) {
+            return this.unsupported("a ternary of aggregates");
+        }
+        var Value* condition = this.Condition(x.condition);
+        var Module.Block* then = this.e.fn.AddBlock();
+        var Module.Block* otherwise = this.e.fn.AddBlock();
+        var Module.Block* end = this.e.fn.AddBlock();
+        this.b.CondBr(condition, then, otherwise);
+        var ArrList[Value*]* values = ArrList::[Value*]New(0U);
+        var ArrList[Module.Block*]* blocks = ArrList::[Module.Block*]New(0U);
+        var ArrList[Module.Block*]* arms = ArrList::[Module.Block*]New(2U, then, otherwise);
+        var ArrList[ast.Expr*]* exprs = ArrList::[ast.Expr*]New(2U, x.then, x.otherwise);
+        for(var uint i = 0U; i < 2U; i++) {
+            this.b.At(arms.Get(i));
+            values.AddLast(this.As(exprs.Get(i), t));
+            blocks.AddLast(this.b.Block());
+            this.b.Br(end);
+        }
+        this.b.At(end);
+        var Module.Instr* phi = this.b.Phi(IrType::Int(64U));
+        for(var uint i = 0U; i < 2U; i++) {
+            Builder::Incoming(phi, values.Get(i), blocks.Get(i));
+        }
+        return Builder::PhiValue(phi);
+    }
+
+    fun Value*(ast.Expr.Unary*) negation = (x) {
+        var Value* v = this.Of(x.operand);
+        var Type* t = this.typeOf(x);
+        var Kind k = this.kindOf(t);
+        if(!Expressions::primitive(k)) {
+            return this.unsupported("a value of type " + t.Text());
+        } else if(x.operator == TokenKind::Bang) {
+            return this.zext(this.b.ICmp("eq", v, Program::Word(0U)));
+        } else if(x.operator == TokenKind::Tilde && k == Kind::Bool) {
+            return this.b.Binary("xor", v, Program::Word(1U));
+        } else if(x.operator == TokenKind::Tilde) {
+            return this.narrow(this.b.Not(v), k);
+        } else if(k == Kind::Float) {
+            return this.fromFloat(this.b.FNeg(this.toFloat(v)));
+        }
+        return this.narrow(this.b.Binary("sub", Program::Word(0U), v), k);
+    }
+
+    fun Value*(ast.Expr.NAry*) comparison = (x) {
+        var Type* t = this.typeOf(x.operands.Get(0U));
+        var Kind k = this.kindOf(t);
+        if(this.byRuntime(t, k)) {
+            return this.unsupported("comparing values of type " + t.Text());
+        } else if(k != Kind::Pointer && k != Kind::Enum && !Expressions::primitive(k)) {
+            return this.unsupported("a value of type " + t.Text());
+        }
+        var Value* left = this.As(x.operands.Get(0U), t);
+        var Value* right = this.As(x.operands.Get(1U), t);
+        if(k == Kind::Float) {
+            return this.zext(this.floatComparison(x.operator, left, right));
+        }
+        return this.zext(this.b.ICmp(Expressions::predicate(x.operator, k == Kind::Int || k == Kind::Posit), left, right));
+    }
+
+    // floatComparison compares two floats
+    fun Value*(TokenKind, Value*, Value*) floatComparison = (op, left, right) {
+        var Value* l = this.toFloat(left);
+        var Value* r = this.toFloat(right);
+        if(op == TokenKind::EqualEqual) {
+            return this.b.FCmp("oeq", l, r);
+        } else if(op == TokenKind::BangEqual) {
+            return this.b.FCmp("une", l, r);
+        }
+        var Value* greater = this.b.FCmp("ogt", l, r);
+        var Value* less = this.b.FCmp("olt", l, r);
+        if(op == TokenKind::Less) {
+            return less;
+        } else if(op == TokenKind::Greater) {
+            return greater;
+        } else if(op == TokenKind::LessEqual) {
+            return this.b.Not(greater);
+        }
+        return this.b.Not(less);
+    }
+
+    fun Value*(ast.Expr.NAry*) spaceship = (x) {
+        var Type* t = this.typeOf(x.operands.Get(0U));
+        var Kind k = this.kindOf(t);
+        if(k == Kind::Enum || (k == Kind::Pointer && !this.byRuntime(t, k))) {
+            k = Kind::Uint;
+        } else if(!Expressions::primitive(k)) {
+            return this.unsupported("comparing values of type " + t.Text());
+        }
+        var Value* left = this.As(x.operands.Get(0U), t);
+        var Value* right = this.As(x.operands.Get(1U), t);
+        var Value* greater = null;
+        var Value* less = null;
+        if(k == Kind::Float) {
+            greater = this.b.FCmp("ogt", this.toFloat(left), this.toFloat(right));
+            less = this.b.FCmp("olt", this.toFloat(left), this.toFloat(right));
+        } else if(k == Kind::Int || k == Kind::Posit) {
+            greater = this.b.ICmp("sgt", left, right);
+            less = this.b.ICmp("slt", left, right);
+        } else {
+            greater = this.b.ICmp("ugt", left, right);
+            less = this.b.ICmp("ult", left, right);
+        }
+        return this.b.Binary("sub", this.zext(greater), this.zext(less));
+    }
+
+    fun Value*(ast.Expr.NAry*) binary = (x) {
+        var Type* t = this.typeOf(x);
+        var Kind k = this.kindOf(t);
+        if(k == Kind::Pointer) {
+            return this.pointerArithmetic(x, t);
+        } else if(k == Kind::String && x.operator == TokenKind::Plus) {
+            return this.unsupported("concatenating strings");
+        } else if(!Expressions::primitive(k)) {
+            return this.unsupported("a value of type " + t.Text());
+        }
+        var Value* v = this.As(x.operands.Get(0U), t);
+        for(var uint i = 1U; i < x.operands.Len(); i++) {
+            var Value* right = this.As(x.operands.Get(i), t);
+            v = this.binaryOp(x.operator, k, v, right);
+        }
+        return v;
+    }
+
+    // binaryOp applies the operator op to left and right, words of the primitive kind k
+    fun Value*(TokenKind, Kind, Value*, Value*) binaryOp = (op, k, left, right) {
+        if(k == Kind::Posit) {
+            if(op == TokenKind::Plus) {
+                return this.p.Call(this.b, "zam_posit_add", ArrList::[Value*]New(2U, left, right));
+            } else if(op == TokenKind::Minus) {
+                return this.p.Call(this.b, "zam_posit_sub", ArrList::[Value*]New(2U, left, right));
+            } else if(op == TokenKind::Star) {
+                return this.p.Call(this.b, "zam_posit_mul", ArrList::[Value*]New(2U, left, right));
+            } else if(op == TokenKind::Slash) {
+                return this.p.Call(this.b, "zam_posit_div", ArrList::[Value*]New(2U, left, right));
+            }
+            return this.unsupported("posit " + op.text);
+        } else if(k == Kind::Float) {
+            var Value* l = this.toFloat(left);
+            var Value* r = this.toFloat(right);
+            if(op == TokenKind::Plus) {
+                return this.fromFloat(this.b.Binary("fadd", l, r));
+            } else if(op == TokenKind::Minus) {
+                return this.fromFloat(this.b.Binary("fsub", l, r));
+            } else if(op == TokenKind::Star) {
+                return this.fromFloat(this.b.Binary("fmul", l, r));
+            } else if(op == TokenKind::Slash) {
+                return this.fromFloat(this.b.Binary("fdiv", l, r));
+            }
+            return this.unsupported("float " + op.text);
+        }
+        var Value* v = null;
+        switch(op) {
+            case (TokenKind::Plus)
+                v = this.b.Binary("add", left, right);
+            case (TokenKind::Minus)
+                v = this.b.Binary("sub", left, right);
+            case (TokenKind::Star)
+                v = this.b.Binary("mul", left, right);
+            case (TokenKind::Slash, TokenKind::Percent)
+                v = this.division(left, right, k == Kind::Int, op == TokenKind::Slash);
+            case (TokenKind::And)
+                v = this.b.Binary("and", left, right);
+            case (TokenKind::Or)
+                v = this.b.Binary("or", left, right);
+            case (TokenKind::Caret)
+                v = this.b.Binary("xor", left, right);
+            case (TokenKind::LessLess, TokenKind::GreaterGreater, TokenKind::GreaterGreaterGreater)
+                v = this.shift(op, k, left, right);
+        }
+        return this.narrow(v, k);
+    }
+
+    // shift shifts left by count as op says, or, by a negative int count, the other way by its magnitude
+    fun Value*(TokenKind, Kind, Value*, Value*) shift = (op, k, left, count) {
+        var Value* forward = this.shiftBy(op, left, count);
+        if(k != Kind::Int) {
+            return forward;
+        }
+        var TokenKind back = TokenKind::LessLess;
+        if(op == TokenKind::LessLess) {
+            back = TokenKind::GreaterGreater;
+        }
+        var Value* backward = this.shiftBy(back, left, this.b.Binary("sub", Program::Word(0U), count));
+        var Value* negative = this.b.ICmp("slt", count, Program::Word(0U));
+        return this.b.Select(negative, backward, forward);
+    }
+
+    fun Value*(TokenKind, Value*, Value*) shiftBy = (op, left, count) {
+        var Value* by = this.b.Binary("and", count, Program::Word(63U));
+        if(op == TokenKind::LessLess) {
+            return this.b.Binary("shl", left, by);
+        } else if(op == TokenKind::GreaterGreater) {
+            return this.b.Binary("lshr", left, by);
+        }
+        return this.b.Binary("ashr", left, by);
+    }
+
+    // division divides or takes the remainder, panicking on a zero divisor
+    fun Value*(Value*, Value*, bool, bool) division = (left, right, signed, quotient) {
+        var Module.Block* zero = this.e.fn.AddBlock();
+        var Module.Block* ok = this.e.fn.AddBlock();
+        this.b.CondBr(this.b.ICmp("eq", right, Program::Word(0U)), zero, ok);
+        this.b.At(zero);
+        this.p.Call(this.b, "zamrt_panic", ArrList::[Value*]New(2U, this.e.threadValue(), Value::Uint(IrType::Int(32U), 0U)));
+        this.b.Unreachable();
+        this.b.At(ok);
+        if(!signed) {
+            return this.b.Binary(quotient ? "udiv" : "urem", left, right);
+        }
+        var Value* overflows = this.b.Binary("and",
+            this.b.ICmp("eq", left, Program::Word(1U << 63U)),
+            this.b.ICmp("eq", right, Value::Int(IrType::Int(64U), -1)));
+        var Value* divisor = this.b.Select(overflows, Program::Word(1U), right);
+        return this.b.Binary(quotient ? "sdiv" : "srem", left, divisor);
+    }
+
+    // pointerArithmetic offsets a pointer by integers, each counting elements of what the pointer points at
+    fun Value*(ast.Expr.NAry*, Type*) pointerArithmetic = (x, t) {
+        if(x.operator != TokenKind::Plus && x.operator != TokenKind::Minus) {
+            return this.unsupported("pointer " + x.operator.text);
+        }
+        var Type* pointee = Program::stripConst(t){Type.Wrapped*}.inner;
+        if(Type::ContainsParam(pointee)) {
+            return this.unsupported("arithmetic on a pointer to " + pointee.Text());
+        }
+        var uint stride = this.p.layout.FieldInfo(pointee).0;
+        var Value* v = null;
+        for(var uint i = 0U; i < x.operands.Len(); i++) {
+            var ast.Expr* operand = x.operands.Get(i);
+            var Value* word = this.Of(operand);
+            var Kind k = this.kindOf(this.typeOf(operand));
+            if(k == Kind::Int || k == Kind::Uint) {
+                word = this.b.Binary("mul", word, Program::Word(stride));
+            } else if(k != Kind::Pointer) {
+                return this.unsupported("offsetting a pointer by " + this.typeOf(operand).Text());
+            }
+            if(i == 0U) {
+                v = word;
+            } else if(x.operator == TokenKind::Plus) {
+                v = this.b.Binary("add", v, word);
+            } else {
+                v = this.b.Binary("sub", v, word);
+            }
+        }
+        return v;
+    }
+
+    // convert converts the word v of type from to target
+    fun Value*(Value*, Type*, Type*) convert = (v, from, target) {
+        var Kind fk = this.kindOf(from);
+        var Kind tk = this.kindOf(target);
+        var str converting = "converting " + from.Text() + " to " + target.Text();
+        if(tk == Kind::String && (fk == Kind::String || Expressions::isNull(from))) {
+            return v;
+        } else if(tk == Kind::Any && (fk == Kind::Any || Expressions::isNull(from))) {
+            return v;
+        } else if(tk == Kind::String || tk == Kind::Any || fk == Kind::String || fk == Kind::Any || fk == Kind::Aggregate || tk == Kind::Aggregate) {
+            return this.unsupported(converting);
+        } else if(fk == Kind::Enum) {
+            if(tk == Kind::Enum) {
+                return v;
+            }
+            return this.unsupported(converting);
+        } else if(tk == Kind::Thread) {
+            if(fk == Kind::Thread || Expressions::isNull(from)) {
+                return v;
+            }
+            return this.unsupported(converting);
+        } else if(tk == Kind::Closure) {
+            if(fk == Kind::Closure || Expressions::isNull(from) || Expressions::isVoidPointer(from)) {
+                return v;
+            }
+            return this.unsupported(converting);
+        } else if(fk == Kind::Pointer || tk == Kind::Pointer) {
+            if(!Expressions::addressLike(fk) || !Expressions::addressLike(tk)) {
+                return this.unsupported(converting);
+            } else if(this.objectPointer(from) && this.objectPointer(target) && this.downcast(from, target)) {
+                return this.unsupported("a downcast");
+            }
+            return v;
+        } else if(!Expressions::primitive(fk)) {
+            return this.unsupported("a value of type " + from.Text());
+        } else if(!Expressions::primitive(tk)) {
+            return this.unsupported("a value of type " + target.Text());
+        } else if(fk == tk) {
+            return v;
+        }
+
+        if(tk == Kind::Bool && fk == Kind::Float) {
+            return this.zext(this.b.FCmp("une", this.toFloat(v), Value::Double(0.0)));
+        } else if(tk == Kind::Bool) {
+            return this.zext(this.b.ICmp("ne", v, Program::Word(0U)));
+        } else if(tk == Kind::Posit && fk == Kind::Uint) {
+            return this.p.Call(this.b, "zam_posit_from_uint", ArrList::[Value*]New(1U, v));
+        } else if(tk == Kind::Posit && fk == Kind::Float) {
+            return this.p.Call(this.b, "zam_posit_from_double", ArrList::[Value*]New(1U, this.toFloat(v)));
+        } else if(tk == Kind::Posit) {
+            return this.p.Call(this.b, "zam_posit_from_int", ArrList::[Value*]New(1U, v));
+        } else if(fk == Kind::Posit && tk == Kind::Uint) {
+            return this.p.Call(this.b, "zam_posit_to_uint", ArrList::[Value*]New(1U, v));
+        } else if(fk == Kind::Posit && tk == Kind::Float) {
+            return this.fromFloat(this.p.Call(this.b, "zam_posit_to_double", ArrList::[Value*]New(1U, v)));
+        } else if(fk == Kind::Posit) {
+            return this.narrow(this.p.Call(this.b, "zam_posit_to_int", ArrList::[Value*]New(1U, v)), tk);
+        } else if(tk == Kind::Float && fk == Kind::Uint) {
+            return this.fromFloat(this.b.Cast("uitofp", v, IrType::Double()));
+        } else if(tk == Kind::Float) {
+            return this.fromFloat(this.b.Cast("sitofp", v, IrType::Double()));
+        } else if(fk == Kind::Float && tk == Kind::Uint) {
+            return this.p.Call(this.b, "llvm.fptoui.sat.i64.f64", ArrList::[Value*]New(1U, this.toFloat(v)));
+        } else if(fk == Kind::Float) {
+            return this.narrow(this.p.Call(this.b, "llvm.fptosi.sat.i64.f64", ArrList::[Value*]New(1U, this.toFloat(v))), tk);
+        }
+        return this.narrow(v, tk);
+    }
+
+    // kindOf answers how a value of t is held
+    fun Kind(Type*) kindOf = (t) {
+        if(t == null) {
+            return Kind::Other;
+        }
+        switch(t.kind) {
+            case (Type.Kind::Primitive) {
+                switch(t{Type.Primitive*}.keyword) {
+                    case (TokenKind::Int)
+                        return Kind::Int;
+                    case (TokenKind::Uint)
+                        return Kind::Uint;
+                    case (TokenKind::Bool)
+                        return Kind::Bool;
+                    case (TokenKind::Char)
+                        return Kind::Char;
+                    case (TokenKind::Byte)
+                        return Kind::Byte;
+                    case (TokenKind::Float)
+                        return Kind::Float;
+                    case (TokenKind::Posit)
+                        return Kind::Posit;
+                    case (TokenKind::String)
+                        return Kind::String;
+                    case (TokenKind::Any)
+                        return Kind::Any;
+                    case (TokenKind::Type)
+                        return Kind::Aggregate;
+                }
+                return Kind::Other;
+            }
+            case (Type.Kind::Wrapped) {
+                var Type.Wrapped* w = t{Type.Wrapped*};
+                if(w.wrap == ast.Type.Wrap::Const) {
+                    return this.kindOf(w.inner);
+                } else if(w.wrap == ast.Type.Wrap::Thread) {
+                    return Kind::Thread;
+                }
+                return Kind::Pointer;
+            }
+            case (Type.Kind::Function)
+                return Kind::Closure;
+            case (Type.Kind::Tuple)
+                return Kind::Aggregate;
+            case (Type.Kind::Array) {
+                if(t{Type.Array*}.sized) {
+                    return Kind::Aggregate;
+                }
+                return Kind::Other;
+            }
+            case (Type.Kind::Named, Type.Kind::Generic) {
+                var ast.Decl* d = Members::DeclOf(t);
+                if(d == null) {
+                    return Kind::Other;
+                } else if(d.kind == ast.Field.Kind::Enum) {
+                    if(this.p.layout.FieldInfo(t).0 <= Layout::Word) {
+                        return Kind::Enum;
+                    }
+                    return Kind::Aggregate;
+                } else if(d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Struct) {
+                    return Kind::Aggregate;
+                }
+            }
+        }
+        return Kind::Other;
+    }
+
+    // byRuntime reports whether values of t, held as k, compare through the runtime rather than as words
+    fun bool(Type*, Kind) byRuntime = (t, k) {
+        if(k == Kind::String || k == Kind::Aggregate || k == Kind::Closure || k == Kind::Thread || k == Kind::Any) {
+            return true;
+        }
+        return k == Kind::Pointer && this.objectPointer(t);
+    }
+
+    // objectPointer reports whether t points at a class, abstract or interface
+    fun bool(Type*) objectPointer = (t) {
+        t = Program::stripConst(t);
+        if(t.kind != Type.Kind::Wrapped || t{Type.Wrapped*}.wrap != ast.Type.Wrap::Pointer) {
+            return false;
+        }
+        var ast.Decl* d = Members::DeclOf(Program::stripConst(t{Type.Wrapped*}.inner));
+        return d != null && (d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Abstract || d.kind == ast.Field.Kind::Interface);
+    }
+
+    // downcast reports whether converting from to target narrows to a subtype
+    fun bool(Type*, Type*) downcast = (from, target) {
+        from = Program::stripConst(from);
+        target = Program::stripConst(target);
+        if(Expressions::isVoidPointer(from) || Expressions::isVoidPointer(target)) {
+            return false;
+        }
+        return !this.p.subtyping.Is(from, target) && this.p.subtyping.Is(target, from);
+    }
+
+    fun Type*(ast.Expr*) typeOf = (x) {
+        return this.e.ground(this.p.model.ExprType(x));
+    }
+
+    fun Value*(str) unsupported = (why) {
+        this.e.Unsupported(why);
+        return Program::Word(0U);
+    }
+
+    fun Value*(Value*) zext = (v) {
+        return this.b.Cast("zext", v, IrType::Int(64U));
+    }
+
+    fun Value*(Value*) toFloat = (v) {
+        return this.b.Cast("bitcast", v, IrType::Double());
+    }
+
+    fun Value*(Value*) fromFloat = (v) {
+        return this.b.Cast("bitcast", v, IrType::Int(64U));
+    }
+
+    // narrow keeps a char or byte to its width after an operation on one
+    fun Value*(Value*, Kind) narrow = (v, k) {
+        if(k == Kind::Char) {
+            return this.b.Binary("and", v, Program::Word(4294967295U));
+        } else if(k == Kind::Byte) {
+            return this.b.Binary("and", v, Program::Word(255U));
+        }
+        return v;
+    }
+
+    // predicate answers the integer comparison op is, signed or not
+    static fun str(TokenKind, bool) predicate = (op, signed) {
+        if(op == TokenKind::EqualEqual) {
+            return "eq";
+        } else if(op == TokenKind::BangEqual) {
+            return "ne";
+        }
+        var str sign = signed ? "s" : "u";
+        if(op == TokenKind::Less) {
+            return sign + "lt";
+        } else if(op == TokenKind::Greater) {
+            return sign + "gt";
+        } else if(op == TokenKind::LessEqual) {
+            return sign + "le";
+        }
+        return sign + "ge";
+    }
+
+    // primitive reports whether k is a word-sized primitive
+    static fun bool(Kind) primitive = (k) {
+        return k == Kind::Int || k == Kind::Uint || k == Kind::Bool || k == Kind::Char || k == Kind::Byte || k == Kind::Float || k == Kind::Posit;
+    }
+
+    // addressLike reports whether k converts to and from a pointer as the same word
+    static fun bool(Kind) addressLike = (k) {
+        return k == Kind::Pointer || k == Kind::Int || k == Kind::Uint;
+    }
+
+    static fun bool(Type*) isNull = (t) {
+        return t == Type::Null();
+    }
+
+    // isVoidPointer reports whether t is void*, which is any address at all
+    static fun bool(Type*) isVoidPointer = (t) {
+        t = Program::stripConst(t);
+        if(t.kind != Type.Kind::Wrapped || t{Type.Wrapped*}.wrap != ast.Type.Wrap::Pointer) {
+            return false;
+        }
+        var Type* inner = t{Type.Wrapped*}.inner;
+        return inner.kind == Type.Kind::Primitive && inner{Type.Primitive*}.keyword == TokenKind::Void;
+    }
+}

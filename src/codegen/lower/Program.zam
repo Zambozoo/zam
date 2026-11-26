@@ -9,6 +9,7 @@ import ast = "../../syntax/ast/*";
 import "../../semantic/Canonical.zam";
 import "../../semantic/Members.zam";
 import "../../semantic/Model.zam";
+import "../../semantic/Subtyping.zam";
 import "../../semantic/Type.zam";
 import "../ir/Builder.zam";
 import "../ir/IrType.zam";
@@ -48,6 +49,7 @@ public class Program {
     public var IrType* rootType;
     var TypeIds* ids;
     var Members* members;
+    var Subtyping* subtyping;
     var IrType* typeIDType;
     var HashMap[str, Module.Function*]* runtime;
     var ArrList[Pending*]* pending;
@@ -68,6 +70,7 @@ public class Program {
         p.ids = ids;
         p.layout = layout;
         p.members = Members::New(m);
+        p.subtyping = Subtyping::New(m);
         p.module = Module::New();
         p.module.triple = triple;
         p.runtime = HashMap::[str, Module.Function*]New(0U);
@@ -90,6 +93,19 @@ public class Program {
         p.declare("zamrt_frame_pop", IrType::Void(), ArrList::[IrType*]New(2U, ptr, ptr), false);
         p.declare("zamrt_safepoint", IrType::Void(), ArrList::[IrType*]New(1U, ptr), false);
         p.declare("zamrt_unsupported", IrType::Void(), ArrList::[IrType*]New(2U, ptr, ptr), true);
+        p.declare("zamrt_panic", IrType::Void(), ArrList::[IrType*]New(2U, ptr, i32), true);
+        var ArrList[str]* positOperators = ArrList::[str]New(4U, "zam_posit_add", "zam_posit_sub", "zam_posit_mul", "zam_posit_div");
+        for(var uint i = 0U; i < positOperators.Len(); i++) {
+            p.declare(positOperators.Get(i), i64, ArrList::[IrType*]New(2U, i64, i64), false);
+        }
+        p.declare("zam_posit_from_int", i64, ArrList::[IrType*]New(1U, i64), false);
+        p.declare("zam_posit_from_uint", i64, ArrList::[IrType*]New(1U, i64), false);
+        p.declare("zam_posit_from_double", i64, ArrList::[IrType*]New(1U, IrType::Double()), false);
+        p.declare("zam_posit_to_int", i64, ArrList::[IrType*]New(1U, i64), false);
+        p.declare("zam_posit_to_uint", i64, ArrList::[IrType*]New(1U, i64), false);
+        p.declare("zam_posit_to_double", IrType::Double(), ArrList::[IrType*]New(1U, i64), false);
+        p.declare("llvm.fptosi.sat.i64.f64", i64, ArrList::[IrType*]New(1U, IrType::Double()), false);
+        p.declare("llvm.fptoui.sat.i64.f64", i64, ArrList::[IrType*]New(1U, IrType::Double()), false);
 
         var Arr[byte]* bytes = image.Arr();
         var Module.Global* imageData = p.module.AddGlobal("zam_image", IrType::Array(bytes.Len(), IrType::Int(8U)), Value::Bytes(bytes.Arr(), bytes.Len()));
@@ -292,8 +308,11 @@ public class Program {
             var Function* e = Function::New(this, next.fn, outer);
             e.Named(this.qualified(outer) + "." + next.method.name.value{str});
             var Type* signature = this.model.TypeOf(next.method.signature);
-            if(next.owner != null && signature != null) {
-                signature = signature.Instantiate(Members::BindingsOf(next.owner), null);
+            if(next.owner != null) {
+                e.bindings = Members::BindingsOf(next.owner);
+                if(signature != null) {
+                    signature = signature.Instantiate(e.bindings, null);
+                }
             }
             if(signature == null || signature.kind != Type.Kind::Function) {
                 e.Unsupported("a method of this type");

@@ -1,0 +1,52 @@
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var int a = 7;
+        var int b = -3;
+        var int c1 = one / ((a * b == -21) ? 1 : 0);
+        var int c2 = one / ((a / b == -2 && a % b == 1) ? 1 : 0);
+        var int c3 = one / ((a - b == 10 && a + b == 4) ? 1 : 0);
+        var int c4 = one / (((a << 2) == 28 && (a << -1) == 3 && (b >>> 1) == -2) ? 1 : 0);
+        var int c5 = one / (((a & 3) == 3 && (a | 8) == 15 && (a ^ 2) == 5) ? 1 : 0);
+        var int c6 = one / ((~a == -8 && -a == -7) ? 1 : 0);
+        var int min = -9223372036854775807 - 1;
+        var int c7 = one / ((min / -1 == min && min % -1 == 0) ? 1 : 0);
+
+        var uint u = 250U;
+        var int c8 = one / ((u / 7U == 35U && u % 7U == 5U && (u >> 1U) == 125U) ? 1 : 0);
+        var int c9 = one / ((0U - 1U > u && u > 249U && u >= 250U && u <= 250U) ? 1 : 0);
+
+        var byte y = 250{byte};
+        var int c10 = one / ((y + 10{byte} == 4{byte} && 300{byte} == 44{byte}) ? 1 : 0);
+        var char ch = 'a';
+        var int c11 = one / ((ch{int} == 97 && ch < 'b') ? 1 : 0);
+
+        var bool t = true;
+        var int c12 = one / ((!t == false && (t || false) && !(t && false) && t{int} == 1) ? 1 : 0);
+
+        var flt f = 1.5;
+        var int c13 = one / ((f * 2.0 == 3.0 && f / 0.5 == 3.0 && -f < 0.0 && f - 0.5 == 1.0) ? 1 : 0);
+        var int c14 = one / ((f{int} == 1 && 7{flt} == 7.0 && 3U{flt} == 3.0 && f{bool}) ? 1 : 0);
+        var flt z = 0.0;
+        var flt nan = z / z;
+        var int c15 = one / ((!(nan == nan) && nan != nan && 1e300{int} == 9223372036854775807 && (-1.0){uint} == 0U) ? 1 : 0);
+        var int c16 = one / (((f <=> 2.0) == -1 && (a <=> b) == 1 && (u <=> 300U) == -1 && (a <=> 7) == 0) ? 1 : 0);
+
+        var pst p = 1.5p;
+        var int c17 = one / ((p + 1p == 2.5p && p * 2p == 3p && p > 1p && p{flt} == 1.5 && 2{pst} == 2p) ? 1 : 0);
+
+        var int* pa = &a;
+        var int* pb = pa + 1;
+        var int c18 = one / ((pb - 1 == pa && pa < pb && pb{uint} - pa{uint} == 8U && pa != null) ? 1 : 0);
+
+        var int i = 5;
+        var int c19 = one / ((i++ == 5 && i == 6 && ++i == 7 && i-- == 7 && --i == 5) ? 1 : 0);
+        var flt g = 1.0;
+        g++;
+        var byte w = 255{byte};
+        w++;
+        var int q = 0;
+        var int c20 = one / ((g == 2.0 && w == 0{byte} && (q = 5) == 5 && q == 5) ? 1 : 0);
+        var int c21 = one / (((-1){uint} == 18446744073709551615U && (t ? a : b) == 7 && (!t ? a : b) == -3) ? 1 : 0);
+    }
+}
