@@ -1,0 +1,240 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("lang/Iter.zam");
+import std("lang/StrErr.zam");
+import "../syntax/Source.zam";
+import "../syntax/Token.zam";
+import ast = "../syntax/ast/*";
+import "Access.zam";
+import "Model.zam";
+import "Subtyping.zam";
+import "Type.zam";
+
+// Static checks what declarations, fields, statements and expressions mean once types are well formed
+public class Static {
+    var Model* model;
+    var Subtyping* subtyping;
+    var ArrList[Err*]* errs;
+    // decl is the declaration being checked
+    var ast.Decl* decl;
+    // staticField is the static field being checked
+    var ast.Field* staticField;
+
+    // Run checks the program m models
+    public static fun ArrList[Err*]*(Model*) Run = (m) {
+        var Static* s = new(Static);
+        s.model = m;
+        s.subtyping = Subtyping::New(m);
+        s.errs = ArrList::[Err*]New(0U);
+        var Iter[(str, Source*)]* all = m.Program().sources.Iter();
+        for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
+            if(next.0.1.file.decl != null) {
+                s.visitDecl(next.0.1.file.decl);
+            }
+        }
+        return s.errs;
+    }
+
+    // visitDecl checks d's static fields, instance fields, and nested declarations
+    fun void(ast.Decl*) visitDecl = (d) {
+        var ast.Decl* outer = this.decl;
+        this.decl = d;
+        if(d.kind == ast.Field.Kind::Alias) {
+            this.visitAlias(d{ast.Decl.Alias*});
+        } else {
+            for(var uint i = 0U; i < d.fields.Len(); i++) {
+                var ast.Field* f = d.fields.Get(i);
+                if(f{ast.Decl*} == null && Static::isStatic(f)) {
+                    this.visitField(f);
+                }
+            }
+            for(var uint i = 0U; i < d.fields.Len(); i++) {
+                var ast.Field* f = d.fields.Get(i);
+                if(f{ast.Decl*} == null && !Static::isStatic(f)) {
+                    this.visitField(f);
+                }
+            }
+            for(var uint i = 0U; i < d.fields.Len(); i++) {
+                var ast.Decl* nested = d.fields.Get(i){ast.Decl*};
+                if(nested != null) {
+                    this.visitDecl(nested);
+                }
+            }
+        }
+        this.decl = outer;
+    }
+
+    // visitAlias checks the bounds of an alias's parameters and the type it names
+    fun void(ast.Decl.Alias*) visitAlias = (d) {
+        if(d.generics != null) {
+            for(var uint i = 0U; i < d.generics.Len(); i++) {
+                var ast.Generic* g = d.generics.Get(i);
+                if(g.bounds != null) {
+                    for(var uint j = 0U; j < g.bounds.Len(); j++) {
+                        this.walk(this.model.TypeOf(g.bounds.Get(j)), false);
+                    }
+                }
+            }
+        }
+        this.walk(this.model.TypeOf(d.aliased), true);
+    }
+
+    // visitField checks the type a member or method is declared with
+    fun void(ast.Field*) visitField = (f) {
+        var ast.Type* declared = null;
+        var str kind = "";
+        if(f.kind == ast.Field.Kind::Member) {
+            declared = f{ast.Field.Member*}.declared;
+            kind = "member";
+        } else if(f.kind == ast.Field.Kind::Method) {
+            declared = f{ast.Field.Method*}.signature;
+            kind = "method";
+        } else {
+            return;
+        }
+        this.staticField = null;
+        if(Static::isStatic(f)) {
+            this.staticField = f;
+        }
+        var Type* t = this.model.TypeOf(declared);
+        this.requireDeclarable(t, f.start, kind, this.decl.name.value{str} + "." + f.name.value{str});
+        this.walk(t, false);
+        this.staticField = null;
+    }
+
+    // requireDeclarable rejects a type that holds an abstract or interface as a value
+    fun void(Type*, Token*, str, str) requireDeclarable = (t, tok, kind, name) {
+        var Type* bad = Static::bare(t, false);
+        if(bad == null) {
+            return;
+        }
+        var ast.Decl* d = Subtyping::DeclOf(bad);
+        this.fail(tok, kind + " " + name + " cannot be declared " + t.Text() + "; " + bad.Text() + " is declared " + Static::kindName(d) + ", which is only ever a reference to the implementor it names, so write " + bad.Text() + "*");
+    }
+
+    // walk checks every declaration t names is accessible here, and not a namespace unless head
+    fun void(Type*, bool) walk = (t, head) {
+        if(t == null) {
+            return;
+        }
+        switch(t.kind) {
+            case (Type.Kind::Named) {
+                var ast.Decl* d = t{Type.Named*}.decl;
+                if(!Access::From(this.model, this.decl, d.modifiers, d)) {
+                    this.fail(t.at, "type " + t.Text() + " is not accessible");
+                }
+                if(d.kind == ast.Field.Kind::Namespace && !head) {
+                    this.fail(t.at, "namespace " + t.Text() + " is not a type and can only be used to name its statics");
+                }
+            }
+            case (Type.Kind::Generic) {
+                var Type.Generic* g = t{Type.Generic*};
+                this.walk(g.inner, false);
+                this.walkAll(g.arguments);
+                var ast.Decl* d = Subtyping::DeclOf(g.inner);
+                if(d != null) {
+                    var str unsatisfied = this.subtyping.Bound(d.generics, g.arguments);
+                    if(unsatisfied != "") {
+                        this.fail(t.at, "type " + t.Text() + ": " + unsatisfied);
+                    }
+                }
+            }
+            case (Type.Kind::Param) {
+                var Type.Param* p = t{Type.Param*};
+                if(this.staticField != null && p.owner != this.staticField) {
+                    this.fail(t.at, "static field " + this.decl.name.value{str} + "::" + this.staticField.name.value{str} + " cannot name generic argument " + t.Text());
+                }
+            }
+            case (Type.Kind::Wrapped)
+                this.walk(t{Type.Wrapped*}.inner, false);
+            case (Type.Kind::Array)
+                this.walk(t{Type.Array*}.inner, false);
+            case (Type.Kind::Tailed)
+                this.walk(t{Type.Tailed*}.inner, false);
+            case (Type.Kind::Tuple)
+                this.walkAll(t{Type.Tuple*}.types);
+            case (Type.Kind::Function) {
+                this.walk(t{Type.Function*}.returns, false);
+                this.walkAll(t{Type.Function*}.parameters);
+            }
+        }
+    }
+
+    fun void(ArrList[Type*]*) walkAll = (ts) {
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            this.walk(ts.Get(i), false);
+        }
+    }
+
+    // fail records msg as found at tok in the declaration being checked
+    fun void(Token*, str) fail = (tok, msg) {
+        this.errs.AddLast(this.model.At(this.decl, tok, StrErr::New(msg)));
+    }
+
+    // bare answers an abstract or interface held as a value within t
+    static fun Type*(Type*, bool) bare = (t, pointedAt) {
+        if(t == null) {
+            return null;
+        } else if(!pointedAt && Static::heldAsReference(t)) {
+            return t;
+        }
+        switch(t.kind) {
+            case (Type.Kind::Generic)
+                return Static::bareAll(t{Type.Generic*}.arguments);
+            case (Type.Kind::Function) {
+                var Type* bad = Static::bareAll(t{Type.Function*}.parameters);
+                if(bad != null) {
+                    return bad;
+                }
+                return Static::bare(t{Type.Function*}.returns, false);
+            }
+            case (Type.Kind::Array)
+                return Static::bare(t{Type.Array*}.inner, false);
+            case (Type.Kind::Tuple)
+                return Static::bareAll(t{Type.Tuple*}.types);
+            case (Type.Kind::Wrapped) {
+                var Type.Wrapped* w = t{Type.Wrapped*};
+                switch(w.wrap) {
+                    case (ast.Type.Wrap::Pointer)
+                        return Static::bare(w.inner, true);
+                    case (ast.Type.Wrap::Const)
+                        return Static::bare(w.inner, pointedAt);
+                }
+                return Static::bare(w.inner, false);
+            }
+        }
+        return null;
+    }
+
+    static fun Type*(ArrList[Type*]*) bareAll = (ts) {
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            var Type* bad = Static::bare(ts.Get(i), false);
+            if(bad != null) {
+                return bad;
+            }
+        }
+        return null;
+    }
+
+    // heldAsReference reports whether a value of t is one word naming an implementor that lies elsewhere
+    static fun bool(Type*) heldAsReference = (t) {
+        if(t.kind != Type.Kind::Named && t.kind != Type.Kind::Generic && t.kind != Type.Kind::Tailed) {
+            return false;
+        }
+        var ast.Decl* d = Subtyping::DeclOf(t);
+        return d != null && (d.kind == ast.Field.Kind::Abstract || d.kind == ast.Field.Kind::Interface);
+    }
+
+    // kindName answers the keyword d is declared with
+    static fun str(ast.Decl*) kindName = (d) {
+        if(d.kind == ast.Field.Kind::Abstract) {
+            return "abstract";
+        }
+        return "interface";
+    }
+
+    // isStatic reports whether f is static, as an enum value always is
+    static fun bool(ast.Field*) isStatic = (f) {
+        return f.kind == ast.Field.Kind::Value || ast.Modifier::Static.In(f.modifiers);
+    }
+}

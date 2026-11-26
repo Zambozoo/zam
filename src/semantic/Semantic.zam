@@ -8,6 +8,7 @@ import "InheritanceCycle.zam";
 import "MemberCycle.zam";
 import "Model.zam";
 import "Resolve.zam";
+import "Static.zam";
 
 // Semantic checks what a parsed program means
 public namespace Semantic {
@@ -34,6 +35,10 @@ public namespace Semantic {
         if(errs.Len() > 0U) {
             return (m, errs);
         }
-        return (m, AliasUse::Run(m));
+        errs = AliasUse::Run(m);
+        if(errs.Len() > 0U) {
+            return (m, errs);
+        }
+        return (m, Static::Run(m));
     }
 }

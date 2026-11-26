@@ -1,0 +1,10 @@
+import "sub/Far.zam";
+
+public namespace Main {
+    var Far.Hidden* hidden;
+    var Far.Secret* secret;
+    var Far.Open* open;
+    var Far.Peek peek;
+    var Far whole;
+    alias Whole = Far;
+}

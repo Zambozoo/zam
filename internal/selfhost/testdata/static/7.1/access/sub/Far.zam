@@ -1,0 +1,6 @@
+public namespace Far {
+    class Hidden {}
+    private class Secret {}
+    public class Open {}
+    public alias Peek = Hidden*;
+}

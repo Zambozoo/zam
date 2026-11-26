@@ -1,0 +1,87 @@
+import std("data/list/ArrList.zam");
+import std("data/map/TreeMap.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import "Semantic.zam";
+
+public namespace StaticTest {
+    // reports checks that validating the program in files finds the errors
+    // want, each a message and its position in /p/Main.zam, in order
+    private fun void(TreeMap[str, str]*, uint, str...) reports = (files, n, want) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(files);
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var ArrList[Err*]* errs = Semantic::Validate(parsed.0).1;
+        Assert::[uint]Equal(n / 2U, errs.Len());
+        for(var uint i = 0U; i + 1U < n && i / 2U < errs.Len(); i = i + 2U) {
+            Assert::[str]Equal(want[i] + " (" + Path::Display("/p/Main.zam") + want[i + 1U] + ")", errs.Get(i / 2U).Err());
+        }
+    }
+
+    public fun void(uint, str...) Declarable = (argC, argV) {
+        StaticTest::reports(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" +
+            "    abstract Shape {}\n" +
+            "    interface Named {}\n" +
+            "    class Box[T] {}\n" +
+            "    class Holder {\n" +
+            "        var Shape bare;\n" +
+            "        var Shape* pointed;\n" +
+            "        var Box[Shape]* boxed;\n" +
+            "        var (int, Named) pair;\n" +
+            "    }\n" +
+            "    abstract Maker {\n" +
+            "        virtual fun void(Shape) take;\n" +
+            "    }\n" +
+            "}\n"), 8U,
+            "member Holder.bare cannot be declared Shape; Shape is declared abstract, which is only ever a reference to the implementor it names, so write Shape*", "[6:9]",
+            "member Holder.boxed cannot be declared Box[Shape]*; Shape is declared abstract, which is only ever a reference to the implementor it names, so write Shape*", "[8:9]",
+            "member Holder.pair cannot be declared (int, Named); Named is declared interface, which is only ever a reference to the implementor it names, so write Named*", "[9:9]",
+            "method Maker.take cannot be declared void(Shape); Shape is declared abstract, which is only ever a reference to the implementor it names, so write Shape*", "[12:17]");
+    }
+
+    public fun void(uint, str...) Types = (argC, argV) {
+        StaticTest::reports(MapSourcesTest::Files(4U,
+            "/p/Main.zam", "import \"sub/Far.zam\";\n" +
+                "public namespace Main {\n" +
+                "    abstract Shape {}\n" +
+                "    class Box[T <: Shape*] {}\n" +
+                "    var Far.Hidden* hidden;\n" +
+                "    var Far.Peek peek;\n" +
+                "    var Far whole;\n" +
+                "    alias Whole = Far;\n" +
+                "    var Box[int]* bad;\n" +
+                "}\n",
+            "/p/sub/Far.zam", "public namespace Far {\n    class Hidden {}\n    public alias Peek = Hidden*;\n}\n"), 8U,
+            "type Far.Hidden is not accessible", "[5:9]",
+            "type Hidden is not accessible", "[6:9]",
+            "namespace Far is not a type and can only be used to name its statics", "[7:9]",
+            "type Box[int]: type argument int for T is not a subtype of Shape*", "[9:9]");
+    }
+
+    public fun void(uint, str...) Params = (argC, argV) {
+        StaticTest::reports(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" +
+            "    class Gen[T] {\n" +
+            "        static var T shared;\n" +
+            "        var T own;\n" +
+            "        static fun[U] U(U) same = (u) {\n" +
+            "            return u;\n" +
+            "        }\n" +
+            "        static fun void(T) take = (t) {}\n" +
+            "    }\n" +
+            "}\n"), 4U,
+            "static field Gen::shared cannot name generic argument T", "[3:20]",
+            "static field Gen::take cannot name generic argument T", "[8:25]");
+    }
+
+    // Broken checks what a parse recovered from without failing on what it
+    // left out
+    public fun void(uint, str...) Broken = (argC, argV) {
+        StaticTest::reports(MapSourcesTest::Files(2U, "/p/Main.zam",
+            "public namespace Main {\n    abstract Shape {}\n    var Shape s;\n    fun void() f = () {\n        var int x = ;\n    }\n}\n"), 2U,
+            "member Main.s cannot be declared Shape; Shape is declared abstract, which is only ever a reference to the implementor it names, so write Shape*", "[3:5]");
+    }
+}

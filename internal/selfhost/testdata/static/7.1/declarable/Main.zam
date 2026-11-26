@@ -1,0 +1,23 @@
+public namespace Main {
+    abstract Shape {}
+    interface Named {}
+    class Box[T] {}
+    class Holder {
+        var Shape bare;
+        var Shape* pointed;
+        var Shape$ constant;
+        var Shape*$ constPointer;
+        var Box[Shape]* boxed;
+        var Box[Shape*]* fine;
+        var Shape[2] shapes;
+        var (int, Named) pair;
+        var thread[Shape] later;
+        var void(int, Shape...) spread;
+        var Shape*() maker;
+    }
+    abstract Maker {
+        virtual fun Named(Shape*) make;
+        virtual fun void(Shape) take;
+        virtual fun Shape*(Shape*) fine;
+    }
+}

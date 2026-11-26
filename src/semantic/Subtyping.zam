@@ -101,7 +101,7 @@ public class Subtyping {
         } else if(t.kind == Type.Kind::Param) {
             return t{Type.Param*}.param.bound == ast.Generic.Bound::Enum;
         }
-        var ast.Decl* d = Subtyping::declOf(t);
+        var ast.Decl* d = Subtyping::DeclOf(t);
         return d != null && d.kind == ast.Field.Kind::Enum;
     }
 
@@ -201,11 +201,11 @@ public class Subtyping {
                 return true;
             }
         }
-        var ast.Decl* d = Subtyping::declOf(sub.inner);
+        var ast.Decl* d = Subtyping::DeclOf(sub.inner);
         if(d == null || (d.kind != ast.Field.Kind::Class && d.kind != ast.Field.Kind::Abstract)) {
             return false;
         }
-        var ast.Decl* parent = Subtyping::declOf(to);
+        var ast.Decl* parent = Subtyping::DeclOf(to);
         if(parent == null) {
             return false;
         } else if(parent.kind == ast.Field.Kind::Interface) {
@@ -226,7 +226,7 @@ public class Subtyping {
 
     // implements reports whether the class t names has every instance method of the interface iface names
     fun bool(Type*, Type*) implements = (t, iface) {
-        var ast.Decl* i = Subtyping::declOf(iface);
+        var ast.Decl* i = Subtyping::DeclOf(iface);
         var HashMap[ast.Generic*, Type*]* bindings = Subtyping::bindingsOf(iface);
         for(var uint k = 0U; k < i.fields.Len(); k++) {
             var ast.Field.Method* wanted = Subtyping::instanceMethod(i.fields.Get(k));
@@ -245,7 +245,7 @@ public class Subtyping {
     // methodOf answers the type of the instance method named name that the declaration t names has
     fun Type*(Type*, str) methodOf = (t, name) {
         for(; t != null; t = this.baseOf(t)) {
-            var ast.Decl* d = Subtyping::declOf(t);
+            var ast.Decl* d = Subtyping::DeclOf(t);
             if(d == null) {
                 return null;
             }
@@ -265,7 +265,7 @@ public class Subtyping {
 
     // baseOf answers what the class or abstract t names extends
     fun Type*(Type*) baseOf = (t) {
-        var ast.Decl* d = Subtyping::declOf(t);
+        var ast.Decl* d = Subtyping::DeclOf(t);
         if(d == null || (d.kind != ast.Field.Kind::Class && d.kind != ast.Field.Kind::Abstract)) {
             return null;
         }
@@ -303,7 +303,7 @@ public class Subtyping {
     // bindingsOf answers the parameters of the declaration t names bound to the arguments t gives them
     static fun HashMap[ast.Generic*, Type*]*(Type*) bindingsOf = (t) {
         t = Subtyping::stripTail(t);
-        var ast.Decl* d = Subtyping::declOf(t);
+        var ast.Decl* d = Subtyping::DeclOf(t);
         if(t == null || t.kind != Type.Kind::Generic || d == null || d.generics == null) {
             return HashMap::[ast.Generic*, Type*]New(0U);
         }
@@ -319,8 +319,8 @@ public class Subtyping {
         return bindings;
     }
 
-    // declOf answers the declaration t names
-    static fun ast.Decl*(Type*) declOf = (t) {
+    // DeclOf answers the declaration t names
+    public static fun ast.Decl*(Type*) DeclOf = (t) {
         if(t != null && t.kind == Type.Kind::Generic) {
             t = t{Type.Generic*}.inner;
         }

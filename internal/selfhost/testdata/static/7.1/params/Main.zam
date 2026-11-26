@@ -1,0 +1,14 @@
+public namespace Main {
+    class Gen[T] {
+        static var T shared;
+        var T own;
+        static var T*[2] many;
+        static fun[U] U(U) same = (u) {
+            return u;
+        }
+        static fun void(T) take = (t) {}
+        fun T() get = () {
+            return this.own;
+        }
+    }
+}

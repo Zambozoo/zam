@@ -1,0 +1,9 @@
+public namespace Main {
+    abstract Shape {}
+    class Square <: Shape* {}
+    class Box[T <: Shape*] {}
+    var Box[int]* bad;
+    var Box[Square*]* good;
+    var Box[Box[str]*]* nested;
+    alias Wrapped[U] = Box[U]*;
+}
