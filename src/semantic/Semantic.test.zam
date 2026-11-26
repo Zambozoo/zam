@@ -26,5 +26,8 @@ public namespace SemanticTest {
         if(Assert::[uint]Equal(1U, invalid.1.Len())) {
             Assert::True(invalid.1.Get(0U).Err() != "", "the error is empty");
         }
+
+        var (Model*, ArrList[Err*]*) aliased = SemanticTest::validated("public namespace Main {\n    alias Unused[T] = int;\n}");
+        Assert::[uint]Equal(1U, aliased.1.Len());
     }
 }

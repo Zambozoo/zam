@@ -1,0 +1,151 @@
+import std("data/list/ArrList.zam");
+import std("data/map/TreeMap.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import ast = "../syntax/ast/*";
+import "Alias.zam";
+import "Model.zam";
+import "Resolve.zam";
+import "Type.zam";
+
+public namespace AliasTest {
+    // expanded answers the model of the program /p/Main.zam, written as main,
+    // resolved, and what expanding its aliases finds
+    private fun (Model*, ArrList[Err*]*)(str) expanded = (main) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", main));
+        if(!Assert::[uint]Equal(0U, parsed.1.Len())) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var Model* m = Model::New(parsed.0);
+        var ArrList[Err*]* resolved = Resolve::Run(m);
+        if(!Assert::[uint]Equal(0U, resolved.Len())) {
+            Assert::Fatal(resolved.Get(0U).Err());
+        }
+        return (m, Alias::Run(m));
+    }
+
+    // member answers the declared type of the member named name of d
+    private fun ast.Type*(ast.Decl*, str) member = (d, name) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f.kind == ast.Field.Kind::Member && f.name.value{str} == name) {
+                return f{ast.Field.Member*}.declared;
+            }
+        }
+        Assert::Fatal("no member " + name);
+        return null;
+    }
+
+    // reports checks that validating main finds the errors want, in order,
+    // each at its position in /p/Main.zam
+    private fun void(str, uint, str...) reports = (main, n, want) {
+        var ArrList[Err*]* errs = AliasTest::expanded(main).1;
+        Assert::[uint]Equal(n / 2U, errs.Len());
+        for(var uint i = 0U; i + 1U < n && i / 2U < errs.Len(); i = i + 2U) {
+            Assert::[str]Equal(want[i] + " (" + Path::Display("/p/Main.zam") + want[i + 1U] + ")", errs.Get(i / 2U).Err());
+        }
+    }
+
+    public fun void(uint, str...) Expansion = (argC, argV) {
+        var (Model*, ArrList[Err*]*) out = AliasTest::expanded("public namespace Main {\n" +
+            "    alias Number = int;\n" +
+            "    alias Two[T] = (T, T);\n" +
+            "    alias Pairs = Two[Number];\n" +
+            "    alias Fn[R, P] = R(P);\n" +
+            "    alias B = Base;\n" +
+            "    class Base {}\n" +
+            "    class Derived <: B* {}\n" +
+            "    var Number a;\n" +
+            "    var Two[str]* b;\n" +
+            "    var Pairs c;\n" +
+            "    var Fn[Number, str] d;\n" +
+            "    var Number[2] e;\n" +
+            "    var int f;\n" +
+            "}\n");
+        for(var uint i = 0U; i < out.1.Len(); i++) {
+            Assert::True(false, out.1.Get(i).Err());
+        }
+        var Model* m = out.0;
+        var ast.Decl* main = m.Program().main;
+        Assert::[str]Equal("int", m.TypeOf(AliasTest::member(main, "a")).Text());
+        Assert::[str]Equal("(str, str)*", m.TypeOf(AliasTest::member(main, "b")).Text());
+        Assert::[str]Equal("(int, int)", m.TypeOf(AliasTest::member(main, "c")).Text());
+        Assert::[str]Equal("int(str)", m.TypeOf(AliasTest::member(main, "d")).Text());
+        Assert::[str]Equal("int[2]", m.TypeOf(AliasTest::member(main, "e")).Text());
+
+        var ast.Type* b = AliasTest::member(main, "b");
+        Assert::[str]Equal("Two[str]*", m.Written(b).Text());
+        Assert::[str]Equal("(str, str)", m.TypeOf(b{ast.Type.Wrapped*}.inner).Text());
+        Assert::True(m.TypeOf(b).at == b.start, "an expansion is not written where the alias is");
+        var ast.Type* f = AliasTest::member(main, "f");
+        Assert::True(m.TypeOf(f) == m.Written(f), "a type without an alias changes");
+
+        Assert::[str]Equal("Base*", m.Base(m.Nested(main, "Derived")).Text());
+
+        var ArrList[Model.Use*]* uses = m.Uses();
+        Assert::[uint]Equal(9U, uses.Len());
+        var bool found = false;
+        for(var uint i = 0U; i < uses.Len(); i++) {
+            var Model.Use* u = uses.Get(i);
+            if(u.at == b{ast.Type.Wrapped*}.inner{ast.Type.Generic*}.inner) {
+                found = true;
+                Assert::True(u.named == m.Nested(main, "Two"), "b's use is not of Two");
+                Assert::True(u.decl == main, "b's use is not in Main");
+                if(Assert::[uint]Equal(1U, u.arguments.Len())) {
+                    Assert::[str]Equal("str", u.arguments.Get(0U).Text());
+                }
+            }
+        }
+        Assert::True(found, "b's use is not recorded");
+    }
+
+    public fun void(uint, str...) Parameters = (argC, argV) {
+        AliasTest::reports("public namespace Main {\n    alias Unused[T] = int;\n    alias Loop = Loop*;\n}\n", 2U,
+            "alias Unused does not use its parameter T", "[2:11]");
+    }
+
+    public fun void(uint, str...) Cycles = (argC, argV) {
+        AliasTest::reports("public namespace Main {\n" +
+            "    alias A = B;\n" +
+            "    alias B = A*;\n" +
+            "    alias Self = Self[2];\n" +
+            "    alias Two[T] = (T, T);\n" +
+            "    alias Wrong = Two[int, int];\n" +
+            "    var Two[int, int] later;\n" +
+            "}\n", 6U,
+            "alias A refers to itself through A -> B -> A", "[2:11]",
+            "alias Self refers to itself through Self -> Self", "[4:11]",
+            "alias Two takes 1 type arguments, but 2 were provided", "[6:19]");
+    }
+
+    public fun void(uint, str...) Uses = (argC, argV) {
+        AliasTest::reports("public namespace Main {\n" +
+            "    alias Number = int;\n" +
+            "    alias Two[T] = (T, T);\n" +
+            "    var Two[int, int] wrong;\n" +
+            "    var Number[int] extra;\n" +
+            "    class Base <: Number* {\n" +
+            "    }\n" +
+            "}\n", 6U,
+            "alias Two takes 1 type arguments, but 2 were provided", "[4:9]",
+            "alias Number takes 0 type arguments, but 1 were provided", "[5:9]",
+            "base declaration type \"int*\" is not a pointer to a resolvable type", "[6:19]");
+    }
+
+    // Broken expands what a parse recovered from without failing on what it
+    // left out
+    public fun void(uint, str...) Broken = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam",
+            "public namespace Main {\n    alias Number = int;\n    fun Number() f = () {\n        var Number x = ;\n    }\n}\n"));
+        Assert::True(parsed.1.Len() > 0U, "the broken file parses");
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            return;
+        }
+        var Model* m = Model::New(parsed.0);
+        Assert::[uint]Equal(0U, Resolve::Run(m).Len());
+        Assert::[uint]Equal(0U, Alias::Run(m).Len());
+    }
+}

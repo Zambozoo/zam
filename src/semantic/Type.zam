@@ -1,4 +1,5 @@
 import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
 import "../syntax/Token.zam";
 import "../syntax/TokenKind.zam";
 import ast = "../syntax/ast/*";
@@ -25,6 +26,18 @@ public abstract Type {
     // Text writes the type as messages name it
     public virtual fun str() Text;
 
+    // Instantiate answers a copy of the type written at at
+    public virtual fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate;
+
+    // instantiateAll instantiates each of types
+    static fun ArrList[Type*]*(ArrList[Type*]*, HashMap[ast.Generic*, Type*]*, Token*) instantiateAll = (types, bindings, at) {
+        var ArrList[Type*]* copied = ArrList::[Type*]New(0U);
+        for(var uint i = 0U; i < types.Len(); i++) {
+            copied.AddLast(types.Get(i).Instantiate(bindings, at));
+        }
+        return copied;
+    }
+
     // texts writes types as messages name them, separated by commas
     static fun str(ArrList[Type*]*) texts = (types) {
         var str out = "";
@@ -49,6 +62,10 @@ public abstract Type {
             return t;
         }
 
+        public fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate = (bindings, at) {
+            return Primitive::New(at, this.keyword);
+        }
+
         public fun str() Text = () {
             return this.keyword.text;
         }
@@ -66,6 +83,10 @@ public abstract Type {
             t.wrap = wrap;
             t.inner = inner;
             return t;
+        }
+
+        public fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate = (bindings, at) {
+            return Wrapped::New(at, this.wrap, this.inner.Instantiate(bindings, at));
         }
 
         public fun str() Text = () {
@@ -97,6 +118,10 @@ public abstract Type {
             return t;
         }
 
+        public fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate = (bindings, at) {
+            return Array::New(at, this.inner.Instantiate(bindings, at), this.sized, this.size);
+        }
+
         public fun str() Text = () {
             if(this.sized) {
                 return this.inner.Text() + "[" + this.size{str} + "]";
@@ -121,6 +146,10 @@ public abstract Type {
             return t;
         }
 
+        public fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate = (bindings, at) {
+            return Tailed::New(at, this.inner.Instantiate(bindings, at), this.sized, this.size);
+        }
+
         public fun str() Text = () {
             if(this.sized) {
                 return this.inner.Text() + "~" + this.size{str};
@@ -141,6 +170,10 @@ public abstract Type {
             return t;
         }
 
+        public fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate = (bindings, at) {
+            return Tuple::New(at, Type::instantiateAll(this.types, bindings, at));
+        }
+
         public fun str() Text = () {
             return "(" + Type::texts(this.types) + ")";
         }
@@ -158,6 +191,10 @@ public abstract Type {
             t.returns = returns;
             t.parameters = parameters;
             return t;
+        }
+
+        public fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate = (bindings, at) {
+            return Function::New(at, this.returns.Instantiate(bindings, at), Type::instantiateAll(this.parameters, bindings, at));
         }
 
         public fun str() Text = () {
@@ -183,6 +220,10 @@ public abstract Type {
             return t;
         }
 
+        public fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate = (bindings, at) {
+            return Named::New(at, this.decl, this.name, this.archive);
+        }
+
         public fun str() Text = () {
             if(this.archive != "") {
                 return this.archive + ":" + this.name;
@@ -205,6 +246,10 @@ public abstract Type {
             return t;
         }
 
+        public fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate = (bindings, at) {
+            return Generic::New(at, this.inner.Instantiate(bindings, at), Type::instantiateAll(this.arguments, bindings, at));
+        }
+
         public fun str() Text = () {
             return this.inner.Text() + "[" + Type::texts(this.arguments) + "]";
         }
@@ -223,6 +268,15 @@ public abstract Type {
             t.param = param;
             t.owner = owner;
             return t;
+        }
+
+        // Instantiate answers what the parameter is bound to
+        public fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate = (bindings, at) {
+            var (Type*, bool) bound = bindings.Get(this.param);
+            if(bound.1) {
+                return bound.0;
+            }
+            return this;
         }
 
         public fun str() Text = () {

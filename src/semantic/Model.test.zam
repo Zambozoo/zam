@@ -6,7 +6,10 @@ import "../syntax/MapSources.test.zam";
 import "../syntax/Path.zam";
 import "../syntax/ProjectParser.zam";
 import ast = "../syntax/ast/*";
+import "../syntax/Token.zam";
+import "../syntax/TokenKind.zam";
 import "Model.zam";
+import "Type.zam";
 
 public namespace ModelTest {
     public fun void(uint, str...) Declarations = (argC, argV) {
@@ -39,5 +42,29 @@ public namespace ModelTest {
         }
         Assert::True(m.TypeOf(inner.fields.Get(0U){ast.Field.Member*}.declared) == null, "a type is resolved before resolution");
         Assert::[str]Equal("bad (" + Path::Display("/p/Main.zam") + "[3:11])", m.At(inner, inner.name, StrErr::New("bad")).Err());
+    }
+
+    public fun void(uint, str...) Expansion = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U,
+            "/p/Main.zam", "public namespace Main {\n    alias Number = int;\n    var Number n;\n}"));
+        var Model* m = Model::New(parsed.0);
+        var ast.Decl.Alias* number = m.Nested(parsed.0.main, "Number"){ast.Decl.Alias*};
+        var ast.Type* declared = parsed.0.main.fields.Get(1U){ast.Field.Member*}.declared;
+        var Type* asWritten = Type.Named::New(declared.start, number, "Number", "");
+        var Type* expanded = Type.Primitive::New(declared.start, TokenKind::Int);
+
+        m.bindType(declared, asWritten);
+        Assert::True(m.Written(declared) == asWritten, "a type not expanded is not as written");
+        m.rebindType(declared, expanded);
+        Assert::True(m.TypeOf(declared) == expanded, "an expanded type is not what it resolves to");
+        Assert::True(m.Written(declared) == asWritten, "an expanded type is not kept as written");
+        m.rebindType(declared, Type.Primitive::New(declared.start, TokenKind::Int));
+        Assert::True(m.Written(declared) == asWritten, "rebinding again loses what was written");
+
+        Assert::[uint]Equal(0U, m.Uses().Len());
+        m.addUse(Model.Use::New(number, ArrList::[Type*]New(0U), declared{ast.Type.Reference*}, parsed.0.main));
+        if(Assert::[uint]Equal(1U, m.Uses().Len())) {
+            Assert::True(m.Uses().Get(0U).named == number, "the use is not of Number");
+        }
     }
 }

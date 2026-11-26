@@ -1,6 +1,7 @@
 import std("data/list/ArrList.zam");
 import std("lang/Err.zam");
 import "../syntax/ProjectParser.zam";
+import "Alias.zam";
 import "Model.zam";
 import "Resolve.zam";
 
@@ -9,6 +10,10 @@ public namespace Semantic {
     // Validate runs the semantic passes over program in order
     public fun (Model*, ArrList[Err*]*)(ProjectParser.Program*) Validate = (program) {
         var Model* m = Model::New(program);
-        return (m, Resolve::Run(m));
+        var ArrList[Err*]* errs = Resolve::Run(m);
+        if(errs.Len() > 0U) {
+            return (m, errs);
+        }
+        return (m, Alias::Run(m));
     }
 }

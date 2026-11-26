@@ -1,4 +1,5 @@
 import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
 import std("test/Assert.zam");
 import "../syntax/Token.zam";
 import "../syntax/TokenKind.zam";
@@ -40,5 +41,29 @@ public namespace TypeTest {
         var Token* t = Token::New(TokenKind::Identifier, 0U, "T");
         var ast.Generic* g = ast.Generic::New(t, ast.Generic.Bound::None, null);
         Assert::[str]Equal("T*", Type.Wrapped::New(null, ast.Type.Wrap::Pointer, Type.Param::New(t, g, null)).Text());
+    }
+
+    public fun void(uint, str...) Instantiate = (argC, argV) {
+        var Token* tok = Token::New(TokenKind::Identifier, 0U, "T");
+        var ast.Generic* t = ast.Generic::New(tok, ast.Generic.Bound::None, null);
+        var ast.Generic* u = ast.Generic::New(Token::New(TokenKind::Identifier, 0U, "U"), ast.Generic.Bound::None, null);
+        var Type* s = TypeTest::primitive(TokenKind::String);
+        var Type* uParam = Type.Param::New(null, u, null);
+        var Type* box = TypeTest::named("Box", "");
+        var Type* f = Type.Function::New(null, Type.Param::New(null, t, null), ArrList::[Type*]New(3U, uParam, TypeTest::primitive(TokenKind::Int), box));
+        var HashMap[ast.Generic*, Type*]* bindings = HashMap::[ast.Generic*, Type*]New(1U, (t, s));
+        var Token* at = Token::New(TokenKind::Identifier, 7U, "Use");
+
+        var Type* got = f.Instantiate(bindings, at);
+        Assert::[str]Equal("str(U, int, Box)", got.Text());
+        Assert::[str]Equal("T(U, int, Box)", f.Text());
+        Assert::True(got.at == at, "the copy is not written at the use");
+        var Type.Function* copied = got{Type.Function*};
+        Assert::True(copied.returns == s, "a bound parameter is not replaced by what it is bound to");
+        Assert::True(copied.parameters.Get(0U) == uParam, "an unbound parameter is not kept");
+        Assert::True(copied.parameters.Get(1U).at == at, "a primitive is not written at the use");
+        var Type.Named* named = copied.parameters.Get(2U){Type.Named*};
+        Assert::True(named.at == at, "a declaration is not written at the use");
+        Assert::True(named.decl == box{Type.Named*}.decl, "a declaration is not kept");
     }
 }

@@ -17,7 +17,7 @@ import (
 // TestSemanticMatchesGo validates every valid and invalid program in the Go
 // semantic testdata, and the compiler written in zam itself, with that
 // compiler and with the Go one, and expects the same errors from the passes
-// the compiler written in zam has.
+// the compiler written in zam has, those up to lastPass.
 func TestSemanticMatchesGo(t *testing.T) {
 	zam, err := compiler()
 	require.NoError(t, err)
@@ -36,14 +36,17 @@ func TestSemanticMatchesGo(t *testing.T) {
 		require.NoError(t, err)
 		t.Run(filepath.ToSlash(name), func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, goResolveErrors(t, entry), zamErrors(t, zam, entry, false, "semantic"))
+			assert.Equal(t, goValidateErrors(t, entry), zamErrors(t, zam, entry, false, "semantic"))
 		})
 	}
 }
 
-// goResolveErrors answers the errors the Go resolve pass reports for the
-// program entered at entry, which has to parse, sorted.
-func goResolveErrors(t *testing.T, entry string) []string {
+// lastPass is the last pass of validation the compiler written in zam has.
+const lastPass = semantic.PassAlias
+
+// goValidateErrors answers the errors Go validation up to lastPass reports
+// for the program entered at entry, which has to parse, sorted.
+func goValidateErrors(t *testing.T, entry string) []string {
 	t.Helper()
 	files := &base.FileProvider{}
 	cmd, err := cli.New(arguments(entry, false), files)
@@ -51,7 +54,7 @@ func goResolveErrors(t *testing.T, entry string) []string {
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	got := []string{}
-	for _, err := range semantic.Resolve(ast) {
+	for _, err := range semantic.ValidateUntil(ast, lastPass) {
 		got = append(got, err.Error())
 	}
 	slices.Sort(got)

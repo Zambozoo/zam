@@ -11,17 +11,42 @@ import "Type.zam";
 
 // Model is what semantic analysis finds out about a program
 public class Model {
+    // Use is an alias written where a type is
+    public class Use {
+        // named is the alias written
+        public var ast.Decl.Alias* named;
+        // arguments is the types the alias is given, in parameter order
+        public var ArrList[Type*]* arguments;
+        // at is the reference the alias is written as
+        public var ast.Type.Reference* at;
+        // decl is the declaration the alias is written in
+        public var ast.Decl* decl;
+
+        public static fun Use*(ast.Decl.Alias*, ArrList[Type*]*, ast.Type.Reference*, ast.Decl*) New = (named, arguments, at, decl) {
+            var Use* u = new(Use);
+            u.named = named;
+            u.arguments = arguments;
+            u.at = at;
+            u.decl = decl;
+            return u;
+        }
+    }
+
     var ProjectParser.Program* program;
     // sources maps every declaration onto the file it is written in
     var HashMap[ast.Decl*, Source*]* sources;
     // outer maps every field onto the declaration it is written in
     var HashMap[ast.Field*, ast.Decl*]* outer;
-    // types maps every type written onto what it resolves to
+    // types maps every type written onto what it resolves to, its aliases expanded
     var HashMap[ast.Type*, Type*]* types;
+    // written maps every type whose aliases were expanded onto what it resolved to as written
+    var HashMap[ast.Type*, Type*]* written;
     // imported maps every import onto the files it names
     var HashMap[ast.Import*, ArrList[Source*]*]* imported;
     // bases maps every class and abstract onto the type it extends
     var HashMap[ast.Decl*, Type*]* bases;
+    // uses is every alias written where a type is
+    var ArrList[Use*]* uses;
 
     // New answers a model of program with nothing found out yet
     public static fun Model*(ProjectParser.Program*) New = (program) {
@@ -30,8 +55,10 @@ public class Model {
         m.sources = HashMap::[ast.Decl*, Source*]New(0U);
         m.outer = HashMap::[ast.Field*, ast.Decl*]New(0U);
         m.types = HashMap::[ast.Type*, Type*]New(0U);
+        m.written = HashMap::[ast.Type*, Type*]New(0U);
         m.imported = HashMap::[ast.Import*, ArrList[Source*]*]New(0U);
         m.bases = HashMap::[ast.Decl*, Type*]New(0U);
+        m.uses = ArrList::[Use*]New(0U);
         var Iter[(str, Source*)]* all = program.sources.Iter();
         for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
             var Source* s = next.0.1;
@@ -92,9 +119,25 @@ public class Model {
         return null;
     }
 
-    // TypeOf answers what t resolves to, or null if it has not been resolved
+    // TypeOf answers what t resolves to, its aliases expanded, or null if it
+    // has not been resolved
     public fun Type*(ast.Type*) TypeOf = (t) {
         return this.types.Get(t).0;
+    }
+
+    // Written answers what t resolves to as written, its aliases not expanded,
+    // or null if it has not been resolved
+    public fun Type*(ast.Type*) Written = (t) {
+        var (Type*, bool) written = this.written.Get(t);
+        if(written.1) {
+            return written.0;
+        }
+        return this.types.Get(t).0;
+    }
+
+    // Uses answers every alias written where a type is
+    public fun ArrList[Use*]*() Uses = () {
+        return this.uses;
     }
 
     // Imported answers the files i names, or none for an import not resolved
@@ -120,6 +163,19 @@ public class Model {
     // bindType records t as resolving to resolved
     fun void(ast.Type*, Type*) bindType = (t, resolved) {
         this.types.Put(t, resolved);
+    }
+
+    // rebindType records t as resolving to expanded once its aliases are expanded
+    fun void(ast.Type*, Type*) rebindType = (t, expanded) {
+        if(!this.written.Contains(t)) {
+            this.written.Put(t, this.types.Get(t).0);
+        }
+        this.types.Put(t, expanded);
+    }
+
+    // addUse records u as an alias written where a type is
+    fun void(Use*) addUse = (u) {
+        this.uses.AddLast(u);
     }
 
     // bindBase records d as extending base

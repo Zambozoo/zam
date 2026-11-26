@@ -16,9 +16,9 @@ type referenceTypeResolverVisitor struct {
 	errs []error
 }
 
-// Resolve binds every type reference and import in ast to the declaration it
+// resolve binds every type reference and import in ast to the declaration it
 // names, answering what could not be bound.
-func Resolve(ast *syntax.AST) []error {
+func resolve(ast *syntax.AST) []error {
 	r := &referenceTypeResolverVisitor{
 		ast: ast,
 	}
