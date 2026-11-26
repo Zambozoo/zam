@@ -32,5 +32,8 @@ public namespace SemanticTest {
 
         var (Model*, ArrList[Err*]*) cyclic = SemanticTest::validated("public class Main[T] {\n    var Main[T*]* next;\n}");
         Assert::[uint]Equal(1U, cyclic.1.Len());
+
+        var (Model*, ArrList[Err*]*) inherits = SemanticTest::validated("public class Main <: Main* {\n}");
+        Assert::[uint]Equal(1U, inherits.1.Len());
     }
 }
