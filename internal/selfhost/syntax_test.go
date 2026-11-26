@@ -200,7 +200,7 @@ func zamErrors(t *testing.T, zam, entry string, noProject bool, step string) []s
 		}
 		message, ok := strings.CutPrefix(line, "["+step+"] ")
 		if !ok {
-			require.True(t, stepLine.MatchString(line), fmt.Sprintf("not an error of a step: %s", line))
+			require.True(t, stepLine.MatchString(line), fmt.Sprintf("not an error of a step: %s\n%s", line, stderr.String()))
 			continue
 		}
 		// Go reads nothing past a file's declaration.
