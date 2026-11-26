@@ -8,4 +8,15 @@ public namespace Main {
     struct Self {
         var Self[2] selves;
     }
+    struct Box[T] {
+        var int n;
+        var T held;
+    }
+    struct S {
+        var Box[S] box;
+    }
+    struct Fine {
+        var Box[int] box;
+        var Box[Fine*] pointed;
+    }
 }

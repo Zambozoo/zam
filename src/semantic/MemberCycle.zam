@@ -1,0 +1,239 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("data/set/HashSet.zam");
+import std("lang/Err.zam");
+import std("lang/Iter.zam");
+import std("lang/StrErr.zam");
+import "../syntax/Source.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Type.zam";
+
+// MemberCycle rejects a declaration that holds itself by value, directly or through others
+public class MemberCycle {
+    var Model* model;
+    // none binds no parameters
+    var HashMap[ast.Generic*, Type*]* none;
+    // cycle is the declarations whose members are being followed
+    var HashSet[str]* cycle;
+    // visited is the declarations whose members have been followed
+    var HashSet[str]* visited;
+    // owner is the declaration whose member is being followed
+    var ast.Decl* owner;
+    var str ownerKey;
+    var str field;
+    // owners is the keys of the declarations a cycle closes at
+    var ArrList[str]* owners;
+    var HashMap[str, (ast.Decl*, ArrList[str]*)]* cyclic;
+
+    // Run finds the declarations of the program m models that hold themselves by value
+    public static fun ArrList[Err*]*(Model*) Run = (m) {
+        var MemberCycle* c = new(MemberCycle);
+        c.model = m;
+        c.none = HashMap::[ast.Generic*, Type*]New(0U);
+        c.cycle = HashSet::[str]New(0U);
+        c.visited = HashSet::[str]New(0U);
+        c.ownerKey = "";
+        c.field = "";
+        c.owners = ArrList::[str]New(0U);
+        c.cyclic = HashMap::[str, (ast.Decl*, ArrList[str]*)]New(0U);
+        var Iter[(str, Source*)]* all = m.Program().sources.Iter();
+        for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
+            if(next.0.1.file.decl != null) {
+                c.visit(next.0.1.file.decl, c.none);
+            }
+        }
+
+        var ArrList[Err*]* errs = ArrList::[Err*]New(0U);
+        for(var uint i = 0U; i < c.owners.Len(); i++) {
+            var (ast.Decl*, ArrList[str]*) entry = c.cyclic.Get(c.owners.Get(i)).0;
+            var str fields = "";
+            for(var uint j = 0U; j < entry.1.Len(); j++) {
+                if(j > 0U) {
+                    fields = fields + ", ";
+                }
+                fields = fields + entry.1.Get(j);
+            }
+            errs.AddLast(m.At(entry.0, entry.0.start, StrErr::New("member cycle detected: " + entry.0.name.value{str} + ".{" + fields + "}")));
+        }
+        return errs;
+    }
+
+    // visit follows the members of d, its parameters bound as bindings says
+    fun void(ast.Decl*, HashMap[ast.Generic*, Type*]*) visit = (d, bindings) {
+        switch(d.kind) {
+            case (ast.Field.Kind::Alias)
+                return;
+            case (ast.Field.Kind::Interface, ast.Field.Kind::Namespace)
+                this.nested(d);
+        } else {
+            this.members(d, bindings);
+        }
+    }
+
+    // members follows the instance members of d
+    fun void(ast.Decl*, HashMap[ast.Generic*, Type*]*) members = (d, bindings) {
+        var str key = this.key(d, bindings);
+        if(this.visited.Contains(key)) {
+            return;
+        } else if(this.cycle.Contains(key)) {
+            this.record();
+            return;
+        }
+        this.cycle.Add(key);
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f.kind == ast.Field.Kind::Member && !ast.Modifier::Static.In(f.modifiers)) {
+                this.owner = d;
+                this.ownerKey = key;
+                this.field = f.name.value{str};
+                this.follow(this.model.TypeOf(f{ast.Field.Member*}.declared), bindings);
+            }
+        }
+        this.cycle.Remove(key);
+        this.visited.Add(key);
+        this.nested(d);
+    }
+
+    // nested visits the declarations nested in d
+    fun void(ast.Decl*) nested = (d) {
+        var HashSet[str]* outer = this.cycle;
+        this.cycle = HashSet::[str]New(0U);
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Decl* inner = d.fields.Get(i){ast.Decl*};
+            if(inner != null) {
+                this.visit(inner, this.none);
+            }
+        }
+        this.cycle = outer;
+    }
+
+    // follow follows what of t lies inline into the declarations it names
+    fun void(Type*, HashMap[ast.Generic*, Type*]*) follow = (t, bindings) {
+        if(t == null) {
+            return;
+        }
+        switch(t.kind) {
+            case (Type.Kind::Named)
+                this.visit(t{Type.Named*}.decl, this.none);
+            case (Type.Kind::Generic) {
+                var Type.Generic* g = t{Type.Generic*};
+                var ast.Decl* d = MemberCycle::declOf(g.inner);
+                if(d == null || d.generics == null) {
+                    return;
+                }
+                var HashMap[ast.Generic*, Type*]* inner = HashMap::[ast.Generic*, Type*]New(0U);
+                for(var uint i = 0U; i < d.generics.Len() && i < g.arguments.Len(); i++) {
+                    inner.Put(d.generics.Get(i), g.arguments.Get(i).Instantiate(bindings, g.arguments.Get(i).at));
+                }
+                this.members(d, inner);
+            }
+            case (Type.Kind::Param) {
+                var (Type*, bool) bound = bindings.Get(t{Type.Param*}.param);
+                if(bound.1) {
+                    this.follow(bound.0, this.none);
+                }
+            }
+            case (Type.Kind::Array)
+                this.follow(t{Type.Array*}.inner, bindings);
+            case (Type.Kind::Tailed)
+                this.follow(t{Type.Tailed*}.inner, bindings);
+            case (Type.Kind::Tuple) {
+                var ArrList[Type*]* types = t{Type.Tuple*}.types;
+                for(var uint i = 0U; i < types.Len(); i++) {
+                    this.follow(types.Get(i), bindings);
+                }
+            }
+            case (Type.Kind::Wrapped) {
+                if(t{Type.Wrapped*}.wrap == ast.Type.Wrap::Const) {
+                    this.follow(t{Type.Wrapped*}.inner, bindings);
+                }
+            }
+        }
+    }
+
+    // record records the member being followed as closing a cycle
+    fun void() record = () {
+        var ((ast.Decl*, ArrList[str]*), bool) entry = this.cyclic.Get(this.ownerKey);
+        if(!entry.1) {
+            entry.0 = (this.owner, ArrList::[str]New(0U));
+            this.cyclic.Put(this.ownerKey, entry.0);
+            this.owners.AddLast(this.ownerKey);
+        }
+        entry.0.1.AddLast(this.field);
+    }
+
+    // key answers what tells d apart from every other declaration and instantiation
+    fun str(ast.Decl*, HashMap[ast.Generic*, Type*]*) key = (d, bindings) {
+        var str out = this.model.Source(d).path + ":" + d.start.offset{str};
+        if(d.generics == null || bindings.Len() == 0U) {
+            return out;
+        }
+        out = out + "[";
+        for(var uint i = 0U; i < d.generics.Len(); i++) {
+            if(i > 0U) {
+                out = out + ", ";
+            }
+            out = out + this.identity(bindings.Get(d.generics.Get(i)).0);
+        }
+        return out + "]";
+    }
+
+    // identity answers what tells t apart from every other type
+    fun str(Type*) identity = (t) {
+        if(t == null) {
+            return "?";
+        }
+        switch(t.kind) {
+            case (Type.Kind::Named)
+                return "{" + this.key(t{Type.Named*}.decl, this.none) + "}";
+            case (Type.Kind::Param) {
+                var ast.Generic* p = t{Type.Param*}.param;
+                return "<" + p.name.value{str} + "@" + p.name.offset{str} + ">";
+            }
+            case (Type.Kind::Wrapped)
+                return this.identity(t{Type.Wrapped*}.inner) + t{Type.Wrapped*}.wrap{str};
+            case (Type.Kind::Array) {
+                var Type.Array* a = t{Type.Array*};
+                return this.identity(a.inner) + "[" + a.sized{str} + a.size{str} + "]";
+            }
+            case (Type.Kind::Tailed) {
+                var Type.Tailed* a = t{Type.Tailed*};
+                return this.identity(a.inner) + "~" + a.sized{str} + a.size{str};
+            }
+            case (Type.Kind::Tuple)
+                return "(" + this.identities(t{Type.Tuple*}.types) + ")";
+            case (Type.Kind::Function) {
+                var Type.Function* f = t{Type.Function*};
+                return this.identity(f.returns) + "(" + this.identities(f.parameters) + ")";
+            }
+            case (Type.Kind::Generic) {
+                var Type.Generic* g = t{Type.Generic*};
+                return this.identity(g.inner) + "[" + this.identities(g.arguments) + "]";
+            }
+        }
+        return t.Text();
+    }
+
+    fun str(ArrList[Type*]*) identities = (ts) {
+        var str out = "";
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            if(i > 0U) {
+                out = out + ", ";
+            }
+            out = out + this.identity(ts.Get(i));
+        }
+        return out;
+    }
+
+    // declOf answers the declaration t names, or null for none
+    static fun ast.Decl*(Type*) declOf = (t) {
+        if(t != null && t.kind == Type.Kind::Tailed) {
+            t = t{Type.Tailed*}.inner;
+        }
+        if(t == null || t.kind != Type.Kind::Named) {
+            return null;
+        }
+        return t{Type.Named*}.decl;
+    }
+}

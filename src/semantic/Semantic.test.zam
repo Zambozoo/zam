@@ -35,5 +35,8 @@ public namespace SemanticTest {
 
         var (Model*, ArrList[Err*]*) inherits = SemanticTest::validated("public class Main <: Main* {\n}");
         Assert::[uint]Equal(1U, inherits.1.Len());
+
+        var (Model*, ArrList[Err*]*) holds = SemanticTest::validated("public struct Main {\n    var Main self;\n}");
+        Assert::[uint]Equal(1U, holds.1.Len());
     }
 }

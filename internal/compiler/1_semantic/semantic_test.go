@@ -6,6 +6,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -122,4 +123,20 @@ func TestValidateASTMethodCycle(t *testing.T) {
 	errs := validate(t, path.Join("invalid", "methodcycle"))
 	require.Len(t, errs, 1)
 	assert.ErrorContains(t, errs[0], `recursive generic expansion detected at "Grow"`)
+}
+
+// A declaration that holds itself by value is reported at the declaration whose
+// member closes the cycle, a generic one with its arguments substituted.
+func TestValidateASTMemberCycle(t *testing.T) {
+	t.Parallel()
+	errs := validate(t, path.Join("invalid", "membercycle"))
+	got := make([]string, len(errs))
+	for i, err := range errs {
+		got[i], _, _ = strings.Cut(err.Error(), " (")
+	}
+	assert.Equal(t, []string{
+		"member cycle detected: B.{a}",
+		"member cycle detected: Self.{selves}",
+		"member cycle detected: Box.{held}",
+	}, got)
 }

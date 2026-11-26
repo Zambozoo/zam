@@ -1,0 +1,130 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import "Alias.zam";
+import "GenericCycle.zam";
+import "InheritanceCycle.zam";
+import "MemberCycle.zam";
+import "Model.zam";
+import "Resolve.zam";
+
+public namespace MemberCycleTest {
+    // model answers the model of the program /p/Main.zam, written as main,
+    // through the passes before member cycles, failing on any error
+    private fun Model*(str) model = (main) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", main));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var Model* m = Model::New(parsed.0);
+        var ArrList[Err*]* errs = Resolve::Run(m);
+        if(errs.Len() == 0U) {
+            errs = Alias::Run(m);
+        }
+        if(errs.Len() == 0U) {
+            errs = GenericCycle::Run(m);
+        }
+        if(errs.Len() == 0U) {
+            errs = InheritanceCycle::Run(m);
+        }
+        if(!Assert::[uint]Equal(0U, errs.Len())) {
+            Assert::Fatal(errs.Get(0U).Err());
+        }
+        return m;
+    }
+
+    // reports checks that main has the cycles want, each a declaration and
+    // its members and the position in /p/Main.zam, in order
+    private fun void(str, uint, str...) reports = (main, n, want) {
+        var ArrList[Err*]* errs = MemberCycle::Run(MemberCycleTest::model(main));
+        Assert::[uint]Equal(n / 2U, errs.Len());
+        for(var uint i = 0U; i + 1U < n && i / 2U < errs.Len(); i = i + 2U) {
+            Assert::[str]Equal("member cycle detected: " + want[i] + " (" + Path::Display("/p/Main.zam") + want[i + 1U] + ")", errs.Get(i / 2U).Err());
+        }
+    }
+
+    public fun void(uint, str...) Cycles = (argC, argV) {
+        MemberCycleTest::reports("public namespace Main {\n" +
+            "    struct A {\n" +
+            "        var B b;\n" +
+            "    }\n" +
+            "    struct B {\n" +
+            "        var A a;\n" +
+            "    }\n" +
+            "    struct Self {\n" +
+            "        var Self[2] selves;\n" +
+            "    }\n" +
+            "    struct Both {\n" +
+            "        var (Left, int) pair;\n" +
+            "    }\n" +
+            "    struct Left {\n" +
+            "        var Both both;\n" +
+            "        var Left$ self;\n" +
+            "    }\n" +
+            "    enum Kind {\n" +
+            "        A;\n" +
+            "        var Kind other;\n" +
+            "    }\n" +
+            "}\n", 8U,
+            "B.{a}", "[5:5]",
+            "Self.{selves}", "[8:5]",
+            "Left.{both, self}", "[14:5]",
+            "Kind.{other}", "[18:5]");
+    }
+
+    public fun void(uint, str...) Indirection = (argC, argV) {
+        MemberCycleTest::reports("public namespace Main {\n" +
+            "    struct Node {\n" +
+            "        var Node* next;\n" +
+            "        var thread[Node] later;\n" +
+            "        var Node() make;\n" +
+            "        static var Node shared;\n" +
+            "    }\n" +
+            "    class Tree {\n" +
+            "        var Tree* left;\n" +
+            "    }\n" +
+            "}\n", 0U);
+    }
+
+    public fun void(uint, str...) Generics = (argC, argV) {
+        MemberCycleTest::reports("public namespace Main {\n" +
+            "    struct Box[T] {\n" +
+            "        var int n;\n" +
+            "        var T held;\n" +
+            "    }\n" +
+            "    struct S {\n" +
+            "        var Box[S] box;\n" +
+            "    }\n" +
+            "    struct Fine {\n" +
+            "        var Box[int] box;\n" +
+            "        var Box[Fine*] pointed;\n" +
+            "        var Box[Box[int]] nested;\n" +
+            "    }\n" +
+            "    struct Deep {\n" +
+            "        var Box[Box[Deep]] deep;\n" +
+            "    }\n" +
+            "}\n", 4U,
+            "Box.{held}", "[2:5]",
+            "Box.{held}", "[2:5]");
+    }
+
+    // Broken finds cycles in what a parse recovered from without failing on
+    // what it left out
+    public fun void(uint, str...) Broken = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam",
+            "public namespace Main {\n    struct A {\n        var A a;\n        fun void() f = () {\n            var int x = ;\n        }\n    }\n}\n"));
+        Assert::True(parsed.1.Len() > 0U, "the broken file parses");
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            return;
+        }
+        var Model* m = Model::New(parsed.0);
+        Assert::[uint]Equal(0U, Resolve::Run(m).Len());
+        Assert::[uint]Equal(0U, Alias::Run(m).Len());
+        Assert::[uint]Equal(0U, GenericCycle::Run(m).Len());
+        Assert::[uint]Equal(0U, InheritanceCycle::Run(m).Len());
+        Assert::[uint]Equal(1U, MemberCycle::Run(m).Len());
+    }
+}

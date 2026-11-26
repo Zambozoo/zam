@@ -126,9 +126,12 @@ func (v *memberCycleDetectorVisitor) VisitTypeFunction(t *syntax.TypeFunction) e
 	return nil
 }
 
-// VisitTypeGeneric implements [syntax.TypeVisitor].
+// VisitTypeGeneric implements [syntax.TypeVisitor]. The concrete
+// declaration is followed itself, rather than through the template its Accept
+// visits, so its members are read with its arguments substituted: a Box[S]
+// holding a T holds an S.
 func (v *memberCycleDetectorVisitor) VisitTypeGeneric(t *syntax.TypeGeneric) error {
-	t.Decl().Accept(v)
+	v.visitDeclInstances(t.Decl())
 	return nil
 }
 
