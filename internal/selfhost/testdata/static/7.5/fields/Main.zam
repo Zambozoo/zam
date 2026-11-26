@@ -1,0 +1,21 @@
+import "sub/Far.zam";
+
+public namespace Main {
+    class Box {
+        var int x;
+        var (int, str) pair;
+        private var int mine;
+    }
+    fun void() Use = () {
+        var Box* b = null;
+        var int x = b.x;
+        var int y = b.missing;
+        var int z = b.pair.0;
+        var int w = b.pair.5;
+        var int v = x.y;
+        var int m = b.mine;
+        var Far.Holder* h = null;
+        var int open = h.open;
+        var int secret = h.secret;
+    }
+}

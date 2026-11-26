@@ -1,0 +1,18 @@
+public namespace Main {
+    abstract Shape {}
+    class Gen[T] {
+        static fun void() Make = () {
+            var T made;
+        }
+        fun void() Hold = () {
+            var T held;
+        }
+    }
+    fun void() Twice = () { var int x; var int x; }
+    fun void() Unpacked = () { var int x; var int x, int y = 1, 2; }
+    fun void() Shadowed = () { var int x; { var int x; } for (var int x = 0; x < 1; x++) { var int x; } }
+    fun void(int) Param = (x) { var int x; }
+    fun void() Blanks = () { var int _; var int _; }
+    fun void() Bare = () { var Shape s; var Shape* fine; var Shape a, int b; }
+    fun void() Hoisted = () { for (var int i = 0; i < 1; i++) {} var int i; }
+}

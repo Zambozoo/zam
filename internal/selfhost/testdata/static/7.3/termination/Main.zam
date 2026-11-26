@@ -1,0 +1,50 @@
+public namespace Main {
+    fun int(int) NoElse = (n) { switch (n) { case (1) return 1; } }
+    fun int(int) Breaks = (n) { switch (n) { case (1) break; } else { return 1; } }
+    fun int(int) EmptyCase = (n) { switch (n) { case (1) {} } else { return 1; } }
+    fun int(int) LabelBreak = (n) { label outer: for { switch (n) { case (1) break outer; } } }
+    fun int(int) Returns = (n) { return n; }
+    fun int(int) Nested = (n) { { { return n; } } }
+    fun int(int) IfOnly = (n) { if (n > 0) { return 1; } }
+    fun int(int) IfElse = (n) { if (n > 0) { return 1; } else { return 2; } }
+    fun int(int) IfElseRuns = (n) { if (n > 0) { return 1; } else { n++; } }
+    fun int(int) Forever = (n) { for { n++; } }
+    fun int(int) True = (n) { for (; true;) { n++; } }
+    fun int(int) Conditional = (n) { for (; n < 1;) { n++; } }
+    fun int(int) BreakOut = (n) { for { break; } }
+    fun int(int) InnerBreak = (n) { for { for { break; } } }
+    fun int(int) SwitchBreak = (n) { for { switch (n) { case (1) break; } } }
+    fun int(int) ElseBreak = (n) { for { for (; n < 1;) { n++; } else { break; } } }
+    fun int(int) LoopElse = (n) { for (; n < 1;) { n++; } else { return 1; } }
+    fun int() Labelled = () {
+        label forever: for {
+            continue forever;
+        }
+    }
+    fun int(int) Ends = (n) {
+        switch (n) {
+            case (0) {
+                if (n == 0) {
+                    continue;
+                } else {
+                    return 1;
+                }
+            }
+        } else {
+            return 2;
+        }
+    }
+    fun int(int) Loops = (n) {
+        for (; n < 1;) {
+            switch (n) {
+                case (1) break;
+            }
+            label inner: for {
+                break inner;
+            }
+        } else {
+            return 1;
+        }
+    }
+    fun void(int) Nothing = (n) {}
+}

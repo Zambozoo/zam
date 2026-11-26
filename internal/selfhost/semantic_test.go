@@ -16,8 +16,7 @@ import (
 
 // TestSemanticMatchesGo validates every valid and invalid program in the Go
 // semantic testdata, and the compiler written in zam itself, with that
-// compiler and with the Go one, and expects the same errors, but for the
-// programs still pending.
+// compiler and with the Go one, and expects the same errors.
 func TestSemanticMatchesGo(t *testing.T) {
 	zam, err := compiler()
 	require.NoError(t, err)
@@ -35,22 +34,10 @@ func TestSemanticMatchesGo(t *testing.T) {
 		name, err := filepath.Rel(root, filepath.Dir(entry))
 		require.NoError(t, err)
 		t.Run(filepath.ToSlash(name), func(t *testing.T) {
-			if reason, ok := pending[filepath.ToSlash(name)]; ok {
-				t.Skip(reason)
-			}
 			t.Parallel()
 			assert.Equal(t, goValidateErrors(t, entry, semantic.PassStatic), zamErrors(t, zam, entry, false, "semantic"))
 		})
 	}
-}
-
-// pending is the programs the compiler written in zam is not yet expected to
-// validate as Go does, by directory, with why.
-var pending = map[string]string{
-	"internal/compiler/1_semantic/testdata/invalid/static":    "the static pass is ported in steps",
-	"internal/compiler/1_semantic/testdata/invalid/enumbound": "static selection with type arguments is not ported yet",
-	"internal/compiler/1_semantic/testdata/valid/std":         "the static pass is ported in steps",
-	"src": "the static pass is ported in steps",
 }
 
 // goValidateErrors answers the errors Go validation up to last reports for

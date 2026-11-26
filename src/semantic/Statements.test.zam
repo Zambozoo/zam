@@ -1,0 +1,63 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import "Semantic.zam";
+
+public namespace StatementsTest {
+    // reports checks that validating the namespace Main holding methods
+    // finds the errors want, each a message and its position, in order
+    private fun void(str, uint, str...) reports = (methods, n, want) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + methods + "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var ArrList[Err*]* errs = Semantic::Validate(parsed.0).1;
+        Assert::[uint]Equal(n / 2U, errs.Len());
+        for(var uint i = 0U; i + 1U < n && i / 2U < errs.Len(); i = i + 2U) {
+            Assert::[str]Equal(want[i] + " (" + Path::Display("/p/Main.zam") + want[i + 1U] + ")", errs.Get(i / 2U).Err());
+        }
+    }
+
+    public fun void(uint, str...) Declarations = (argC, argV) {
+        StatementsTest::reports(
+            "    fun void() Twice = () { var int x; var int x; }\n" +
+            "    fun void() Shadowed = () { var int x; { var int x; } for (var int x = 0; x < 1; x++) { var int x; } }\n" +
+            "    fun void() Blanks = () { var int _; var int _; }\n" +
+            "    fun void() Hoisted = () { for (var int i = 0; i < 1; i++) {} var int i; }\n" +
+            "    fun void() Unpacked = () { var int x, int y; var int y; }\n", 4U,
+            "variable x already declared", "[2:40]",
+            "variable y already declared", "[6:50]");
+    }
+
+    public fun void(uint, str...) Jumps = (argC, argV) {
+        StatementsTest::reports(
+            "    fun void() Last = () { switch (1) { case (1) continue; } }\n" +
+            "    fun void() Loose = () { break; }\n" +
+            "    fun void() Nowhere = () { continue nowhere; }\n" +
+            "    fun void() Fine = () { label outer: for { for { break outer; } switch (1) { case (1) continue; } else { break; } } }\n" +
+            "    fun void() Beside = () { for { label inner: for (; true;) {} else { continue inner; } } }\n", 8U,
+            "continue falls through the last body of a switch, which has no body after it", "[2:50]",
+            "break is not in a loop or switch", "[3:29]",
+            "continue names label nowhere, which is not a loop or switch in scope", "[4:31]",
+            "continue names label inner, which is not a loop or switch in scope", "[6:73]");
+    }
+
+    public fun void(uint, str...) Defers = (argC, argV) {
+        StatementsTest::reports(
+            "    fun void() Returns = () { defer { return; } }\n" +
+            "    fun void() Declares = () { defer var int x; }\n" +
+            "    fun void() Twice = () { defer defer Main::Void(); }\n" +
+            "    fun void() Breaks = () { for { defer break; } }\n" +
+            "    fun void() Inner = () { defer { for { break; } } }\n" +
+            "    fun int() Bare = () { return; }\n" +
+            "    static fun void() Void = () {}\n", 10U,
+            "return cannot leave a deferred statement", "[2:39]",
+            "a declaration cannot be deferred", "[3:32]",
+            "a defer cannot be deferred", "[4:29]",
+            "break cannot leave a deferred statement", "[5:42]",
+            "return without a value in a method returning int", "[7:27]");
+    }
+}

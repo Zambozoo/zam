@@ -1,0 +1,6 @@
+public namespace Far {
+    public class Holder {
+        private var int secret;
+        public var int open;
+    }
+}

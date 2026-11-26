@@ -1,31 +1,45 @@
 import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
 import std("lang/Err.zam");
 import std("lang/Iter.zam");
 import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
 import "../syntax/Source.zam";
 import "../syntax/Token.zam";
+import "../syntax/TokenKind.zam";
 import ast = "../syntax/ast/*";
 import "Access.zam";
+import "Expressions.zam";
+import "Members.zam";
 import "Model.zam";
+import "Statements.zam";
 import "Subtyping.zam";
+import "Termination.zam";
 import "Type.zam";
 
 // Static checks what declarations, fields, statements and expressions mean once types are well formed
 public class Static {
     var Model* model;
     var Subtyping* subtyping;
+    var Members* members;
+    var Statements* statements;
     var ArrList[Err*]* errs;
     // decl is the declaration being checked
     var ast.Decl* decl;
     // staticField is the static field being checked
     var ast.Field* staticField;
+    // statics is the statics of each declaration being checked, innermost last
+    var ArrList[HashMap[str, Model.Binding*]*]* statics;
 
     // Run checks the program m models
     public static fun ArrList[Err*]*(Model*) Run = (m) {
         var Static* s = new(Static);
         s.model = m;
         s.subtyping = Subtyping::New(m);
+        s.members = Members::New(m);
+        s.statements = Statements::New(s, m);
         s.errs = ArrList::[Err*]New(0U);
+        s.statics = ArrList::[HashMap[str, Model.Binding*]*]New(0U);
         var Iter[(str, Source*)]* all = m.Program().sources.Iter();
         for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
             if(next.0.1.file.decl != null) {
@@ -42,6 +56,7 @@ public class Static {
         if(d.kind == ast.Field.Kind::Alias) {
             this.visitAlias(d{ast.Decl.Alias*});
         } else {
+            this.statics.AddLast(this.staticScope(d));
             for(var uint i = 0U; i < d.fields.Len(); i++) {
                 var ast.Field* f = d.fields.Get(i);
                 if(f{ast.Decl*} == null && Static::isStatic(f)) {
@@ -60,8 +75,85 @@ public class Static {
                     this.visitDecl(nested);
                 }
             }
+            this.statics.RemoveLast();
+            if(d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Abstract) {
+                this.subtypeable(d);
+            }
         }
         this.decl = outer;
+    }
+
+    // subtypeable checks the base of the class or abstract d is valid and that every method it overrides it overrides with a subtype
+    fun void(ast.Decl*) subtypeable = (d) {
+        if(!this.validBase(d)) {
+            return;
+        }
+        var str name = d.name.value{str};
+        var Type* self = Type.Named::New(d.start, d, name, "");
+        for(var Type* base = this.members.BaseOf(self); base != null; base = this.members.BaseOf(base)) {
+            var ArrList[Members.Method*]* inherited = this.members.Own(base);
+            for(var uint i = 0U; i < inherited.Len(); i++) {
+                var Members.Method* parent = inherited.Get(i);
+                var Members.Method* child = this.members.Find(self, parent.name);
+                if(child == null || !this.subtyping.Is(child.signature, parent.signature)) {
+                    this.fail(d.start, name + "." + parent.name + " does not override " + Members::DeclOf(base).name.value{str} + "." + parent.name + " with a subtype");
+                }
+            }
+        }
+        if(d.kind != ast.Field.Kind::Class) {
+            return;
+        }
+        var ArrList[str]* seen = ArrList::[str]New(0U);
+        for(var Type* t = self; t != null; t = this.members.BaseOf(t)) {
+            var ArrList[Members.Method*]* methods = this.members.Own(t);
+            for(var uint i = 0U; i < methods.Len(); i++) {
+                var Members.Method* m = methods.Get(i);
+                if(Static::holds(seen, m.name)) {
+                    continue;
+                }
+                seen.AddLast(m.name);
+                if(m.virtualized) {
+                    this.fail(d.start, "class " + name + " does not override virtual method " + Strs::Quote(m.name));
+                }
+            }
+        }
+    }
+
+    // validBase reports whether the base of d is one it may descend from
+    fun bool(ast.Decl*) validBase = (d) {
+        var Type* base = this.model.Base(d);
+        if(base == null || base.kind != Type.Kind::Wrapped) {
+            return true;
+        }
+        var Type* inner = base{Type.Wrapped*}.inner;
+        var ast.Decl* parent = Members::DeclOf(inner);
+        if(parent == null) {
+            return true;
+        } else if(inner.kind == Type.Kind::Generic) {
+            var str unsatisfied = this.subtyping.Bound(parent.generics, inner{Type.Generic*}.arguments);
+            if(unsatisfied != "") {
+                var Token* at = base.at;
+                if(at == null) {
+                    at = d.start;
+                }
+                this.fail(at, "type " + inner.Text() + ": " + unsatisfied);
+                return false;
+            }
+        }
+        if(parent.kind == ast.Field.Kind::Abstract || (parent.kind == ast.Field.Kind::Class && d.kind == ast.Field.Kind::Class)) {
+            return true;
+        }
+        var str expected = "a class or an abstract";
+        if(d.kind == ast.Field.Kind::Abstract) {
+            expected = "an abstract";
+        }
+        var str prefix = "base of " + d.name.value{str} + " must be " + expected + "; " + parent.name.value{str};
+        if(parent.kind == ast.Field.Kind::Interface) {
+            this.fail(d.start, prefix + " is an interface, which is implemented by having its methods rather than by naming it");
+        } else {
+            this.fail(d.start, prefix + " is declared " + Static::kindName(parent));
+        }
+        return false;
     }
 
     // visitAlias checks the bounds of an alias's parameters and the type it names
@@ -90,6 +182,9 @@ public class Static {
             declared = f{ast.Field.Method*}.signature;
             kind = "method";
         } else {
+            if(f.kind == ast.Field.Kind::Value) {
+                this.visitValue(f{ast.Field.Value*});
+            }
             return;
         }
         this.staticField = null;
@@ -99,7 +194,114 @@ public class Static {
         var Type* t = this.model.TypeOf(declared);
         this.requireDeclarable(t, f.start, kind, this.decl.name.value{str} + "." + f.name.value{str});
         this.walk(t, false);
+        if(f.kind == ast.Field.Kind::Method) {
+            this.visitMethod(f{ast.Field.Method*}, t);
+        } else if(f{ast.Field.Member*}.init != null) {
+            var ast.Expr* init = f{ast.Field.Member*}.init;
+            var (Type*, bool) checked = this.statements.Expression(init, this.scopes());
+            if(checked.1 && checked.0 != null && t != null && !this.statements.expressions.Packs(init, checked.0, Expressions::InitTarget(t))) {
+                this.fail(init.start, "field " + this.decl.name.value{str} + "." + f.name.value{str} + " expression is not a subtype of " + t.Text());
+            }
+        }
         this.staticField = null;
+    }
+
+    // visitValue checks what an enum value is written with against the enum's primitive or the parameters of its init method
+    fun void(ast.Field.Value*) visitValue = (f) {
+        var ast.Decl.Enum* d = this.decl{ast.Decl.Enum*};
+        var str name = d.name.value{str};
+        var ArrList[HashMap[str, Model.Binding*]*]* scopes = ArrList::[HashMap[str, Model.Binding*]*]New(0U);
+        for(var uint i = 0U; i < this.statics.Len(); i++) {
+            scopes.AddLast(this.statics.Get(i));
+        }
+        if(f.value != null) {
+            var Type* primitive = this.model.TypeOf(d.primitive);
+            var (Type*, bool) checked = this.statements.Expression(f.value, scopes);
+            if(checked.1 && checked.0 != null && primitive != null && !this.subtyping.Is(checked.0, Expressions::InitTarget(primitive))) {
+                this.fail(f.start, "enum value " + name + "::" + f.name.value{str} + " is not a subtype of " + primitive.Text());
+            }
+            return;
+        } else if(f.init == null) {
+            return;
+        }
+        var str init = f.init.value{str};
+        var Members.Method* m = this.members.Find(this.members.SelfType(d), init);
+        if(m == null) {
+            this.fail(f.start, "missing init method " + name + "." + init + " for enum field " + f.name.value{str});
+            return;
+        } else if(m.signature == null || m.signature.kind != Type.Kind::Function) {
+            return;
+        }
+        var ArrList[Type*]* parameters = m.signature{Type.Function*}.parameters;
+        var uint n = 0U;
+        if(f.arguments != null) {
+            n = f.arguments.Len();
+        }
+        if(parameters.Len() != n) {
+            this.fail(f.start, "init method " + name + "." + init + " has " + parameters.Len(){str} + " parameters, but enum field " + name + "." + f.name.value{str} + " has " + n{str} + " parameters");
+            return;
+        }
+        for(var uint i = 0U; i < n; i++) {
+            var (Type*, bool) checked = this.statements.Expression(f.arguments.Get(i), scopes);
+            if(!checked.1) {
+                return;
+            } else if(checked.0 != null && !this.subtyping.Is(checked.0, Expressions::InitTarget(parameters.Get(i)))) {
+                this.fail(f.start, "init method " + name + "." + init + " parameter is not a subtype of " + parameters.Get(i).Text());
+            }
+        }
+    }
+
+    // visitMethod checks the body of f, of type t
+    fun void(ast.Field.Method*, Type*) visitMethod = (f, t) {
+        if(f.body == null || t == null || t.kind != Type.Kind::Function) {
+            return;
+        }
+        this.statements.Method(f, t{Type.Function*}, this.scopes());
+        var Type* returns = t{Type.Function*}.returns;
+        if(!Static::isVoid(returns) && !Termination::Terminates(f.body)) {
+            this.fail(f.start, "method " + this.decl.name.value{str} + "." + f.name.value{str} + " can be left without returning a " + returns.Text());
+        }
+    }
+
+    // staticScope binds the names d's statics are written under
+    fun HashMap[str, Model.Binding*]*(ast.Decl*) staticScope = (d) {
+        var HashMap[str, Model.Binding*]* scope = HashMap::[str, Model.Binding*]New(0U);
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f{ast.Decl*} != null || !Static::isStatic(f)) {
+                continue;
+            }
+            var Type* t = null;
+            if(f.kind == ast.Field.Kind::Value) {
+                t = this.members.SelfType(d);
+            } else if(f.kind == ast.Field.Kind::Member) {
+                t = this.model.TypeOf(f{ast.Field.Member*}.declared);
+            } else {
+                t = this.model.TypeOf(f{ast.Field.Method*}.signature);
+            }
+            scope.Put(f.name.value{str}, Model.Binding::New(Model.Binding.Kind::Static, t, f, f.name));
+        }
+        return scope;
+    }
+
+    // scopes answers the names in scope at the start of a field of the declaration being checked
+    fun ArrList[HashMap[str, Model.Binding*]*]*() scopes = () {
+        var ArrList[HashMap[str, Model.Binding*]*]* scopes = ArrList::[HashMap[str, Model.Binding*]*]New(0U);
+        for(var uint i = 0U; i < this.statics.Len(); i++) {
+            scopes.AddLast(this.statics.Get(i));
+        }
+        var HashMap[str, Model.Binding*]* instance = HashMap::[str, Model.Binding*]New(0U);
+        var ArrList[Members.Field*]* fields = this.members.AllFields(this.members.SelfType(this.decl));
+        for(var uint i = 0U; i < fields.Len(); i++) {
+            var Members.Field* f = fields.Get(i);
+            var Token* at = null;
+            if(f.field != null) {
+                at = f.field.name;
+            }
+            instance.Put(f.name, Model.Binding::New(Model.Binding.Kind::Instance, f.signature, f.field, at));
+        }
+        scopes.AddLast(instance);
+        return scopes;
     }
 
     // requireDeclarable rejects a type that holds an abstract or interface as a value
@@ -108,7 +310,7 @@ public class Static {
         if(bad == null) {
             return;
         }
-        var ast.Decl* d = Subtyping::DeclOf(bad);
+        var ast.Decl* d = Members::DeclOf(bad);
         this.fail(tok, kind + " " + name + " cannot be declared " + t.Text() + "; " + bad.Text() + " is declared " + Static::kindName(d) + ", which is only ever a reference to the implementor it names, so write " + bad.Text() + "*");
     }
 
@@ -131,7 +333,7 @@ public class Static {
                 var Type.Generic* g = t{Type.Generic*};
                 this.walk(g.inner, false);
                 this.walkAll(g.arguments);
-                var ast.Decl* d = Subtyping::DeclOf(g.inner);
+                var ast.Decl* d = Members::DeclOf(g.inner);
                 if(d != null) {
                     var str unsatisfied = this.subtyping.Bound(d.generics, g.arguments);
                     if(unsatisfied != "") {
@@ -221,16 +423,42 @@ public class Static {
         if(t.kind != Type.Kind::Named && t.kind != Type.Kind::Generic && t.kind != Type.Kind::Tailed) {
             return false;
         }
-        var ast.Decl* d = Subtyping::DeclOf(t);
+        var ast.Decl* d = Members::DeclOf(t);
         return d != null && (d.kind == ast.Field.Kind::Abstract || d.kind == ast.Field.Kind::Interface);
     }
 
     // kindName answers the keyword d is declared with
     static fun str(ast.Decl*) kindName = (d) {
-        if(d.kind == ast.Field.Kind::Abstract) {
-            return "abstract";
+        switch(d.kind) {
+            case (ast.Field.Kind::Abstract)
+                return "abstract";
+            case (ast.Field.Kind::Class)
+                return "class";
+            case (ast.Field.Kind::Enum)
+                return "enum";
+            case (ast.Field.Kind::Interface)
+                return "interface";
+            case (ast.Field.Kind::Namespace)
+                return "namespace";
+            case (ast.Field.Kind::Struct)
+                return "struct";
         }
-        return "interface";
+        return "alias";
+    }
+
+    // isVoid reports whether t is void
+    static fun bool(Type*) isVoid = (t) {
+        return t != null && t.kind == Type.Kind::Primitive && t{Type.Primitive*}.keyword == TokenKind::Void;
+    }
+
+    // holds reports whether names holds name
+    static fun bool(ArrList[str]*, str) holds = (names, name) {
+        for(var uint i = 0U; i < names.Len(); i++) {
+            if(names.Get(i) == name) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // isStatic reports whether f is static, as an enum value always is

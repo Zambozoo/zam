@@ -184,10 +184,10 @@ public abstract Expr {
     public class Spread <: Expr* {
         public var Expr* inner;
 
-        public static fun Spread*(Expr*) New = (inner) {
+        public static fun Spread*(Token*, Expr*) New = (start, inner) {
             var Spread* e = new(Spread);
             e.kind = Kind::Spread;
-            e.start = inner.start;
+            e.start = start;
             e.inner = inner;
             return e;
         }

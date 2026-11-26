@@ -1,0 +1,26 @@
+public namespace Main {
+    static fun int(int, str) Two = (n, s) { return n; }
+    static fun int(int, str...) Many = (n, rest) { return n; }
+    static fun void(int...) Ints = (ns) {}
+    fun void(int, str*, int*, int[2], str[2], flt*) Calls = (i, strs, ints, pair, names, floats) {
+        var int a = Two(1, "s");
+        var int b = Two(1);
+        var int c = Two(1, 2);
+        var int d = Many(1);
+        var int e = Many(1, "a", "b");
+        var int f = Many();
+        var int g = Many(1, "a", 2);
+        var int h = Many(1, strs...);
+        var int j = Many(1, names...);
+        var int k = Many(1, "a", strs...);
+        var int l = Two(1, strs...);
+        Ints(ints...);
+        Ints(floats...);
+        Ints(i...);
+        var int m = i(1);
+        var thread[int] spawned = async(Two(1, "s"));
+        var int joined = wait(spawned);
+        var int notThread = wait(i);
+        var int n = Many(strs..., 1);
+    }
+}

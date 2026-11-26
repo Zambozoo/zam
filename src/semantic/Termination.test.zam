@@ -1,0 +1,51 @@
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/FileParser.zam";
+import "../syntax/Parser.zam";
+import ast = "../syntax/ast/*";
+import "Termination.zam";
+
+public namespace TerminationTest {
+    // terminates checks whether body, as the body of a method, terminates
+    private fun void(str, bool) terminates = (body, want) {
+        var (ast.File*, Err*) f = FileParser::Parse(Parser::New("public namespace Main {\n    fun int(int) F = (n) " + body + "\n}\n"));
+        if(!Assert::True(f.0 != null && f.0.decl != null, body + " does not parse")) {
+            return;
+        }
+        var ast.Field.Method* m = f.0.decl.fields.Get(0U){ast.Field.Method*};
+        Assert::True(Termination::Terminates(m.body) == want, body + " terminating is not " + want{str});
+    }
+
+    public fun void(uint, str...) Blocks = (argC, argV) {
+        TerminationTest::terminates("{ return n; }", true);
+        TerminationTest::terminates("{ { { return n; } } }", true);
+        TerminationTest::terminates("{ n++; }", false);
+        TerminationTest::terminates("{ var int x = ; }", true);
+        TerminationTest::terminates("{ if (n > 0) { return 1; } }", false);
+        TerminationTest::terminates("{ if (n > 0) { return 1; } else { return 2; } }", true);
+        TerminationTest::terminates("{ if (n > 0) { return 1; } else { n++; } }", false);
+    }
+
+    public fun void(uint, str...) Loops = (argC, argV) {
+        TerminationTest::terminates("{ for { n++; } }", true);
+        TerminationTest::terminates("{ for (; true;) { n++; } }", true);
+        TerminationTest::terminates("{ for (; n < 1;) { n++; } }", false);
+        TerminationTest::terminates("{ for (; n < 1;) { n++; } else { return 1; } }", true);
+        TerminationTest::terminates("{ for { break; } }", false);
+        TerminationTest::terminates("{ for { for { break; } } }", true);
+        TerminationTest::terminates("{ for { switch (n) { case (1) break; } } }", true);
+        TerminationTest::terminates("{ for { for (; n < 1;) { n++; } else { break; } } }", false);
+        TerminationTest::terminates("{ label outer: for { switch (n) { case (1) break outer; } } }", false);
+        TerminationTest::terminates("{ label forever: for { continue forever; } }", true);
+        TerminationTest::terminates("{ label outer: for { label inner: for { break inner; } } }", true);
+    }
+
+    public fun void(uint, str...) Switches = (argC, argV) {
+        TerminationTest::terminates("{ switch (n) { case (1) return 1; } }", false);
+        TerminationTest::terminates("{ switch (n) { case (1) return 1; } else { return 2; } }", true);
+        TerminationTest::terminates("{ switch (n) { case (1) break; } else { return 1; } }", false);
+        TerminationTest::terminates("{ switch (n) { case (1) {} } else { return 1; } }", false);
+        TerminationTest::terminates("{ switch (n) { case (1) continue; } else { return 1; } }", true);
+        TerminationTest::terminates("{ switch (n) { case (0) { if (n == 0) { continue; } else { return 1; } } } else { return 2; } }", true);
+    }
+}

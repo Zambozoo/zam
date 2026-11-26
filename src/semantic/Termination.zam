@@ -1,0 +1,172 @@
+import std("data/list/ArrList.zam");
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+
+// Termination says whether control can run past a statement
+public namespace Termination {
+    // Terminates reports whether control cannot run past s
+    public fun bool(ast.Stmt*) Terminates = (s) {
+        if(s == null) {
+            return false;
+        }
+        switch(s.kind) {
+            case (ast.Stmt.Kind::Return)
+                return true;
+            case (ast.Stmt.Kind::Block) {
+                var ast.Stmt.Block* b = s{ast.Stmt.Block*};
+                if(b.broken) {
+                    return true;
+                }
+                for(var uint i = 0U; i < b.statements.Len(); i++) {
+                    if(Termination::Terminates(b.statements.Get(i))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            case (ast.Stmt.Kind::If) {
+                var ast.Stmt.If* i = s{ast.Stmt.If*};
+                return i.otherwise != null && Termination::Terminates(i.then) && Termination::Terminates(i.otherwise);
+            }
+            case (ast.Stmt.Kind::For)
+                return Termination::loop(s{ast.Stmt.For*});
+            case (ast.Stmt.Kind::Switch)
+                return Termination::switched(s{ast.Stmt.Switch*});
+            case (ast.Stmt.Kind::Label)
+                return Termination::Terminates(s{ast.Stmt.Label*}.target);
+        }
+        return false;
+    }
+
+    // switched reports whether control cannot run past a switch
+    fun bool(ast.Stmt.Switch*) switched = (s) {
+        if(s.otherwise == null) {
+            return false;
+        }
+        var ArrList[ast.Stmt*]* bodies = Termination::bodies(s);
+        for(var uint i = 0U; i < bodies.Len(); i++) {
+            if(Termination::breaksOut(bodies.Get(i), ArrList::[str]New(0U)) || !Termination::endsOrFallsThrough(bodies.Get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // endsOrFallsThrough reports whether control cannot run past the end of a switch body
+    fun bool(ast.Stmt*) endsOrFallsThrough = (s) {
+        if(s == null) {
+            return false;
+        }
+        switch(s.kind) {
+            case (ast.Stmt.Kind::Continue)
+                return true;
+            case (ast.Stmt.Kind::Block) {
+                var ast.Stmt.Block* b = s{ast.Stmt.Block*};
+                if(b.broken) {
+                    return true;
+                }
+                for(var uint i = 0U; i < b.statements.Len(); i++) {
+                    if(Termination::endsOrFallsThrough(b.statements.Get(i))) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            case (ast.Stmt.Kind::If) {
+                var ast.Stmt.If* i = s{ast.Stmt.If*};
+                return i.otherwise != null && Termination::endsOrFallsThrough(i.then) && Termination::endsOrFallsThrough(i.otherwise);
+            }
+        }
+        return Termination::Terminates(s);
+    }
+
+    // loop reports whether control cannot run past a loop
+    fun bool(ast.Stmt.For*) loop = (s) {
+        if(Termination::breaksOut(s.body, ArrList::[str]New(0U))) {
+            return false;
+        } else if(s.condition == null || (s.condition.kind == ast.Expr.Kind::Symbol && s.condition.start.kind == TokenKind::True)) {
+            return true;
+        }
+        return s.otherwise != null && Termination::Terminates(s.otherwise);
+    }
+
+    // breaksOut reports whether a break within s leaves the loop or switch being asked about
+    fun bool(ast.Stmt*, ArrList[str]*) breaksOut = (s, inner) {
+        if(s == null) {
+            return false;
+        }
+        switch(s.kind) {
+            case (ast.Stmt.Kind::Break) {
+                var ast.Stmt.Jump* j = s{ast.Stmt.Jump*};
+                if(j.target == null) {
+                    return inner.Len() == 0U;
+                }
+                return !Termination::holds(inner, j.target.value{str});
+            }
+            case (ast.Stmt.Kind::Block) {
+                var ast.Stmt.Block* b = s{ast.Stmt.Block*};
+                for(var uint i = 0U; i < b.statements.Len(); i++) {
+                    if(Termination::breaksOut(b.statements.Get(i), inner)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            case (ast.Stmt.Kind::If) {
+                var ast.Stmt.If* i = s{ast.Stmt.If*};
+                return Termination::breaksOut(i.then, inner) || Termination::breaksOut(i.otherwise, inner);
+            }
+            case (ast.Stmt.Kind::Label) {
+                var ast.Stmt.Label* l = s{ast.Stmt.Label*};
+                return Termination::breaksOut(l.target, Termination::with(inner, l.name.value{str}));
+            }
+            case (ast.Stmt.Kind::Switch) {
+                var ArrList[str]* nested = Termination::with(inner, "");
+                var ArrList[ast.Stmt*]* bodies = Termination::bodies(s{ast.Stmt.Switch*});
+                for(var uint i = 0U; i < bodies.Len(); i++) {
+                    if(Termination::breaksOut(bodies.Get(i), nested)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            case (ast.Stmt.Kind::For) {
+                // A loop's else runs on the way out of it, beside its body
+                var ast.Stmt.For* f = s{ast.Stmt.For*};
+                return Termination::breaksOut(f.body, Termination::with(inner, "")) || Termination::breaksOut(f.otherwise, inner);
+            }
+        }
+        return false;
+    }
+
+    // bodies answers the bodies of a switch's cases, then its else
+    fun ArrList[ast.Stmt*]*(ast.Stmt.Switch*) bodies = (s) {
+        var ArrList[ast.Stmt*]* bodies = ArrList::[ast.Stmt*]New(0U);
+        for(var uint i = 0U; i < s.cases.Len(); i++) {
+            bodies.AddLast(s.cases.Get(i).body);
+        }
+        if(s.otherwise != null) {
+            bodies.AddLast(s.otherwise);
+        }
+        return bodies;
+    }
+
+    // with answers labels with name added
+    fun ArrList[str]*(ArrList[str]*, str) with = (labels, name) {
+        var ArrList[str]* added = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < labels.Len(); i++) {
+            added.AddLast(labels.Get(i));
+        }
+        added.AddLast(name);
+        return added;
+    }
+
+    fun bool(ArrList[str]*, str) holds = (labels, name) {
+        for(var uint i = 0U; i < labels.Len(); i++) {
+            if(labels.Get(i) == name) {
+                return true;
+            }
+        }
+        return false;
+    }
+}

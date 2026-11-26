@@ -1,0 +1,206 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "Expressions.zam";
+import "Model.zam";
+import "Semantic.zam";
+import "Statements.zam";
+import "Static.zam";
+import "Type.zam";
+
+public namespace ExpressionsTest {
+    // validated answers the model of the namespace Main holding body,
+    // failing on any error
+    private fun (Model*, ast.Decl*)(str) validated = (body) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + body + "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        return (validated.0, parsed.0.main);
+    }
+
+    // statements answers the statements of the body of the method at index
+    // in d
+    private fun ArrList[ast.Stmt*]*(ast.Decl*, uint) statements = (d, index) {
+        return d.fields.Get(index){ast.Field.Method*}.body{ast.Stmt.Block*}.statements;
+    }
+
+    // initializer answers the expression the variable declared by s starts as
+    private fun ast.Expr*(ast.Stmt*) initializer = (s) {
+        return s{ast.Stmt.Variable*}.init;
+    }
+
+    public fun void(uint, str...) Types = (argC, argV) {
+        var (Model*, ast.Decl*) out = ExpressionsTest::validated(
+            "    class Box[T] {\n" +
+            "        var T held;\n" +
+            "        fun void() Use = () {\n" +
+            "            var Box[T]* me = this;\n" +
+            "            var T it = held;\n" +
+            "            var void* raw = native(X);\n" +
+            "            var Box[T]* fresh = new(Box[T]);\n" +
+            "            var int n = 1{int};\n" +
+            "        }\n" +
+            "    }\n");
+        var Model* m = out.0;
+        var ast.Decl* box = m.Nested(out.1, "Box");
+        var ArrList[ast.Stmt*]* body = ExpressionsTest::statements(box, 1U);
+        Assert::[str]Equal("Box[T]*", m.ExprType(ExpressionsTest::initializer(body.Get(0U))).Text());
+        var ast.Expr* held = ExpressionsTest::initializer(body.Get(1U));
+        Assert::[str]Equal("T", m.ExprType(held).Text());
+        Assert::True(m.Binding(held).kind == Model.Binding.Kind::Instance, "held is not an instance field");
+        Assert::[str]Equal("void*", m.ExprType(ExpressionsTest::initializer(body.Get(2U))).Text());
+        Assert::[str]Equal("Box[T]*", m.ExprType(ExpressionsTest::initializer(body.Get(3U))).Text());
+        Assert::[str]Equal("int", m.ExprType(ExpressionsTest::initializer(body.Get(4U))).Text());
+    }
+
+    public fun void(uint, str...) Captures = (argC, argV) {
+        var (Model*, ast.Decl*) out = ExpressionsTest::validated(
+            "    static var int shared;\n" +
+            "    fun void(int) Use = (n) {\n" +
+            "        var int total = 0;\n" +
+            "        var void() outer = lambda void(): () {\n" +
+            "            var int mine = 0;\n" +
+            "            var void() inner = lambda void(): () {\n" +
+            "                var int a = total;\n" +
+            "                var int b = mine;\n" +
+            "                var int c = n;\n" +
+            "                var int d = shared;\n" +
+            "            };\n" +
+            "        };\n" +
+            "    }\n");
+        var Model* m = out.0;
+        var ArrList[ast.Stmt*]* body = ExpressionsTest::statements(out.1, 1U);
+        var ast.Expr.Lambda* outer = ExpressionsTest::initializer(body.Get(1U)){ast.Expr.Lambda*};
+        var ast.Expr.Lambda* inner = ExpressionsTest::initializer(outer.body{ast.Stmt.Block*}.statements.Get(1U)){ast.Expr.Lambda*};
+        var ArrList[str]* outerCaptures = m.Captures(outer);
+        var ArrList[str]* innerCaptures = m.Captures(inner);
+        if(Assert::[uint]Equal(3U, innerCaptures.Len())) {
+            Assert::[str]Equal("total", innerCaptures.Get(0U));
+            Assert::[str]Equal("mine", innerCaptures.Get(1U));
+            Assert::[str]Equal("n", innerCaptures.Get(2U));
+        }
+        if(Assert::[uint]Equal(2U, outerCaptures.Len())) {
+            Assert::[str]Equal("total", outerCaptures.Get(0U));
+            Assert::[str]Equal("n", outerCaptures.Get(1U));
+        }
+    }
+
+    public fun void(uint, str...) Casts = (argC, argV) {
+        var (Model*, ast.Decl*) out = ExpressionsTest::validated("");
+        var Static* checker = new(Static);
+        var Expressions* x = Expressions::New(checker, null, out.0);
+        var Type* i = Type.Primitive::New(null, TokenKind::Int);
+        var Type* f = Type.Primitive::New(null, TokenKind::Float);
+        var Type* s = Type.Primitive::New(null, TokenKind::String);
+        var Type* b = Type.Primitive::New(null, TokenKind::Bool);
+        var Type* v = Type.Primitive::New(null, TokenKind::Void);
+        var Type* voidPointer = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, v);
+        var Type* intPointer = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, i);
+        var Type* boolPointer = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, b);
+        var Type* bytePointer = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, Type.Primitive::New(null, TokenKind::Byte));
+        var Type* fn = Type.Function::New(null, i, ArrList::[Type*]New(0U));
+        Assert::True(x.Castable(i, f), "int to flt");
+        Assert::True(x.Castable(i, s), "int to str");
+        Assert::False(x.Castable(v, s), "void to str");
+        Assert::True(x.Castable(i, voidPointer), "int to void*");
+        Assert::False(x.Castable(i, intPointer), "int to int*");
+        Assert::True(x.Castable(voidPointer, intPointer), "void* to int*");
+        Assert::False(x.Castable(intPointer, boolPointer), "int* to bool*");
+        Assert::True(x.Castable(intPointer, i), "int* to int");
+        Assert::True(x.Castable(s, bytePointer), "str to byte*");
+        Assert::False(x.Castable(s, i), "str to int");
+        Assert::True(x.Castable(voidPointer, fn), "void* to a function");
+        Assert::True(x.Castable(fn, voidPointer), "a function to void*");
+        Assert::False(x.Castable(fn, f), "a function to flt");
+        Assert::True(x.Castable(Type::Null, intPointer), "null to int*");
+        Assert::True(x.Castable(Type.Wrapped::New(null, ast.Type.Wrap::Const, i), f), "int$ to flt");
+    }
+
+    public fun void(uint, str...) Operators = (argC, argV) {
+        var (Model*, ast.Decl*) out = ExpressionsTest::validated(
+            "    static fun int(int) Twice = (n) { return n * 2; }\n" +
+            "    fun void(int, str, int*, int$) Use = (i, s, p, k) {\n" +
+            "        var bool b = i < 2;\n" +
+            "        var int order = i <=> 2;\n" +
+            "        var int* q = p + 1;\n" +
+            "        var str joined = s + 'c';\n" +
+            "        var (int, str) pair = (k, s);\n" +
+            "        var int called = Twice(i);\n" +
+            "        var thread[int] spawned = async(Twice(i));\n" +
+            "        var int joinedThread = wait(spawned);\n" +
+            "        var int fresh = -k;\n" +
+            "        var int element = p[2];\n" +
+            "    }\n");
+        var Model* m = out.0;
+        var ArrList[ast.Stmt*]* body = ExpressionsTest::statements(out.1, 1U);
+        var ArrList[str]* want = ArrList::[str]New(10U, "bool", "int", "int*", "str", "(int, str)", "int", "thread[int]", "int", "int", "int");
+        for(var uint i = 0U; i < want.Len(); i++) {
+            var Type* t = m.ExprType(ExpressionsTest::initializer(body.Get(i)));
+            if(Assert::True(t != null, "statement " + i{str} + " is untyped")) {
+                Assert::[str]Equal(want.Get(i), t.Text());
+            }
+        }
+    }
+
+    public fun void(uint, str...) LValues = (argC, argV) {
+        var (Model*, ast.Decl*) out = ExpressionsTest::validated(
+            "    class Box {\n" +
+            "        var int held;\n" +
+            "        var Box* next;\n" +
+            "        fun void() Get = () {}\n" +
+            "    }\n" +
+            "    static fun Box() Make = () { var Box b; return b; }\n" +
+            "    fun void(int, int*, Box, Box*) Use = (i, p, box, ref) {\n" +
+            "        i;\n" +
+            "        *p;\n" +
+            "        p[1];\n" +
+            "        box.held;\n" +
+            "        ref.next.held;\n" +
+            "        Make().held;\n" +
+            "        i + 1;\n" +
+            "        box.Get;\n" +
+            "        1;\n" +
+            "    }\n");
+        var Model* m = out.0;
+        var Expressions* x = Expressions::New(new(Static), null, m);
+        var ArrList[ast.Stmt*]* body = ExpressionsTest::statements(out.1, 2U);
+        var ArrList[bool]* want = ArrList::[bool]New(9U, true, true, true, true, true, false, false, false, false);
+        for(var uint i = 0U; i < want.Len(); i++) {
+            Assert::True(x.IsLValue(body.Get(i){ast.Stmt.Value*}.value) == want.Get(i), "statement " + i{str} + " is misjudged");
+        }
+    }
+
+    public fun void(uint, str...) Statics = (argC, argV) {
+        var (Model*, ast.Decl*) out = ExpressionsTest::validated(
+            "    static var int count = 1;\n" +
+            "    static fun[T] T(T) Id = (x) { return x; }\n" +
+            "    enum Code : int {\n" +
+            "        A(1);\n" +
+            "    }\n" +
+            "    fun void() Use = () {\n" +
+            "        var int c = Main::count;\n" +
+            "        var Code k = Main.Code::A;\n" +
+            "        var int(int) id = Main::[int]Id;\n" +
+            "        var type t = @{int};\n" +
+            "        var str s = Main::[str]Id(\"s\");\n" +
+            "    }\n");
+        var Model* m = out.0;
+        var ArrList[ast.Stmt*]* body = ExpressionsTest::statements(out.1, 3U);
+        var ArrList[str]* want = ArrList::[str]New(5U, "int", "Code", "int(int)", "type", "str");
+        for(var uint i = 0U; i < want.Len(); i++) {
+            var Type* t = m.ExprType(ExpressionsTest::initializer(body.Get(i)));
+            if(Assert::True(t != null, "statement " + i{str} + " is untyped")) {
+                Assert::[str]Equal(want.Get(i), t.Text());
+            }
+        }
+    }
+}

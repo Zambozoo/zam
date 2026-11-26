@@ -1,0 +1,5 @@
+public namespace Main {
+    fun int() S5 = () { return; }
+    fun void() Bare = () { return; }
+    fun int() Value = () { return 1; }
+}

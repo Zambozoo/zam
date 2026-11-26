@@ -1,0 +1,34 @@
+public namespace Main {
+    static fun void() Nothing = () {}
+    fun int(int, bool, str, int*, bool$) Statements = (i, b, s, p, fixed) {
+        if (i) {}
+        if (b) {}
+        if (fixed) {}
+        for (; i;) {}
+        for (; s; i++) {}
+        switch (i) {
+            case (1, "two") {}
+            case (3) {}
+        }
+        delete Nothing();
+        delete i;
+        free i;
+        free p;
+        free &i;
+        mark Nothing();
+        var int n = "s";
+        var str t = i;
+        var int x, str y = (1, 2);
+        var int z, str w = i;
+        var int u, int v = (1, 2, 3);
+        if (b) {
+            return "s";
+        }
+        return i;
+    }
+    static fun (int, str)() Pair = () { return (1, "s"); }
+    fun void() Unpacked = () {
+        var int a, str c = Pair();
+        var str d, int e = Pair();
+    }
+}

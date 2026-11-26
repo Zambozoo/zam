@@ -1,0 +1,441 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("lang/Strs.zam");
+import "../syntax/Token.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Expressions.zam";
+import "Static.zam";
+import "Subtyping.zam";
+import "Termination.zam";
+import "Type.zam";
+
+// Statements checks the statements of a body
+public class Statements {
+    // Closure is a lambda whose body is being checked
+    class Closure {
+        var ast.Expr.Lambda* expr;
+        // depth is how many scopes stood open when its body was entered
+        var uint depth;
+    }
+
+    var Static* checker;
+    var Model* model;
+    var Expressions* expressions;
+    // scopes is the names in scope, innermost last
+    var ArrList[HashMap[str, Model.Binding*]*]* scopes;
+    // labels is the names each loop and switch being checked answers to,
+    var ArrList[HashMap[str, ast.Stmt*]*]* labels;
+    // pending is a label written but not yet claimed by the loop or switch it names
+    var str pending;
+    // fallsThrough says whether the body being checked has another after it to fall through to
+    var HashMap[ast.Stmt.Switch*, bool]* fallsThrough;
+    // deferring says the statement being checked runs as its block is left
+    var bool deferring;
+    // returns is the type the body being checked owes
+    var Type* returns;
+    // lambdas is the lambdas whose bodies are being checked, innermost last
+    var ArrList[Closure*]* lambdas;
+
+    public static fun Statements*(Static*, Model*) New = (checker, m) {
+        var Statements* s = new(Statements);
+        s.checker = checker;
+        s.model = m;
+        s.expressions = Expressions::New(checker, s, m);
+        return s;
+    }
+
+    // Method checks the body of f, of type t, with scopes in scope and its parameters innermost
+    fun void(ast.Field.Method*, Type.Function*, ArrList[HashMap[str, Model.Binding*]*]*) Method = (f, t, scopes) {
+        this.reset(scopes, t.returns);
+        this.scopes.AddLast(Statements::parameters(f.parameters, t));
+        this.visit(f.body);
+    }
+
+    // Expression checks e, written outside any body, with scopes in scope
+    fun (Type*, bool)(ast.Expr*, ArrList[HashMap[str, Model.Binding*]*]*) Expression = (e, scopes) {
+        this.reset(scopes, null);
+        return this.expression(e);
+    }
+
+    fun void(ArrList[HashMap[str, Model.Binding*]*]*, Type*) reset = (scopes, returns) {
+        this.scopes = scopes;
+        this.labels = ArrList::[HashMap[str, ast.Stmt*]*]New(0U);
+        this.pending = "";
+        this.fallsThrough = HashMap::[ast.Stmt.Switch*, bool]New(0U);
+        this.deferring = false;
+        this.returns = returns;
+        this.lambdas = ArrList::[Closure*]New(0U);
+    }
+
+    // Lambda checks the body of l, of type t
+    fun void(ast.Expr.Lambda*, Type.Function*) Lambda = (l, t) {
+        var Type* returns = this.returns;
+        var ArrList[HashMap[str, ast.Stmt*]*]* labels = this.labels;
+        var str pending = this.pending;
+        var bool deferring = this.deferring;
+        this.returns = t.returns;
+        this.labels = ArrList::[HashMap[str, ast.Stmt*]*]New(0U);
+        this.pending = "";
+        this.deferring = false;
+        var Closure* context = new(Closure);
+        context.expr = l;
+        context.depth = this.scopes.Len();
+        this.lambdas.AddLast(context);
+        this.scopes.AddLast(Statements::parameters(l.parameters, t));
+        this.visit(l.body);
+        if(!Static::isVoid(t.returns) && !Termination::Terminates(l.body)) {
+            this.checker.fail(l.start, "lambda can be left without returning a " + t.returns.Text());
+        }
+        this.scopes.RemoveLast();
+        this.lambdas.RemoveLast();
+        this.returns = returns;
+        this.labels = labels;
+        this.pending = pending;
+        this.deferring = deferring;
+    }
+
+    // Lookup answers what name stands for, searching the innermost scope outward
+    fun Model.Binding*(str) Lookup = (name) {
+        for(var uint depth = this.scopes.Len(); depth > 0U; depth--) {
+            var (Model.Binding*, bool) b = this.scopes.Get(depth - 1U).Get(name);
+            if(!b.1) {
+                continue;
+            }
+            if(b.0.kind == Model.Binding.Kind::Local) {
+                for(var uint i = this.lambdas.Len(); i > 0U; i--) {
+                    var Closure* l = this.lambdas.Get(i - 1U);
+                    if(depth > l.depth) {
+                        break;
+                    }
+                    this.model.capture(l.expr, name);
+                }
+            }
+            return b.0;
+        }
+        return null;
+    }
+
+    // parameters binds the names of a body's parameters to the types t declares them with
+    static fun HashMap[str, Model.Binding*]*(ArrList[Token*]*, Type.Function*) parameters = (names, t) {
+        var HashMap[str, Model.Binding*]* scope = HashMap::[str, Model.Binding*]New(0U);
+        if(names == null) {
+            return scope;
+        }
+        for(var uint i = 0U; i < names.Len() && i < t.parameters.Len(); i++) {
+            var Token* name = names.Get(i);
+            if(name.kind == TokenKind::Underscore) {
+                continue;
+            }
+            var Type* bound = t.parameters.Get(i);
+            if(bound.kind == Type.Kind::Wrapped && bound{Type.Wrapped*}.wrap == ast.Type.Wrap::Variadic) {
+                bound = Type.Wrapped::New(bound.at, ast.Type.Wrap::Pointer, bound{Type.Wrapped*}.inner);
+            }
+            scope.Put(name.value{str}, Model.Binding::New(Model.Binding.Kind::Local, bound, null, name));
+        }
+        return scope;
+    }
+
+    // expression checks e, answering its type and whether it was found well formed
+    fun (Type*, bool)(ast.Expr*) expression = (e) {
+        if(e == null) {
+            return (null, true);
+        }
+        return this.expressions.Check(e);
+    }
+
+    fun void(ast.Stmt*) visit = (s) {
+        if(s == null) {
+            return;
+        }
+        switch(s.kind) {
+            case (ast.Stmt.Kind::Expr)
+                this.expression(s{ast.Stmt.Value*}.value);
+            case (ast.Stmt.Kind::Delete, ast.Stmt.Kind::Free, ast.Stmt.Kind::Mark)
+                this.visitValue(s{ast.Stmt.Value*});
+            case (ast.Stmt.Kind::Return)
+                this.visitReturn(s{ast.Stmt.Value*});
+            case (ast.Stmt.Kind::Break, ast.Stmt.Kind::Continue)
+                this.visitJump(s{ast.Stmt.Jump*});
+            case (ast.Stmt.Kind::Block) {
+                this.open();
+                var ArrList[ast.Stmt*]* statements = s{ast.Stmt.Block*}.statements;
+                for(var uint i = 0U; i < statements.Len(); i++) {
+                    this.visit(statements.Get(i));
+                }
+                this.close();
+            }
+            case (ast.Stmt.Kind::For)
+                this.visitFor(s{ast.Stmt.For*});
+            case (ast.Stmt.Kind::If) {
+                var ast.Stmt.If* i = s{ast.Stmt.If*};
+                if(!this.condition(i.condition)) {
+                    this.checker.fail(s.start, "if condition is not a boolean");
+                }
+                this.scoped(i.then);
+                this.scoped(i.otherwise);
+            }
+            case (ast.Stmt.Kind::Switch)
+                this.visitSwitch(s{ast.Stmt.Switch*});
+            case (ast.Stmt.Kind::Label) {
+                this.pending = s{ast.Stmt.Label*}.name.value{str};
+                this.visit(s{ast.Stmt.Label*}.target);
+            }
+            case (ast.Stmt.Kind::Variable)
+                this.visitVariable(s{ast.Stmt.Variable*});
+            case (ast.Stmt.Kind::Unpack)
+                this.visitUnpack(s{ast.Stmt.Unpack*});
+            case (ast.Stmt.Kind::Defer)
+                this.visitDefer(s{ast.Stmt.Defer*});
+        }
+    }
+
+    // scoped checks s in a scope of its own
+    fun void(ast.Stmt*) scoped = (s) {
+        if(s != null) {
+            this.open();
+            this.visit(s);
+            this.close();
+        }
+    }
+
+    // visitReturn requires a return leave no deferred statement and give back what the body owes
+    fun void(ast.Stmt.Value*) visitReturn = (s) {
+        var (Type*, bool) value = this.expression(s.value);
+        if(!value.1) {
+            return;
+        } else if(this.deferring) {
+            this.checker.fail(s.start, "return cannot leave a deferred statement");
+        } else if(s.value == null && !Static::isVoid(this.returns)) {
+            this.checker.fail(s.start, "return without a value in a method returning " + this.returns.Text());
+        } else if(s.value != null && this.returns != null && !this.expressions.Packs(s.value, value.0, Expressions::InitTarget(this.returns))) {
+            this.checker.fail(s.value.start, "return expression is not a subtype of " + this.returns.Text());
+        }
+    }
+
+    // visitValue checks what a delete, free or mark is given
+    fun void(ast.Stmt.Value*) visitValue = (s) {
+        var Type* t = this.expression(s.value).0;
+        if(t == null) {
+            return;
+        }
+        switch(s.kind) {
+            case (ast.Stmt.Kind::Delete) {
+                if(Static::isVoid(t)) {
+                    this.checker.fail(s.start, "cannot delete " + t.Text() + ", which is not a value");
+                }
+            }
+            case (ast.Stmt.Kind::Free) {
+                var bool addressed = s.value.kind == ast.Expr.Kind::Unary && s.value{ast.Expr.Unary*}.operator == TokenKind::And;
+                if(!(t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Pointer) && !addressed) {
+                    this.checker.fail(s.start, "free expression " + t.Text() + " is not an lvalue");
+                }
+            }
+            case (ast.Stmt.Kind::Mark) {
+                if(Static::isVoid(t)) {
+                    this.checker.fail(s.start, "cannot mark " + t.Text() + ", which is not a value");
+                }
+            }
+        }
+    }
+
+    // condition checks e, reporting whether it is a boolean or could not be typed
+    fun bool(ast.Expr*) condition = (e) {
+        var (Type*, bool) t = this.expression(e);
+        return !t.1 || t.0 == null || this.expressions.subtyping.Equal(t.0, Type.Primitive::New(null, TokenKind::Bool));
+    }
+
+    // visitJump validates a break or continue
+    fun void(ast.Stmt.Jump*) visitJump = (s) {
+        var str name = "";
+        if(s.target != null) {
+            name = s.target.value{str};
+        }
+        for(var uint i = this.labels.Len(); i > 0U; i--) {
+            var (ast.Stmt*, bool) target = this.labels.Get(i - 1U).Get(name);
+            if(!target.1) {
+                continue;
+            }
+            var ast.Stmt.Switch* switched = target.0{ast.Stmt.Switch*};
+            if(switched != null && s.kind == ast.Stmt.Kind::Continue && !this.fallsThrough.Get(switched).0) {
+                this.checker.fail(s.start, "continue falls through the last body of a switch, which has no body after it");
+            }
+            return;
+        }
+        var str jump = "break";
+        if(s.kind == ast.Stmt.Kind::Continue) {
+            jump = "continue";
+        }
+        if(this.deferring) {
+            this.checker.fail(s.start, jump + " cannot leave a deferred statement");
+        } else if(name == "") {
+            this.checker.fail(s.start, jump + " is not in a loop or switch");
+        } else {
+            this.checker.fail(s.start, jump + " names label " + name + ", which is not a loop or switch in scope");
+        }
+    }
+
+    // visitFor checks a loop
+    fun void(ast.Stmt.For*) visitFor = (s) {
+        if(s.init != null) {
+            this.open();
+            this.visit(s.init);
+        }
+        this.claim(s);
+        if(!this.condition(s.condition)) {
+            this.checker.fail(s.start, "for condition is not a boolean");
+            this.labels.RemoveLast();
+        } else {
+            this.scoped(s.body);
+            this.expression(s.step);
+            this.labels.RemoveLast();
+            this.scoped(s.otherwise);
+        }
+        if(s.init != null) {
+            this.close();
+        }
+    }
+
+    // visitSwitch checks a switch
+    fun void(ast.Stmt.Switch*) visitSwitch = (s) {
+        var (Type*, bool) subject = this.expression(s.subject);
+        for(var uint i = 0U; i < s.cases.Len(); i++) {
+            var ast.Stmt.Case* c = s.cases.Get(i);
+            for(var uint j = 0U; j < c.values.Len(); j++) {
+                var ast.Expr* value = c.values.Get(j);
+                var (Type*, bool) t = this.expression(value);
+                if(t.1 && t.0 != null && subject.1 && subject.0 != null && !this.expressions.Comparable(subject.0, t.0)) {
+                    this.checker.fail(value.start, "case value " + t.0.Text() + " is not comparable with the switch value " + subject.0.Text());
+                }
+            }
+        }
+        this.claim(s);
+        for(var uint i = 0U; i < s.cases.Len(); i++) {
+            this.fallsThrough.Put(s, i + 1U < s.cases.Len() || s.otherwise != null);
+            this.scoped(s.cases.Get(i).body);
+        }
+        if(s.otherwise != null) {
+            this.fallsThrough.Put(s, false);
+            this.scoped(s.otherwise);
+        }
+        this.fallsThrough.Remove(s);
+        this.labels.RemoveLast();
+    }
+
+    // claim puts the names s answers to in scope: "" and any pending label
+    fun void(ast.Stmt*) claim = (s) {
+        var HashMap[str, ast.Stmt*]* names = HashMap::[str, ast.Stmt*]New(0U);
+        names.Put("", s);
+        if(this.pending != "") {
+            names.Put(this.pending, s);
+            this.pending = "";
+        }
+        this.labels.AddLast(names);
+    }
+
+    // visitVariable declares a variable in the innermost scope
+    fun void(ast.Stmt.Variable*) visitVariable = (s) {
+        this.declare(s, s.start);
+        var Type* t = this.model.TypeOf(s.declared);
+        this.checker.requireDeclarable(t, s.start, "variable", Statements::nameOf(s));
+        this.checker.walk(t, false);
+        var (Type*, bool) init = this.expression(s.init);
+        if(init.1 && init.0 != null && t != null && !this.expressions.Packs(s.init, init.0, Expressions::InitTarget(t))) {
+            this.checker.fail(s.init.start, "variable expression is not a subtype of " + t.Text());
+        }
+    }
+
+    // visitUnpack checks the types of an unpack's variables, then its value
+    fun void(ast.Stmt.Unpack*) visitUnpack = (s) {
+        for(var uint i = 0U; i < s.variables.Len(); i++) {
+            var ast.Stmt.Variable* v = s.variables.Get(i);
+            var Type* t = this.model.TypeOf(v.declared);
+            this.checker.requireDeclarable(t, s.start, "variable", Statements::nameOf(v));
+            this.checker.walk(t, false);
+        }
+        var (Type*, bool) init = this.expression(s.init);
+        if(init.1 && init.0 != null) {
+            this.unpack(s, init.0);
+        }
+        for(var uint i = 0U; i < s.variables.Len(); i++) {
+            this.declare(s.variables.Get(i), s.start);
+        }
+    }
+
+    // unpack checks the value of s, of t, has an element for each variable that fits it
+    fun void(ast.Stmt.Unpack*, Type*) unpack = (s, t) {
+        var ArrList[ast.Stmt.Variable*]* variables = s.variables;
+        if(s.init.kind == ast.Expr.Kind::Tuple && s.init{ast.Expr.Tuple*}.elements.Len() == variables.Len()) {
+            var ArrList[ast.Expr*]* elements = s.init{ast.Expr.Tuple*}.elements;
+            for(var uint i = 0U; i < variables.Len(); i++) {
+                var ast.Expr* element = elements.Get(i);
+                var Type* declared = this.model.TypeOf(variables.Get(i).declared);
+                if(declared != null && !this.expressions.Packs(element, this.model.ExprType(element), Expressions::InitTarget(declared))) {
+                    this.checker.fail(element.start, "element " + i{str} + " is not a subtype of " + declared.Text());
+                }
+            }
+            return;
+        }
+        var Type* tuple = Subtyping::StripConst(t);
+        if(tuple.kind != Type.Kind::Tuple || tuple{Type.Tuple*}.types.Len() != variables.Len()) {
+            this.checker.fail(s.init.start, "cannot unpack " + t.Text() + " into " + variables.Len(){str} + " variables");
+            return;
+        }
+        for(var uint i = 0U; i < variables.Len(); i++) {
+            var Type* declared = this.model.TypeOf(variables.Get(i).declared);
+            if(declared != null && !this.expressions.subtyping.Is(tuple{Type.Tuple*}.types.Get(i), Expressions::InitTarget(declared))) {
+                this.checker.fail(s.init.start, "element " + i{str} + " of " + t.Text() + " is not a subtype of " + declared.Text());
+            }
+        }
+    }
+
+    // declare puts v in the innermost scope
+    fun void(ast.Stmt.Variable*, Token*) declare = (v, at) {
+        if(v.name.kind == TokenKind::Underscore) {
+            return;
+        }
+        var str name = v.name.value{str};
+        var HashMap[str, Model.Binding*]* scope = this.scopes.Get(this.scopes.Len() - 1U);
+        if(scope.Contains(name)) {
+            this.checker.fail(at, "variable " + name + " already declared");
+        }
+        scope.Put(name, Model.Binding::New(Model.Binding.Kind::Local, this.model.TypeOf(v.declared), null, v.name));
+    }
+
+    // visitDefer checks a deferred statement
+    fun void(ast.Stmt.Defer*) visitDefer = (s) {
+        if(s.deferred == null) {
+            return;
+        } else if(s.deferred.kind == ast.Stmt.Kind::Variable || s.deferred.kind == ast.Stmt.Kind::Unpack) {
+            this.checker.fail(s.start, "a declaration cannot be deferred");
+            return;
+        } else if(s.deferred.kind == ast.Stmt.Kind::Defer) {
+            this.checker.fail(s.start, "a defer cannot be deferred");
+            return;
+        }
+        var ArrList[HashMap[str, ast.Stmt*]*]* labels = this.labels;
+        var bool deferring = this.deferring;
+        this.labels = ArrList::[HashMap[str, ast.Stmt*]*]New(0U);
+        this.deferring = true;
+        this.scoped(s.deferred);
+        this.labels = labels;
+        this.deferring = deferring;
+    }
+
+    fun void() open = () {
+        this.scopes.AddLast(HashMap::[str, Model.Binding*]New(0U));
+    }
+
+    fun void() close = () {
+        this.scopes.RemoveLast();
+    }
+
+    // nameOf answers the name v declares, _ for none
+    static fun str(ast.Stmt.Variable*) nameOf = (v) {
+        if(v.name.kind == TokenKind::Underscore) {
+            return "_";
+        }
+        return v.name.value{str};
+    }
+}

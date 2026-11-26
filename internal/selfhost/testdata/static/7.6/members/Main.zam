@@ -1,0 +1,13 @@
+public namespace Main {
+    static var int count = 1;
+    static var str named = 2;
+    static var int sum = count + 1;
+    class Box {
+        var int held = 1;
+        var str tag = held;
+        var int twice = held + held;
+        static var int shared = held;
+        static var int fixed = 3;
+        var Box* self = null;
+    }
+}

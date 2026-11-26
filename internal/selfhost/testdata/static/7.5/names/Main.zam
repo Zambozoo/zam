@@ -1,0 +1,30 @@
+public namespace Main {
+    static var int shared;
+    class Base {
+        var int inherited;
+    }
+    class Derived <: Base* {
+        var int own;
+        static var int count;
+        fun void() Use = () {
+            var int a = own;
+            var int b = inherited;
+            var int c = count;
+            var int d = shared;
+            var int e = missing;
+            var Derived* self = this;
+            var Base* up = super;
+            var int own = 1;
+            var int f = own;
+        }
+        static fun void() Alone = () {
+            var int x = own;
+            var int y = count;
+        }
+    }
+    struct Plain {
+        fun void() Up = () {
+            var int x = super;
+        }
+    }
+}

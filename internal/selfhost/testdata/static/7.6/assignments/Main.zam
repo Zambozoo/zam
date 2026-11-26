@@ -1,0 +1,38 @@
+public namespace Main {
+    abstract Shape {}
+    class Box {
+        var int held;
+        fun int() Get = () { return held; }
+        fun void() Set = () {
+            held = 1;
+            Get = Get;
+        }
+    }
+    static fun Box() Make = () { var Box b; return b; }
+    fun void(int, int$, int*, Box*, Shape**, Shape*, (int, str)) Assign = (i, k, p, box, shapes, sh, t) {
+        i = 2;
+        k = 2;
+        1 = i;
+        i = "s";
+        *p = 3;
+        p[1] = 4;
+        box.held = 5;
+        Make().held = 6;
+        t.0 = 7;
+        i++;
+        k++;
+        --i;
+        var str s = "s";
+        s++;
+        (i + 1)++;
+        var int* q = &i;
+        var int* r = &(i + 1);
+        var int v = *i;
+        var Shape* deref = *shapes;
+        var int bad = *sh;
+        var int fromBox = *box;
+        var Box* got = &box.Get;
+        var (int, str) packed = (1, "s");
+        packed = (2, 3);
+    }
+}

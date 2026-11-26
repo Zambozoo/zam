@@ -1,0 +1,25 @@
+public namespace Main {
+    enum Code : int {
+        A(1),
+        B("two"),
+        C(1 + 1);
+    }
+    enum Name : str {
+        X("x"),
+        Y(3);
+    }
+    enum Shape {
+        Square.Init(4, "square"),
+        Line.Init(2),
+        Dot.Missing(),
+        Odd.Init("three", "odd"),
+        Plain;
+
+        var int sides;
+        var str tag;
+        fun void(int, str) Init = (n, s) {
+            sides = n;
+            tag = s;
+        }
+    }
+}

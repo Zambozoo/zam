@@ -1,0 +1,1151 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("lang/Strs.zam");
+import "../syntax/Token.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "Access.zam";
+import "Members.zam";
+import "Model.zam";
+import "Statements.zam";
+import "Static.zam";
+import "Subtyping.zam";
+import "Type.zam";
+
+// Expressions types the expressions of a body
+public class Expressions {
+    var Static* checker;
+    var Statements* statements;
+    var Model* model;
+    var Subtyping* subtyping;
+    var Members* members;
+
+    public static fun Expressions*(Static*, Statements*, Model*) New = (checker, statements, m) {
+        var Expressions* x = new(Expressions);
+        x.checker = checker;
+        x.statements = statements;
+        x.model = m;
+        x.subtyping = Subtyping::New(m);
+        x.members = Members::New(m);
+        return x;
+    }
+
+    // Check types e, recording its type and answers the type and whether e was found well formed
+    fun (Type*, bool)(ast.Expr*) Check = (e) {
+        var (Type*, bool) checked = this.typed(e);
+        if(checked.0 != null) {
+            this.model.bindExpr(e, checked.0);
+        }
+        return checked;
+    }
+
+    fun (Type*, bool)(ast.Expr*) typed = (e) {
+        switch(e.kind) {
+            case (ast.Expr.Kind::Symbol)
+                return this.symbol(e{ast.Expr.Symbol*});
+            case (ast.Expr.Kind::Path)
+                return this.path(e{ast.Expr.Path*});
+            case (ast.Expr.Kind::Field) {
+                var ast.Expr.Field* f = e{ast.Expr.Field*};
+                var (Type*, bool) target = this.Check(f.target);
+                if(!target.1 || target.0 == null) {
+                    return target;
+                }
+                return this.selectField(target.0, f.name, e.start);
+            }
+            case (ast.Expr.Kind::Cast)
+                return this.cast(e{ast.Expr.Cast*});
+            case (ast.Expr.Kind::New)
+                return this.allocation(e{ast.Expr.New*});
+            case (ast.Expr.Kind::Static)
+                return this.staticOf(e{ast.Expr.Static*});
+            case (ast.Expr.Kind::TypeValue) {
+                this.checker.walk(this.model.TypeOf(e{ast.Expr.TypeValue*}.named), false);
+                return (Type.Primitive::New(e.start, TokenKind::Type), true);
+            }
+            case (ast.Expr.Kind::Native)
+                return (Type.Wrapped::New(e.start, ast.Type.Wrap::Pointer, Type.Primitive::New(e.start, TokenKind::Void)), true);
+            case (ast.Expr.Kind::Lambda)
+                return this.closure(e{ast.Expr.Lambda*});
+            case (ast.Expr.Kind::NAry) {
+                var ast.Expr.NAry* n = e{ast.Expr.NAry*};
+                var ArrList[Type*]* ts = this.operands(n.operands, false);
+                if(ts == null) {
+                    return (null, false);
+                } else if(Expressions::untyped(ts)) {
+                    return (null, true);
+                }
+                return this.binary(e, n.operator, n.operands, ts);
+            }
+            case (ast.Expr.Kind::Unary) {
+                var ast.Expr.Unary* u = e{ast.Expr.Unary*};
+                var ArrList[Type*]* ts = this.operands(ArrList::[ast.Expr*]New(1U, u.operand), false);
+                if(ts == null) {
+                    return (null, false);
+                } else if(Expressions::untyped(ts)) {
+                    return (null, true);
+                }
+                return this.unary(u, ts.Get(0U));
+            }
+            case (ast.Expr.Kind::Ternary) {
+                var ast.Expr.Ternary* t = e{ast.Expr.Ternary*};
+                var ArrList[Type*]* ts = this.operands(ArrList::[ast.Expr*]New(3U, t.condition, t.then, t.otherwise), false);
+                if(ts == null) {
+                    return (null, false);
+                } else if(Expressions::untyped(ts)) {
+                    return (null, true);
+                } else if(Expressions::keyword(Subtyping::StripConst(ts.Get(0U))) != TokenKind::Bool) {
+                    return this.fail(e.start, "ternary condition must be a boolean, got " + ts.Get(0U).Text());
+                } else if(!this.subtyping.Is(ts.Get(1U), ts.Get(2U))) {
+                    return this.fail(e.start, "ternary then expression is not a subtype of the else expression");
+                }
+                return (ts.Get(1U), true);
+            }
+            case (ast.Expr.Kind::Tuple) {
+                var ArrList[Type*]* ts = this.operands(e{ast.Expr.Tuple*}.elements, false);
+                if(ts == null) {
+                    return (null, false);
+                } else if(Expressions::untyped(ts)) {
+                    return (null, true);
+                }
+                var ArrList[Type*]* elements = ArrList::[Type*]New(0U);
+                for(var uint i = 0U; i < ts.Len(); i++) {
+                    elements.AddLast(Subtyping::StripConst(ts.Get(i)));
+                }
+                return (Type.Tuple::New(e.start, elements), true);
+            }
+            case (ast.Expr.Kind::Call) {
+                var ast.Expr.Call* c = e{ast.Expr.Call*};
+                var ArrList[ast.Expr*]* all = ArrList::[ast.Expr*]New(1U, c.callee);
+                for(var uint i = 0U; i < c.arguments.Len(); i++) {
+                    all.AddLast(c.arguments.Get(i));
+                }
+                var ArrList[Type*]* ts = this.operands(all, true);
+                if(ts == null) {
+                    return (null, false);
+                } else if(Expressions::untyped(ts)) {
+                    return (null, true);
+                }
+                return this.call(e, c.arguments, ts);
+            }
+            case (ast.Expr.Kind::Spread) {
+                var ArrList[Type*]* ts = this.operands(ArrList::[ast.Expr*]New(1U, e{ast.Expr.Spread*}.inner), false);
+                if(ts == null) {
+                    return (null, false);
+                }
+                return (ts.Get(0U), true);
+            }
+            case (ast.Expr.Kind::Index) {
+                var ast.Expr.Index* i = e{ast.Expr.Index*};
+                var ArrList[ast.Expr*]* xs = ArrList::[ast.Expr*]New(2U, i.target, i.index);
+                var ArrList[Type*]* ts = this.operands(xs, false);
+                if(ts == null) {
+                    return (null, false);
+                } else if(Expressions::untyped(ts)) {
+                    return (null, true);
+                }
+                var (Type*, bool) sum = this.additive(e, TokenKind::Plus, xs, ts);
+                if(!sum.1) {
+                    return sum;
+                }
+                return this.dereference(e, sum.0);
+            }
+            case (ast.Expr.Kind::Async) {
+                var ArrList[Type*]* ts = this.operands(ArrList::[ast.Expr*]New(1U, e{ast.Expr.Async*}.call), false);
+                if(ts == null) {
+                    return (null, false);
+                } else if(Expressions::untyped(ts)) {
+                    return (null, true);
+                }
+                return (Type.Wrapped::New(e.start, ast.Type.Wrap::Thread, ts.Get(0U)), true);
+            }
+            case (ast.Expr.Kind::Wait) {
+                var ArrList[Type*]* ts = this.operands(ArrList::[ast.Expr*]New(1U, e{ast.Expr.Wait*}.waited), false);
+                if(ts == null) {
+                    return (null, false);
+                } else if(Expressions::untyped(ts)) {
+                    return (null, true);
+                }
+                var Type* t = ts.Get(0U);
+                if(t.kind != Type.Kind::Wrapped || t{Type.Wrapped*}.wrap != ast.Type.Wrap::Thread) {
+                    return this.fail(e.start, "wait expression must be a thread, got " + t.Text());
+                }
+                return (t{Type.Wrapped*}.inner, true);
+            }
+        }
+        return (null, true);
+    }
+
+    // operands types each operand in order, stopping at the first that fails, and answers their types, or null if one failed
+    fun ArrList[Type*]*(ArrList[ast.Expr*]*, bool) operands = (operands, call) {
+        var ArrList[Type*]* ts = ArrList::[Type*]New(0U);
+        for(var uint i = 0U; i < operands.Len(); i++) {
+            var ast.Expr* operand = operands.Get(i);
+            if(operand == null) {
+                ts.AddLast(null);
+                continue;
+            }
+            if(operand.kind == ast.Expr.Kind::Spread) {
+                if(!call || i + 1U != operands.Len()) {
+                    this.checker.fail(operand.start, "spread may only appear as the last argument of a call");
+                    return null;
+                }
+                var (Type*, bool) inner = this.Check(operand{ast.Expr.Spread*}.inner);
+                if(!inner.1) {
+                    return null;
+                } else if(inner.0 != null) {
+                    this.model.bindExpr(operand, inner.0);
+                }
+                ts.AddLast(inner.0);
+                continue;
+            }
+            var (Type*, bool) checked = this.Check(operand);
+            if(!checked.1) {
+                return null;
+            }
+            ts.AddLast(checked.0);
+        }
+        return ts;
+    }
+
+    // binary types the operator op written as e over xs, typed ts
+    fun (Type*, bool)(ast.Expr*, TokenKind, ArrList[ast.Expr*]*, ArrList[Type*]*) binary = (e, op, xs, ts) {
+        var str name = Expressions::binaryName(op);
+        switch(op) {
+            case (TokenKind::Equal) {
+                if(!this.IsLValue(xs.Get(0U))) {
+                    return this.fail(e.start, "assignment target is not an lvalue");
+                } else if(Expressions::isConst(ts.Get(0U))) {
+                    return this.fail(e.start, "cannot assign to const " + ts.Get(0U).Text());
+                } else if(!this.Packs(xs.Get(1U), ts.Get(1U), ts.Get(0U))) {
+                    return this.fail(xs.Get(1U).start, "cannot assign " + ts.Get(1U).Text() + " to " + ts.Get(0U).Text());
+                }
+                return (ts.Get(0U), true);
+            }
+            case (TokenKind::QuestionQuestion) {
+                if(!Expressions::isPointer(Subtyping::StripConst(ts.Get(0U)))) {
+                    return this.fail(e.start, "left operand of " + name + " must be a pointer, got " + ts.Get(0U).Text());
+                }
+                for(var uint i = 1U; i < ts.Len(); i++) {
+                    if(!this.subtyping.Is(ts.Get(i), ts.Get(0U))) {
+                        return this.fail(e.start, "operands of " + name + " have mismatched types " + ts.Get(0U).Text() + " and " + ts.Get(i).Text());
+                    }
+                }
+                return (ts.Get(0U), true);
+            }
+            case (TokenKind::EqualEqual, TokenKind::BangEqual, TokenKind::Greater, TokenKind::Less, TokenKind::GreaterEqual, TokenKind::LessEqual) {
+                if(!this.requireComparable(e, ts, name)) {
+                    return (null, false);
+                }
+                return (Type.Primitive::New(e.start, TokenKind::Bool), true);
+            }
+            case (TokenKind::Spaceship) {
+                if(!this.requireComparable(e, ts, name)) {
+                    return (null, false);
+                }
+                return (Type.Primitive::New(e.start, TokenKind::Int), true);
+            }
+            case (TokenKind::Subtype) {
+                if(ts.Len() != 2U) {
+                    return this.fail(e.start, name + " relates two operands, got " + ts.Len(){str});
+                } else if(!this.requireAll(e, ts, TokenKind::Type, name)) {
+                    return (null, false);
+                }
+                return (Type.Primitive::New(e.start, TokenKind::Bool), true);
+            }
+            case (TokenKind::OrOr, TokenKind::AndAnd) {
+                if(!this.requireAll(e, ts, TokenKind::Bool, name)) {
+                    return (null, false);
+                }
+                return (Type.Primitive::New(e.start, TokenKind::Bool), true);
+            }
+            case (TokenKind::Or, TokenKind::And, TokenKind::Caret) {
+                if(!this.requireAnyOf(e, ts, 0U, name, Expressions::bitwise())) {
+                    return (null, false);
+                }
+                return (Subtyping::StripConst(ts.Get(0U)), true);
+            }
+            case (TokenKind::LessLess, TokenKind::GreaterGreater, TokenKind::GreaterGreaterGreater, TokenKind::Percent) {
+                if(!this.requireAnyOf(e, ts, 0U, name, Expressions::integral())) {
+                    return (null, false);
+                }
+                return (Subtyping::StripConst(ts.Get(0U)), true);
+            }
+            case (TokenKind::Plus, TokenKind::Minus)
+                return this.additive(e, op, xs, ts);
+            case (TokenKind::Star, TokenKind::Slash)
+                return this.requireAllSame(e, ts, name);
+        }
+        return (null, true);
+    }
+
+    // unary types the prefix or postfix operator e over an operand of t
+    fun (Type*, bool)(ast.Expr.Unary*, Type*) unary = (e, t) {
+        var str name = Expressions::unaryName(e);
+        switch(e.operator) {
+            case (TokenKind::PlusPlus, TokenKind::MinusMinus) {
+                if(!this.IsLValue(e.operand)) {
+                    return this.fail(e.start, "operand of " + name + " is not an lvalue");
+                } else if(Expressions::isConst(t)) {
+                    return this.fail(e.start, "cannot " + name + " const " + t.Text());
+                } else if(!Expressions::numeric(t)) {
+                    return this.fail(e.start, "operand of " + name + " must be numeric, got " + t.Text());
+                }
+                return (t, true);
+            }
+            case (TokenKind::Bang) {
+                if(!this.requireAnyOf(e, ArrList::[Type*]New(1U, t), 0U, name, Expressions::bitwise())) {
+                    return (null, false);
+                }
+                return (Type.Primitive::New(e.start, TokenKind::Bool), true);
+            }
+            case (TokenKind::Tilde) {
+                if(!this.requireAnyOf(e, ArrList::[Type*]New(1U, t), 0U, name, Expressions::bitwise())) {
+                    return (null, false);
+                }
+                return (Subtyping::StripConst(t), true);
+            }
+            case (TokenKind::Minus) {
+                if(!Expressions::numeric(t)) {
+                    return this.fail(e.start, "operand of " + name + " must be numeric, got " + t.Text());
+                }
+                return (Subtyping::StripConst(t), true);
+            }
+            case (TokenKind::Star)
+                return this.dereference(e, t);
+            case (TokenKind::And) {
+                if(!this.IsLValue(e.operand)) {
+                    return this.fail(e.start, "operand of " + name + " is not an lvalue");
+                }
+                return (Type.Wrapped::New(e.start, ast.Type.Wrap::Pointer, t), true);
+            }
+            case (TokenKind::Hash)
+                return (Type.Primitive::New(e.start, TokenKind::Int), true);
+            case (TokenKind::At)
+                return (Type.Primitive::New(e.start, TokenKind::Type), true);
+        }
+        return (t, true);
+    }
+
+    // dereference types reading what a value of t, written as e, points at
+    fun (Type*, bool)(ast.Expr*, Type*) dereference = (e, t) {
+        var Type* w = Subtyping::StripConst(t);
+        if(!Expressions::isPointer(w)) {
+            return this.fail(e.start, "cannot dereference non-pointer type " + t.Text());
+        }
+        var Type* inner = w{Type.Wrapped*}.inner;
+        if(Static::heldAsReference(inner)) {
+            return this.fail(e.start, "cannot dereference " + t.Text() + "; " + inner.Text() + " is declared " + Static::kindName(Members::DeclOf(inner)) + ", which is only ever a reference to the implementor it names and is laid out nowhere to be read out of");
+        }
+        return (inner, true);
+    }
+
+    // call types calling the first of ts with arguments, typed as the rest
+    fun (Type*, bool)(ast.Expr*, ArrList[ast.Expr*]*, ArrList[Type*]*) call = (e, arguments, ts) {
+        var Type* callee = Subtyping::StripConst(ts.Get(0U));
+        if(callee.kind != Type.Kind::Function) {
+            return this.fail(e.start, "cannot call non-function type " + ts.Get(0U).Text());
+        }
+        var ArrList[Type*]* argumentTypes = ArrList::[Type*]New(0U);
+        for(var uint i = 1U; i < ts.Len(); i++) {
+            argumentTypes.AddLast(ts.Get(i));
+        }
+        if(!this.callArguments(e, callee{Type.Function*}, arguments, argumentTypes)) {
+            return (null, false);
+        }
+        return (callee{Type.Function*}.returns, true);
+    }
+
+    // callArguments checks the arity of a call and that each argument fits its parameter, a trailing variadic taking the rest
+    fun bool(ast.Expr*, Type.Function*, ArrList[ast.Expr*]*, ArrList[Type*]*) callArguments = (e, ft, arguments, ts) {
+        var uint params = ft.parameters.Len();
+        var Type* variadic = null;
+        if(params > 0U) {
+            variadic = Expressions::VariadicElement(ft.parameters.Get(params - 1U));
+            if(variadic != null) {
+                params--;
+            }
+        }
+        if(variadic != null && arguments.Len() < params) {
+            this.checker.fail(e.start, "call expects at least " + params{str} + " arguments, got " + arguments.Len(){str});
+            return false;
+        } else if(variadic == null && arguments.Len() != params) {
+            this.checker.fail(e.start, "call expects " + params{str} + " arguments, got " + arguments.Len(){str});
+            return false;
+        }
+        for(var uint i = 0U; i < params; i++) {
+            var ast.Expr* argument = arguments.Get(i);
+            var Type* p = ft.parameters.Get(i);
+            if(argument.kind == ast.Expr.Kind::Spread) {
+                this.checker.fail(argument.start, "argument " + (i + 1U){str} + " of call is a spread, which may only feed a variadic parameter");
+                return false;
+            } else if(!this.Packs(argument, ts.Get(i), Expressions::InitTarget(p))) {
+                this.checker.fail(argument.start, "argument " + (i + 1U){str} + " of call is not a subtype of " + p.Text());
+                return false;
+            }
+        }
+        if(variadic == null) {
+            return true;
+        }
+        for(var uint i = params; i < arguments.Len(); i++) {
+            if(arguments.Get(i).kind != ast.Expr.Kind::Spread) {
+                continue;
+            } else if(arguments.Len() - params != 1U) {
+                this.checker.fail(e.start, "spread in call must be the only variadic argument");
+                return false;
+            }
+            return this.spreadArgument(e, arguments.Get(i){ast.Expr.Spread*}.inner, ts.Get(i), variadic);
+        }
+        for(var uint i = params; i < arguments.Len(); i++) {
+            if(!this.Packs(arguments.Get(i), ts.Get(i), Expressions::InitTarget(variadic))) {
+                this.checker.fail(arguments.Get(i).start, "variadic argument of call is not a subtype of " + variadic.Text());
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // spreadArgument checks inner, of t, may be forwarded whole as the payload of a variadic of element
+    fun bool(ast.Expr*, ast.Expr*, Type*, Type*) spreadArgument = (e, inner, t, element) {
+        var Type* bare = Subtyping::StripConst(t);
+        var Type* held = null;
+        if(Expressions::isPointer(bare)) {
+            held = bare{Type.Wrapped*}.inner;
+        } else if(bare.kind == Type.Kind::Array) {
+            if(!this.IsLValue(inner)) {
+                this.checker.fail(e.start, "spread in call is an array that is not an lvalue; forwarding a run of elements needs somewhere it begins");
+                return false;
+            }
+            held = bare{Type.Array*}.inner;
+        } else {
+            this.checker.fail(e.start, "spread in call must be a pointer or array, got " + t.Text());
+            return false;
+        }
+        if(!this.subtyping.Equal(Subtyping::StripConst(held), Subtyping::StripConst(element))) {
+            this.checker.fail(e.start, "spread in call has element type " + held.Text() + ", which does not match the variadic element " + element.Text());
+            return false;
+        }
+        return true;
+    }
+
+    // additive types + and -: a string concatenates, a pointer or array steps by integers, and anything else adds its own kind
+    fun (Type*, bool)(ast.Expr*, TokenKind, ArrList[ast.Expr*]*, ArrList[Type*]*) additive = (e, op, xs, ts) {
+        var str name = Expressions::binaryName(op);
+        var Type* first = Subtyping::StripConst(ts.Get(0U));
+        var bool concatenates = false;
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            if(Expressions::keyword(Subtyping::StripConst(ts.Get(i))) == TokenKind::String) {
+                concatenates = true;
+            }
+        }
+        if(concatenates) {
+            if(op != TokenKind::Plus) {
+                return this.fail(e.start, "operands of " + name + " cannot be strings");
+            } else if(!this.requireAnyOf(e, ts, 0U, name, ArrList::[TokenKind]New(2U, TokenKind::String, TokenKind::Char))) {
+                return (null, false);
+            }
+            return (Type.Primitive::New(e.start, TokenKind::String), true);
+        } else if(Expressions::isPointer(first)) {
+            if(!this.requireAnyOf(e, ts, 1U, name, ArrList::[TokenKind]New(2U, TokenKind::Int, TokenKind::Uint))) {
+                return (null, false);
+            }
+            return (first, true);
+        } else if(first.kind == Type.Kind::Array) {
+            if(!this.requireAnyOf(e, ts, 1U, name, ArrList::[TokenKind]New(2U, TokenKind::Int, TokenKind::Uint))) {
+                return (null, false);
+            } else if(!this.IsLValue(xs.Get(0U))) {
+                return this.fail(e.start, "left operand of " + name + " is a " + first.Text() + " that is not an lvalue; stepping over a run of elements needs somewhere it begins");
+            }
+            return (Type.Wrapped::New(e.start, ast.Type.Wrap::Pointer, first{Type.Array*}.inner), true);
+        }
+        return this.requireAllSame(e, ts, name);
+    }
+
+    // requireAll reports whether every operand is the primitive want, failing on the first that is not
+    fun bool(ast.Expr*, ArrList[Type*]*, TokenKind, str) requireAll = (e, ts, want, name) {
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            if(Expressions::keyword(Subtyping::StripConst(ts.Get(i))) != want) {
+                this.checker.fail(e.start, "operand of " + name + " must be " + Type.Primitive::New(null, want).Text() + ", got " + ts.Get(i).Text());
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // requireAnyOf reports whether every operand from the one at from is one of allowed, failing on the first that is not
+    fun bool(ast.Expr*, ArrList[Type*]*, uint, str, ArrList[TokenKind]*) requireAnyOf = (e, ts, from, name, allowed) {
+        for(var uint i = from; i < ts.Len(); i++) {
+            if(!Expressions::among(ts.Get(i), allowed)) {
+                this.checker.fail(e.start, "operand of " + name + " has unsupported type " + ts.Get(i).Text());
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // requireAllSame answers the first operand's type without const if it is a number and every other operand has it
+    fun (Type*, bool)(ast.Expr*, ArrList[Type*]*, str) requireAllSame = (e, ts, name) {
+        var Type* got = Subtyping::StripConst(ts.Get(0U));
+        if(!Expressions::numeric(got)) {
+            return this.fail(e.start, "operand of " + name + " has unsupported type " + ts.Get(0U).Text());
+        }
+        for(var uint i = 1U; i < ts.Len(); i++) {
+            if(!this.subtyping.Equal(Subtyping::StripConst(ts.Get(i)), got)) {
+                return this.fail(e.start, "operands of " + name + " must all be " + got.Text() + ", got " + ts.Get(i).Text());
+            }
+        }
+        return (got, true);
+    }
+
+    // requireComparable reports whether ts is two operands comparable with each other
+    fun bool(ast.Expr*, ArrList[Type*]*, str) requireComparable = (e, ts, name) {
+        if(ts.Len() != 2U) {
+            this.checker.fail(e.start, name + " compares two operands, got " + ts.Len(){str});
+            return false;
+        } else if(!this.Comparable(ts.Get(0U), ts.Get(1U))) {
+            this.checker.fail(e.start, "operands of " + name + " are not comparable: " + ts.Get(0U).Text() + " and " + ts.Get(1U).Text());
+            return false;
+        }
+        return true;
+    }
+
+    // Comparable reports whether values of a and b can be compared, one standing below the other or either being any
+    fun bool(Type*, Type*) Comparable = (a, b) {
+        a = Subtyping::StripConst(a);
+        b = Subtyping::StripConst(b);
+        var bool aAny = Expressions::keyword(a) == TokenKind::Any;
+        var bool bAny = Expressions::keyword(b) == TokenKind::Any;
+        if(aAny && bAny) {
+            return true;
+        } else if(aAny) {
+            return this.subtyping.Is(b, a);
+        } else if(bAny) {
+            return this.subtyping.Is(a, b);
+        }
+        return this.subtyping.Is(a, b) || this.subtyping.Is(b, a);
+    }
+
+    // Packs reports whether a value of t, written as e, may land in a slot of target, a tuple written out landing element by element
+    fun bool(ast.Expr*, Type*, Type*) Packs = (e, t, target) {
+        if(e.kind == ast.Expr.Kind::Tuple) {
+            var ArrList[ast.Expr*]* elements = e{ast.Expr.Tuple*}.elements;
+            var Type* tuple = Subtyping::StripConst(target);
+            if(tuple.kind == Type.Kind::Tuple && tuple{Type.Tuple*}.types.Len() == elements.Len()) {
+                for(var uint i = 0U; i < elements.Len(); i++) {
+                    var ast.Expr* element = elements.Get(i);
+                    if(!this.Packs(element, this.model.ExprType(element), Expressions::InitTarget(tuple{Type.Tuple*}.types.Get(i)))) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        return t == null || this.subtyping.Is(t, target);
+    }
+
+    // IsLValue reports whether e names a location that may be assigned to or addressed
+    fun bool(ast.Expr*) IsLValue = (e) {
+        switch(e.kind) {
+            case (ast.Expr.Kind::Symbol) {
+                if(e.start.kind != TokenKind::Identifier) {
+                    return false;
+                }
+                var Model.Binding* b = this.model.Binding(e);
+                return b == null || b.kind != Model.Binding.Kind::Instance || !b.IsMethod();
+            }
+            case (ast.Expr.Kind::Path)
+                return this.pathLValue(e{ast.Expr.Path*}, e{ast.Expr.Path*}.ids.Len() - 1U);
+            case (ast.Expr.Kind::Unary)
+                return e{ast.Expr.Unary*}.operator == TokenKind::Star;
+            case (ast.Expr.Kind::Index, ast.Expr.Kind::Static)
+                return true;
+            case (ast.Expr.Kind::Field) {
+                var ast.Expr.Field* f = e{ast.Expr.Field*};
+                return this.member(this.model.ExprType(f.target), f.name.value{str}) && this.hasHome(f.target);
+            }
+        }
+        return false;
+    }
+
+    // hasHome reports whether e leaves what it names somewhere that can be pointed into
+    fun bool(ast.Expr*) hasHome = (e) {
+        if(Expressions::reachedThroughAddress(this.model.ExprType(e))) {
+            return true;
+        }
+        switch(e.kind) {
+            case (ast.Expr.Kind::Symbol) {
+                var TokenKind k = e.start.kind;
+                return k == TokenKind::Identifier || k == TokenKind::This || k == TokenKind::Super;
+            }
+            case (ast.Expr.Kind::Unary)
+                return e{ast.Expr.Unary*}.operator == TokenKind::Star;
+            case (ast.Expr.Kind::Index, ast.Expr.Kind::Static)
+                return true;
+            case (ast.Expr.Kind::NAry)
+                return e{ast.Expr.NAry*}.operator == TokenKind::Equal;
+            case (ast.Expr.Kind::Path, ast.Expr.Kind::Field)
+                return this.IsLValue(e);
+        }
+        return false;
+    }
+
+    // pathLValue reports whether the first last+1 names of p name a location
+    fun bool(ast.Expr.Path*, uint) pathLValue = (p, last) {
+        if(last == 0U) {
+            var Model.Binding* b = this.model.Binding(p);
+            return b == null || b.kind != Model.Binding.Kind::Instance || !b.IsMethod();
+        }
+        var Type* object = this.prefix(p, last - 1U);
+        if(!this.member(object, p.ids.Get(last).value{str})) {
+            return false;
+        } else if(last == 1U || Expressions::reachedThroughAddress(object)) {
+            return true;
+        }
+        return this.pathLValue(p, last - 1U);
+    }
+
+    // prefix answers the type of the first last+1 names of p, or null if it is not known
+    fun Type*(ast.Expr.Path*, uint) prefix = (p, last) {
+        var Model.Binding* b = this.model.Binding(p);
+        if(b == null) {
+            return null;
+        }
+        var Type* t = b.bound;
+        for(var uint i = 1U; i <= last && t != null; i++) {
+            var str name = p.ids.Get(i).value{str};
+            var Type* tuple = Expressions::selection(t, true);
+            if(tuple != null) {
+                var (uint, bool) at = Expressions::index(name);
+                if(!at.1 || at.0 >= tuple{Type.Tuple*}.types.Len()) {
+                    return null;
+                }
+                t = tuple{Type.Tuple*}.types.Get(at.0);
+                continue;
+            }
+            var Type* target = Expressions::selection(t, false);
+            if(target == null) {
+                return null;
+            }
+            var Members.Field* f = this.members.FindField(target, name);
+            if(f == null) {
+                return null;
+            }
+            t = f.signature;
+        }
+        return t;
+    }
+
+    // member reports whether name selected out of a value of t is a member rather than a method
+    fun bool(Type*, str) member = (t, name) {
+        if(t == null) {
+            return false;
+        } else if(Expressions::selection(t, true) != null) {
+            return true;
+        }
+        var Type* target = Expressions::selection(t, false);
+        if(target == null) {
+            return false;
+        }
+        var Members.Field* f = this.members.FindField(target, name);
+        return f != null && !f.IsMethod();
+    }
+
+    fun (Type*, bool)(Token*, str) fail = (tok, msg) {
+        this.checker.fail(tok, msg);
+        return (null, false);
+    }
+
+    // symbol types a name, a literal, this or super
+    fun (Type*, bool)(ast.Expr.Symbol*) symbol = (e) {
+        var Token* tok = e.start;
+        switch(tok.kind) {
+            case (TokenKind::Identifier)
+                return this.name(e, tok);
+            case (TokenKind::This)
+                return (Type.Wrapped::New(tok, ast.Type.Wrap::Pointer, this.members.SelfType(this.checker.decl)), true);
+            case (TokenKind::Super) {
+                var ast.Decl* d = this.checker.decl;
+                if(d.kind != ast.Field.Kind::Class && d.kind != ast.Field.Kind::Abstract) {
+                    this.checker.fail(tok, "current declaration " + d.name.value{str} + " is not a subtypeable");
+                    return (null, false);
+                }
+                return (this.model.Base(d), true);
+            }
+            case (TokenKind::Null)
+                return (Type::Null, true);
+            case (TokenKind::True, TokenKind::False)
+                return (Type.Primitive::New(tok, TokenKind::Bool), true);
+            case (TokenKind::CharLiteral)
+                return (Type.Primitive::New(tok, TokenKind::Char), true);
+            case (TokenKind::StringLiteral)
+                return (Type.Primitive::New(tok, TokenKind::String), true);
+            case (TokenKind::IntLiteral)
+                return (Type.Primitive::New(tok, TokenKind::Int), true);
+            case (TokenKind::UintLiteral)
+                return (Type.Primitive::New(tok, TokenKind::Uint), true);
+            case (TokenKind::FloatLiteral)
+                return (Type.Primitive::New(tok, TokenKind::Float), true);
+            case (TokenKind::PositLiteral)
+                return (Type.Primitive::New(tok, TokenKind::Posit), true);
+        }
+        return (null, true);
+    }
+
+    // name types the name written at tok as e
+    fun (Type*, bool)(ast.Expr*, Token*) name = (e, tok) {
+        var str written = tok.value{str};
+        var Model.Binding* b = this.statements.Lookup(written);
+        if(b == null) {
+            this.checker.fail(tok, "variable " + written + " not found");
+            return (null, false);
+        }
+        this.model.bindName(e, b);
+        if(b.kind == Model.Binding.Kind::Instance && this.checker.staticField != null) {
+            this.checker.fail(tok, "instance field " + written + " cannot be named in static " + this.checker.decl.name.value{str} + "::" + this.checker.staticField.name.value{str});
+            return (null, false);
+        }
+        return (b.bound, true);
+    }
+
+    // path types a name followed by the fields selected out of it in turn
+    fun (Type*, bool)(ast.Expr.Path*) path = (e) {
+        var (Type*, bool) t = this.name(e, e.ids.Get(0U));
+        for(var uint i = 1U; i < e.ids.Len() && t.1 && t.0 != null; i++) {
+            t = this.selectField(t.0, e.ids.Get(i), e.start);
+        }
+        return t;
+    }
+
+    // staticOf types the static field e names, instantiating a generic method with the arguments e gives it
+    fun (Type*, bool)(ast.Expr.Static*) staticOf = (e) {
+        var Type* owner = this.model.TypeOf(e.owner);
+        if(owner == null) {
+            return (null, true);
+        }
+        this.checker.walk(owner, true);
+        var str field = e.name.value{str};
+        if(owner.kind == Type.Kind::Generic) {
+            return this.fail(e.start, "static field " + field + " cannot be accessed on generic instantiation " + owner.Text() + "; name the template without type arguments");
+        } else if(owner.kind != Type.Kind::Named && owner.kind != Type.Kind::Tailed) {
+            return this.fail(e.start, "type " + owner.Text() + " is not resolvable");
+        }
+        var ast.Decl* d = Members::DeclOf(owner);
+        var str qualified = d.name.value{str} + "::" + field;
+        var (Model.Binding*, bool) found = this.checker.staticScope(d).Get(field);
+        if(!found.1) {
+            return this.fail(e.name, "static field " + qualified + " not found");
+        }
+        var Model.Binding* b = found.0;
+        if(b.field.kind != ast.Field.Kind::Value && !Access::From(this.model, this.checker.decl, b.field.modifiers, d)) {
+            return this.fail(e.name, "static field " + qualified + " is not accessible");
+        }
+        this.model.bindName(e, b);
+        var ast.Field.Method* method = b.field{ast.Field.Method*};
+        if(e.arguments != null && e.arguments.Len() > 0U) {
+            var ArrList[Type*]* arguments = ArrList::[Type*]New(0U);
+            for(var uint i = 0U; i < e.arguments.Len(); i++) {
+                var Type* argument = this.model.TypeOf(e.arguments.Get(i));
+                this.checker.walk(argument, false);
+                arguments.AddLast(argument);
+            }
+            if(method == null) {
+                return this.fail(e.start, "type arguments can only be given to a method, got " + qualified);
+            } else if(method.generics == null) {
+                return this.fail(e.start, "method " + qualified + " is not generic");
+            } else if(method.generics.Len() != arguments.Len()) {
+                return this.fail(e.start, "method " + qualified + " expects " + method.generics.Len(){str} + " type arguments, got " + arguments.Len(){str});
+            } else if(Expressions::untyped(arguments) || b.bound == null) {
+                return (null, true);
+            }
+            var str unsatisfied = this.subtyping.Bound(method.generics, arguments);
+            if(unsatisfied != "") {
+                return this.fail(e.start, "method " + qualified + ": " + unsatisfied);
+            }
+            var HashMap[ast.Generic*, Type*]* bindings = HashMap::[ast.Generic*, Type*]New(0U);
+            for(var uint i = 0U; i < arguments.Len(); i++) {
+                bindings.Put(method.generics.Get(i), arguments.Get(i));
+            }
+            return (b.bound.Instantiate(bindings, e.start), true);
+        } else if(method != null && method.generics != null) {
+            return this.fail(e.start, "method " + qualified + " is generic over " + method.generics.Len(){str} + " parameter(s); name it with its type arguments");
+        }
+        return (b.bound, true);
+    }
+
+    // selectField types the field written at tok selected out of a value of t
+    fun (Type*, bool)(Type*, Token*, Token*) selectField = (t, tok, at) {
+        var str written = tok.value{str};
+        var Type* tuple = Expressions::selection(t, true);
+        if(tuple != null) {
+            var ArrList[Type*]* elements = tuple{Type.Tuple*}.types;
+            var (uint, bool) i = Expressions::index(written);
+            if(!i.1 || i.0 >= elements.Len()) {
+                this.checker.fail(tok, "tuple " + tuple.Text() + " has no element " + written);
+                return (null, false);
+            }
+            return (elements.Get(i.0), true);
+        }
+        var Type* target = Expressions::selection(t, false);
+        if(target == null) {
+            this.checker.fail(at, "expression " + t.Text() + " is not a resolvable type");
+            return (null, false);
+        }
+        var Members.Field* f = this.members.FindField(target, written);
+        if(f == null) {
+            this.checker.fail(tok, "field " + Members::DeclOf(target).name.value{str} + "." + written + " not found");
+            return (null, false);
+        } else if(!Access::From(this.model, this.checker.decl, f.modifiers, f.owner)) {
+            this.checker.fail(tok, "field " + f.owner.name.value{str} + "." + f.name + " is not accessible");
+            return (null, false);
+        }
+        return (f.signature, true);
+    }
+
+    // cast types a cast, which a value may be put through only as Go's
+    fun (Type*, bool)(ast.Expr.Cast*) cast = (e) {
+        var (Type*, bool) inner = this.Check(e.inner);
+        if(!inner.1) {
+            return inner;
+        }
+        var Type* to = this.model.TypeOf(e.to);
+        this.checker.walk(to, false);
+        if(inner.0 != null && to != null && !this.Castable(inner.0, to)) {
+            this.checker.fail(e.start, "cannot cast " + inner.0.Text() + " to " + to.Text());
+            return (null, false);
+        }
+        return (to, true);
+    }
+
+    // Castable reports whether a value of src may be cast to target
+    fun bool(Type*, Type*) Castable = (src, target) {
+        if(Expressions::isConst(src) || Expressions::isConst(target)) {
+            return this.Castable(Subtyping::StripConst(src), Subtyping::StripConst(target));
+        } else if(this.subtyping.Equal(src, target)) {
+            return true;
+        }
+        var Type* backing = this.backing(src, target);
+        if(backing != null) {
+            return this.Castable(backing, target);
+        }
+        var TokenKind tk = Expressions::keyword(target);
+        if(tk == TokenKind::String) {
+            return Expressions::keyword(src) != TokenKind::Void;
+        } else if(this.subtyping.Is(src, target) || this.subtyping.Is(target, src)) {
+            return true;
+        } else if(Static::heldAsReference(src) && (tk == TokenKind::Int || tk == TokenKind::Uint || tk == TokenKind::Bool || Expressions::isVoidPointer(target))) {
+            return true;
+        }
+        if(Expressions::isPointer(src)) {
+            if(tk == TokenKind::Bool || tk == TokenKind::Int || tk == TokenKind::Uint) {
+                return true;
+            }
+            return (Expressions::isPointer(target) || target.kind == Type.Kind::Function) && Expressions::isVoidPointer(src);
+        } else if(src.kind == Type.Kind::Function) {
+            return Expressions::isVoidPointer(target);
+        }
+        switch(Expressions::keyword(src)) {
+            case (TokenKind::Bool)
+                return tk == TokenKind::Char || tk == TokenKind::Byte || tk == TokenKind::Int || tk == TokenKind::Uint || tk == TokenKind::Float || tk == TokenKind::Posit;
+            case (TokenKind::Char)
+                return tk == TokenKind::Int || tk == TokenKind::Uint || tk == TokenKind::Byte || tk == TokenKind::Bool || tk == TokenKind::Float || tk == TokenKind::Posit;
+            case (TokenKind::Byte)
+                return tk == TokenKind::Int || tk == TokenKind::Uint || tk == TokenKind::Char || tk == TokenKind::Bool || tk == TokenKind::Float || tk == TokenKind::Posit;
+            case (TokenKind::Float)
+                return tk == TokenKind::Int || tk == TokenKind::Uint || tk == TokenKind::Char || tk == TokenKind::Byte || tk == TokenKind::Bool || tk == TokenKind::Posit;
+            case (TokenKind::Posit)
+                return tk == TokenKind::Int || tk == TokenKind::Uint || tk == TokenKind::Char || tk == TokenKind::Byte || tk == TokenKind::Bool || tk == TokenKind::Float;
+            case (TokenKind::Int, TokenKind::Uint)
+                return tk == TokenKind::Int || tk == TokenKind::Uint || tk == TokenKind::Float || tk == TokenKind::Posit || tk == TokenKind::Char || tk == TokenKind::Byte || tk == TokenKind::Bool || Expressions::isVoidPointer(target);
+            case (TokenKind::String) {
+                if(tk == TokenKind::Bool || Expressions::isVoidPointer(target)) {
+                    return true;
+                } else if(!Expressions::isPointer(target)) {
+                    return false;
+                }
+                var TokenKind pointee = Expressions::keyword(target{Type.Wrapped*}.inner);
+                return pointee == TokenKind::Byte || pointee == TokenKind::Char;
+            }
+        }
+        return false;
+    }
+
+    // backing answers the primitive src's enum is backed by
+    fun Type*(Type*, Type*) backing = (src, target) {
+        var Type* t = Subtyping::StripConst(src);
+        if(t.kind != Type.Kind::Named && t.kind != Type.Kind::Generic && t.kind != Type.Kind::Tailed) {
+            return null;
+        }
+        var ast.Decl* d = Members::DeclOf(t);
+        if(d == null || d.kind != ast.Field.Kind::Enum || d{ast.Decl.Enum*}.primitive == null) {
+            return null;
+        }
+        var Type* primitive = this.model.TypeOf(d{ast.Decl.Enum*}.primitive);
+        var TokenKind tk = Expressions::keyword(Subtyping::StripConst(target));
+        if(primitive == null || !(tk == TokenKind::Bool || tk == TokenKind::Char || tk == TokenKind::Byte || tk == TokenKind::Int || tk == TokenKind::Uint || tk == TokenKind::Float || tk == TokenKind::Posit || tk == TokenKind::String)) {
+            return null;
+        } else if(tk == TokenKind::String && Expressions::keyword(primitive) != TokenKind::String) {
+            return null;
+        }
+        return primitive;
+    }
+
+    // allocation types new
+    fun (Type*, bool)(ast.Expr.New*) allocation = (e) {
+        var Type* t = this.model.TypeOf(e.allocated);
+        if(t == null) {
+            return (null, true);
+        }
+        this.checker.walk(t, false);
+        var Type* bare = t;
+        for(; bare.kind == Type.Kind::Array || bare.kind == Type.Kind::Tailed;) {
+            if(bare.kind == Type.Kind::Array) {
+                bare = bare{Type.Array*}.inner;
+            } else {
+                bare = bare{Type.Tailed*}.inner;
+            }
+        }
+        if(Static::heldAsReference(bare)) {
+            this.checker.fail(e.start, "cannot allocate " + t.Text() + "; use " + bare.Text() + "* instead");
+        }
+        if(e.count != null) {
+            var (Type*, bool) count = this.Check(e.count);
+            if(count.1 && count.0 != null && !Expressions::isInteger(count.0)) {
+                this.checker.fail(e.start, "size expression is not an integer");
+            }
+        }
+        if(e.tail != null) {
+            if(t.kind != Type.Kind::Generic && t.kind != Type.Kind::Tailed) {
+                this.checker.fail(e.start, "tail expression for non-tailable type " + t.Text());
+            } else if(!Expressions::tailable(t)) {
+                this.checker.fail(e.start, "tail length of " + t.Text() + " is already part of the type");
+            } else {
+                var (Type*, bool) tail = this.Check(e.tail);
+                if(tail.1 && tail.0 != null && !Expressions::isInteger(tail.0)) {
+                    this.checker.fail(e.start, "tail expression is not an integer");
+                }
+            }
+        }
+        return (Type.Wrapped::New(e.start, ast.Type.Wrap::Pointer, t), true);
+    }
+
+    // closure types a lambda as its signature, checking its body
+    fun (Type*, bool)(ast.Expr.Lambda*) closure = (e) {
+        var Type* t = this.model.TypeOf(e.signature);
+        if(t == null || t.kind != Type.Kind::Function) {
+            return (t, true);
+        }
+        this.checker.walk(t, false);
+        if(e.body != null) {
+            this.statements.Lambda(e, t{Type.Function*});
+        }
+        return (t, true);
+    }
+
+    // selection answers what a field written after a dot is selected out of
+    static fun Type*(Type*, bool) selection = (t, tuple) {
+        t = Subtyping::StripConst(t);
+        if(Expressions::isPointer(t)) {
+            t = Subtyping::StripConst(t{Type.Wrapped*}.inner);
+        }
+        if(tuple) {
+            if(t.kind == Type.Kind::Tuple) {
+                return t;
+            }
+            return null;
+        } else if(t.kind == Type.Kind::Named || t.kind == Type.Kind::Generic || t.kind == Type.Kind::Tailed) {
+            return t;
+        }
+        return null;
+    }
+
+    // index answers the element a tuple selection written as s names
+    static fun (uint, bool)(str) index = (s) {
+        var (byte*, uint) b = Strs::ToBytes(s);
+        if(b.1 == 0U || (b.1 > 1U && b.0[0U] == '0'{byte})) {
+            return (0U, false);
+        }
+        var uint i = 0U;
+        for(var uint k = 0U; k < b.1; k++) {
+            if(b.0[k] < '0'{byte} || b.0[k] > '9'{byte}) {
+                return (0U, false);
+            }
+            i = i * 10U + (b.0[k] - '0'{byte}){uint};
+        }
+        return (i, true);
+    }
+
+    // tailable reports whether t is a declaration with a tail of any length
+    static fun bool(Type*) tailable = (t) {
+        if(t.kind == Type.Kind::Generic) {
+            t = t{Type.Generic*}.inner;
+        }
+        return t.kind == Type.Kind::Tailed && !t{Type.Tailed*}.sized;
+    }
+
+    // keyword answers the keyword of a primitive t, or Identifier for none
+    static fun TokenKind(Type*) keyword = (t) {
+        if(t != null && t.kind == Type.Kind::Primitive) {
+            return t{Type.Primitive*}.keyword;
+        }
+        return TokenKind::Identifier;
+    }
+
+    static fun bool(Type*) isInteger = (t) {
+        var TokenKind k = Expressions::keyword(Subtyping::StripConst(t));
+        return k == TokenKind::Int || k == TokenKind::Uint;
+    }
+
+    static fun bool(Type*) isConst = (t) {
+        return t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Const;
+    }
+
+    static fun bool(Type*) isPointer = (t) {
+        return t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Pointer;
+    }
+
+    static fun bool(Type*) isVoidPointer = (t) {
+        return Expressions::isPointer(t) && Expressions::keyword(t{Type.Wrapped*}.inner) == TokenKind::Void;
+    }
+
+    // InitTarget answers the type an initializer of a slot of t is checked against, t without its outermost const
+    static fun Type*(Type*) InitTarget = (t) {
+        return Subtyping::StripConst(t);
+    }
+
+    // VariadicElement answers what one argument of a variadic parameter of t is, or null if t is not variadic
+    static fun Type*(Type*) VariadicElement = (t) {
+        if(t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Variadic) {
+            return t{Type.Wrapped*}.inner;
+        }
+        return null;
+    }
+
+    // reachedThroughAddress reports whether a value of t is the address of an instance rather than the instance
+    static fun bool(Type*) reachedThroughAddress = (t) {
+        if(t == null) {
+            return false;
+        }
+        t = Subtyping::StripConst(t);
+        return Expressions::isPointer(t) || Static::heldAsReference(t);
+    }
+
+    // untyped reports whether any of ts is not known
+    static fun bool(ArrList[Type*]*) untyped = (ts) {
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            if(ts.Get(i) == null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // among reports whether t without const is a primitive of one of keywords
+    static fun bool(Type*, ArrList[TokenKind]*) among = (t, keywords) {
+        var TokenKind k = Expressions::keyword(Subtyping::StripConst(t));
+        for(var uint i = 0U; i < keywords.Len(); i++) {
+            if(keywords.Get(i) == k) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static fun ArrList[TokenKind]*() bitwise = () {
+        return ArrList::[TokenKind]New(5U, TokenKind::Bool, TokenKind::Int, TokenKind::Uint, TokenKind::Char, TokenKind::Byte);
+    }
+
+    static fun ArrList[TokenKind]*() integral = () {
+        return ArrList::[TokenKind]New(4U, TokenKind::Int, TokenKind::Uint, TokenKind::Char, TokenKind::Byte);
+    }
+
+    // numeric reports whether t without const is a number
+    static fun bool(Type*) numeric = (t) {
+        return Expressions::among(t, ArrList::[TokenKind]New(6U, TokenKind::Int, TokenKind::Uint, TokenKind::Float, TokenKind::Posit, TokenKind::Char, TokenKind::Byte));
+    }
+
+    // binaryName answers what Go names the operator op
+    static fun str(TokenKind) binaryName = (op) {
+        switch(op) {
+            case (TokenKind::Equal)
+                return "assign";
+            case (TokenKind::QuestionQuestion)
+                return "null_coalesce";
+            case (TokenKind::OrOr)
+                return "logical_or";
+            case (TokenKind::AndAnd)
+                return "logical_and";
+            case (TokenKind::Or)
+                return "binary_or";
+            case (TokenKind::And)
+                return "binary_and";
+            case (TokenKind::Caret)
+                return "binary_xor";
+            case (TokenKind::LessLess)
+                return "binary_shift_left";
+            case (TokenKind::GreaterGreater)
+                return "binary_shift_right";
+            case (TokenKind::GreaterGreaterGreater)
+                return "arithmetic_shift";
+            case (TokenKind::EqualEqual)
+                return "equal";
+            case (TokenKind::BangEqual)
+                return "not_equal";
+            case (TokenKind::Greater)
+                return "greater_than";
+            case (TokenKind::Less)
+                return "less_than";
+            case (TokenKind::GreaterEqual)
+                return "greater_than_or_equal";
+            case (TokenKind::LessEqual)
+                return "less_than_or_equal";
+            case (TokenKind::Spaceship)
+                return "spaceship";
+            case (TokenKind::Subtype)
+                return "subtype_of";
+            case (TokenKind::Plus)
+                return "add";
+            case (TokenKind::Minus)
+                return "subtract";
+            case (TokenKind::Star)
+                return "multiply";
+            case (TokenKind::Slash)
+                return "divide";
+            case (TokenKind::Percent)
+                return "modulus";
+        }
+        return "";
+    }
+
+    // unaryName answers what Go names the operator of e
+    static fun str(ast.Expr.Unary*) unaryName = (e) {
+        switch(e.operator) {
+            case (TokenKind::PlusPlus) {
+                if(e.postfix) {
+                    return "post_increment";
+                }
+                return "pre_increment";
+            }
+            case (TokenKind::MinusMinus) {
+                if(e.postfix) {
+                    return "post_decrement";
+                }
+                return "pre_decrement";
+            }
+            case (TokenKind::Bang)
+                return "logical_negate";
+            case (TokenKind::Tilde)
+                return "binary_negate";
+            case (TokenKind::Minus)
+                return "arithmetic_negate";
+            case (TokenKind::Star)
+                return "dereference";
+            case (TokenKind::And)
+                return "address_of";
+            case (TokenKind::Hash)
+                return "hash";
+            case (TokenKind::At)
+                return "typeof";
+        }
+        return "";
+    }
+}

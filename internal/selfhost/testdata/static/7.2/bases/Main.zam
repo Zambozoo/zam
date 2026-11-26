@@ -1,0 +1,41 @@
+import std("lang/Obj.zam");
+
+public namespace Main {
+    interface Named {
+        fun str() Name;
+    }
+    abstract Shape {
+        virtual fun int() Area;
+        fun int() Sides = () {
+            return 0;
+        }
+    }
+    class Square <: Shape* {
+        public fun int() Area = () {
+            return 1;
+        }
+    }
+    class FromInterface <: Named* {
+    }
+    abstract FromClass <: Square* {
+    }
+    class FromFromInterface <: FromInterface* {
+    }
+    abstract FromStruct <: Plain* {
+    }
+    class FromEnum <: Kind* {
+    }
+    class Generic[T <: Obj*] {
+        var T item;
+    }
+    class Bound <: Generic[int]* {
+    }
+    class Fine <: Generic[Square*]* {
+    }
+    struct Plain {
+        var int x;
+    }
+    enum Kind {
+        A;
+    }
+}

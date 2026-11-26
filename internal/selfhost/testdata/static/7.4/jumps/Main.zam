@@ -1,0 +1,10 @@
+public namespace Main {
+    fun void() S12 = () { switch (1) { case (1) continue; } }
+    fun void() S15 = () { break; }
+    fun void() S16 = () { continue nowhere; }
+    fun void() Fine = () { label outer: for { for { break outer; } switch (1) { case (1) continue; } else { break; } } }
+    fun void() ElseJump = () { for { label inner: for (; true;) {} else { continue inner; } } }
+    fun void() BareInElse = () { for (; true;) {} else { break; } }
+    fun void() LastBody = () { switch (1) { case (1) {} } else { continue; } }
+    fun void() Nested = () { label outer: switch (1) { case (1) { for { continue outer; } } } else {} }
+}

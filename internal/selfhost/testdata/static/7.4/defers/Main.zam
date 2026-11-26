@@ -1,0 +1,10 @@
+public namespace Main {
+    fun void() S4 = () { defer { return; } }
+    fun void() S10 = () { defer var int x; }
+    fun void() S11 = () { defer defer Main::Void(); }
+    fun void() S13 = () { for { defer break; } }
+    fun void() S14 = () { for { defer continue; } }
+    fun void() Inner = () { defer { for { break; } } }
+    fun void() Scoped = () { var int x; defer { var int x; } }
+    static fun void() Void = () {}
+}

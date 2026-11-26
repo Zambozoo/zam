@@ -1,0 +1,259 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import "../syntax/ProjectParser.zam";
+import "../syntax/Source.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Type.zam";
+
+// Members answers the fields a declaration has
+public class Members {
+    // Method is an instance method a declaration has
+    public class Method {
+        public var str name;
+        // field is the method as written,
+        public var ast.Field.Method* field;
+        public var Type* signature;
+        public var bool virtualized;
+
+        public static fun Method*(str, ast.Field.Method*, Type*, bool) New = (name, field, signature, virtualized) {
+            var Method* m = new(Method);
+            m.name = name;
+            m.field = field;
+            m.signature = signature;
+            m.virtualized = virtualized;
+            return m;
+        }
+    }
+
+    // Field is an instance member or method a declaration has
+    public class Field {
+        public var str name;
+        // field is the field as written
+        public var ast.Field* field;
+        public var Type* signature;
+        // owner is the declaration the field is declared in
+        public var ast.Decl* owner;
+        public var ast.Modifier.Set modifiers;
+
+        public static fun Field*(str, ast.Field*, Type*, ast.Decl*, ast.Modifier.Set) New = (name, field, signature, owner, modifiers) {
+            var Field* f = new(Field);
+            f.name = name;
+            f.field = field;
+            f.signature = signature;
+            f.owner = owner;
+            f.modifiers = modifiers;
+            return f;
+        }
+
+        // IsMethod reports whether the field is a method
+        public fun bool() IsMethod = () {
+            return this.field == null || this.field.kind == ast.Field.Kind::Method;
+        }
+    }
+
+    var Model* model;
+    // obj is the declaration of Obj, or null when Obj was not parsed
+    var ast.Decl* obj;
+
+    public static fun Members*(Model*) New = (m) {
+        var Members* s = new(Members);
+        s.model = m;
+        var (Source*, bool) obj = m.Program().sources.Get(ProjectParser::ObjPath);
+        if(obj.1) {
+            s.obj = obj.0.file.decl;
+        }
+        return s;
+    }
+
+    // Own answers the instance methods the declaration t names declares
+    public fun ArrList[Method*]*(Type*) Own = (t) {
+        var ArrList[Method*]* methods = ArrList::[Method*]New(0U);
+        var ast.Decl* d = Members::DeclOf(t);
+        if(d == null) {
+            return methods;
+        }
+        this.declared(d, Members::BindingsOf(t), methods);
+        if(d.kind != ast.Field.Kind::Interface || this.obj == null) {
+            return methods;
+        }
+        var ArrList[Method*]* objects = ArrList::[Method*]New(0U);
+        this.declared(this.obj, HashMap::[ast.Generic*, Type*]New(0U), objects);
+        for(var uint i = 0U; i < objects.Len(); i++) {
+            var Method* m = objects.Get(i);
+            if(!Members::declares(d, m.name)) {
+                methods.AddLast(Method::New(m.name, null, m.signature, true));
+            }
+        }
+        return methods;
+    }
+
+    // Find answers the instance method named name that the declaration t names declares or inherits
+    public fun Method*(Type*, str) Find = (t, name) {
+        for(; t != null; t = this.BaseOf(t)) {
+            var ArrList[Method*]* methods = this.Own(t);
+            for(var uint i = 0U; i < methods.Len(); i++) {
+                if(methods.Get(i).name == name) {
+                    return methods.Get(i);
+                }
+            }
+        }
+        return null;
+    }
+
+    // OwnFields answers the instance members and methods the declaration t names declares
+    public fun ArrList[Field*]*(Type*) OwnFields = (t) {
+        var ArrList[Field*]* fields = ArrList::[Field*]New(0U);
+        var ast.Decl* d = Members::DeclOf(t);
+        if(d == null) {
+            return fields;
+        }
+        var HashMap[ast.Generic*, Type*]* bindings = Members::BindingsOf(t);
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if((f.kind != ast.Field.Kind::Member && f.kind != ast.Field.Kind::Method) || ast.Modifier::Static.In(f.modifiers)) {
+                continue;
+            }
+            var Type* signature = this.model.TypeOf(Members::declaredType(f));
+            if(signature != null) {
+                fields.AddLast(Field::New(f.name.value{str}, f, signature.Instantiate(bindings, signature.at), d, f.modifiers));
+            }
+        }
+        if(d.kind == ast.Field.Kind::Interface) {
+            var ArrList[Method*]* methods = this.Own(t);
+            for(var uint i = 0U; i < methods.Len(); i++) {
+                if(methods.Get(i).field == null) {
+                    fields.AddLast(Field::New(methods.Get(i).name, null, methods.Get(i).signature, d, ast.Modifier::Virtual.Bit() | ast.Modifier::Public.Bit()));
+                }
+            }
+        }
+        return fields;
+    }
+
+    // FindField answers the instance member or method named name that the declaration t names declares or inherits
+    public fun Field*(Type*, str) FindField = (t, name) {
+        for(; t != null; t = this.BaseOf(t)) {
+            var ArrList[Field*]* fields = this.OwnFields(t);
+            for(var uint i = 0U; i < fields.Len(); i++) {
+                if(fields.Get(i).name == name) {
+                    return fields.Get(i);
+                }
+            }
+        }
+        return null;
+    }
+
+    // AllFields answers every instance member and method the declaration t names declares or inherits
+    public fun ArrList[Field*]*(Type*) AllFields = (t) {
+        var ArrList[Field*]* all = ArrList::[Field*]New(0U);
+        for(; t != null; t = this.BaseOf(t)) {
+            var ArrList[Field*]* fields = this.OwnFields(t);
+            for(var uint i = 0U; i < fields.Len(); i++) {
+                var bool shadowed = false;
+                for(var uint j = 0U; j < all.Len() && !shadowed; j++) {
+                    shadowed = all.Get(j).name == fields.Get(i).name;
+                }
+                if(!shadowed) {
+                    all.AddLast(fields.Get(i));
+                }
+            }
+        }
+        return all;
+    }
+
+    // SelfType answers the type a declaration's own instances are of
+    public fun Type*(ast.Decl*) SelfType = (d) {
+        var Type* t = Type.Named::New(d.start, d, d.name.value{str}, this.model.Source(d).project.archive);
+        var bool tailed = ((d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Abstract) && d{ast.Decl.Object*}.tailed) || (d.kind == ast.Field.Kind::Struct && d{ast.Decl.Struct*}.tailed);
+        if(tailed) {
+            t = Type.Tailed::New(d.start, t, false, 0U);
+        }
+        if(d.generics == null || d.kind == ast.Field.Kind::Alias) {
+            return t;
+        }
+        var ArrList[Type*]* arguments = ArrList::[Type*]New(0U);
+        for(var uint i = 0U; i < d.generics.Len(); i++) {
+            arguments.AddLast(Type.Param::New(d.generics.Get(i).name, d.generics.Get(i), d));
+        }
+        return Type.Generic::New(d.start, t, arguments);
+    }
+
+    // declaredType answers the type a member or method is written with
+    static fun ast.Type*(ast.Field*) declaredType = (f) {
+        if(f.kind == ast.Field.Kind::Member) {
+            return f{ast.Field.Member*}.declared;
+        }
+        return f{ast.Field.Method*}.signature;
+    }
+
+    // BaseOf answers what the class or abstract t names extends
+    public fun Type*(Type*) BaseOf = (t) {
+        var ast.Decl* d = Members::DeclOf(t);
+        if(d == null || (d.kind != ast.Field.Kind::Class && d.kind != ast.Field.Kind::Abstract)) {
+            return null;
+        }
+        var Type* base = this.model.Base(d);
+        if(base == null || base.kind != Type.Kind::Wrapped) {
+            return null;
+        }
+        var Type* inner = base{Type.Wrapped*}.inner;
+        return inner.Instantiate(Members::BindingsOf(t), inner.at);
+    }
+
+    // declared adds the instance methods d declares to methods, typed through bindings
+    fun void(ast.Decl*, HashMap[ast.Generic*, Type*]*, ArrList[Method*]*) declared = (d, bindings, methods) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f.kind != ast.Field.Kind::Method || ast.Modifier::Static.In(f.modifiers)) {
+                continue;
+            }
+            var ast.Field.Method* m = f{ast.Field.Method*};
+            var Type* signature = this.model.TypeOf(m.signature);
+            if(signature != null) {
+                methods.AddLast(Method::New(m.name.value{str}, m, signature.Instantiate(bindings, signature.at), ast.Modifier::Virtual.In(m.modifiers)));
+            }
+        }
+    }
+
+    // declares reports whether d declares a field named name
+    static fun bool(ast.Decl*, str) declares = (d, name) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f{ast.Decl*} == null && f.name != null && f.name.value{str} == name) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // BindingsOf answers the parameters of the declaration t names bound to the arguments t gives them
+    public static fun HashMap[ast.Generic*, Type*]*(Type*) BindingsOf = (t) {
+        if(t != null && t.kind == Type.Kind::Tailed) {
+            t = t{Type.Tailed*}.inner;
+        }
+        var ast.Decl* d = Members::DeclOf(t);
+        var HashMap[ast.Generic*, Type*]* bindings = HashMap::[ast.Generic*, Type*]New(0U);
+        if(t == null || t.kind != Type.Kind::Generic || d == null || d.generics == null) {
+            return bindings;
+        }
+        var ArrList[Type*]* arguments = t{Type.Generic*}.arguments;
+        for(var uint i = 0U; i < d.generics.Len() && i < arguments.Len(); i++) {
+            bindings.Put(d.generics.Get(i), arguments.Get(i));
+        }
+        return bindings;
+    }
+
+    // DeclOf answers the declaration t names
+    public static fun ast.Decl*(Type*) DeclOf = (t) {
+        if(t != null && t.kind == Type.Kind::Generic) {
+            t = t{Type.Generic*}.inner;
+        }
+        if(t != null && t.kind == Type.Kind::Tailed) {
+            t = t{Type.Tailed*}.inner;
+        }
+        if(t == null || t.kind != Type.Kind::Named) {
+            return null;
+        }
+        return t{Type.Named*}.decl;
+    }
+}

@@ -1,0 +1,41 @@
+public namespace Main {
+    static var int count = 1;
+    static fun int() Void = () { return 0; }
+    static fun[T] T(T) Id = (x) { return x; }
+    static fun[T <: Far*] T(T) Boxed = (x) { return x; }
+    static fun[A, B] int(A, B) Pair = (a, b) { return 0; }
+    enum Code : int {
+        A(1),
+        B(2);
+    }
+    class Far {
+        private static var int secret = 1;
+        static var int open = 2;
+    }
+    class Generic[T] {
+        static var int shared = 3;
+    }
+    alias Instantiated = Generic[int];
+    alias Number = int;
+    fun void() Uses = () {
+        var int c = Main::count + 1;
+        var Code k = Main.Code::A;
+        var int n = Main::[int]Id(2);
+        var str s = Main::[int]Id(2);
+        var int v = Main::Void();
+        var int o = Far::open;
+        var int g = Generic::shared;
+        var int missing = Main::Missing;
+        var int hidden = Far::secret;
+        var int number = Main::[int]count;
+        var int plain = Main::[int]Void();
+        var int same = Main::[int, str]Id(1);
+        var int boxed = Main::[int]Boxed(1);
+        var int bare = Main::Id(1);
+        var int pair = Main::[int]Pair(1, 2);
+        var int instantiated = Instantiated::shared;
+        var int numbered = Number::X;
+        if (Main::count) {}
+        Main::count = "s";
+    }
+}

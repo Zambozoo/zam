@@ -23,6 +23,9 @@ public abstract Type {
     // at is the token the type is written at, or null for one not written
     public var Token* at;
 
+    // Null is the type of null: a void* that stands for every pointer, str and function
+    public static var Type*$ Null = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, Type.Primitive::New(null, TokenKind::Void));
+
     // Text writes the type as messages name it
     public virtual fun str() Text;
 

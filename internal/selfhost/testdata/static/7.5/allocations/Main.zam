@@ -1,0 +1,20 @@
+public namespace Main {
+    abstract Shape {}
+    interface Named {}
+    struct Tail~ {
+        var int length;
+        var int[~] items;
+    }
+    fun void() New = () {
+        var Shape* a = new(Shape);
+        var Shape** b = new(Shape*);
+        var void* c = new(Named[2]);
+        var int* d = new(int, 3);
+        var int* e = new(int, "s");
+        var int* f = new(int, 1, 2);
+        var Tail~4* g = new(Tail~4, 1, 2);
+        var Tail~* h = new(Tail~, 1, "s");
+        var Tail~* k = new(Tail~, 1, 4);
+        var void* n = native(ANYTHING);
+    }
+}

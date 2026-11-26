@@ -1,0 +1,22 @@
+public namespace Main {
+    fun void() Lambdas = () {
+        var int total = 0;
+        var void() f = lambda void(): () {
+            var int x = total;
+        };
+        var int() g = lambda int(): () {
+        };
+        var void() h = lambda void(): () {
+            break;
+        };
+        for {
+            var void() k = lambda void(): () {
+                continue;
+            };
+            break;
+        }
+        var int() m = lambda int(): () {
+            return missing;
+        };
+    }
+}

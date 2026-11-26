@@ -1,0 +1,43 @@
+public namespace Main {
+    abstract Shape {}
+    class Square <: Shape* {}
+    fun void(int, uint, flt, str, bool, char, int*, int[3], Square*, Shape*, any) Operators = (i, u, f, s, b, c, p, a, sq, sh, x) {
+        var int sum = i + i + i;
+        var int mixed = i + u;
+        var flt scaled = f * 2;
+        var str joined = s + c + s;
+        var str minus = s - s;
+        var str joinedBad = s + 1;
+        var int* stepped = p + 2;
+        var int* steppedBad = p + f;
+        var int* first = a + 0;
+        var bool both = b && i;
+        var bool either = b || b;
+        var int bits = i & 3;
+        var int bitsBad = i | f;
+        var int shifted = i << 2U;
+        var int shiftedBad = f >> 1;
+        var int rest = i % u;
+        var bool equal = i == 1;
+        var bool unequal = i != s;
+        var bool ordered = sq < sh;
+        var int order = i <=> 2;
+        var bool loose = x == i;
+        var bool below = @sq <: @sh;
+        var bool belowBad = sq <: sh;
+        var bool negated = !i;
+        var bool negatedBad = !f;
+        var int flipped = ~b;
+        var flt opposite = -f;
+        var str oppositeBad = -s;
+        var int hashed = #s;
+        var Shape* chosen = b ? sq : sh;
+        var Shape* chosenBad = i ? sq : sh;
+        var Square* narrowed = b ? sh : sq;
+        var int* fallback = p ?? null;
+        var int fallbackBad = i ?? 1;
+        var Shape* fallbackMixed = sh ?? p;
+        var (int, str) pair = (i, s);
+        var int quotient = i / f;
+    }
+}

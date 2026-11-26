@@ -1,0 +1,13 @@
+public namespace Main {
+    abstract Shape {}
+    class Square <: Shape* {}
+    namespace Tools {}
+    fun void(Square*) Types = (sq) {
+        var bool below = @{Square} <: @{Shape};
+        var bool read = @sq <: @{Shape};
+        var bool three = @{int} <: @{int} <: @{int};
+        var bool tools = @{Tools} <: @{int};
+        var type t = @{int};
+        var int bad = @{int};
+    }
+}

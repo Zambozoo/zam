@@ -1,0 +1,53 @@
+public namespace Main {
+    abstract Shape {
+        virtual fun int() Area;
+        virtual fun str() Name;
+        fun int() Sides = () {
+            return 0;
+        }
+        fun Shape*(Shape*) Join = (s) {
+            return s;
+        }
+    }
+    class Square <: Shape* {
+        public fun int() Area = () {
+            return 1;
+        }
+        fun str() Name = () {
+            return "square";
+        }
+        fun Square*(Shape*) Join = (s) {
+            return this;
+        }
+    }
+    class Unoverridden <: Shape* {
+    }
+    class Narrowed <: Square* {
+        fun str() Sides = () {
+            return "";
+        }
+    }
+    class Widened <: Square* {
+        fun Shape*(Square*) Join = (s) {
+            return s;
+        }
+    }
+    abstract Box[T] {
+        virtual fun T() Get;
+    }
+    class IntBox <: Box[int]* {
+        fun int() Get = () {
+            return 0;
+        }
+    }
+    class WrongBox <: Box[int]* {
+        fun str() Get = () {
+            return "";
+        }
+    }
+    class Labelled {
+        fun int() Str = () {
+            return 0;
+        }
+    }
+}

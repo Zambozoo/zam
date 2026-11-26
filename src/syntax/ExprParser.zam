@@ -378,7 +378,7 @@ public namespace ExprParser {
             if(spread.1 != null) {
                 return (null, spread.1);
             } else if(spread.0 != null) {
-                arguments.AddLast(Expr.Spread::New(argument.0));
+                arguments.AddLast(Expr.Spread::New(spread.0, argument.0));
             } else {
                 arguments.AddLast(argument.0);
             }

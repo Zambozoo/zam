@@ -1,0 +1,26 @@
+public namespace Main {
+    abstract Shape {}
+    class Square <: Shape* {}
+    enum Code : int {
+        A(1);
+    }
+    fun void(int, Code, Square*, Shape*) Casts = (i, k, sq, sh) {
+        var flt f = i{flt};
+        var str s = i{str};
+        var void* p = i{void*};
+        var int* q = p{int*};
+        var bool* r = q{bool*};
+        var int n = s{int};
+        var byte* bytes = s{byte*};
+        var (int, int) t = i{(int, int)};
+        var Shape* up = sq{Shape*};
+        var Square* down = sh{Square*};
+        var int code = k{int};
+        var bool flag = k{bool};
+        var int address = sh{int};
+        var void* raw = true{void*};
+        var int$ fixed = i{int$};
+        var int() fn = p{int()};
+        var flt back = fn{flt};
+    }
+}

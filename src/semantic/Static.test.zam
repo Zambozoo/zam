@@ -77,6 +77,35 @@ public namespace StaticTest {
             "static field Gen::take cannot name generic argument T", "[8:25]");
     }
 
+    public fun void(uint, str...) Declarations = (argC, argV) {
+        StaticTest::reports(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" +
+            "    interface Named {}\n" +
+            "    abstract Shape {\n" +
+            "        virtual fun int() Area;\n" +
+            "        fun int() Sides = () {\n" +
+            "            return 0;\n" +
+            "        }\n" +
+            "    }\n" +
+            "    class Square <: Shape* {\n" +
+            "        fun int() Area = () {\n" +
+            "            return 1;\n" +
+            "        }\n" +
+            "    }\n" +
+            "    class FromInterface <: Named* {}\n" +
+            "    abstract FromClass <: Square* {}\n" +
+            "    class Unoverridden <: Shape* {}\n" +
+            "    class Narrowed <: Square* {\n" +
+            "        fun str() Sides = () {\n" +
+            "            return \"\";\n" +
+            "        }\n" +
+            "    }\n" +
+            "}\n"), 8U,
+            "base of FromInterface must be a class or an abstract; Named is an interface, which is implemented by having its methods rather than by naming it", "[14:5]",
+            "base of FromClass must be an abstract; Square is declared class", "[15:5]",
+            "class Unoverridden does not override virtual method \"Area\"", "[16:5]",
+            "Narrowed.Sides does not override Shape.Sides with a subtype", "[17:5]");
+    }
+
     // Broken checks what a parse recovered from without failing on what it
     // left out
     public fun void(uint, str...) Broken = (argC, argV) {

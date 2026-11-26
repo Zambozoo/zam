@@ -32,6 +32,44 @@ public class Model {
         }
     }
 
+    // Binding is what a name written in a body stands for
+    public class Binding {
+        // Kind is where what a name stands for lies
+        public enum Kind : int {
+            // Local is a parameter or a variable a body declares
+            Local(0),
+            // Static is a static field of a declaration being checked or one enclosing it
+            Static(1),
+            // Instance is a field of the receiver, inherited ones among them
+            Instance(2);
+        }
+
+        public var Kind kind;
+        // bound is the type the name comes to
+        public var Type* bound;
+        // field is the field the name stands for, or null for a local
+        public var ast.Field* field;
+        // at is where the name is declared
+        public var Token* at;
+
+        public static fun Binding*(Kind, Type*, ast.Field*, Token*) New = (kind, bound, field, at) {
+            var Binding* b = new(Binding);
+            b.kind = kind;
+            b.bound = bound;
+            b.field = field;
+            b.at = at;
+            return b;
+        }
+
+        // IsMethod reports whether the name stands for a method
+        public fun bool() IsMethod = () {
+            if(this.field == null) {
+                return this.kind == Kind::Instance;
+            }
+            return this.field.kind == ast.Field.Kind::Method;
+        }
+    }
+
     var ProjectParser.Program* program;
     // sources maps every declaration onto the file it is written in
     var HashMap[ast.Decl*, Source*]* sources;
@@ -47,6 +85,12 @@ public class Model {
     var HashMap[ast.Decl*, Type*]* bases;
     // uses is every alias written where a type is
     var ArrList[Use*]* uses;
+    // exprTypes maps every expression typed onto its type
+    var HashMap[ast.Expr*, Type*]* exprTypes;
+    // captures maps every lambda onto the locals it closes over, in the order first closed over
+    var HashMap[ast.Expr.Lambda*, ArrList[str]*]* captures;
+    // bindings maps every name written in a body onto what it stands for
+    var HashMap[ast.Expr*, Binding*]* bindings;
 
     // New answers a model of program with nothing found out yet
     public static fun Model*(ProjectParser.Program*) New = (program) {
@@ -59,6 +103,9 @@ public class Model {
         m.imported = HashMap::[ast.Import*, ArrList[Source*]*]New(0U);
         m.bases = HashMap::[ast.Decl*, Type*]New(0U);
         m.uses = ArrList::[Use*]New(0U);
+        m.exprTypes = HashMap::[ast.Expr*, Type*]New(0U);
+        m.captures = HashMap::[ast.Expr.Lambda*, ArrList[str]*]New(0U);
+        m.bindings = HashMap::[ast.Expr*, Binding*]New(0U);
         var Iter[(str, Source*)]* all = program.sources.Iter();
         for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
             var Source* s = next.0.1;
@@ -119,20 +166,37 @@ public class Model {
         return null;
     }
 
-    // TypeOf answers what t resolves to, its aliases expanded, or null if it
-    // has not been resolved
+    // TypeOf answers what t resolves to, its aliases expanded
     public fun Type*(ast.Type*) TypeOf = (t) {
         return this.types.Get(t).0;
     }
 
-    // Written answers what t resolves to as written, its aliases not expanded,
-    // or null if it has not been resolved
+    // Written answers what t resolves to as written, its aliases not expanded
     public fun Type*(ast.Type*) Written = (t) {
         var (Type*, bool) written = this.written.Get(t);
         if(written.1) {
             return written.0;
         }
         return this.types.Get(t).0;
+    }
+
+    // ExprType answers the type of e, or null if it has not been typed
+    public fun Type*(ast.Expr*) ExprType = (e) {
+        return this.exprTypes.Get(e).0;
+    }
+
+    // Captures answers the locals l closes over, in the order first closed over
+    public fun ArrList[str]*(ast.Expr.Lambda*) Captures = (l) {
+        var (ArrList[str]*, bool) names = this.captures.Get(l);
+        if(!names.1) {
+            return ArrList::[str]New(0U);
+        }
+        return names.0;
+    }
+
+    // Binding answers what the name written as e stands for, or null
+    public fun Binding*(ast.Expr*) Binding = (e) {
+        return this.bindings.Get(e).0;
     }
 
     // Uses answers every alias written where a type is
@@ -171,6 +235,28 @@ public class Model {
             this.written.Put(t, this.types.Get(t).0);
         }
         this.types.Put(t, expanded);
+    }
+
+    // bindExpr records e as of type t
+    fun void(ast.Expr*, Type*) bindExpr = (e, t) {
+        this.exprTypes.Put(e, t);
+    }
+
+    // capture records l as closing over name, unless it already does
+    fun void(ast.Expr.Lambda*, str) capture = (l, name) {
+        var ArrList[str]* names = this.Captures(l);
+        for(var uint i = 0U; i < names.Len(); i++) {
+            if(names.Get(i) == name) {
+                return;
+            }
+        }
+        names.AddLast(name);
+        this.captures.Put(l, names);
+    }
+
+    // bindName records the name written as e as standing for b
+    fun void(ast.Expr*, Binding*) bindName = (e, b) {
+        this.bindings.Put(e, b);
     }
 
     // addUse records u as an alias written where a type is
