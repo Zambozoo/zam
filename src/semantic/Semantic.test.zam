@@ -29,5 +29,8 @@ public namespace SemanticTest {
 
         var (Model*, ArrList[Err*]*) aliased = SemanticTest::validated("public namespace Main {\n    alias Unused[T] = int;\n}");
         Assert::[uint]Equal(1U, aliased.1.Len());
+
+        var (Model*, ArrList[Err*]*) cyclic = SemanticTest::validated("public class Main[T] {\n    var Main[T*]* next;\n}");
+        Assert::[uint]Equal(1U, cyclic.1.Len());
     }
 }

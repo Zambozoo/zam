@@ -2,6 +2,7 @@ import std("data/list/ArrList.zam");
 import std("lang/Err.zam");
 import "../syntax/ProjectParser.zam";
 import "Alias.zam";
+import "GenericCycle.zam";
 import "Model.zam";
 import "Resolve.zam";
 
@@ -14,6 +15,10 @@ public namespace Semantic {
         if(errs.Len() > 0U) {
             return (m, errs);
         }
-        return (m, Alias::Run(m));
+        errs = Alias::Run(m);
+        if(errs.Len() > 0U) {
+            return (m, errs);
+        }
+        return (m, GenericCycle::Run(m));
     }
 }

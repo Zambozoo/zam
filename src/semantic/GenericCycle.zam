@@ -1,0 +1,225 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("data/set/HashSet.zam");
+import std("lang/Err.zam");
+import std("lang/Iter.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "../syntax/Source.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Type.zam";
+
+// GenericCycle rejects a generic declaration whose instantiations never close
+public class GenericCycle <: ast.Walker* {
+    var Model* model;
+    // edges maps each parameter onto those it is given as an argument for
+    var HashMap[ast.Generic*, HashMap[ast.Generic*, bool]*]* edges;
+    // owners maps each parameter with edges onto the declaration or method it is of
+    var HashMap[ast.Generic*, ast.Field*]* owners;
+    // sources is the parameters with edges, in the order first found
+    var ArrList[ast.Generic*]* sources;
+
+    // Run finds the generic declarations of the program m models whose instantiations never close
+    public static fun ArrList[Err*]*(Model*) Run = (m) {
+        var GenericCycle* c = new(GenericCycle);
+        c.model = m;
+        c.edges = HashMap::[ast.Generic*, HashMap[ast.Generic*, bool]*]New(0U);
+        c.owners = HashMap::[ast.Generic*, ast.Field*]New(0U);
+        c.sources = ArrList::[ast.Generic*]New(0U);
+        var Iter[(str, Source*)]* all = m.Program().sources.Iter();
+        for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
+            c.VisitFile(next.0.1.file);
+        }
+        return c.cycles();
+    }
+
+    // VisitDeclAlias reads nothing, as every alias has been expanded where it is written
+    fun void(ast.Decl.Alias*) VisitDeclAlias = (d) {}
+
+    // VisitFieldMethod reads a method's type and body, but not the bounds of its parameters
+    fun void(ast.Field.Method*) VisitFieldMethod = (f) {
+        if(f.signature != null) {
+            this.VisitType(f.signature);
+        }
+        if(f.body != null) {
+            this.VisitStmt(f.body);
+        }
+    }
+
+    // VisitExprStatic reads the declaration a static is selected from
+    fun void(ast.Expr.Static*) VisitExprStatic = (e) {
+        if(e.owner == null) {
+            return;
+        }
+        this.VisitType(e.owner);
+        var ast.Field.Method* method = this.genericMethod(e);
+        if(method == null) {
+            return;
+        }
+        for(var uint i = 0U; i < e.arguments.Len() && i < method.generics.Len(); i++) {
+            var Type* argument = this.model.TypeOf(e.arguments.Get(i));
+            this.leaves(argument, 0U, method.generics.Get(i));
+            this.read(argument);
+        }
+    }
+
+    // genericMethod answers the generic static method e selects with arguments
+    fun ast.Field.Method*(ast.Expr.Static*) genericMethod = (e) {
+        if(e.arguments == null || e.name == null) {
+            return null;
+        }
+        var ast.Decl* d = GenericCycle::declOf(this.model.TypeOf(e.owner));
+        if(d == null) {
+            return null;
+        }
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field.Method* method = d.fields.Get(i){ast.Field.Method*};
+            if(method != null && method.generics != null && method.name.value{str} == e.name.value{str}) {
+                return method;
+            }
+        }
+        return null;
+    }
+
+    fun void(ast.Type*) VisitType = (t) {
+        this.read(this.model.TypeOf(t));
+    }
+
+    // read adds the edges every generic type within t makes
+    fun void(Type*) read = (t) {
+        if(t == null) {
+            return;
+        }
+        switch(t.kind) {
+            case (Type.Kind::Wrapped)
+                this.read(t{Type.Wrapped*}.inner);
+            case (Type.Kind::Array)
+                this.read(t{Type.Array*}.inner);
+            case (Type.Kind::Tuple)
+                this.readAll(t{Type.Tuple*}.types);
+            case (Type.Kind::Function) {
+                this.read(t{Type.Function*}.returns);
+                this.readAll(t{Type.Function*}.parameters);
+            }
+            case (Type.Kind::Generic) {
+                var Type.Generic* g = t{Type.Generic*};
+                var ast.Decl* d = GenericCycle::declOf(g.inner);
+                if(d == null || d.generics == null) {
+                    return;
+                }
+                for(var uint i = 0U; i < g.arguments.Len() && i < d.generics.Len(); i++) {
+                    this.leaves(g.arguments.Get(i), 0U, d.generics.Get(i));
+                    this.read(g.arguments.Get(i));
+                }
+            }
+        }
+    }
+
+    fun void(ArrList[Type*]*) readAll = (ts) {
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            this.read(ts.Get(i));
+        }
+    }
+
+    // leaves adds an edge to to from every parameter within t
+    fun void(Type*, uint, ast.Generic*) leaves = (t, depth, to) {
+        if(t == null) {
+            return;
+        }
+        switch(t.kind) {
+            case (Type.Kind::Param) {
+                var Type.Param* p = t{Type.Param*};
+                this.add(p.param, p.owner, to, depth > 0U);
+            }
+            case (Type.Kind::Wrapped)
+                this.leaves(t{Type.Wrapped*}.inner, depth + 1U, to);
+            case (Type.Kind::Array)
+                this.leaves(t{Type.Array*}.inner, depth + 1U, to);
+            case (Type.Kind::Tuple)
+                this.allLeaves(t{Type.Tuple*}.types, depth + 1U, to);
+            case (Type.Kind::Function) {
+                this.leaves(t{Type.Function*}.returns, depth + 1U, to);
+                this.allLeaves(t{Type.Function*}.parameters, depth + 1U, to);
+            }
+            case (Type.Kind::Generic)
+                this.allLeaves(t{Type.Generic*}.arguments, depth + 1U, to);
+        }
+    }
+
+    fun void(ArrList[Type*]*, uint, ast.Generic*) allLeaves = (ts, depth, to) {
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            this.leaves(ts.Get(i), depth, to);
+        }
+    }
+
+    // add records from, of owner, as given for to
+    fun void(ast.Generic*, ast.Field*, ast.Generic*, bool) add = (from, owner, to, expansive) {
+        var (HashMap[ast.Generic*, bool]*, bool) tos = this.edges.Get(from);
+        if(!tos.1) {
+            tos.0 = HashMap::[ast.Generic*, bool]New(0U);
+            this.edges.Put(from, tos.0);
+            this.owners.Put(from, owner);
+            this.sources.AddLast(from);
+        }
+        var (bool, bool) was = tos.0.Get(to);
+        tos.0.Put(to, (was.1 && was.0) || expansive);
+    }
+
+    // reachable reports whether target is reached from start along edges
+    fun bool(ast.Generic*, ast.Generic*, HashSet[ast.Generic*]*) reachable = (start, target, visited) {
+        if(start == target) {
+            return true;
+        } else if(!visited.Add(start)) {
+            return false;
+        }
+        var (HashMap[ast.Generic*, bool]*, bool) tos = this.edges.Get(start);
+        if(!tos.1) {
+            return false;
+        }
+        var Iter[(ast.Generic*, bool)]* nexts = tos.0.Iter();
+        for(var ((ast.Generic*, bool), bool) next = nexts.Next(); next.1; next = nexts.Next()) {
+            if(this.reachable(next.0.0, target, visited)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // cycles reports every declaration or method with a parameter given for one that reaches back to it
+    fun ArrList[Err*]*() cycles = () {
+        var ArrList[Err*]* errs = ArrList::[Err*]New(0U);
+        var HashSet[ast.Field*]* reported = HashSet::[ast.Field*]New(0U);
+        for(var uint i = 0U; i < this.sources.Len(); i++) {
+            var ast.Generic* from = this.sources.Get(i);
+            var ast.Field* owner = this.owners.Get(from).0;
+            if(owner == null || reported.Contains(owner)) {
+                continue;
+            }
+            var ast.Decl* at = owner{ast.Decl*};
+            if(at == null) {
+                at = this.model.Outer(owner);
+            }
+            var Iter[(ast.Generic*, bool)]* tos = this.edges.Get(from).0.Iter();
+            for(var ((ast.Generic*, bool), bool) next = tos.Next(); next.1; next = tos.Next()) {
+                if(next.0.1 && this.reachable(next.0.0, from, HashSet::[ast.Generic*]New(0U))) {
+                    reported.Add(owner);
+                    errs.AddLast(this.model.At(at, owner.start, StrErr::New("recursive generic expansion detected at " + Strs::Quote(owner.name.value{str}))));
+                    break;
+                }
+            }
+        }
+        return errs;
+    }
+
+    // declOf answers the generic declaration t names
+    static fun ast.Decl*(Type*) declOf = (t) {
+        if(t != null && t.kind == Type.Kind::Tailed) {
+            t = t{Type.Tailed*}.inner;
+        }
+        if(t == null || t.kind != Type.Kind::Named) {
+            return null;
+        }
+        return t{Type.Named*}.decl;
+    }
+}

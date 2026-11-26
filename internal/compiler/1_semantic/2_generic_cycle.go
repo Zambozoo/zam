@@ -73,17 +73,23 @@ func detectGenericCycles(ast *syntax.AST) []error {
 	}
 
 	var errs []error
-	reported := base.Set[syntax.DeclGeneric]{}
+	reported := base.Set[syntax.GenericOwner]{}
 	for from, tos := range v.graph {
-		fromDecl, ok := from.Owner.(syntax.DeclGeneric)
-		if !ok {
-			// Method-level parameters never participate in the recursion the
-			// cycle detector guards against: a method is only instantiated
-			// at a call site under ground arguments, not nested inside a
-			// declaration whose instantiation set has to close.
+		// A declaration's parameters close over every instantiation written
+		// inside it; a method's only over those it gives itself, as a generic
+		// static method calling itself with a wrapped argument does.
+		var at syntax.Decl
+		var start *syntax.Token
+		var name string
+		switch owner := from.Owner.(type) {
+		case syntax.DeclGeneric:
+			at, start, name = owner, owner.Start(), owner.Name()
+		case *syntax.FieldMethod:
+			at, start, name = owner.OuterDecl(), owner.Start(), owner.Name()
+		default:
 			continue
 		}
-		if _, ok := reported[fromDecl]; ok {
+		if _, ok := reported[from.Owner]; ok {
 			continue
 		}
 		for to, expansive := range tos {
@@ -91,9 +97,8 @@ func detectGenericCycles(ast *syntax.AST) []error {
 				continue
 			}
 			if v.graph.reachable(to, from, base.Set[syntax.GenericArgKey]{}) {
-				reported[fromDecl] = struct{}{}
-				errs = append(errs, errfAt(fromDecl, fromDecl.Start(),
-					"recursive generic expansion detected at %q", fromDecl.Name()))
+				reported[from.Owner] = struct{}{}
+				errs = append(errs, errfAt(at, start, "recursive generic expansion detected at %q", name))
 				break
 			}
 		}
@@ -404,10 +409,49 @@ func (v *genericCycleDetectorVisitor) VisitExprSymbol(e *syntax.ExprSymbol) erro
 	return nil
 }
 
-// VisitExprType implements [syntax.ExprVisitor].
+// VisitExprType implements [syntax.ExprVisitor]. The type arguments of a
+// generic static method are given for its own parameters, so they add edges
+// to those as a constructed type's add edges to its declaration's.
 func (v *genericCycleDetectorVisitor) VisitExprType(e *syntax.ExprType) error {
 	e.Type.Accept(v)
+	method := staticGenericMethod(e)
+	if method == nil {
+		return nil
+	}
+	for i, entry := range method.Generics().All() {
+		if i >= len(e.TypeArgs) {
+			break
+		}
+		v.addEdges(e.TypeArgs[i], syntax.GenericArgKey{Owner: method, Name: entry.Key.Name})
+		e.TypeArgs[i].Accept(v)
+	}
 	return nil
+}
+
+// staticGenericMethod answers the generic static method e selects with type
+// arguments, or nil when it selects none.
+func staticGenericMethod(e *syntax.ExprType) *syntax.FieldMethod {
+	if e.Field == "" || e.TypeArgs == nil {
+		return nil
+	}
+	resolvable, ok := e.Type.(syntax.TypeResolvable)
+	if !ok || resolvable.Decl() == nil {
+		return nil
+	}
+	method, ok := resolvable.Decl().GetStaticMethod(e.Field)
+	if !ok || method.Generics() == nil {
+		return nil
+	}
+	return method
+}
+
+// addEdges adds an edge to to from every parameter within arg.
+func (v *genericCycleDetectorVisitor) addEdges(arg syntax.Type, to syntax.GenericArgKey) {
+	var gav genericArgVisitor
+	arg.Accept(&gav)
+	for _, leaf := range gav.leaves {
+		v.graph.add(expansionEdge{From: leaf.from, To: to, Expansive: leaf.expansive})
+	}
 }
 
 func (v *genericCycleDetectorVisitor) VisitTypePrimitive(*syntax.TypePrimitive) error {
@@ -458,14 +502,7 @@ func (v *genericCycleDetectorVisitor) VisitTypeTailed(*syntax.TypeTailed) error 
 func (v *genericCycleDetectorVisitor) VisitTypeGeneric(t *syntax.TypeGeneric) error {
 	genericDecl := t.Type.Decl().(syntax.DeclGeneric)
 	for i, entry := range genericDecl.Generics().All() {
-		to := syntax.GenericArgKey{Owner: genericDecl, Name: entry.Key.Name}
-
-		var gav genericArgVisitor
-		t.ParameterTypes[i].Accept(&gav)
-		for _, leaf := range gav.leaves {
-			v.graph.add(expansionEdge{From: leaf.from, To: to, Expansive: leaf.expansive})
-		}
-
+		v.addEdges(t.ParameterTypes[i], syntax.GenericArgKey{Owner: genericDecl, Name: entry.Key.Name})
 		t.ParameterTypes[i].Accept(v)
 	}
 	return nil

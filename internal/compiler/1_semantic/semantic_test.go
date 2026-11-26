@@ -114,3 +114,12 @@ func TestValidateASTAmbiguous(t *testing.T) {
 	require.Len(t, errs, 1)
 	assert.Regexp(t, `^declaration "Twin" is ambiguous between \S*A\.zam and \S*B\.zam; alias one of their imports`, errs[0].Error())
 }
+
+// A generic static method that calls itself with a wrapped argument never
+// stops instantiating; one passing its parameter on unwrapped does.
+func TestValidateASTMethodCycle(t *testing.T) {
+	t.Parallel()
+	errs := validate(t, path.Join("invalid", "methodcycle"))
+	require.Len(t, errs, 1)
+	assert.ErrorContains(t, errs[0], `recursive generic expansion detected at "Grow"`)
+}

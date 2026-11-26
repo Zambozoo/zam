@@ -1,0 +1,127 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import "Alias.zam";
+import "GenericCycle.zam";
+import "Model.zam";
+import "Resolve.zam";
+
+public namespace GenericCycleTest {
+    // found answers what finding cycles in the program /p/Main.zam, written
+    // as main, resolved and its aliases expanded, finds
+    private fun ArrList[Err*]*(str) found = (main) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", main));
+        if(!Assert::[uint]Equal(0U, parsed.1.Len())) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var Model* m = Model::New(parsed.0);
+        var ArrList[Err*]* errs = Resolve::Run(m);
+        if(errs.Len() == 0U) {
+            errs = Alias::Run(m);
+        }
+        if(!Assert::[uint]Equal(0U, errs.Len())) {
+            Assert::Fatal(errs.Get(0U).Err());
+        }
+        return GenericCycle::Run(m);
+    }
+
+    // reports checks that main has a cycle at each declaration in want, given
+    // with its position in /p/Main.zam, and no other
+    private fun void(str, uint, str...) reports = (main, n, want) {
+        var ArrList[Err*]* errs = GenericCycleTest::found(main);
+        Assert::[uint]Equal(n / 2U, errs.Len());
+        for(var uint i = 0U; i + 1U < n && i / 2U < errs.Len(); i = i + 2U) {
+            Assert::[str]Equal("recursive generic expansion detected at \"" + want[i] + "\" (" + Path::Display("/p/Main.zam") + want[i + 1U] + ")", errs.Get(i / 2U).Err());
+        }
+    }
+
+    public fun void(uint, str...) Cycles = (argC, argV) {
+        GenericCycleTest::reports("public namespace Main {\n" +
+            "    class List[T] {\n" +
+            "        var List[T*]* next;\n" +
+            "        var List[T]* plain;\n" +
+            "    }\n" +
+            "    struct Twice[A, B] {\n" +
+            "        var Twice[B[2], A[2]]* twice;\n" +
+            "    }\n" +
+            "    struct Pair[A, B] {\n" +
+            "        var Pair[B, A[2]]* swapped;\n" +
+            "    }\n" +
+            "}\n", 6U,
+            "List", "[2:5]",
+            "Twice", "[6:5]",
+            "Pair", "[9:5]");
+    }
+
+    public fun void(uint, str...) Closed = (argC, argV) {
+        GenericCycleTest::reports("public namespace Main {\n" +
+            "    struct Pair[A, B] {\n" +
+            "        var Pair[B, A]* swapped;\n" +
+            "    }\n" +
+            "    class Box[T] {\n" +
+            "        var Pair[T*, T]* pair;\n" +
+            "        static fun[U] void(U) f = (u) {\n" +
+            "            var Box[U*]* b = null;\n" +
+            "        }\n" +
+            "    }\n" +
+            "}\n", 0U);
+    }
+
+    public fun void(uint, str...) Indirect = (argC, argV) {
+        GenericCycleTest::reports("public namespace Main {\n" +
+            "    class A[T] {\n" +
+            "        var B[T[2]]* b;\n" +
+            "    }\n" +
+            "    class B[U] {\n" +
+            "        var A[U]* a;\n" +
+            "    }\n" +
+            "}\n", 2U,
+            "A", "[2:5]");
+    }
+
+    public fun void(uint, str...) ThroughAlias = (argC, argV) {
+        GenericCycleTest::reports("public namespace Main {\n" +
+            "    alias Next[T] = Node[T*]*;\n" +
+            "    class Node[T] {\n" +
+            "        var Next[T] next;\n" +
+            "    }\n" +
+            "}\n", 2U,
+            "Node", "[3:5]");
+    }
+
+    public fun void(uint, str...) Methods = (argC, argV) {
+        GenericCycleTest::reports("public namespace Main {\n" +
+            "    class Recursing {\n" +
+            "        static fun[U] void(uint) Grow = (n) {\n" +
+            "            if(n > 0U) {\n" +
+            "                Recursing::[U*]Grow(n - 1U);\n" +
+            "            }\n" +
+            "        }\n" +
+            "        static fun[U] void(uint) Same = (n) {\n" +
+            "            if(n > 0U) {\n" +
+            "                Recursing::[U]Same(n - 1U);\n" +
+            "            }\n" +
+            "        }\n" +
+            "    }\n" +
+            "}\n", 2U,
+            "Grow", "[3:16]");
+    }
+
+    // Broken finds cycles in what a parse recovered from without failing on
+    // what it left out
+    public fun void(uint, str...) Broken = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam",
+            "public namespace Main {\n    class List[T] {\n        fun void() f = () {\n            var List[T*]* x = ;\n        }\n    }\n}\n"));
+        Assert::True(parsed.1.Len() > 0U, "the broken file parses");
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            return;
+        }
+        var Model* m = Model::New(parsed.0);
+        Assert::[uint]Equal(0U, Resolve::Run(m).Len());
+        Assert::[uint]Equal(0U, Alias::Run(m).Len());
+        Assert::[uint]Equal(1U, GenericCycle::Run(m).Len());
+    }
+}

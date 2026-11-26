@@ -1,0 +1,15 @@
+public namespace Main {
+    class Recursing {
+        static fun[U] void(uint) Grow = (n) {
+            if(n > 0U) {
+                Recursing::[U*]Grow(n - 1U);
+            }
+        }
+
+        static fun[U] void(uint) Same = (n) {
+            if(n > 0U) {
+                Recursing::[U]Same(n - 1U);
+            }
+        }
+    }
+}
