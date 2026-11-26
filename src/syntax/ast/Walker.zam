@@ -1,0 +1,427 @@
+import std("data/list/ArrList.zam");
+import "Decl.zam";
+import "Expr.zam";
+import "Field.zam";
+import "File.zam";
+import "Generic.zam";
+import "Import.zam";
+import "Stmt.zam";
+import "Type.zam";
+
+// Walker visits a syntax tree
+public abstract Walker {
+    public fun void(File*) VisitFile = (f) {
+        for(var uint i = 0U; i < f.imports.Len(); i++) {
+            this.VisitImport(f.imports.Get(i));
+        }
+        if(f.decl != null) {
+            this.VisitDecl(f.decl);
+        }
+    }
+
+    public fun void(Import*) VisitImport = (i) {}
+
+    public fun void(Generic*) VisitGeneric = (g) {
+        this.types(g.bounds);
+    }
+
+    // VisitField visits f as the kind of field it is
+    public fun void(Field*) VisitField = (f) {
+        switch(f.kind) {
+            case (Field.Kind::Member)
+                this.VisitFieldMember(f{Field.Member*});
+            case (Field.Kind::Method)
+                this.VisitFieldMethod(f{Field.Method*});
+            case (Field.Kind::Value)
+                this.VisitFieldValue(f{Field.Value*});
+        } else {
+            this.VisitDecl(f{Decl*});
+        }
+    }
+
+    public fun void(Field.Member*) VisitFieldMember = (f) {
+        this.typed(f.declared);
+        this.expr(f.init);
+    }
+
+    public fun void(Field.Method*) VisitFieldMethod = (f) {
+        this.generics(f.generics);
+        this.typed(f.signature);
+        this.stmt(f.body);
+    }
+
+    public fun void(Field.Value*) VisitFieldValue = (f) {
+        this.expr(f.value);
+        this.exprs(f.arguments);
+    }
+
+    // VisitDecl visits d as the kind of declaration it is
+    public fun void(Decl*) VisitDecl = (d) {
+        switch(d.kind) {
+            case (Field.Kind::Abstract, Field.Kind::Class)
+                this.VisitDeclObject(d{Decl.Object*});
+            case (Field.Kind::Struct)
+                this.VisitDeclStruct(d{Decl.Struct*});
+            case (Field.Kind::Interface)
+                this.VisitDeclInterface(d{Decl.Interface*});
+            case (Field.Kind::Namespace)
+                this.VisitDeclNamespace(d{Decl.Namespace*});
+            case (Field.Kind::Enum)
+                this.VisitDeclEnum(d{Decl.Enum*});
+            case (Field.Kind::Alias)
+                this.VisitDeclAlias(d{Decl.Alias*});
+        }
+    }
+
+    public fun void(Decl.Object*) VisitDeclObject = (d) {
+        this.generics(d.generics);
+        this.typed(d.base);
+        this.fields(d);
+    }
+
+    public fun void(Decl.Struct*) VisitDeclStruct = (d) {
+        this.generics(d.generics);
+        this.fields(d);
+    }
+
+    public fun void(Decl.Interface*) VisitDeclInterface = (d) {
+        this.generics(d.generics);
+        this.fields(d);
+    }
+
+    public fun void(Decl.Namespace*) VisitDeclNamespace = (d) {
+        this.generics(d.generics);
+        this.fields(d);
+    }
+
+    public fun void(Decl.Enum*) VisitDeclEnum = (d) {
+        this.generics(d.generics);
+        this.typed(d.primitive);
+        this.fields(d);
+    }
+
+    public fun void(Decl.Alias*) VisitDeclAlias = (d) {
+        this.generics(d.generics);
+        this.typed(d.aliased);
+    }
+
+    // VisitStmt visits s as the kind of statement it is
+    public fun void(Stmt*) VisitStmt = (s) {
+        switch(s.kind) {
+            case (Stmt.Kind::Expr, Stmt.Kind::Return, Stmt.Kind::Delete, Stmt.Kind::Free, Stmt.Kind::Mark)
+                this.VisitStmtValue(s{Stmt.Value*});
+            case (Stmt.Kind::Break, Stmt.Kind::Continue)
+                this.VisitStmtJump(s{Stmt.Jump*});
+            case (Stmt.Kind::For)
+                this.VisitStmtFor(s{Stmt.For*});
+            case (Stmt.Kind::If)
+                this.VisitStmtIf(s{Stmt.If*});
+            case (Stmt.Kind::Switch)
+                this.VisitStmtSwitch(s{Stmt.Switch*});
+            case (Stmt.Kind::Label)
+                this.VisitStmtLabel(s{Stmt.Label*});
+            case (Stmt.Kind::Block)
+                this.VisitStmtBlock(s{Stmt.Block*});
+            case (Stmt.Kind::Import)
+                this.VisitStmtImports(s{Stmt.Imports*});
+            case (Stmt.Kind::Variable)
+                this.VisitStmtVariable(s{Stmt.Variable*});
+            case (Stmt.Kind::Unpack)
+                this.VisitStmtUnpack(s{Stmt.Unpack*});
+            case (Stmt.Kind::Defer)
+                this.VisitStmtDefer(s{Stmt.Defer*});
+        }
+    }
+
+    public fun void(Stmt.Value*) VisitStmtValue = (s) {
+        this.expr(s.value);
+    }
+
+    public fun void(Stmt.Jump*) VisitStmtJump = (s) {}
+
+    public fun void(Stmt.For*) VisitStmtFor = (s) {
+        this.stmt(s.init);
+        this.expr(s.condition);
+        this.expr(s.step);
+        this.stmt(s.body);
+        this.stmt(s.otherwise);
+    }
+
+    public fun void(Stmt.If*) VisitStmtIf = (s) {
+        this.expr(s.condition);
+        this.stmt(s.then);
+        this.stmt(s.otherwise);
+    }
+
+    public fun void(Stmt.Switch*) VisitStmtSwitch = (s) {
+        this.expr(s.subject);
+        for(var uint i = 0U; i < s.cases.Len(); i++) {
+            this.VisitCase(s.cases.Get(i));
+        }
+        this.stmt(s.otherwise);
+    }
+
+    public fun void(Stmt.Case*) VisitCase = (c) {
+        this.exprs(c.values);
+        this.stmt(c.body);
+    }
+
+    public fun void(Stmt.Label*) VisitStmtLabel = (s) {
+        this.stmt(s.target);
+    }
+
+    public fun void(Stmt.Block*) VisitStmtBlock = (s) {
+        for(var uint i = 0U; i < s.statements.Len(); i++) {
+            this.stmt(s.statements.Get(i));
+        }
+    }
+
+    public fun void(Stmt.Imports*) VisitStmtImports = (s) {
+        for(var uint i = 0U; i < s.imports.Len(); i++) {
+            this.VisitImport(s.imports.Get(i));
+        }
+    }
+
+    public fun void(Stmt.Variable*) VisitStmtVariable = (s) {
+        this.typed(s.declared);
+        this.expr(s.init);
+    }
+
+    public fun void(Stmt.Unpack*) VisitStmtUnpack = (s) {
+        for(var uint i = 0U; i < s.variables.Len(); i++) {
+            this.VisitStmtVariable(s.variables.Get(i));
+        }
+        this.expr(s.init);
+    }
+
+    public fun void(Stmt.Defer*) VisitStmtDefer = (s) {
+        this.stmt(s.deferred);
+    }
+
+    // VisitExpr visits e as the kind of expression it is
+    public fun void(Expr*) VisitExpr = (e) {
+        switch(e.kind) {
+            case (Expr.Kind::Symbol)
+                this.VisitExprSymbol(e{Expr.Symbol*});
+            case (Expr.Kind::NAry)
+                this.VisitExprNAry(e{Expr.NAry*});
+            case (Expr.Kind::Unary)
+                this.VisitExprUnary(e{Expr.Unary*});
+            case (Expr.Kind::Ternary)
+                this.VisitExprTernary(e{Expr.Ternary*});
+            case (Expr.Kind::Tuple)
+                this.VisitExprTuple(e{Expr.Tuple*});
+            case (Expr.Kind::Call)
+                this.VisitExprCall(e{Expr.Call*});
+            case (Expr.Kind::Spread)
+                this.VisitExprSpread(e{Expr.Spread*});
+            case (Expr.Kind::Index)
+                this.VisitExprIndex(e{Expr.Index*});
+            case (Expr.Kind::Field)
+                this.VisitExprField(e{Expr.Field*});
+            case (Expr.Kind::Path)
+                this.VisitExprPath(e{Expr.Path*});
+            case (Expr.Kind::Static)
+                this.VisitExprStatic(e{Expr.Static*});
+            case (Expr.Kind::TypeValue)
+                this.VisitExprTypeValue(e{Expr.TypeValue*});
+            case (Expr.Kind::Cast)
+                this.VisitExprCast(e{Expr.Cast*});
+            case (Expr.Kind::New)
+                this.VisitExprNew(e{Expr.New*});
+            case (Expr.Kind::Native)
+                this.VisitExprNative(e{Expr.Native*});
+            case (Expr.Kind::Async)
+                this.VisitExprAsync(e{Expr.Async*});
+            case (Expr.Kind::Wait)
+                this.VisitExprWait(e{Expr.Wait*});
+            case (Expr.Kind::Lambda)
+                this.VisitExprLambda(e{Expr.Lambda*});
+        }
+    }
+
+    public fun void(Expr.Symbol*) VisitExprSymbol = (e) {}
+
+    public fun void(Expr.NAry*) VisitExprNAry = (e) {
+        this.exprs(e.operands);
+    }
+
+    public fun void(Expr.Unary*) VisitExprUnary = (e) {
+        this.expr(e.operand);
+    }
+
+    public fun void(Expr.Ternary*) VisitExprTernary = (e) {
+        this.expr(e.condition);
+        this.expr(e.then);
+        this.expr(e.otherwise);
+    }
+
+    public fun void(Expr.Tuple*) VisitExprTuple = (e) {
+        this.exprs(e.elements);
+    }
+
+    public fun void(Expr.Call*) VisitExprCall = (e) {
+        this.expr(e.callee);
+        this.exprs(e.arguments);
+    }
+
+    public fun void(Expr.Spread*) VisitExprSpread = (e) {
+        this.expr(e.inner);
+    }
+
+    public fun void(Expr.Index*) VisitExprIndex = (e) {
+        this.expr(e.target);
+        this.expr(e.index);
+    }
+
+    public fun void(Expr.Field*) VisitExprField = (e) {
+        this.expr(e.target);
+    }
+
+    public fun void(Expr.Path*) VisitExprPath = (e) {}
+
+    public fun void(Expr.Static*) VisitExprStatic = (e) {
+        this.typed(e.owner);
+        this.types(e.arguments);
+    }
+
+    public fun void(Expr.TypeValue*) VisitExprTypeValue = (e) {
+        this.typed(e.named);
+    }
+
+    public fun void(Expr.Cast*) VisitExprCast = (e) {
+        this.expr(e.inner);
+        this.typed(e.to);
+    }
+
+    public fun void(Expr.New*) VisitExprNew = (e) {
+        this.typed(e.allocated);
+        this.expr(e.count);
+        this.expr(e.tail);
+    }
+
+    public fun void(Expr.Native*) VisitExprNative = (e) {}
+
+    public fun void(Expr.Async*) VisitExprAsync = (e) {
+        this.expr(e.call);
+    }
+
+    public fun void(Expr.Wait*) VisitExprWait = (e) {
+        this.expr(e.waited);
+    }
+
+    public fun void(Expr.Lambda*) VisitExprLambda = (e) {
+        this.typed(e.signature);
+        this.stmt(e.body);
+    }
+
+    // VisitType visits t as the kind of type it is
+    public fun void(Type*) VisitType = (t) {
+        switch(t.kind) {
+            case (Type.Kind::Primitive)
+                this.VisitTypePrimitive(t{Type.Primitive*});
+            case (Type.Kind::Wrapped)
+                this.VisitTypeWrapped(t{Type.Wrapped*});
+            case (Type.Kind::Array)
+                this.VisitTypeArray(t{Type.Array*});
+            case (Type.Kind::Tailed)
+                this.VisitTypeTailed(t{Type.Tailed*});
+            case (Type.Kind::Tuple)
+                this.VisitTypeTuple(t{Type.Tuple*});
+            case (Type.Kind::Function)
+                this.VisitTypeFunction(t{Type.Function*});
+            case (Type.Kind::Reference)
+                this.VisitTypeReference(t{Type.Reference*});
+            case (Type.Kind::Generic)
+                this.VisitTypeGeneric(t{Type.Generic*});
+        }
+    }
+
+    public fun void(Type.Primitive*) VisitTypePrimitive = (t) {}
+
+    public fun void(Type.Wrapped*) VisitTypeWrapped = (t) {
+        this.typed(t.inner);
+    }
+
+    public fun void(Type.Array*) VisitTypeArray = (t) {
+        this.typed(t.inner);
+    }
+
+    public fun void(Type.Tailed*) VisitTypeTailed = (t) {
+        this.typed(t.inner);
+    }
+
+    public fun void(Type.Tuple*) VisitTypeTuple = (t) {
+        this.types(t.types);
+    }
+
+    public fun void(Type.Function*) VisitTypeFunction = (t) {
+        this.typed(t.returns);
+        this.types(t.parameters);
+    }
+
+    public fun void(Type.Reference*) VisitTypeReference = (t) {}
+
+    public fun void(Type.Generic*) VisitTypeGeneric = (t) {
+        this.typed(t.inner);
+        this.types(t.arguments);
+    }
+
+    // fields visits the fields of d
+    fun void(Decl*) fields = (d) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            this.VisitField(d.fields.Get(i));
+        }
+    }
+
+    // generics visits gs unless there are none
+    fun void(ArrList[Generic*]*) generics = (gs) {
+        if(gs == null) {
+            return;
+        }
+        for(var uint i = 0U; i < gs.Len(); i++) {
+            this.VisitGeneric(gs.Get(i));
+        }
+    }
+
+    // typed visits t unless it is left out
+    fun void(Type*) typed = (t) {
+        if(t != null) {
+            this.VisitType(t);
+        }
+    }
+
+    // types visits ts unless there are none
+    fun void(ArrList[Type*]*) types = (ts) {
+        if(ts == null) {
+            return;
+        }
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            this.typed(ts.Get(i));
+        }
+    }
+
+    // stmt visits s unless it is left out
+    fun void(Stmt*) stmt = (s) {
+        if(s != null) {
+            this.VisitStmt(s);
+        }
+    }
+
+    // expr visits e unless it is left out
+    fun void(Expr*) expr = (e) {
+        if(e != null) {
+            this.VisitExpr(e);
+        }
+    }
+
+    // exprs visits es unless there are none
+    fun void(ArrList[Expr*]*) exprs = (es) {
+        if(es == null) {
+            return;
+        }
+        for(var uint i = 0U; i < es.Len(); i++) {
+            this.expr(es.Get(i));
+        }
+    }
+}

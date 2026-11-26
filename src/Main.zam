@@ -16,8 +16,10 @@ import "syntax/LocalPackages.zam";
 import "syntax/LocalSources.zam";
 import "syntax/PackageArchive.zam";
 import "syntax/Path.zam";
-import "test/TestFiles.zam";
+import "semantic/Model.zam";
+import "semantic/Semantic.zam";
 import "syntax/ProjectParser.zam";
+import "test/TestFiles.zam";
 
 namespace Main {
     namespace Errs {
@@ -31,6 +33,7 @@ namespace Main {
         Command("command"),
         Std("std"),
         Syntax("syntax"),
+        Semantic("semantic"),
         Get("get"),
         Clean("clean"),
         Test("test");
@@ -200,6 +203,8 @@ namespace Main {
             var ProjectParser* parser = ProjectParser::New(sources, fetcher, r.0.maxThreads{uint}, r.0.noProject, r.0.writeProject);
             var (ProjectParser.Program*, ArrList[Err*]*) program = parser.Parse(entry, extra);
             onError(Step::Syntax, program.1.Len(), program.1.Arr().Arr()...);
+            var (Model*, ArrList[Err*]*) model = Semantic::Validate(program.0);
+            onError(Step::Semantic, model.1.Len(), model.1.Arr().Arr()...);
         }
         File::StdOut.WriteStr(r.0.Str() + "\n");
     }

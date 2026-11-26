@@ -16,8 +16,9 @@ type referenceTypeResolverVisitor struct {
 	errs []error
 }
 
-// VisitAST visits the AST and resolves the types.
-func resolveReferenceTypes(ast *syntax.AST) []error {
+// Resolve binds every type reference and import in ast to the declaration it
+// names, answering what could not be bound.
+func Resolve(ast *syntax.AST) []error {
 	r := &referenceTypeResolverVisitor{
 		ast: ast,
 	}
@@ -415,9 +416,9 @@ func (r *referenceTypeResolverVisitor) VisitTypeGeneric(t *syntax.TypeGeneric) e
 	_, isTailedType := t.Type.(*syntax.TypeTailed)
 	if tailedDecl, isTailedDecl := decl.(syntax.DeclTailable); (isTailedDecl && tailedDecl.IsTailed()) != isTailedType {
 		if isTailedType {
-			r.errf(t, "declaration %q is a tailed type, but %s was provided", t.String(), decl)
+			r.errf(t, "declaration %q is not a tailed type", t.String())
 		} else {
-			r.errf(t, "declaration %q is not a tailed type, but %s was provided", t.String(), decl)
+			r.errf(t, "declaration %q is a tailed type", t.String())
 		}
 		return nil
 	}
@@ -558,11 +559,11 @@ func (r *referenceTypeResolverVisitor) importsDecl(t *syntax.TypeReference, impo
 
 // importedDecl finds what ids name among imports, ids[0] being the name of an
 // imported file's declaration and the rest a path nested inside it, skipping
-// aliased imports when told to. Two imports answering with different
-// declarations make the name ambiguous, since which one was meant is for an
-// alias to say.
+// aliased imports when told to. Imports answering with different declarations
+// make the name ambiguous, since which one was meant is for an alias to say;
+// the first two files in path order are named.
 func (r *referenceTypeResolverVisitor) importedDecl(t *syntax.TypeReference, imports []*syntax.Import, ids []string, skipAliased bool) (syntax.Decl, error) {
-	var found syntax.Decl
+	var found []syntax.Decl
 	for _, imp := range imports {
 		r.bindImport(imp)
 		if imp.ImportedFile == nil || (skipAliased && imp.Alias != nil) {
@@ -572,18 +573,22 @@ func (r *referenceTypeResolverVisitor) importedDecl(t *syntax.TypeReference, imp
 		if fileDecl.Name() != ids[0] {
 			continue
 		}
-		decl, ok := nestedDecl(fileDecl, ids[1:])
-		if !ok || decl == found {
-			continue
+		if decl, ok := nestedDecl(fileDecl, ids[1:]); ok && !slices.Contains(found, decl) {
+			found = append(found, decl)
 		}
-		if found != nil {
-			paths := []string{found.File().Path.String(), decl.File().Path.String()}
-			slices.Sort(paths)
-			return nil, fmt.Errorf("declaration %q is ambiguous between %s and %s; alias one of their imports", t.String(), paths[0], paths[1])
-		}
-		found = decl
 	}
-	return found, nil
+	switch len(found) {
+	case 0:
+		return nil, nil
+	case 1:
+		return found[0], nil
+	}
+	paths := make([]string, len(found))
+	for i, d := range found {
+		paths[i] = d.File().Path.String()
+	}
+	slices.Sort(paths)
+	return nil, fmt.Errorf("declaration %q is ambiguous between %s and %s; alias one of their imports", t.String(), paths[0], paths[1])
 }
 
 // VisitTypeReference implements [syntax.TypeVisitor].

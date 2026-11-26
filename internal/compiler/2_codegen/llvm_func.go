@@ -3781,8 +3781,15 @@ func (e *funcEmitter) methodTarget(object syntax.Expr, decl syntax.Decl, method 
 		return fail(fmt.Errorf("no method %q", method.Name()))
 	}
 	index := uint64(*origin.Index())
+	// A call through super names the base's own method, which an override of
+	// it would otherwise be found in place of.
+	symbol, isSymbol := object.(*syntax.ExprSymbol)
+	viaSuper := isSymbol && symbol.Kind() == syntax.ExprKindSuper && origin.Body != nil
 	entryOf := func() llvm.Value {
 		pointer := func() llvm.Value { return e.b.CreateIntToPtr(receiver.value, e.p.ptr, "") }
+		if viaSuper {
+			return e.p.methodFunction(origin, decl)
+		}
 		switch decl.(type) {
 		case *syntax.DeclInterface, *syntax.DeclConcreteInterface:
 			a, _, _ := e.p.typeInstance(decl.(syntax.DeclTypeable).DeclType()).packed()

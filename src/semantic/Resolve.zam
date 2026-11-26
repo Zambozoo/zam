@@ -1,0 +1,503 @@
+import std("data/list/ArrList.zam");
+import std("data/sort/Sort.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Iter.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/Source.zam";
+import "../syntax/SourceErr.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Type.zam";
+
+// Resolve binds every type written in a program to what it names
+public class Resolve <: ast.Walker* {
+    var Model* model;
+    var ArrList[Err*]* errs;
+    // obj is the base of a class or abstract written without one
+    var Type* obj;
+    var Source* source;
+    // decl is the declaration being walked
+    var ast.Decl* decl;
+    // method is the method being walked, or null outside one
+    var ast.Field.Method* method;
+    // scopes holds, for each block being walked, the imports written in it so far
+    var ArrList[ArrList[ast.Import*]*]* scopes;
+
+    // Run resolves the types of every file of the program m
+    public static fun ArrList[Err*]*(Model*) Run = (m) {
+        var Resolve* r = new(Resolve);
+        r.model = m;
+        r.errs = ArrList::[Err*]New(0U);
+        r.scopes = ArrList::[ArrList[ast.Import*]*]New(0U);
+        var (Source*, bool) obj = m.Program().sources.Get(ProjectParser::ObjPath);
+        if(obj.1 && obj.0.file.decl != null) {
+            var Type* named = Type.Named::New(null, obj.0.file.decl, "std.Obj", "");
+            r.obj = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, named);
+        }
+        var Iter[(str, Source*)]* all = m.Program().sources.Iter();
+        for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
+            r.source = next.0.1;
+            r.VisitFile(r.source.file);
+        }
+        return r.errs;
+    }
+
+    fun void(ast.Decl*) VisitDecl = (d) {
+        var ast.Decl* outer = this.decl;
+        this.decl = d;
+        super.VisitDecl(d);
+        this.decl = outer;
+    }
+
+    fun void(ast.Decl.Object*) VisitDeclObject = (d) {
+        super.VisitDeclObject(d);
+        if(d.base != null) {
+            var Type* base = this.model.TypeOf(d.base);
+            if(base != null) {
+                this.model.bindBase(d, base);
+            }
+        } else if(this.obj != null && this.source.path != ProjectParser::ObjPath) {
+            this.model.bindBase(d, this.obj);
+        }
+    }
+
+    fun void(ast.Field.Method*) VisitFieldMethod = (f) {
+        var ast.Field.Method* outer = this.method;
+        this.method = f;
+        super.VisitFieldMethod(f);
+        this.method = outer;
+    }
+
+    fun void(ast.Stmt.Block*) VisitStmtBlock = (s) {
+        this.scopes.AddLast(ArrList::[ast.Import*]New(0U));
+        super.VisitStmtBlock(s);
+        this.scopes.RemoveLast();
+    }
+
+    fun void(ast.Stmt.Imports*) VisitStmtImports = (s) {
+        if(this.scopes.Len() == 0U) {
+            return;
+        }
+        var ArrList[ast.Import*]* scope = this.scopes.Get(this.scopes.Len() - 1U);
+        for(var uint i = 0U; i < s.imports.Len(); i++) {
+            scope.AddLast(s.imports.Get(i));
+        }
+    }
+
+    // VisitExprStatic resolves the declaration a static field is selected from
+    fun void(ast.Expr.Static*) VisitExprStatic = (e) {
+        if(e.owner != null && e.owner.kind == ast.Type.Kind::Reference) {
+            var ast.Type.Reference* owner = e.owner{ast.Type.Reference*};
+            var Type* param = this.param(owner);
+            if(param != null) {
+                this.model.bindType(owner, param);
+            } else {
+                var (ast.Decl*, str) found = this.lookup(owner);
+                if(found.1 != "") {
+                    this.fail(owner, found.1);
+                } else {
+                    this.model.bindType(owner, this.named(owner, found.0));
+                }
+            }
+        } else {
+            this.resolve(e.owner);
+        }
+        this.resolveAll(e.arguments);
+    }
+
+    fun void(ast.Type*) VisitType = (t) {
+        this.resolve(t);
+    }
+
+    // resolve answers what t resolves to
+    fun Type*(ast.Type*) resolve = (t) {
+        if(t == null) {
+            return null;
+        }
+        var Type* resolved = this.resolved(t);
+        if(resolved != null) {
+            this.model.bindType(t, resolved);
+        }
+        return resolved;
+    }
+
+    // resolveAll resolves every type of ts
+    fun ArrList[Type*]*(ArrList[ast.Type*]*) resolveAll = (ts) {
+        if(ts == null) {
+            return null;
+        }
+        var ArrList[Type*]* resolved = ArrList::[Type*]New(0U);
+        var bool whole = true;
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            var Type* t = this.resolve(ts.Get(i));
+            whole = whole && t != null;
+            resolved.AddLast(t);
+        }
+        if(!whole) {
+            return null;
+        }
+        return resolved;
+    }
+
+    fun Type*(ast.Type*) resolved = (t) {
+        switch(t.kind) {
+            case (ast.Type.Kind::Primitive)
+                return Type.Primitive::New(t.start, t.start.kind);
+            case (ast.Type.Kind::Wrapped) {
+                var ast.Type.Wrapped* w = t{ast.Type.Wrapped*};
+                var Type* inner = this.resolve(w.inner);
+                if(inner == null) {
+                    return null;
+                }
+                return Type.Wrapped::New(t.start, w.wrap, inner);
+            }
+            case (ast.Type.Kind::Array) {
+                var ast.Type.Array* a = t{ast.Type.Array*};
+                var Type* inner = this.resolve(a.inner);
+                if(inner == null) {
+                    return null;
+                }
+                return Type.Array::New(t.start, inner, a.sized, a.size);
+            }
+            case (ast.Type.Kind::Tuple) {
+                var ArrList[Type*]* types = this.resolveAll(t{ast.Type.Tuple*}.types);
+                if(types == null) {
+                    return null;
+                }
+                return Type.Tuple::New(t.start, types);
+            }
+            case (ast.Type.Kind::Function) {
+                var ast.Type.Function* f = t{ast.Type.Function*};
+                var Type* returns = this.resolve(f.returns);
+                var ArrList[Type*]* parameters = this.resolveAll(f.parameters);
+                if(returns == null || parameters == null) {
+                    return null;
+                }
+                return Type.Function::New(t.start, returns, parameters);
+            }
+            case (ast.Type.Kind::Reference)
+                return this.reference(t{ast.Type.Reference*});
+            case (ast.Type.Kind::Tailed)
+                return this.tailed(t{ast.Type.Tailed*});
+            case (ast.Type.Kind::Generic)
+                return this.generic(t{ast.Type.Generic*});
+        }
+        return null;
+    }
+
+    // reference resolves t, which must name neither a generic nor a tailed declaration
+    fun Type*(ast.Type.Reference*) reference = (t) {
+        var Type* param = this.param(t);
+        if(param != null) {
+            return param;
+        }
+        var (ast.Decl*, str) found = this.lookup(t);
+        if(found.1 != "") {
+            this.fail(t, found.1);
+            return null;
+        }
+        var ast.Decl* d = found.0;
+        var Type* named = this.named(t, d);
+        if(d.kind == ast.Field.Kind::Alias) {
+            return named;
+        } else if(d.generics != null) {
+            this.fail(t, "declaration " + Strs::Quote(named.Text()) + " is a generic type");
+            return null;
+        } else if(Resolve::isTailed(d)) {
+            this.fail(t, "declaration " + Strs::Quote(named.Text()) + " is a tailed type");
+            return null;
+        }
+        return named;
+    }
+
+    // tailed resolves t, which must name a tailed declaration that is not generic
+    fun Type*(ast.Type.Tailed*) tailed = (t) {
+        if(t.inner == null || t.inner.kind != ast.Type.Kind::Reference) {
+            return null;
+        }
+        var ast.Type.Reference* ref = t.inner{ast.Type.Reference*};
+        var (ast.Decl*, str) found = this.lookup(ref);
+        if(found.1 != "") {
+            this.fail(t, found.1);
+            return null;
+        }
+        var ast.Decl* d = found.0;
+        var Type* named = this.named(ref, d);
+        if(d.kind == ast.Field.Kind::Alias) {
+            this.fail(t, "alias " + Strs::Quote(named.Text()) + " cannot be tailed");
+            return null;
+        } else if(!Resolve::isTailed(d)) {
+            this.fail(t, "declaration " + Strs::Quote(this.written(t, d)) + " is not a tailed type");
+            return null;
+        } else if(d.generics != null) {
+            this.fail(t, "declaration " + Strs::Quote(this.written(t, d)) + " is a generic type");
+            return null;
+        }
+        this.model.bindType(ref, named);
+        return Type.Tailed::New(t.start, named, t.sized, t.size);
+    }
+
+    // generic resolves t
+    fun Type*(ast.Type.Generic*) generic = (t) {
+        var ast.Type* head = t.inner;
+        if(head == null) {
+            return null;
+        }
+        var ast.Type.Tailed* tail = null;
+        if(head.kind == ast.Type.Kind::Tailed) {
+            tail = head{ast.Type.Tailed*};
+            head = tail.inner;
+        }
+        if(head == null || head.kind != ast.Type.Kind::Reference) {
+            return null;
+        }
+        var ast.Type.Reference* ref = head{ast.Type.Reference*};
+        var (ast.Decl*, str) found = this.lookup(ref);
+        if(found.1 != "") {
+            this.fail(t, found.1);
+            return null;
+        }
+        var ast.Decl* d = found.0;
+        var Type* named = this.named(ref, d);
+        var uint count = 0U;
+        if(t.arguments != null) {
+            count = t.arguments.Len();
+        }
+        if(d.kind == ast.Field.Kind::Alias && tail != null) {
+            this.fail(t, "alias " + Strs::Quote(named.Text()) + " cannot be tailed");
+            return null;
+        } else if(d.kind != ast.Field.Kind::Alias) {
+            var str written = Strs::Quote(this.written(t, d));
+            if(d.generics == null) {
+                this.fail(t, "declaration " + written + " is not a generic type");
+                return null;
+            } else if(d.generics.Len() != count) {
+                this.fail(t, "generic type " + written + " has " + d.generics.Len(){str} + " parameters, but " + count{str} + " were provided");
+                return null;
+            } else if(Resolve::isTailed(d) != (tail != null)) {
+                if(tail != null) {
+                    this.fail(t, "declaration " + written + " is not a tailed type");
+                } else {
+                    this.fail(t, "declaration " + written + " is a tailed type");
+                }
+                return null;
+            }
+        }
+
+        var ArrList[Type*]* arguments = this.resolveAll(t.arguments);
+        this.model.bindType(ref, named);
+        var Type* inner = named;
+        if(tail != null) {
+            inner = Type.Tailed::New(tail.start, named, tail.sized, tail.size);
+            this.model.bindType(tail, inner);
+        }
+        if(arguments == null) {
+            return null;
+        }
+        return Type.Generic::New(t.start, inner, arguments);
+    }
+
+    // param answers the generic parameter t names
+    fun Type*(ast.Type.Reference*) param = (t) {
+        if(t.ids.Len() != 1U) {
+            return null;
+        }
+        var str name = t.ids.Get(0U).value{str};
+        if(this.method != null) {
+            var ast.Generic* g = Resolve::paramNamed(this.method.generics, name);
+            if(g != null) {
+                return Type.Param::New(t.start, g, this.method);
+            }
+        }
+        if(this.decl != null) {
+            var ast.Generic* g = Resolve::paramNamed(this.decl.generics, name);
+            if(g != null) {
+                return Type.Param::New(t.start, g, this.decl);
+            }
+        }
+        return null;
+    }
+
+    // lookup finds the declaration t names
+    fun (ast.Decl*, str)(ast.Type.Reference*) lookup = (t) {
+        var ArrList[str]* ids = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < t.ids.Len(); i++) {
+            ids.AddLast(t.ids.Get(i).value{str});
+        }
+
+        for(var uint i = this.scopes.Len(); i > 0U; i--) {
+            var ArrList[ast.Import*]* scope = this.scopes.Get(i - 1U);
+            if(scope.Len() > 0U) {
+                var (ast.Decl*, str) found = this.imported(ids, scope);
+                if(found.0 != null || found.1 != "") {
+                    return found;
+                }
+            }
+        }
+
+        // The nearest declaration with a name for the head binds it
+        for(var ast.Decl* outer = this.decl; outer != null; outer = this.model.Outer(outer)) {
+            var ast.Decl* head = outer;
+            if(outer.name == null || outer.name.value{str} != ids.Get(0U)) {
+                head = this.model.Nested(outer, ids.Get(0U));
+                if(head == null) {
+                    continue;
+                }
+            }
+            var ast.Decl* d = this.nested(head, ids, 1U);
+            if(d == null) {
+                return (null, Resolve::notFound(ids));
+            }
+            return (d, "");
+        }
+
+        var (ast.Decl*, str) found = this.imported(ids, this.source.file.imports);
+        if(found.0 != null || found.1 != "") {
+            return found;
+        }
+        return (null, Resolve::notFound(ids));
+    }
+
+    // imported finds what ids name among imports
+    fun (ast.Decl*, str)(ArrList[str]*, ArrList[ast.Import*]*) imported = (ids, imports) {
+        if(ids.Len() > 1U) {
+            var (ast.Decl*, str) found = this.importedDecl(ids, imports, ids.Get(0U), 1U);
+            if(found.0 != null || found.1 != "") {
+                return found;
+            }
+        }
+        return this.importedDecl(ids, imports, "", 0U);
+    }
+
+    // importedDecl finds the declaration ids name from the one at from
+    fun (ast.Decl*, str)(ArrList[str]*, ArrList[ast.Import*]*, str, uint) importedDecl = (ids, imports, id, from) {
+        var ArrList[ast.Decl*]* found = ArrList::[ast.Decl*]New(0U);
+        var ArrList[str]* paths = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < imports.Len(); i++) {
+            var ast.Import* imp = imports.Get(i);
+            if(id == "" && imp.name != null) {
+                continue;
+            }
+            var ArrList[Source*]* files = this.model.Imported(imp);
+            for(var uint j = 0U; j < files.Len(); j++) {
+                var Source* s = files.Get(j);
+                var ast.Decl* fileDecl = s.file.decl;
+                if(id != "" && Resolve::importID(imp, s.path) != id) {
+                    continue;
+                } else if(fileDecl == null || fileDecl.name == null || fileDecl.name.value{str} != ids.Get(from)) {
+                    continue;
+                }
+                var ast.Decl* d = this.nested(fileDecl, ids, from + 1U);
+                if(d != null && !Resolve::holds(found, d)) {
+                    found.AddLast(d);
+                    paths.AddLast(Path::Display(s.path));
+                }
+            }
+        }
+        if(found.Len() == 0U) {
+            return (null, "");
+        } else if(found.Len() == 1U) {
+            return (found.Get(0U), "");
+        }
+        var Arr[str]* sorted = paths.Arr();
+        Sort::[str]SortArr(sorted);
+        return (null, "declaration " + Strs::Quote(Resolve::joined(ids)) + " is ambiguous between " + sorted.Get(0U) + " and " + sorted.Get(1U) + "; alias one of their imports");
+    }
+
+    // nested answers the declaration ids name from the one at from
+    fun ast.Decl*(ast.Decl*, ArrList[str]*, uint) nested = (d, ids, from) {
+        for(var uint i = from; d != null && i < ids.Len(); i++) {
+            d = this.model.Nested(d, ids.Get(i));
+        }
+        return d;
+    }
+
+    // named answers t as naming d
+    fun Type*(ast.Type.Reference*, ast.Decl*) named = (t, d) {
+        var str names = "";
+        for(var uint i = 0U; i < t.ids.Len(); i++) {
+            if(i > 0U) {
+                names = names + ".";
+            }
+            names = names + t.ids.Get(i).value{str};
+        }
+        return Type.Named::New(t.start, d, names, this.model.Source(d).project.archive);
+    }
+
+    // written answers t as messages name it, its head naming d
+    fun str(ast.Type*, ast.Decl*) written = (t, d) {
+        var str archive = this.model.Source(d).project.archive;
+        if(archive != "") {
+            return archive + ":" + t.Text();
+        }
+        return t.Text();
+    }
+
+    // fail records msg as found at t
+    fun void(ast.Type*, str) fail = (t, msg) {
+        this.errs.AddLast(SourceErr::At(StrErr::New(msg), this.source.path, this.source.lineStarts, t.start));
+    }
+
+    // generic answers the parameter named name among generics
+    static fun ast.Generic*(ArrList[ast.Generic*]*, str) paramNamed = (generics, name) {
+        if(generics == null) {
+            return null;
+        }
+        for(var uint i = 0U; i < generics.Len(); i++) {
+            var ast.Generic* g = generics.Get(i);
+            if(g.name != null && g.name.value{str} == name) {
+                return g;
+            }
+        }
+        return null;
+    }
+
+    // isTailed reports whether d is a class, abstract or struct written with a tail
+    static fun bool(ast.Decl*) isTailed = (d) {
+        if(d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Abstract) {
+            return d{ast.Decl.Object*}.tailed;
+        } else if(d.kind == ast.Field.Kind::Struct) {
+            return d{ast.Decl.Struct*}.tailed;
+        }
+        return false;
+    }
+
+    // importID answers the name imp is reached by as importing the file at path
+    static fun str(ast.Import*, str) importID = (imp, path) {
+        if(imp.name != null) {
+            return imp.name.value{str};
+        } else if(imp.pkg != null) {
+            return imp.pkg.value{str};
+        }
+        return Path::FileName(path);
+    }
+
+    // holds reports whether ds holds d
+    static fun bool(ArrList[ast.Decl*]*, ast.Decl*) holds = (ds, d) {
+        for(var uint i = 0U; i < ds.Len(); i++) {
+            if(ds.Get(i) == d) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static fun str(ArrList[str]*) joined = (ids) {
+        var str out = "";
+        for(var uint i = 0U; i < ids.Len(); i++) {
+            if(i > 0U) {
+                out = out + ".";
+            }
+            out = out + ids.Get(i);
+        }
+        return out;
+    }
+
+    static fun str(ArrList[str]*) notFound = (ids) {
+        return "declaration " + Strs::Quote(Resolve::joined(ids)) + " not found";
+    }
+}

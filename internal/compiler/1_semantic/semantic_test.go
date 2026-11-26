@@ -105,3 +105,12 @@ func TestValidateASTEnumBound(t *testing.T) {
 	require.Len(t, errs, 1)
 	assert.ErrorContains(t, errs[0], "type argument int for E is not an enum")
 }
+
+// A name three imports declare is ambiguous between the first two of their
+// files in path order, whatever order they are imported in.
+func TestValidateASTAmbiguous(t *testing.T) {
+	t.Parallel()
+	errs := validate(t, path.Join("invalid", "ambiguous"))
+	require.Len(t, errs, 1)
+	assert.Regexp(t, `^declaration "Twin" is ambiguous between \S*A\.zam and \S*B\.zam; alias one of their imports`, errs[0].Error())
+}

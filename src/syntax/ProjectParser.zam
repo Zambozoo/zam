@@ -14,7 +14,6 @@ import std("sync/SingleFlight.zam");
 import std("sync/WaitGroup.zam");
 import "FileParser.zam";
 import "Lexer.zam";
-import "PackageProvider.zam";
 import "Parser.zam";
 import "Path.zam";
 import "ProjectFileEdit.zam";
@@ -26,6 +25,7 @@ import "SourceProvider.zam";
 import "Token.zam";
 import "TokenKind.zam";
 import "ast/Decl.zam";
+import "ast/Field.zam";
 import "ast/File.zam";
 
 // ProjectParser parses every file a program is made of on several threads
@@ -78,12 +78,21 @@ public class ProjectParser {
         }
     }
 
+    // PackageProvider fetches the dependencies projects declare
+    public interface PackageProvider {
+        // Fetch answers the directory the dependency ref repo@version and the hash of what was fetched
+        fun (str, str, Err*)(str) Fetch;
+    }
+
     // Program is every file parsed and every project they are in
     public class Program {
         public var TreeMap[str, Source*]* sources;
         public var TreeMap[str, Project*]* projects;
         public var Decl* main;
     }
+
+    // ObjPath is the file holding Obj, which every class, abstract and interface descends from
+    public static var str$ ObjPath = "std://lang/Obj.zam";
 
     var SourceProvider* provider;
     var PackageProvider* packages;
@@ -212,6 +221,10 @@ public class ProjectParser {
                         this.add(paths.Get(j));
                     }
                 }
+                var Decl* decl = parsed.0.file.decl;
+                if(path != ProjectParser::ObjPath && decl != null && ProjectParser::descendsFromObj(decl)) {
+                    this.add(ProjectParser::ObjPath);
+                }
             }
             this.pending--;
             this.changed.Broadcast();
@@ -263,6 +276,22 @@ public class ProjectParser {
             errs.AddLast(SourceErr::At(d.err, path, s.lineStarts, d.token));
         }
         return (s, errs, file.1 == null);
+    }
+
+    // descendsFromObj reports whether d descends from Obj directly
+    static fun bool(Decl*) descendsFromObj = (d) {
+        if(d.kind == Field.Kind::Interface) {
+            return true;
+        } else if((d.kind == Field.Kind::Class || d.kind == Field.Kind::Abstract) && d{Decl.Object*}.base == null) {
+            return true;
+        }
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var Decl* nested = d.fields.Get(i){Decl*};
+            if(nested != null && ProjectParser::descendsFromObj(nested)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // projectOf answers the project the file at path is in

@@ -1,0 +1,30 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "Model.zam";
+import "Semantic.zam";
+
+public namespace SemanticTest {
+    // validated answers what validating the program entered at /p/Main.zam,
+    // written as main, finds
+    private fun (Model*, ArrList[Err*]*)(str) validated = (main) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", main));
+        if(!Assert::[uint]Equal(0U, parsed.1.Len())) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        return Semantic::Validate(parsed.0);
+    }
+
+    public fun void(uint, str...) Validate = (argC, argV) {
+        var (Model*, ArrList[Err*]*) valid = SemanticTest::validated("public class Main {\n    var Main* next;\n}");
+        Assert::[uint]Equal(0U, valid.1.Len());
+        Assert::[str]Equal("std.Obj*", valid.0.Base(valid.0.Program().main).Text());
+
+        var (Model*, ArrList[Err*]*) invalid = SemanticTest::validated("public class Main {\n    var Missing m;\n}");
+        if(Assert::[uint]Equal(1U, invalid.1.Len())) {
+            Assert::True(invalid.1.Get(0U).Err() != "", "the error is empty");
+        }
+    }
+}

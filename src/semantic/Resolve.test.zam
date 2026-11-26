@@ -1,0 +1,205 @@
+import std("data/list/ArrList.zam");
+import std("data/map/TreeMap.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Resolve.zam";
+import "Type.zam";
+
+public namespace ResolveTest {
+    // resolved answers the model of the program in files, resolved, failing
+    // on any error
+    private fun Model*(TreeMap[str, str]*) resolved = (files) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(files);
+        if(!Assert::[uint]Equal(0U, parsed.1.Len())) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var Model* m = Model::New(parsed.0);
+        var ArrList[Err*]* errs = Resolve::Run(m);
+        for(var uint i = 0U; i < errs.Len(); i++) {
+            Assert::True(false, errs.Get(i).Err());
+        }
+        return m;
+    }
+
+    // member answers the declared type of the member named name of d
+    private fun ast.Type*(ast.Decl*, str) member = (d, name) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f.kind == ast.Field.Kind::Member && f.name.value{str} == name) {
+                return f{ast.Field.Member*}.declared;
+            }
+        }
+        Assert::Fatal("no member " + name);
+        return null;
+    }
+
+    // declOf answers the declaration t resolves to the name of
+    private fun ast.Decl*(Model*, ast.Type*) declOf = (m, t) {
+        var Type* resolved = m.TypeOf(t);
+        if(!Assert::True(resolved != null && resolved.kind == Type.Kind::Named, t.Text() + " does not resolve to a declaration")) {
+            return null;
+        }
+        return resolved{Type.Named*}.decl;
+    }
+
+    // at answers where an error at pos in /p/Main.zam is said to be
+    private fun str(str) at = (pos) {
+        return " (" + Path::Display("/p/Main.zam") + pos + ")";
+    }
+
+    public fun void(uint, str...) Nested = (argC, argV) {
+        var Model* m = ResolveTest::resolved(MapSourcesTest::Files(2U,
+            "/p/Main.zam", "public class Main {\n    namespace Ns {\n        class C {}\n    }\n    class Inner {}\n    var Inner a;\n    var Main* b;\n    var Ns.C c;\n    var Main.Inner d;\n}"));
+        var ast.Decl* main = m.Program().main;
+        var ast.Decl* inner = m.Nested(main, "Inner");
+        Assert::True(ResolveTest::declOf(m, ResolveTest::member(main, "a")) == inner, "a is not an Inner");
+        Assert::True(ResolveTest::declOf(m, ResolveTest::member(main, "b"){ast.Type.Wrapped*}.inner) == main, "b is not a Main*");
+        Assert::True(ResolveTest::declOf(m, ResolveTest::member(main, "c")) == m.Nested(m.Nested(main, "Ns"), "C"), "c is not an Ns.C");
+        Assert::True(ResolveTest::declOf(m, ResolveTest::member(main, "d")) == inner, "d is not a Main.Inner");
+        Assert::[str]Equal("std.Obj*", m.Base(main).Text());
+        Assert::[str]Equal("std.Obj*", m.Base(inner).Text());
+    }
+
+    public fun void(uint, str...) Imports = (argC, argV) {
+        var TreeMap[str, str]* files = MapSourcesTest::Files(8U,
+            "/p/Main.zam", "import \"A.zam\";\nimport lib = \"lib/*\";\nimport std(\"lang/X.zam\");\npublic class Main <: A* {\n    var A a;\n    var lib.B b;\n    var std.X x;\n    var X y;\n    var A.Inner i;\n}",
+            "/p/A.zam", "abstract A {\n    class Inner {}\n}",
+            "/p/lib/B.zam", "class B {}",
+            "std://lang/X.zam", "class X {}");
+        var Model* m = ResolveTest::resolved(files);
+        var ast.Decl* main = m.Program().main;
+        var ast.Decl* a = m.Program().sources.Get("/p/A.zam").0.file.decl;
+        var ast.Decl* x = m.Program().sources.Get("std://lang/X.zam").0.file.decl;
+        Assert::True(ResolveTest::declOf(m, ResolveTest::member(main, "a")) == a, "a is not an A");
+        Assert::True(ResolveTest::declOf(m, ResolveTest::member(main, "b")) == m.Program().sources.Get("/p/lib/B.zam").0.file.decl, "b is not a lib.B");
+        Assert::True(ResolveTest::declOf(m, ResolveTest::member(main, "x")) == x, "x is not a std.X");
+        Assert::True(ResolveTest::declOf(m, ResolveTest::member(main, "y")) == x, "y is not an X");
+        Assert::True(ResolveTest::declOf(m, ResolveTest::member(main, "i")) == m.Nested(a, "Inner"), "i is not an A.Inner");
+        Assert::[str]Equal("A*", m.Base(main).Text());
+    }
+
+    public fun void(uint, str...) Blocks = (argC, argV) {
+        var Model* m = ResolveTest::resolved(MapSourcesTest::Files(4U,
+            "/p/Main.zam", "public namespace Main {\n    class Inner {}\n    fun void() f = () {\n        var Inner before;\n        import \"Inner.zam\";\n        var Inner after;\n        {\n            var Inner nested;\n        }\n    }\n}",
+            "/p/Inner.zam", "class Inner {}"));
+        var ast.Decl* main = m.Program().main;
+        var ast.Decl* imported = m.Program().sources.Get("/p/Inner.zam").0.file.decl;
+        var ast.Stmt.Block* body = main.fields.Get(1U){ast.Field.Method*}.body{ast.Stmt.Block*};
+        Assert::True(ResolveTest::declOf(m, body.statements.Get(0U){ast.Stmt.Variable*}.declared) == m.Nested(main, "Inner"), "an import names a type before it is written");
+        Assert::True(ResolveTest::declOf(m, body.statements.Get(2U){ast.Stmt.Variable*}.declared) == imported, "a block's import does not shadow a declaration");
+        var ast.Stmt.Block* inner = body.statements.Get(3U){ast.Stmt.Block*};
+        Assert::True(ResolveTest::declOf(m, inner.statements.Get(0U){ast.Stmt.Variable*}.declared) == imported, "an outer block's import is not in scope");
+    }
+
+    public fun void(uint, str...) Params = (argC, argV) {
+        var Model* m = ResolveTest::resolved(MapSourcesTest::Files(2U,
+            "/p/Main.zam", "public class Main[T] {\n    var T t;\n    static fun[U] U(U) f = (u) {\n        return null;\n    }\n}"));
+        var ast.Decl* main = m.Program().main;
+        var Type* t = m.TypeOf(ResolveTest::member(main, "t"));
+        if(Assert::True(t != null && t.kind == Type.Kind::Param, "t is not of a parameter")) {
+            Assert::True(t{Type.Param*}.owner == main, "T is not Main's");
+        }
+        var ast.Field.Method* f = main.fields.Get(1U){ast.Field.Method*};
+        var Type* returns = m.TypeOf(f.signature.returns);
+        if(Assert::True(returns != null && returns.kind == Type.Kind::Param, "f does not answer a parameter")) {
+            Assert::True(returns{Type.Param*}.owner == f, "U is not f's");
+        }
+        Assert::[str]Equal("U(U)", m.TypeOf(f.signature).Text());
+
+        var Model* statics = ResolveTest::resolved(MapSourcesTest::Files(2U,
+            "/p/Main.zam", "public class Main[T] {\n    fun void() M = () {\n        T::[int]F();\n    }\n}"));
+        var ast.Stmt.Block* body = statics.Program().main.fields.Get(0U){ast.Field.Method*}.body{ast.Stmt.Block*};
+        var ast.Expr.Call* call = body.statements.Get(0U){ast.Stmt.Value*}.value{ast.Expr.Call*};
+        var Type* owner = statics.TypeOf(call.callee{ast.Expr.Static*}.owner);
+        Assert::True(owner != null && owner.kind == Type.Kind::Param, "a static is not selected from a parameter");
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        var str source = "import \"Other.zam\";\n" +
+            "import again = \"Other.zam\";\n" +
+            "public namespace Main {\n" +
+            "    struct Plain {}\n" +
+            "    struct Tailed~ {\n" +
+            "        var int[~] t;\n" +
+            "    }\n" +
+            "    struct Gen[T] {\n" +
+            "        var T t;\n" +
+            "    }\n" +
+            "    struct GenTailed~[T] {\n" +
+            "        var T[~] t;\n" +
+            "    }\n" +
+            "    alias Al = int;\n" +
+            "    var Missing a;\n" +
+            "    var Gen b;\n" +
+            "    var Tailed c;\n" +
+            "    var Plain[int] d;\n" +
+            "    var Gen[int, int] e;\n" +
+            "    var Gen~[int]* f;\n" +
+            "    var GenTailed[int] g;\n" +
+            "    var Al~* h;\n" +
+            "    var Plain~* k;\n" +
+            "    var GenTailed~* l;\n" +
+            "    var Plain.Missing m;\n" +
+            "    var Other.Missing n;\n" +
+            "    fun void() Statics = () {\n" +
+            "        var int x = Missing::Y;\n" +
+            "    }\n" +
+            "}\n";
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(4U,
+            "/p/Main.zam", source,
+            "/p/Other.zam", "public namespace Other {}"));
+        if(!Assert::[uint]Equal(0U, parsed.1.Len())) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var ArrList[Err*]* errs = Resolve::Run(Model::New(parsed.0));
+        var ArrList[str]* want = ArrList::[str]New(13U,
+            "declaration \"Missing\" not found" + ResolveTest::at("[15:9]"),
+            "declaration \"Gen\" is a generic type" + ResolveTest::at("[16:9]"),
+            "declaration \"Tailed\" is a tailed type" + ResolveTest::at("[17:9]"),
+            "declaration \"Plain[int]\" is not a generic type" + ResolveTest::at("[18:9]"),
+            "generic type \"Gen[int, int]\" has 1 parameters, but 2 were provided" + ResolveTest::at("[19:9]"),
+            "declaration \"Gen~[int]\" is not a tailed type" + ResolveTest::at("[20:9]"),
+            "declaration \"GenTailed[int]\" is a tailed type" + ResolveTest::at("[21:9]"),
+            "alias \"Al\" cannot be tailed" + ResolveTest::at("[22:9]"),
+            "declaration \"Plain~\" is not a tailed type" + ResolveTest::at("[23:9]"),
+            "declaration \"GenTailed~\" is a generic type" + ResolveTest::at("[24:9]"),
+            "declaration \"Plain.Missing\" not found" + ResolveTest::at("[25:9]"),
+            "declaration \"Other.Missing\" not found" + ResolveTest::at("[26:9]"),
+            "declaration \"Missing\" not found" + ResolveTest::at("[28:21]"));
+        Assert::[uint]Equal(want.Len(), errs.Len());
+        for(var uint i = 0U; i < want.Len() && i < errs.Len(); i++) {
+            Assert::[str]Equal(want.Get(i), errs.Get(i).Err());
+        }
+    }
+
+    public fun void(uint, str...) Ambiguous = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(8U,
+            "/p/Main.zam", "import \"C.zam\";\nimport \"B.zam\";\nimport \"A.zam\";\npublic namespace Main {\n    var Twin t;\n}",
+            "/p/A.zam", "class Twin {}",
+            "/p/B.zam", "class Twin {}",
+            "/p/C.zam", "class Twin {}"));
+        if(!Assert::[uint]Equal(0U, parsed.1.Len())) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var ArrList[Err*]* errs = Resolve::Run(Model::New(parsed.0));
+        if(Assert::[uint]Equal(1U, errs.Len())) {
+            Assert::[str]Equal("declaration \"Twin\" is ambiguous between " + Path::Display("/p/A.zam") + " and " + Path::Display("/p/B.zam") + "; alias one of their imports" + ResolveTest::at("[5:9]"), errs.Get(0U).Err());
+        }
+    }
+
+    // Broken resolves what a parse recovered from without failing on what it
+    // left out
+    public fun void(uint, str...) Broken = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n    fun int() Unfinished = () {\n        var int x = ;\n    }\n\n    fun int(int) Falls = (n) {\n        switch (n) {\n            case (0) {\n                var int y = ;\n            }\n        } else {\n            return 1;\n        }\n    }\n}\n"));
+        Assert::True(parsed.1.Len() > 0U, "the broken file parses");
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            return;
+        }
+        Assert::[uint]Equal(0U, Resolve::Run(Model::New(parsed.0)).Len());
+    }
+}

@@ -1,0 +1,121 @@
+import std("data/list/ArrList.zam");
+import std("data/map/TreeMap.zam");
+import std("io/Paths.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Iter.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "Path.zam";
+import "Project.zam";
+import "ProjectParser.zam";
+
+public namespace MapSourcesTest {
+    // Sources serves sources from a map of paths to their text
+    public class Sources {
+        public var TreeMap[str, str]* files;
+
+        // New answers sources serving files, beside a std holding Obj
+        public static fun Sources*(TreeMap[str, str]*) New = (files) {
+            var Sources* s = new(Sources);
+            s.files = files;
+            if(!files.Contains("std://zam.yml")) {
+                files.Put("std://zam.yml", "name: std");
+            }
+            if(!files.Contains(ProjectParser::ObjPath)) {
+                files.Put(ProjectParser::ObjPath, "public abstract Obj {}");
+            }
+            return s;
+        }
+
+        public fun (str, Err*)(str) Read = (path) {
+            var (str, bool) text = this.files.Get(path);
+            if(!text.1) {
+                return ("", StrErr::New("no file " + path));
+            }
+            return (text.0, null);
+        }
+
+        public fun (Arr[str]*, Err*)(str) ListCodeFiles = (dir) {
+            var ArrList[str]* children = ArrList::[str]New(0U);
+            var Iter[(str, str)]* all = this.files.Iter();
+            for(var ((str, str), bool) next = all.Next(); next.1; next = all.Next()) {
+                var str path = next.0.0;
+                if(Paths::Dir(path) == Paths::Clean(dir) && Strs::HasSuffix(path, Path::Extension)) {
+                    children.AddLast(path);
+                }
+            }
+            return (children.Arr(), null);
+        }
+
+        public fun Err*(str, str) Write = (path, text) {
+            this.files.Put(path, text);
+            return null;
+        }
+
+        public fun (str, Err*)(str) ProjectFile = (path) {
+            if(Path::IsStd(path)) {
+                return ("std://zam.yml", null);
+            }
+            var str dir = Paths::Dir(path);
+            for {
+                for(var uint i = 0U; i < Project::FileNames.Len(); i++) {
+                    var str candidate = Paths::Join(dir, Project::FileNames.Get(i));
+                    if(this.files.Contains(candidate)) {
+                        return (candidate, null);
+                    }
+                }
+                var str parent = Paths::Dir(dir);
+                if(parent == dir) {
+                    return ("", StrErr::New("project file missing for " + path));
+                }
+                dir = parent;
+            }
+            return ("", null);
+        }
+    }
+
+    // Packages serves dependencies from a map of repo@version to the
+    // directory each is in, every one hashed h1
+    public class Packages {
+        public var TreeMap[str, str]* dirs;
+
+        public static fun Packages*(TreeMap[str, str]*) New = (dirs) {
+            var Packages* p = new(Packages);
+            p.dirs = dirs;
+            return p;
+        }
+
+        public fun (str, str, Err*)(str) Fetch = (ref) {
+            var (str, bool) dir = this.dirs.Get(ref);
+            if(!dir.1) {
+                return ("", "", StrErr::New("no repo " + ref));
+            }
+            return (dir.0, "h1", null);
+        }
+    }
+
+    // Files answers the files of the given paths and texts, alternating
+    public fun TreeMap[str, str]*(uint, str...) Files = (n, pairs) {
+        var TreeMap[str, str]* files = TreeMap::[str, str]New(0U);
+        for(var uint i = 0U; i + 1U < n; i = i + 2U) {
+            files.Put(pairs[i], pairs[i + 1U]);
+        }
+        return files;
+    }
+
+    // Parse parses the program entered at /p/Main.zam in files, without
+    // project files
+    public fun (ProjectParser.Program*, ArrList[Err*]*)(TreeMap[str, str]*) Parse = (files) {
+        return ProjectParser::New(Sources::New(files), Packages::New(TreeMap::[str, str]New(0U)), 1U, true, false).Parse("/p/Main.zam", Arr::[str]New(0U));
+    }
+
+    public fun void(uint, str...) ProjectFiles = (argC, argV) {
+        var Sources* s = Sources::New(MapSourcesTest::Files(4U, "/p/zam.yml", "", "/p/a/b/X.zam", ""));
+        Assert::[str]Equal("/p/zam.yml", s.ProjectFile("/p/a/b/X.zam").0);
+        Assert::[str]Equal("std://zam.yml", s.ProjectFile("std://lang/Obj.zam").0);
+        Assert::True(s.ProjectFile("/q/X.zam").1 != null, "a project file is found outside every project");
+        Assert::[str]Equal("public abstract Obj {}", s.Read(ProjectParser::ObjPath).0);
+    }
+}

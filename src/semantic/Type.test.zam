@@ -1,0 +1,44 @@
+import std("data/list/ArrList.zam");
+import std("test/Assert.zam");
+import "../syntax/Token.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "Type.zam";
+
+public namespace TypeTest {
+    // named answers a reference named name to a declaration of that name
+    private fun Type*(str, str) named = (name, archive) {
+        var Token* id = Token::New(TokenKind::Identifier, 0U, name);
+        var ast.Decl* d = ast.Decl.Object::New(ast.Field.Kind::Class, id, 0U, id);
+        return Type.Named::New(id, d, name, archive);
+    }
+
+    private fun Type*(TokenKind) primitive = (keyword) {
+        return Type.Primitive::New(null, keyword);
+    }
+
+    public fun void(uint, str...) Text = (argC, argV) {
+        var Type* i = TypeTest::primitive(TokenKind::Int);
+        var Type* s = TypeTest::primitive(TokenKind::String);
+        Assert::[str]Equal("int", i.Text());
+        Assert::[str]Equal("int*", Type.Wrapped::New(null, ast.Type.Wrap::Pointer, i).Text());
+        Assert::[str]Equal("int$", Type.Wrapped::New(null, ast.Type.Wrap::Const, i).Text());
+        Assert::[str]Equal("int...", Type.Wrapped::New(null, ast.Type.Wrap::Variadic, i).Text());
+        Assert::[str]Equal("thread[int]", Type.Wrapped::New(null, ast.Type.Wrap::Thread, i).Text());
+        Assert::[str]Equal("int[4]", Type.Array::New(null, i, true, 4U).Text());
+        Assert::[str]Equal("int[~]", Type.Array::New(null, i, false, 0U).Text());
+        Assert::[str]Equal("(int, str)", Type.Tuple::New(null, ArrList::[Type*]New(2U, i, s)).Text());
+        Assert::[str]Equal("int(str, int)", Type.Function::New(null, i, ArrList::[Type*]New(2U, s, i)).Text());
+        Assert::[str]Equal("void()", Type.Function::New(null, TypeTest::primitive(TokenKind::Void), ArrList::[Type*]New(0U)).Text());
+
+        Assert::[str]Equal("lib.Dep", TypeTest::named("lib.Dep", "").Text());
+        Assert::[str]Equal("example.com/dep@v1:lib.Dep", TypeTest::named("lib.Dep", "example.com/dep@v1").Text());
+        Assert::[str]Equal("Node~", Type.Tailed::New(null, TypeTest::named("Node", ""), false, 0U).Text());
+        Assert::[str]Equal("Node~3", Type.Tailed::New(null, TypeTest::named("Node", ""), true, 3U).Text());
+        Assert::[str]Equal("Map[str, int*]", Type.Generic::New(null, TypeTest::named("Map", ""), ArrList::[Type*]New(2U, s, Type.Wrapped::New(null, ast.Type.Wrap::Pointer, i))).Text());
+
+        var Token* t = Token::New(TokenKind::Identifier, 0U, "T");
+        var ast.Generic* g = ast.Generic::New(t, ast.Generic.Bound::None, null);
+        Assert::[str]Equal("T*", Type.Wrapped::New(null, ast.Type.Wrap::Pointer, Type.Param::New(t, g, null)).Text());
+    }
+}

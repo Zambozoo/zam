@@ -7,77 +7,13 @@ import std("lang/Iter.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import std("test/Assert.zam");
+import "MapSources.test.zam";
 import "Path.zam";
 import "Project.zam";
 import "ProjectParser.zam";
 import "Source.zam";
 
 public namespace ProjectParserTest {
-    // MapSources serves sources from a map of paths to their text
-    class MapSources {
-        var TreeMap[str, str]* files;
-
-        fun (str, Err*)(str) Read = (path) {
-            var (str, bool) text = this.files.Get(path);
-            if(!text.1) {
-                return ("", StrErr::New("no file " + path));
-            }
-            return (text.0, null);
-        }
-
-        fun (Arr[str]*, Err*)(str) ListCodeFiles = (dir) {
-            var ArrList[str]* children = ArrList::[str]New(0U);
-            var Iter[(str, str)]* all = this.files.Iter();
-            for(var ((str, str), bool) next = all.Next(); next.1; next = all.Next()) {
-                var str path = next.0.0;
-                if(Paths::Dir(path) == Paths::Clean(dir) && Strs::HasSuffix(path, Path::Extension)) {
-                    children.AddLast(path);
-                }
-            }
-            return (children.Arr(), null);
-        }
-
-        fun Err*(str, str) Write = (path, text) {
-            this.files.Put(path, text);
-            return null;
-        }
-
-        fun (str, Err*)(str) ProjectFile = (path) {
-            if(Path::IsStd(path)) {
-                return ("std://zam.yml", null);
-            }
-            var str dir = Paths::Dir(path);
-            for {
-                for(var uint i = 0U; i < Project::FileNames.Len(); i++) {
-                    var str candidate = Paths::Join(dir, Project::FileNames.Get(i));
-                    if(this.files.Contains(candidate)) {
-                        return (candidate, null);
-                    }
-                }
-                var str parent = Paths::Dir(dir);
-                if(parent == dir) {
-                    return ("", StrErr::New("project file missing for " + path));
-                }
-                dir = parent;
-            }
-            return ("", null);
-        }
-    }
-
-    // MapPackages serves dependencies from a map of repo@version to the
-    // directory each is in, every one hashed h1
-    class MapPackages {
-        var TreeMap[str, str]* dirs;
-
-        fun (str, str, Err*)(str) Fetch = (ref) {
-            var (str, bool) dir = this.dirs.Get(ref);
-            if(!dir.1) {
-                return ("", "", StrErr::New("no repo " + ref));
-            }
-            return (dir.0, "h1", null);
-        }
-    }
-
     // at answers where an error at pos in the file at path is said to be
     private fun str(str, str) at = (path, pos) {
         return " (" + Path::Display(path) + pos + ")";
@@ -86,15 +22,6 @@ public namespace ProjectParserTest {
     // quoted answers path as an error quotes it
     private fun str(str) quoted = (path) {
         return Strs::Quote(Path::Display(path));
-    }
-
-    // files answers the files of the given paths and texts, alternating
-    private fun TreeMap[str, str]*(uint, str...) files = (n, pairs) {
-        var TreeMap[str, str]* files = TreeMap::[str, str]New(0U);
-        for(var uint i = 0U; i + 1U < n; i = i + 2U) {
-            files.Put(pairs[i], pairs[i + 1U]);
-        }
-        return files;
     }
 
     // parse parses the program entered at /p/Main.zam on threads threads,
@@ -106,10 +33,8 @@ public namespace ProjectParserTest {
     // parseIn parses the program entered at /p/Main.zam on threads threads,
     // with the dependencies in packages and project files unless noProject
     private fun (ProjectParser.Program*, ArrList[Err*]*)(TreeMap[str, str]*, TreeMap[str, str]*, uint, bool) parseIn = (files, packages, threads, noProject) {
-        var MapSources* sources = new(MapSources);
-        sources.files = files;
-        var MapPackages* fetcher = new(MapPackages);
-        fetcher.dirs = packages;
+        var MapSourcesTest.Sources* sources = MapSourcesTest.Sources::New(files);
+        var MapSourcesTest.Packages* fetcher = MapSourcesTest.Packages::New(packages);
         return ProjectParser::New(sources, fetcher, threads, noProject, false).Parse("/p/Main.zam", Arr::[str]New(0U));
     }
 
@@ -162,41 +87,56 @@ public namespace ProjectParserTest {
     }
 
     public fun void(uint, str...) Imports = (argC, argV) {
-        ProjectParserTest::parses(ProjectParserTest::files(8U,
+        ProjectParserTest::parses(MapSourcesTest::Files(8U,
             "/p/Main.zam", "import \"A.zam\";\nimport \"B.zam\";\npublic namespace Main {}",
             "/p/A.zam", "import \"lib/C.zam\";\nclass A {}",
             "/p/B.zam", "import \"lib/C.zam\";\nclass B {}",
             "/p/lib/C.zam", "class C {}"),
-            "/p/A.zam /p/B.zam /p/Main.zam /p/lib/C.zam");
+            "/p/A.zam /p/B.zam /p/Main.zam /p/lib/C.zam std://lang/Obj.zam");
+    }
+
+    public fun void(uint, str...) Obj = (argC, argV) {
+        ProjectParserTest::parses(MapSourcesTest::Files(2U,
+            "/p/Main.zam", "public namespace Main {}"),
+            "/p/Main.zam");
+        ProjectParserTest::parses(MapSourcesTest::Files(2U,
+            "/p/Main.zam", "public namespace Main {\n    interface I {}\n}"),
+            "/p/Main.zam std://lang/Obj.zam");
+        ProjectParserTest::parses(MapSourcesTest::Files(2U,
+            "/p/Main.zam", "public abstract Main {}"),
+            "/p/Main.zam std://lang/Obj.zam");
+        ProjectParserTest::parses(MapSourcesTest::Files(2U,
+            "/p/Main.zam", "public class Main <: Base* {}"),
+            "/p/Main.zam");
     }
 
     public fun void(uint, str...) Std = (argC, argV) {
-        ProjectParserTest::parses(ProjectParserTest::files(8U,
+        ProjectParserTest::parses(MapSourcesTest::Files(8U,
             "/p/Main.zam", "import std(\"lang/X.zam\");\npublic namespace Main {}",
             "std://zam.yml", "name: std",
             "std://lang/X.zam", "import \"Y.zam\";\nclass X {}",
             "std://lang/Y.zam", "class Y {}"),
-            "/p/Main.zam std://lang/X.zam std://lang/Y.zam");
+            "/p/Main.zam std://lang/Obj.zam std://lang/X.zam std://lang/Y.zam");
     }
 
     public fun void(uint, str...) Globs = (argC, argV) {
-        ProjectParserTest::parses(ProjectParserTest::files(8U,
+        ProjectParserTest::parses(MapSourcesTest::Files(8U,
             "/p/Main.zam", "import lib = \"lib/*\";\npublic namespace Main {}",
             "/p/lib/A.zam", "class A {}",
             "/p/lib/B.zam", "class B {}",
             "/p/lib/T.test.zam", "class T {}"),
-            "/p/Main.zam /p/lib/A.zam /p/lib/B.zam");
-        ProjectParserTest::reports(ProjectParserTest::files(2U,
+            "/p/Main.zam /p/lib/A.zam /p/lib/B.zam std://lang/Obj.zam");
+        ProjectParserTest::reports(MapSourcesTest::Files(2U,
             "/p/Main.zam", "import \"empty/*\";\npublic namespace Main {}"),
             true, "import \"empty/*\" matched no .zam files" + ProjectParserTest::at("/p/Main.zam", "[1:1]"));
     }
 
     public fun void(uint, str...) Blocks = (argC, argV) {
-        ProjectParserTest::parses(ProjectParserTest::files(4U,
+        ProjectParserTest::parses(MapSourcesTest::Files(4U,
             "/p/Main.zam", "public namespace Main {\n    fun void() f = () {\n        import \"Inner.zam\";\n    }\n}",
             "/p/Inner.zam", "class Inner {}"),
-            "/p/Inner.zam /p/Main.zam");
-        ProjectParserTest::reports(ProjectParserTest::files(6U,
+            "/p/Inner.zam /p/Main.zam std://lang/Obj.zam");
+        ProjectParserTest::reports(MapSourcesTest::Files(6U,
             "/p/Main.zam", "public namespace Main {\n    fun void() f = () {\n        import \"a/Twin.zam\";\n        import \"b/Twin.zam\";\n    }\n}",
             "/p/a/Twin.zam", "class Twin {}",
             "/p/b/Twin.zam", "class Twin {}"),
@@ -204,32 +144,32 @@ public namespace ProjectParserTest {
     }
 
     public fun void(uint, str...) Errors = (argC, argV) {
-        ProjectParserTest::reports(ProjectParserTest::files(4U,
+        ProjectParserTest::reports(MapSourcesTest::Files(4U,
             "/p/Main.zam", "import \"A.zam\";\nimport \"A.zam\";\npublic namespace Main {}",
             "/p/A.zam", "class A {}"),
             true, "duplicate import \"A\" of " + ProjectParserTest::quoted("/p/A.zam") + ProjectParserTest::at("/p/Main.zam", "[2:1]"));
-        ProjectParserTest::reports(ProjectParserTest::files(2U,
+        ProjectParserTest::reports(MapSourcesTest::Files(2U,
             "/p/Main.zam", "import pkg(\"x.zam\");\npublic namespace Main {}"),
             true, "no dependency \"pkg\" declared by project \"Main\"" + ProjectParserTest::at("/p/Main.zam", "[1:1]"));
-        ProjectParserTest::reports(ProjectParserTest::files(4U,
+        ProjectParserTest::reports(MapSourcesTest::Files(4U,
             "/p/Main.zam", "import \"T.test.zam\";\npublic namespace Main {}",
             "/p/T.test.zam", "class T {}"),
             true, "test file " + Path::Display("/p/T.test.zam") + " can only be imported by a test file" + ProjectParserTest::at("/p/Main.zam", "[1:1]"));
-        ProjectParserTest::reports(ProjectParserTest::files(2U,
+        ProjectParserTest::reports(MapSourcesTest::Files(2U,
             "/p/Main.zam", "public namespace Main { var int x = ; }"),
             true, ProjectParserTest::at("/p/Main.zam", "[1:37]"));
     }
 
     public fun void(uint, str...) Incomplete = (argC, argV) {
-        ProjectParserTest::reports(ProjectParserTest::files(2U,
+        ProjectParserTest::reports(MapSourcesTest::Files(2U,
             "/p/Main.zam", "import \"Missing.zam\";\npublic namespace Main {}"),
             false, "no file /p/Missing.zam" + ProjectParserTest::at("/p/Missing.zam", ""));
-        ProjectParserTest::reports(ProjectParserTest::files(4U,
+        ProjectParserTest::reports(MapSourcesTest::Files(4U,
             "/p/Main.zam", "import \"B.zam\";\npublic namespace Main {}",
             "/p/B.zam", "class {}"),
             false, "unexpected token: \"{\", expected \"IDENTIFIER\"" + ProjectParserTest::at("/p/B.zam", "[1:7]"));
 
-        var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parse(ProjectParserTest::files(2U,
+        var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parse(MapSourcesTest::Files(2U,
             "/p/Main.zam", "import pkg(\"x.zam\");\nclass {}"), 1U);
         Assert::True(out.0 == null, "a program of a file not read whole");
         if(Assert::[uint]Equal(2U, out.1.Len())) {
@@ -239,7 +179,7 @@ public namespace ProjectParserTest {
     }
 
     public fun void(uint, str...) Projects = (argC, argV) {
-        var TreeMap[str, str]* files = ProjectParserTest::files(10U,
+        var TreeMap[str, str]* files = MapSourcesTest::Files(10U,
             "/p/zam.yml", "name: demo\ndependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: h1\n",
             "/p/Main.zam", "import dep(\"Dep.zam\");\nimport std(\"lang/X.zam\");\npublic namespace Main {}",
             "/deps/dep/zam.yml", "name: dep",
@@ -270,7 +210,7 @@ public namespace ProjectParserTest {
     }
 
     public fun void(uint, str...) NoProject = (argC, argV) {
-        var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parseIn(ProjectParserTest::files(4U,
+        var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parseIn(MapSourcesTest::Files(4U,
             "/p/zam.yml", "name: [",
             "/p/Main.zam", "public namespace Main {}"), TreeMap::[str, str]New(0U), 1U, true);
         Assert::[uint]Equal(0U, out.1.Len());
@@ -282,19 +222,19 @@ public namespace ProjectParserTest {
         var str main = "public namespace Main {}";
         var TreeMap[str, str]* none = TreeMap::[str, str]New(0U);
         var TreeMap[str, str]* packages = TreeMap::[str, str]New(2U, ("example.com/dep@v1", "/deps/dep"), ("example.com/rootless@v1", "/deps/rootless"));
-        ProjectParserTest::fails(ProjectParserTest::files(2U, "/p/Main.zam", main), none,
+        ProjectParserTest::fails(MapSourcesTest::Files(2U, "/p/Main.zam", main), none,
             "project file missing for /p/Main.zam" + ProjectParserTest::at("/p/Main.zam", ""));
-        ProjectParserTest::fails(ProjectParserTest::files(4U, "/p/zam.yml", "name: [1, 2]", "/p/Main.zam", main), none,
+        ProjectParserTest::fails(MapSourcesTest::Files(4U, "/p/zam.yml", "name: [1, 2]", "/p/Main.zam", main), none,
             "project file field \"name\" is not a string" + ProjectParserTest::at("/p/zam.yml", ""));
-        ProjectParserTest::fails(ProjectParserTest::files(4U, "/p/zam.yml", "dependencies:\n  std:\n    repo: example.com/dep@v1", "/p/Main.zam", main), packages,
+        ProjectParserTest::fails(MapSourcesTest::Files(4U, "/p/zam.yml", "dependencies:\n  std:\n    repo: example.com/dep@v1", "/p/Main.zam", main), packages,
             "\"std\" is a reserved package name" + ProjectParserTest::at("/p/zam.yml", ""));
-        ProjectParserTest::fails(ProjectParserTest::files(4U, "/p/zam.yml", "dependencies:\n  dep:\n    hash: h1", "/p/Main.zam", main), packages,
+        ProjectParserTest::fails(MapSourcesTest::Files(4U, "/p/zam.yml", "dependencies:\n  dep:\n    hash: h1", "/p/Main.zam", main), packages,
             "dependency \"dep\" has no repo" + ProjectParserTest::at("/p/zam.yml", ""));
-        ProjectParserTest::fails(ProjectParserTest::files(4U, "/p/zam.yml", "dependencies:\n  gone:\n    repo: example.com/gone@v1", "/p/Main.zam", main), packages,
+        ProjectParserTest::fails(MapSourcesTest::Files(4U, "/p/zam.yml", "dependencies:\n  gone:\n    repo: example.com/gone@v1", "/p/Main.zam", main), packages,
             "failed to fetch dependency \"gone\": no repo example.com/gone@v1" + ProjectParserTest::at("/p/zam.yml", ""));
-        ProjectParserTest::fails(ProjectParserTest::files(4U, "/p/zam.yml", "dependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: wrong", "/p/Main.zam", main), packages,
+        ProjectParserTest::fails(MapSourcesTest::Files(4U, "/p/zam.yml", "dependencies:\n  dep:\n    repo: example.com/dep@v1\n    hash: wrong", "/p/Main.zam", main), packages,
             "dependency \"dep\" does not match its hash: the project file has wrong, example.com/dep@v1 has h1" + ProjectParserTest::at("/p/zam.yml", ""));
-        ProjectParserTest::fails(ProjectParserTest::files(8U,
+        ProjectParserTest::fails(MapSourcesTest::Files(8U,
             "/zam.yml", "name: above",
             "/p/zam.yml", "dependencies:\n  rootless:\n    repo: example.com/rootless@v1",
             "/p/Main.zam", "import rootless(\"R.zam\");\n" + main,
@@ -304,7 +244,7 @@ public namespace ProjectParserTest {
 
     public fun void(uint, str...) Leaves = (argC, argV) {
         var TreeMap[str, str]* packages = TreeMap::[str, str]New(1U, ("example.com/dep@v1", "/deps/dep"));
-        var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parseIn(ProjectParserTest::files(10U,
+        var (ProjectParser.Program*, ArrList[Err*]*) out = ProjectParserTest::parseIn(MapSourcesTest::Files(10U,
             "/p/zam.yml", "dependencies:\n  dep:\n    repo: example.com/dep@v1",
             "/p/Main.zam", "import dep(\"Dep.zam\");\npublic namespace Main {}",
             "/deps/dep/zam.yml", "name: dep",
@@ -318,15 +258,13 @@ public namespace ProjectParserTest {
     // parser answers a parser of files, with the dependencies in packages,
     // recording missing hashes
     private fun ProjectParser*(TreeMap[str, str]*, TreeMap[str, str]*) parser = (files, packages) {
-        var MapSources* sources = new(MapSources);
-        sources.files = files;
-        var MapPackages* fetcher = new(MapPackages);
-        fetcher.dirs = packages;
+        var MapSourcesTest.Sources* sources = MapSourcesTest.Sources::New(files);
+        var MapSourcesTest.Packages* fetcher = MapSourcesTest.Packages::New(packages);
         return ProjectParser::New(sources, fetcher, 1U, false, true);
     }
 
     public fun void(uint, str...) RecordsHashes = (argC, argV) {
-        var TreeMap[str, str]* files = ProjectParserTest::files(8U,
+        var TreeMap[str, str]* files = MapSourcesTest::Files(8U,
             "/p/zam.yml", "name: demo\ndependencies:\n  dep:\n    repo: example.com/dep@v1\n",
             "/p/Main.zam", "import dep(\"Dep.zam\");\npublic namespace Main {}",
             "/deps/dep/zam.yml", "dependencies:\n  inner:\n    repo: example.com/inner@v1\n",
@@ -342,7 +280,7 @@ public namespace ProjectParserTest {
     }
 
     public fun void(uint, str...) Get = (argC, argV) {
-        var TreeMap[str, str]* files = ProjectParserTest::files(6U,
+        var TreeMap[str, str]* files = MapSourcesTest::Files(6U,
             "/p/zam.yml", "name: demo # the demo\n",
             "/deps/dep/zam.yml", "dependencies:\n  inner:\n    repo: example.com/inner@v1\n",
             "/deps/inner/zam.yml", "name: inner");
@@ -359,7 +297,7 @@ public namespace ProjectParserTest {
     }
 
     public fun void(uint, str...) GetErrors = (argC, argV) {
-        var TreeMap[str, str]* files = ProjectParserTest::files(2U, "/p/zam.yml", "name: demo\n");
+        var TreeMap[str, str]* files = MapSourcesTest::Files(2U, "/p/zam.yml", "name: demo\n");
         var TreeMap[str, str]* packages = TreeMap::[str, str]New(1U, ("example.com/dep@v1", "/deps/dep"));
         var ProjectParser* p = ProjectParserTest::parser(files, packages);
         Assert::[str]Equal("\"std\" is a reserved package name", p.Get("/p/zam.yml", Arr::[str]New(1U, "example.com/dep@v1"), "std").Err());

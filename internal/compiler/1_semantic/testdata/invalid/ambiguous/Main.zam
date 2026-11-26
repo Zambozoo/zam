@@ -1,0 +1,7 @@
+import "C.zam";
+import "B.zam";
+import "A.zam";
+
+public namespace Main {
+    var Twin t;
+}

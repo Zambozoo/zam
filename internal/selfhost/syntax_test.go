@@ -82,14 +82,14 @@ func TestSyntaxMatchesGo(t *testing.T) {
 		require.NoError(t, err)
 		t.Run("no-project/"+filepath.ToSlash(name), func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, goErrors(t, entry, true), zamErrors(t, zam, entry, true))
+			assert.Equal(t, goErrors(t, entry, true), zamErrors(t, zam, entry, true, "syntax"))
 		})
 		if declaresDependencies(t, entry) {
 			continue
 		}
 		t.Run("project/"+filepath.ToSlash(name), func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, goErrors(t, entry, false), zamErrors(t, zam, entry, false))
+			assert.Equal(t, goErrors(t, entry, false), zamErrors(t, zam, entry, false, "syntax"))
 		})
 	}
 }
@@ -114,6 +114,8 @@ func declaresDependencies(t *testing.T, entry string) bool {
 }
 
 var (
+	// stepLine matches an error the compiler reports in some step.
+	stepLine = regexp.MustCompile(`^\[[a-z]+\] `)
 	// alternatives matches the tokens an error lists as expected.
 	alternatives = regexp.MustCompile(`expected one of ((?:"[^"]*", )+or "[^"]*")`)
 	// modifiers matches the modifiers an error names, which Go writes as the
@@ -169,9 +171,9 @@ func goErrors(t *testing.T, entry string, noProject bool) []string {
 	return got
 }
 
-// zamErrors answers the errors the compiler at zam reports for the program
-// entered at entry, sorted, without project files when noProject.
-func zamErrors(t *testing.T, zam, entry string, noProject bool) []string {
+// zamErrors answers the errors the compiler at zam reports in step for the
+// program entered at entry, sorted, without project files when noProject.
+func zamErrors(t *testing.T, zam, entry string, noProject bool, step string) []string {
 	t.Helper()
 	var stderr bytes.Buffer
 	cmd := exec.Command(zam, arguments(entry, noProject)[1:]...)
@@ -187,8 +189,11 @@ func zamErrors(t *testing.T, zam, entry string, noProject bool) []string {
 		if line == "" {
 			continue
 		}
-		message, ok := strings.CutPrefix(line, "[syntax] ")
-		require.True(t, ok, fmt.Sprintf("not a syntax error: %s", line))
+		message, ok := strings.CutPrefix(line, "["+step+"] ")
+		if !ok {
+			require.True(t, stepLine.MatchString(line), fmt.Sprintf("not an error of a step: %s", line))
+			continue
+		}
 		// Go reads nothing past a file's declaration.
 		if strings.Contains(message, `expected "EOF"`) {
 			continue

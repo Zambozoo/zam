@@ -23,7 +23,7 @@ func errfAt(d syntax.Decl, tok *syntax.Token, format string, args ...any) error 
 }
 
 func ValidateAST(syntaxAST *syntax.AST) []error {
-	if errs := resolveReferenceTypes(syntaxAST); len(errs) > 0 {
+	if errs := Resolve(syntaxAST); len(errs) > 0 {
 		return errs
 	}
 

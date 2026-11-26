@@ -1,0 +1,78 @@
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../FileParser.zam";
+import "../Parser.zam";
+import "File.zam";
+import "Field.zam";
+import "Import.zam";
+import "Stmt.zam";
+import "Type.zam";
+import "Walker.zam";
+
+public namespace WalkerTest {
+    // Recorder writes the imports and references it is walked over, with
+    // braces around blocks, and skips methods if pruning
+    class Recorder <: Walker* {
+        var str out;
+        var bool pruning;
+
+        fun void(str) write = (s) {
+            if(this.out != "") {
+                this.out = this.out + " ";
+            }
+            this.out = this.out + s;
+        }
+
+        fun void(Import*) VisitImport = (i) {
+            this.write(i.path.value{str});
+        }
+
+        fun void(Type.Reference*) VisitTypeReference = (t) {
+            this.write(t.Text());
+        }
+
+        fun void(Stmt.Block*) VisitStmtBlock = (s) {
+            this.write("{");
+            super.VisitStmtBlock(s);
+            this.write("}");
+        }
+
+        fun void(Field.Method*) VisitFieldMethod = (f) {
+            if(!this.pruning) {
+                super.VisitFieldMethod(f);
+            }
+        }
+    }
+
+    // walked answers what a recorder walked over source writes
+    private fun str(str, bool) walked = (source, pruning) {
+        var (File*, Err*) f = FileParser::Parse(Parser::New(source));
+        if(!Assert::True(f.1 == null, "the file fails to parse")) {
+            Assert::Fatal(f.1.Err());
+        }
+        var Recorder* r = new(Recorder);
+        r.out = "";
+        r.pruning = pruning;
+        r.VisitFile(f.0);
+        return r.out;
+    }
+
+    public fun void(uint, str...) Order = (argC, argV) {
+        var str source = "import \"A.zam\";\n" +
+            "public class Main[T <: Bound*] <: Base* {\n" +
+            "    var Member m = new(Alloc);\n" +
+            "    fun Ret(Param) f = (p) {\n" +
+            "        import \"B.zam\";\n" +
+            "        var Local l = x{Cast};\n" +
+            "        switch(y) {\n" +
+            "            case (Case::V) z;\n" +
+            "        } else Other::[Arg]w;\n" +
+            "        lambda Lam(): () {\n" +
+            "            return type(Typed);\n" +
+            "        };\n" +
+            "    }\n" +
+            "}\n";
+        Assert::[str]Equal("A.zam Bound Base Member Alloc Ret Param { B.zam Local Cast Case Other Arg Lam { Typed } }", WalkerTest::walked(source, false));
+        Assert::[str]Equal("A.zam Bound Base Member Alloc", WalkerTest::walked(source, true));
+    }
+}

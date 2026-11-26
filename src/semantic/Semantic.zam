@@ -1,0 +1,14 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import "../syntax/ProjectParser.zam";
+import "Model.zam";
+import "Resolve.zam";
+
+// Semantic checks what a parsed program means
+public namespace Semantic {
+    // Validate runs the semantic passes over program in order
+    public fun (Model*, ArrList[Err*]*)(ProjectParser.Program*) Validate = (program) {
+        var Model* m = Model::New(program);
+        return (m, Resolve::Run(m));
+    }
+}

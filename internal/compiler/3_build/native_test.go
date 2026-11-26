@@ -1503,7 +1503,7 @@ namespace Main {
 }
 
 // TestNativeSuper calls a base's method through super from an override of
-// it, checked against the VM.
+// it, for a class base and an abstract one.
 func TestNativeSuper(t *testing.T) {
 	t.Parallel()
 	output, status := runNative(t, `import std("lang/*");
@@ -1522,14 +1522,27 @@ namespace Main {
         }
     }
 
+    abstract Shape {
+        fun str(str) Name = (s) {
+            return "shape:" + s;
+        }
+    }
+
+    class Square <: Shape* {
+        fun str(str) Name = (s) {
+            return "square(" + super.Name(s) + ")";
+        }
+    }
+
     fun void(uint, str...) main = (argC, argV) {
         var Derived* d = new(Derived);
-        File::StdOut.WriteStr(d.Name("x") + "\n");
+        var Shape* s = new(Square);
+        File::StdOut.WriteStr(d.Name("x") + " " + s.Name("y") + "\n");
     }
 }
 `)
 	assert.Zero(t, status, output)
-	assert.Equal(t, "derived(base:x)\n", output)
+	assert.Equal(t, "derived(base:x) square(shape:y)\n", output)
 }
 
 // TestNativeTailedStructs allocates tailed structs with a tail length given at

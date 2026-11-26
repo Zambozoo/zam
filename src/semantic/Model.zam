@@ -1,0 +1,129 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("lang/Err.zam");
+import std("lang/Iter.zam");
+import "../syntax/ProjectParser.zam";
+import "../syntax/Source.zam";
+import "../syntax/SourceErr.zam";
+import "../syntax/Token.zam";
+import ast = "../syntax/ast/*";
+import "Type.zam";
+
+// Model is what semantic analysis finds out about a program
+public class Model {
+    var ProjectParser.Program* program;
+    // sources maps every declaration onto the file it is written in
+    var HashMap[ast.Decl*, Source*]* sources;
+    // outer maps every field onto the declaration it is written in
+    var HashMap[ast.Field*, ast.Decl*]* outer;
+    // types maps every type written onto what it resolves to
+    var HashMap[ast.Type*, Type*]* types;
+    // imported maps every import onto the files it names
+    var HashMap[ast.Import*, ArrList[Source*]*]* imported;
+    // bases maps every class and abstract onto the type it extends
+    var HashMap[ast.Decl*, Type*]* bases;
+
+    // New answers a model of program with nothing found out yet
+    public static fun Model*(ProjectParser.Program*) New = (program) {
+        var Model* m = new(Model);
+        m.program = program;
+        m.sources = HashMap::[ast.Decl*, Source*]New(0U);
+        m.outer = HashMap::[ast.Field*, ast.Decl*]New(0U);
+        m.types = HashMap::[ast.Type*, Type*]New(0U);
+        m.imported = HashMap::[ast.Import*, ArrList[Source*]*]New(0U);
+        m.bases = HashMap::[ast.Decl*, Type*]New(0U);
+        var Iter[(str, Source*)]* all = program.sources.Iter();
+        for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
+            var Source* s = next.0.1;
+            if(s.file.decl != null) {
+                m.declare(s, s.file.decl);
+            }
+            for(var uint i = 0U; i < s.imports.Len(); i++) {
+                var Source.Resolved* r = s.imports.Get(i);
+                var ArrList[Source*]* files = ArrList::[Source*]New(0U);
+                for(var uint j = 0U; j < r.paths.Len(); j++) {
+                    var (Source*, bool) file = program.sources.Get(r.paths.Get(j));
+                    if(file.1) {
+                        files.AddLast(file.0);
+                    }
+                }
+                m.imported.Put(r.imported, files);
+            }
+        }
+        return m;
+    }
+
+    // declare records d, and the fields and declarations within it, as written in s
+    fun void(Source*, ast.Decl*) declare = (s, d) {
+        this.sources.Put(d, s);
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            this.outer.Put(f, d);
+            var ast.Decl* nested = f{ast.Decl*};
+            if(nested != null) {
+                this.declare(s, nested);
+            }
+        }
+    }
+
+    // Program answers the program modelled
+    public fun ProjectParser.Program*() Program = () {
+        return this.program;
+    }
+
+    // Source answers the file d is written in
+    public fun Source*(ast.Decl*) Source = (d) {
+        return this.sources.Get(d).0;
+    }
+
+    // Outer answers the declaration f is written in, or null for a file's own
+    public fun ast.Decl*(ast.Field*) Outer = (f) {
+        return this.outer.Get(f).0;
+    }
+
+    // Nested answers the declaration named name written in d, or null for none
+    public fun ast.Decl*(ast.Decl*, str) Nested = (d, name) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Decl* nested = d.fields.Get(i){ast.Decl*};
+            if(nested != null && nested.name != null && nested.name.value{str} == name) {
+                return nested;
+            }
+        }
+        return null;
+    }
+
+    // TypeOf answers what t resolves to, or null if it has not been resolved
+    public fun Type*(ast.Type*) TypeOf = (t) {
+        return this.types.Get(t).0;
+    }
+
+    // Imported answers the files i names, or none for an import not resolved
+    public fun ArrList[Source*]*(ast.Import*) Imported = (i) {
+        var (ArrList[Source*]*, bool) files = this.imported.Get(i);
+        if(!files.1) {
+            return ArrList::[Source*]New(0U);
+        }
+        return files.0;
+    }
+
+    // Base answers the type d extends, or null for a declaration extending none
+    public fun Type*(ast.Decl*) Base = (d) {
+        return this.bases.Get(d).0;
+    }
+
+    // At answers err as found at tok in the file d is written in
+    public fun Err*(ast.Decl*, Token*, Err*) At = (d, tok, err) {
+        var Source* s = this.Source(d);
+        return SourceErr::At(err, s.path, s.lineStarts, tok);
+    }
+
+    // bindType records t as resolving to resolved
+    fun void(ast.Type*, Type*) bindType = (t, resolved) {
+        this.types.Put(t, resolved);
+    }
+
+    // bindBase records d as extending base
+    fun void(ast.Decl*, Type*) bindBase = (d, base) {
+        this.bases.Put(d, base);
+    }
+}
