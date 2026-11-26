@@ -1,0 +1,61 @@
+import std("data/list/ArrList.zam");
+import std("data/map/TreeMap.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import "Semantic.zam";
+
+public namespace AliasUseTest {
+    // reports checks that validating the program in files, which alias uses
+    // are checked last in, finds the alias use errors want, each a message
+    // and its position in /p/Main.zam, in order
+    private fun void(TreeMap[str, str]*, uint, str...) reports = (files, n, want) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(files);
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var ArrList[Err*]* errs = Semantic::Validate(parsed.0).1;
+        Assert::[uint]Equal(n / 2U, errs.Len());
+        for(var uint i = 0U; i + 1U < n && i / 2U < errs.Len(); i = i + 2U) {
+            Assert::[str]Equal(want[i] + " (" + Path::Display("/p/Main.zam") + want[i + 1U] + ")", errs.Get(i / 2U).Err());
+        }
+    }
+
+    public fun void(uint, str...) Access = (argC, argV) {
+        AliasUseTest::reports(MapSourcesTest::Files(4U,
+            "/p/Main.zam", "import \"sub/Hidden.zam\";\n\npublic namespace Main {\n    var Hidden.Secret secret;\n    var Hidden.Bounded[int] bounded;\n    var Hidden.Open open;\n}\n",
+            "/p/sub/Hidden.zam", "import std(\"lang/Obj.zam\");\n\npublic namespace Hidden {\n    private alias Secret = int;\n    public alias Bounded[T <: Obj*] = T;\n    public alias Open = int;\n}\n"), 4U,
+            "alias Secret is not accessible", "[4:9]",
+            "alias Bounded: type argument int for T is not a subtype of Obj*", "[5:9]");
+    }
+
+    public fun void(uint, str...) Bounds = (argC, argV) {
+        AliasUseTest::reports(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" +
+            "    abstract Shape {}\n" +
+            "    class Square <: Shape* {}\n" +
+            "    enum Kind {\n" +
+            "        A;\n" +
+            "    }\n" +
+            "    alias Above[T :> Square*] = T;\n" +
+            "    alias Choice[E <: enum] = E;\n" +
+            "    alias Fits[T <: Shape*] = T;\n" +
+            "    var Above[Shape*] fine;\n" +
+            "    var Above[int] low;\n" +
+            "    var Choice[Kind] chosen;\n" +
+            "    var Choice[int] unchosen;\n" +
+            "    var Fits[Square*] fits;\n" +
+            "}\n"), 4U,
+            "alias Above: type argument int for T is not a supertype of Square*", "[11:9]",
+            "alias Choice: type argument int for E is not an enum", "[13:9]");
+    }
+
+    // Broken checks the alias uses of what a parse recovered from without
+    // failing on what it left out
+    public fun void(uint, str...) Broken = (argC, argV) {
+        AliasUseTest::reports(MapSourcesTest::Files(2U, "/p/Main.zam",
+            "public namespace Main {\n    alias Choice[E <: enum] = E;\n    var Choice[int] c;\n    fun void() f = () {\n        var int x = ;\n    }\n}\n"), 2U,
+            "alias Choice: type argument int for E is not an enum", "[3:9]");
+    }
+}

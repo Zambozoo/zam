@@ -1,0 +1,29 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import "Access.zam";
+import "Model.zam";
+import "Subtyping.zam";
+
+// AliasUse requires each alias written meets accessibility and bounds requirements
+public namespace AliasUse {
+    // Run checks every alias use in the program m models recorded while its aliases were expanded
+    public fun ArrList[Err*]*(Model*) Run = (m) {
+        var ArrList[Err*]* errs = ArrList::[Err*]New(0U);
+        var Subtyping* subtyping = Subtyping::New(m);
+        var ArrList[Model.Use*]* uses = m.Uses();
+        for(var uint i = 0U; i < uses.Len(); i++) {
+            var Model.Use* u = uses.Get(i);
+            var str name = u.named.name.value{str};
+            if(!Access::From(m, u.decl, u.named.modifiers, u.named)) {
+                errs.AddLast(m.At(u.decl, u.at.start, StrErr::New("alias " + name + " is not accessible")));
+                continue;
+            }
+            var str unsatisfied = subtyping.Bound(u.named.generics, u.arguments);
+            if(unsatisfied != "") {
+                errs.AddLast(m.At(u.decl, u.at.start, StrErr::New("alias " + name + ": " + unsatisfied)));
+            }
+        }
+        return errs;
+    }
+}

@@ -1,0 +1,347 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Type.zam";
+
+// Subtyping says which types stand for which in a program
+public class Subtyping {
+    var Model* model;
+
+    public static fun Subtyping*(Model*) New = (m) {
+        var Subtyping* s = new(Subtyping);
+        s.model = m;
+        return s;
+    }
+
+    // Equal reports whether a and b are the same type
+    public fun bool(Type*, Type*) Equal = (a, b) {
+        if(a == null || b == null || a.kind != b.kind) {
+            return false;
+        }
+        switch(a.kind) {
+            case (Type.Kind::Primitive)
+                return a{Type.Primitive*}.keyword == b{Type.Primitive*}.keyword;
+            case (Type.Kind::Wrapped)
+                return a{Type.Wrapped*}.wrap == b{Type.Wrapped*}.wrap && this.Equal(a{Type.Wrapped*}.inner, b{Type.Wrapped*}.inner);
+            case (Type.Kind::Array) {
+                var Type.Array* x = a{Type.Array*};
+                var Type.Array* y = b{Type.Array*};
+                return x.sized == y.sized && (!x.sized || x.size == y.size) && this.Equal(x.inner, y.inner);
+            }
+            case (Type.Kind::Tailed) {
+                var Type.Tailed* x = a{Type.Tailed*};
+                var Type.Tailed* y = b{Type.Tailed*};
+                return x.sized == y.sized && (!x.sized || x.size == y.size) && this.Equal(x.inner, y.inner);
+            }
+            case (Type.Kind::Tuple)
+                return this.allEqual(a{Type.Tuple*}.types, b{Type.Tuple*}.types);
+            case (Type.Kind::Function)
+                return this.Equal(a{Type.Function*}.returns, b{Type.Function*}.returns) && this.allEqual(a{Type.Function*}.parameters, b{Type.Function*}.parameters);
+            case (Type.Kind::Named)
+                return a{Type.Named*}.decl == b{Type.Named*}.decl;
+            case (Type.Kind::Generic)
+                return this.Equal(a{Type.Generic*}.inner, b{Type.Generic*}.inner) && this.allEqual(a{Type.Generic*}.arguments, b{Type.Generic*}.arguments);
+            case (Type.Kind::Param)
+                return a{Type.Param*}.param == b{Type.Param*}.param;
+        }
+        return false;
+    }
+
+    fun bool(ArrList[Type*]*, ArrList[Type*]*) allEqual = (xs, ys) {
+        if(xs.Len() != ys.Len()) {
+            return false;
+        }
+        for(var uint i = 0U; i < xs.Len(); i++) {
+            if(!this.Equal(xs.Get(i), ys.Get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // Is reports whether sub stands for target
+    public fun bool(Type*, Type*) Is = (sub, target) {
+        if(sub == null || target == null) {
+            return false;
+        }
+        switch(sub.kind) {
+            case (Type.Kind::Function)
+                return this.above(target, sub) || this.function(sub{Type.Function*}, target);
+            case (Type.Kind::Wrapped)
+                return this.wrapped(sub{Type.Wrapped*}, target);
+            case (Type.Kind::Tailed)
+                return this.above(target, sub) || this.Equal(sub, target) || this.Equal(sub{Type.Tailed*}.inner, target);
+            case (Type.Kind::Param) {
+                if(this.above(target, sub) || this.Equal(sub, target)) {
+                    return true;
+                }
+                var ast.Generic* g = sub{Type.Param*}.param;
+                if(g.bound != ast.Generic.Bound::Upper) {
+                    return false;
+                }
+                var ArrList[Type*]* bounds = this.bounds(g);
+                for(var uint i = 0U; i < bounds.Len(); i++) {
+                    if(!this.Is(bounds.Get(i), target)) {
+                        return false;
+                    }
+                }
+                return true;
+            }
+        }
+        return this.above(target, sub) || this.Equal(sub, target);
+    }
+
+    // IsEnum reports whether t is an enum, or a parameter bounded to enums
+    public fun bool(Type*) IsEnum = (t) {
+        t = Subtyping::StripConst(t);
+        if(t == null) {
+            return false;
+        } else if(t.kind == Type.Kind::Param) {
+            return t{Type.Param*}.param.bound == ast.Generic.Bound::Enum;
+        }
+        var ast.Decl* d = Subtyping::declOf(t);
+        return d != null && d.kind == ast.Field.Kind::Enum;
+    }
+
+    // Bound answers why the first of arguments does not satisfy its parameter's bound
+    public fun str(ArrList[ast.Generic*]*, ArrList[Type*]*) Bound = (generics, arguments) {
+        if(generics == null || generics.Len() != arguments.Len()) {
+            return "";
+        }
+        var HashMap[ast.Generic*, Type*]* bindings = Subtyping::bind(generics, arguments);
+        for(var uint i = 0U; i < generics.Len(); i++) {
+            var ast.Generic* g = generics.Get(i);
+            var Type* argument = arguments.Get(i);
+            var str prefix = "type argument " + argument.Text() + " for " + g.name.value{str};
+            if(g.bound == ast.Generic.Bound::Enum) {
+                if(!this.IsEnum(argument)) {
+                    return prefix + " is not an enum";
+                }
+                continue;
+            }
+            var ArrList[Type*]* bounds = this.bounds(g);
+            for(var uint j = 0U; j < bounds.Len(); j++) {
+                var Type* bound = bounds.Get(j).Instantiate(bindings, bounds.Get(j).at);
+                if(g.bound == ast.Generic.Bound::Upper && !this.Is(argument, bound)) {
+                    return prefix + " is not a subtype of " + bound.Text();
+                } else if(g.bound == ast.Generic.Bound::Lower && !this.Is(bound, argument)) {
+                    return prefix + " is not a supertype of " + bound.Text();
+                }
+            }
+        }
+        return "";
+    }
+
+    // StripConst answers t without an outermost const
+    public static fun Type*(Type*) StripConst = (t) {
+        if(t != null && t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Const) {
+            return t{Type.Wrapped*}.inner;
+        }
+        return t;
+    }
+
+    // above reports whether target stands above sub without being equal to it
+    fun bool(Type*, Type*) above = (target, sub) {
+        if(target.kind == Type.Kind::Primitive) {
+            return target{Type.Primitive*}.keyword == TokenKind::Any && !(sub.kind == Type.Kind::Primitive && sub{Type.Primitive*}.keyword == TokenKind::Void);
+        } else if(target.kind != Type.Kind::Param || target{Type.Param*}.param.bound != ast.Generic.Bound::Lower) {
+            return false;
+        }
+        var ArrList[Type*]* bounds = this.bounds(target{Type.Param*}.param);
+        for(var uint i = 0U; i < bounds.Len(); i++) {
+            if(!this.Is(sub, bounds.Get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // function reports whether sub stands for target
+    fun bool(Type.Function*, Type*) function = (sub, target) {
+        if(target.kind != Type.Kind::Function) {
+            return false;
+        }
+        var Type.Function* f = target{Type.Function*};
+        if(sub.parameters.Len() != f.parameters.Len()) {
+            return false;
+        } else if(Subtyping::isConst(sub.returns) != Subtyping::isConst(f.returns) || !this.Is(sub.returns, f.returns)) {
+            return false;
+        }
+        for(var uint i = 0U; i < sub.parameters.Len(); i++) {
+            var Type* mine = sub.parameters.Get(i);
+            var Type* theirs = f.parameters.Get(i);
+            if(Subtyping::isConst(mine) != Subtyping::isConst(theirs) || !this.Is(theirs, mine)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // wrapped reports whether sub stands for target
+    fun bool(Type.Wrapped*, Type*) wrapped = (sub, target) {
+        if(sub.wrap == ast.Type.Wrap::Const) {
+            if(Subtyping::isConst(target)) {
+                return this.Is(sub.inner, target{Type.Wrapped*}.inner);
+            }
+            return this.Is(sub.inner, target);
+        } else if(this.above(target, sub) || this.Equal(sub, target)) {
+            return true;
+        } else if(target.kind != Type.Kind::Wrapped || sub.wrap != ast.Type.Wrap::Pointer || target{Type.Wrapped*}.wrap != ast.Type.Wrap::Pointer) {
+            return false;
+        }
+        var Type* to = target{Type.Wrapped*}.inner;
+        if(to.kind == Type.Kind::Primitive && to{Type.Primitive*}.keyword == TokenKind::Void) {
+            return true;
+        } else if(sub.inner.kind == Type.Kind::Tailed && to.kind == Type.Kind::Tailed) {
+            var Type.Tailed* mine = sub.inner{Type.Tailed*};
+            var Type.Tailed* theirs = to{Type.Tailed*};
+            if(mine.sized && !theirs.sized && this.Equal(mine.inner, theirs.inner)) {
+                return true;
+            }
+        }
+        var ast.Decl* d = Subtyping::declOf(sub.inner);
+        if(d == null || (d.kind != ast.Field.Kind::Class && d.kind != ast.Field.Kind::Abstract)) {
+            return false;
+        }
+        var ast.Decl* parent = Subtyping::declOf(to);
+        if(parent == null) {
+            return false;
+        } else if(parent.kind == ast.Field.Kind::Interface) {
+            return this.implements(sub.inner, to);
+        }
+        return this.inherits(sub.inner, to);
+    }
+
+    // inherits reports whether the declaration t names has the declaration parent names
+    fun bool(Type*, Type*) inherits = (t, parent) {
+        for(var Type* base = this.baseOf(t); base != null; base = this.baseOf(base)) {
+            if(this.Equal(Subtyping::stripTail(base), Subtyping::stripTail(parent))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // implements reports whether the class t names has every instance method of the interface iface names
+    fun bool(Type*, Type*) implements = (t, iface) {
+        var ast.Decl* i = Subtyping::declOf(iface);
+        var HashMap[ast.Generic*, Type*]* bindings = Subtyping::bindingsOf(iface);
+        for(var uint k = 0U; k < i.fields.Len(); k++) {
+            var ast.Field.Method* wanted = Subtyping::instanceMethod(i.fields.Get(k));
+            if(wanted == null) {
+                continue;
+            }
+            var Type* want = this.model.TypeOf(wanted.signature);
+            var Type* have = this.methodOf(t, wanted.name.value{str});
+            if(want == null || have == null || !this.Is(have, want.Instantiate(bindings, want.at))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // methodOf answers the type of the instance method named name that the declaration t names has
+    fun Type*(Type*, str) methodOf = (t, name) {
+        for(; t != null; t = this.baseOf(t)) {
+            var ast.Decl* d = Subtyping::declOf(t);
+            if(d == null) {
+                return null;
+            }
+            for(var uint k = 0U; k < d.fields.Len(); k++) {
+                var ast.Field.Method* m = Subtyping::instanceMethod(d.fields.Get(k));
+                if(m != null && m.name.value{str} == name) {
+                    var Type* signature = this.model.TypeOf(m.signature);
+                    if(signature == null) {
+                        return null;
+                    }
+                    return signature.Instantiate(Subtyping::bindingsOf(t), signature.at);
+                }
+            }
+        }
+        return null;
+    }
+
+    // baseOf answers what the class or abstract t names extends
+    fun Type*(Type*) baseOf = (t) {
+        var ast.Decl* d = Subtyping::declOf(t);
+        if(d == null || (d.kind != ast.Field.Kind::Class && d.kind != ast.Field.Kind::Abstract)) {
+            return null;
+        }
+        var Type* base = this.model.Base(d);
+        if(base == null || base.kind != Type.Kind::Wrapped) {
+            return null;
+        }
+        var Type* inner = base{Type.Wrapped*}.inner;
+        return inner.Instantiate(Subtyping::bindingsOf(t), inner.at);
+    }
+
+    // bounds answers the types g is bounded by
+    fun ArrList[Type*]*(ast.Generic*) bounds = (g) {
+        var ArrList[Type*]* bounds = ArrList::[Type*]New(0U);
+        if(g.bounds == null) {
+            return bounds;
+        }
+        for(var uint i = 0U; i < g.bounds.Len(); i++) {
+            var Type* b = this.model.TypeOf(g.bounds.Get(i));
+            if(b != null) {
+                bounds.AddLast(b);
+            }
+        }
+        return bounds;
+    }
+
+    // instanceMethod answers f if it is an instance method, or null
+    static fun ast.Field.Method*(ast.Field*) instanceMethod = (f) {
+        if(f.kind != ast.Field.Kind::Method || ast.Modifier::Static.In(f.modifiers)) {
+            return null;
+        }
+        return f{ast.Field.Method*};
+    }
+
+    // bindingsOf answers the parameters of the declaration t names bound to the arguments t gives them
+    static fun HashMap[ast.Generic*, Type*]*(Type*) bindingsOf = (t) {
+        t = Subtyping::stripTail(t);
+        var ast.Decl* d = Subtyping::declOf(t);
+        if(t == null || t.kind != Type.Kind::Generic || d == null || d.generics == null) {
+            return HashMap::[ast.Generic*, Type*]New(0U);
+        }
+        return Subtyping::bind(d.generics, t{Type.Generic*}.arguments);
+    }
+
+    // bind answers each of generics bound to the argument in its place
+    static fun HashMap[ast.Generic*, Type*]*(ArrList[ast.Generic*]*, ArrList[Type*]*) bind = (generics, arguments) {
+        var HashMap[ast.Generic*, Type*]* bindings = HashMap::[ast.Generic*, Type*]New(0U);
+        for(var uint i = 0U; i < generics.Len() && i < arguments.Len(); i++) {
+            bindings.Put(generics.Get(i), arguments.Get(i));
+        }
+        return bindings;
+    }
+
+    // declOf answers the declaration t names
+    static fun ast.Decl*(Type*) declOf = (t) {
+        if(t != null && t.kind == Type.Kind::Generic) {
+            t = t{Type.Generic*}.inner;
+        }
+        if(t != null && t.kind == Type.Kind::Tailed) {
+            t = t{Type.Tailed*}.inner;
+        }
+        if(t == null || t.kind != Type.Kind::Named) {
+            return null;
+        }
+        return t{Type.Named*}.decl;
+    }
+
+    // stripTail answers t without its tail
+    static fun Type*(Type*) stripTail = (t) {
+        if(t != null && t.kind == Type.Kind::Tailed) {
+            return t{Type.Tailed*}.inner;
+        }
+        return t;
+    }
+
+    static fun bool(Type*) isConst = (t) {
+        return t != null && t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Const;
+    }
+}

@@ -1,0 +1,63 @@
+import std("io/Paths.zam");
+import std("lang/Strs.zam");
+import "../syntax/Path.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Type.zam";
+
+// Access says where a declaration or field may be named from
+public namespace Access {
+    // From reports whether what is declared in or as owner, with modifiers, may be named from current
+    public fun bool(Model*, ast.Decl*, ast.Modifier.Set, ast.Decl*) From = (m, current, modifiers, owner) {
+        var str here = m.Source(current).path;
+        var str there = m.Source(owner).path;
+        if(here == there || ast.Modifier::Public.In(modifiers) || ast.Modifier::Virtual.In(modifiers)) {
+            return true;
+        } else if(ast.Modifier::Private.In(modifiers)) {
+            return false;
+        } else if(ast.Modifier::Protected.In(modifiers)) {
+            return Access::Descends(m, current, owner);
+        }
+        return Access::dir(here) == Access::dir(there);
+    }
+
+    // Descends reports whether d is ancestor or extends it
+    public fun bool(Model*, ast.Decl*, ast.Decl*) Descends = (m, d, ancestor) {
+        for(; d != null; d = Access::baseDecl(m, d)) {
+            if(d == ancestor) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // baseDecl answers the declaration the class or abstract d extends
+    fun ast.Decl*(Model*, ast.Decl*) baseDecl = (m, d) {
+        if(d.kind != ast.Field.Kind::Class && d.kind != ast.Field.Kind::Abstract) {
+            return null;
+        }
+        var Type* base = m.Base(d);
+        if(base == null || base.kind != Type.Kind::Wrapped) {
+            return null;
+        }
+        var Type* t = base{Type.Wrapped*}.inner;
+        if(t.kind == Type.Kind::Generic) {
+            t = t{Type.Generic*}.inner;
+        }
+        if(t.kind == Type.Kind::Tailed) {
+            t = t{Type.Tailed*}.inner;
+        }
+        if(t.kind != Type.Kind::Named) {
+            return null;
+        }
+        return t{Type.Named*}.decl;
+    }
+
+    // dir answers the directory the file at p is in
+    fun str(str) dir = (p) {
+        if(Path::IsStd(p)) {
+            return Path::Std + Paths::Dir(Strs::Slice(p, Strs::ByteLen(Path::Std), Strs::ByteLen(p)));
+        }
+        return Paths::Dir(p);
+    }
+}

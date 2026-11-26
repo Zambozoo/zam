@@ -42,7 +42,7 @@ func TestSemanticMatchesGo(t *testing.T) {
 }
 
 // lastPass is the last pass of validation the compiler written in zam has.
-const lastPass = semantic.PassMemberCycles
+const lastPass = semantic.PassAliasUses
 
 // goValidateErrors answers the errors Go validation up to lastPass reports
 // for the program entered at entry, which has to parse, sorted.

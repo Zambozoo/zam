@@ -1,0 +1,52 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import ast = "../syntax/ast/*";
+import "Access.zam";
+import "Model.zam";
+import "Semantic.zam";
+
+public namespace AccessTest {
+    public fun void(uint, str...) From = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(12U,
+            "/p/Main.zam", "import \"Peer.zam\";\nimport \"sub/Far.zam\";\nimport std(\"lang/A.zam\");\nimport std(\"lang/B.zam\");\nimport std(\"io/C.zam\");\npublic namespace Main {\n    class Derived <: Far.Base* {}\n}",
+            "/p/Peer.zam", "namespace Peer {}",
+            "/p/sub/Far.zam", "public namespace Far {\n    public class Base {}\n}",
+            "std://lang/A.zam", "namespace A {}",
+            "std://lang/B.zam", "namespace B {}",
+            "std://io/C.zam", "namespace C {}"));
+        if(!Assert::[uint]Equal(0U, parsed.1.Len())) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        if(!Assert::[uint]Equal(0U, validated.1.Len())) {
+            Assert::Fatal(validated.1.Get(0U).Err());
+        }
+        var Model* m = validated.0;
+        var ast.Decl* main = parsed.0.main;
+        var ast.Decl* derived = m.Nested(main, "Derived");
+        var ast.Decl* peer = parsed.0.sources.Get("/p/Peer.zam").0.file.decl;
+        var ast.Decl* far = parsed.0.sources.Get("/p/sub/Far.zam").0.file.decl;
+        var ast.Decl* base = m.Nested(far, "Base");
+        var ast.Decl* a = parsed.0.sources.Get("std://lang/A.zam").0.file.decl;
+        var ast.Decl* b = parsed.0.sources.Get("std://lang/B.zam").0.file.decl;
+        var ast.Decl* c = parsed.0.sources.Get("std://io/C.zam").0.file.decl;
+        var ast.Modifier.Set none = 0U;
+
+        Assert::True(Access::From(m, derived, ast.Modifier::Private.Bit(), main), "a private field is hidden in its own file");
+        Assert::True(Access::From(m, main, ast.Modifier::Public.Bit(), far), "a public field is hidden");
+        Assert::True(Access::From(m, main, ast.Modifier::Virtual.Bit(), far), "a virtual field is hidden");
+        Assert::False(Access::From(m, main, ast.Modifier::Private.Bit(), peer), "a private field is seen from another file");
+        Assert::True(Access::From(m, main, none, peer), "an unmarked field is hidden in its directory");
+        Assert::False(Access::From(m, main, none, far), "an unmarked field is seen from another directory");
+        Assert::True(Access::From(m, derived, ast.Modifier::Protected.Bit(), base), "a protected field is hidden from a subclass");
+        Assert::True(Access::From(m, base, ast.Modifier::Protected.Bit(), base), "a protected field is hidden from its declaration");
+        Assert::False(Access::From(m, main, ast.Modifier::Protected.Bit(), base), "a protected field is seen from outside its subclasses");
+        Assert::True(Access::From(m, a, none, b), "an unmarked std field is hidden in its directory");
+        Assert::False(Access::From(m, a, none, c), "an unmarked std field is seen from another directory");
+        Assert::True(Access::Descends(m, derived, base), "Derived does not descend from Base");
+        Assert::False(Access::Descends(m, base, derived), "Base descends from Derived");
+    }
+}

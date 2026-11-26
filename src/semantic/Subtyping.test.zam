@@ -1,0 +1,187 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Semantic.zam";
+import "Subtyping.zam";
+import "Type.zam";
+
+public namespace SubtypingTest {
+    // Types is a program's resolved types to compare, read by member name
+    class Types {
+        var Model* model;
+        var ast.Decl* main;
+        var Subtyping* subtyping;
+
+        fun Type*(str) Of = (name) {
+            for(var uint i = 0U; i < this.main.fields.Len(); i++) {
+                var ast.Field* f = this.main.fields.Get(i);
+                if(f.kind == ast.Field.Kind::Member && f.name.value{str} == name) {
+                    return this.model.TypeOf(f{ast.Field.Member*}.declared);
+                }
+            }
+            Assert::Fatal("no member " + name);
+            return null;
+        }
+
+        // Is checks whether the member named sub's type stands for that of target
+        fun void(str, str, bool) Is = (sub, target, want) {
+            Assert::True(this.subtyping.Is(this.Of(sub), this.Of(target)) == want, sub + " <: " + target + " is not " + want{str});
+        }
+    }
+
+    private fun Types*() types = () {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" +
+            "    abstract Shape {}\n" +
+            "    class Square <: Shape* {\n" +
+            "        fun int() Area = () {\n" +
+            "            return 1;\n" +
+            "        }\n" +
+            "    }\n" +
+            "    class Big <: Square* {}\n" +
+            "    interface Sized {\n" +
+            "        fun int() Area;\n" +
+            "    }\n" +
+            "    interface Labeled {\n" +
+            "        fun str() Label;\n" +
+            "    }\n" +
+            "    interface Cmp[T] {\n" +
+            "        fun int(T) Compare;\n" +
+            "    }\n" +
+            "    class Num {\n" +
+            "        fun int(Num*) Compare = (n) {\n" +
+            "            return 0;\n" +
+            "        }\n" +
+            "    }\n" +
+            "    class Box[T] {}\n" +
+            "    class Boxed <: Box[int]* {}\n" +
+            "    struct Node~ {\n" +
+            "        var int[~] items;\n" +
+            "    }\n" +
+            "    enum Kind {\n" +
+            "        A;\n" +
+            "    }\n" +
+            "    class Holder[U <: Shape*, L :> Square*, E <: enum] {\n" +
+            "        var U u;\n" +
+            "        var L l;\n" +
+            "        var E e;\n" +
+            "    }\n" +
+            "    class Ord[T <: Cmp[T]*] {}\n" +
+            "    var int i;\n" +
+            "    var byte b;\n" +
+            "    var any a;\n" +
+            "    var int$ ci;\n" +
+            "    var int[2] two;\n" +
+            "    var int[3] three;\n" +
+            "    var (int, str) pair;\n" +
+            "    var Shape* shape;\n" +
+            "    var Shape*$ constShape;\n" +
+            "    var Square* square;\n" +
+            "    var Big* big;\n" +
+            "    var void* opaque;\n" +
+            "    var Box[int]* boxInt;\n" +
+            "    var Box[str]* boxStr;\n" +
+            "    var Boxed* boxed;\n" +
+            "    var Sized* sized;\n" +
+            "    var Labeled* labeled;\n" +
+            "    var Num* num;\n" +
+            "    var Node~3* node3;\n" +
+            "    var Node~* node;\n" +
+            "    var Kind kind;\n" +
+            "    var Shape*(Square*) narrow;\n" +
+            "    var Square*(Shape*) wide;\n" +
+            "    var Shape*(Shape*) even;\n" +
+            "    var int() plain;\n" +
+            "    var int$() constant;\n" +
+            "}\n"));
+        if(!Assert::[uint]Equal(0U, parsed.1.Len())) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        if(!Assert::[uint]Equal(0U, validated.1.Len())) {
+            Assert::Fatal(validated.1.Get(0U).Err());
+        }
+        var Types* t = new(Types);
+        t.model = validated.0;
+        t.main = parsed.0.main;
+        t.subtyping = Subtyping::New(validated.0);
+        return t;
+    }
+
+    public fun void(uint, str...) Values = (argC, argV) {
+        var Types* t = SubtypingTest::types();
+        t.Is("i", "a", true);
+        t.Is("pair", "a", true);
+        t.Is("i", "b", false);
+        t.Is("b", "i", false);
+        Assert::False(t.subtyping.Is(Type.Primitive::New(null, TokenKind::Void), t.Of("a")), "void <: any");
+        t.Is("two", "two", true);
+        t.Is("two", "three", false);
+        t.Is("ci", "i", true);
+        t.Is("i", "ci", false);
+        t.Is("constShape", "shape", true);
+        t.Is("kind", "kind", true);
+        Assert::True(t.subtyping.IsEnum(t.Of("kind")), "Kind is not an enum");
+        Assert::False(t.subtyping.IsEnum(t.Of("i")), "int is an enum");
+    }
+
+    public fun void(uint, str...) Pointers = (argC, argV) {
+        var Types* t = SubtypingTest::types();
+        t.Is("square", "shape", true);
+        t.Is("big", "shape", true);
+        t.Is("shape", "square", false);
+        t.Is("square", "opaque", true);
+        t.Is("shape", "opaque", true);
+        t.Is("boxed", "boxInt", true);
+        t.Is("boxed", "boxStr", false);
+        t.Is("boxInt", "boxStr", false);
+        t.Is("square", "sized", true);
+        t.Is("big", "sized", true);
+        t.Is("square", "labeled", false);
+        t.Is("sized", "shape", false);
+        t.Is("node3", "node", true);
+        t.Is("node", "node3", false);
+    }
+
+    public fun void(uint, str...) Functions = (argC, argV) {
+        var Types* t = SubtypingTest::types();
+        t.Is("wide", "narrow", true);
+        t.Is("narrow", "wide", false);
+        t.Is("even", "narrow", true);
+        t.Is("plain", "constant", false);
+        t.Is("constant", "plain", false);
+    }
+
+    public fun void(uint, str...) Params = (argC, argV) {
+        var Types* t = SubtypingTest::types();
+        var ast.Decl* holder = t.model.Nested(t.main, "Holder");
+        var Type* u = t.model.TypeOf(holder.fields.Get(0U){ast.Field.Member*}.declared);
+        var Type* l = t.model.TypeOf(holder.fields.Get(1U){ast.Field.Member*}.declared);
+        var Type* e = t.model.TypeOf(holder.fields.Get(2U){ast.Field.Member*}.declared);
+        Assert::True(t.subtyping.Is(u, t.Of("shape")), "U <: Shape*");
+        Assert::True(t.subtyping.Is(u, t.Of("opaque")), "U <: void*");
+        Assert::False(t.subtyping.Is(u, t.Of("square")), "U <: Square*");
+        Assert::True(t.subtyping.Is(t.Of("square"), l), "Square* <: L");
+        Assert::True(t.subtyping.Is(t.Of("big"), l), "Big* <: L");
+        Assert::False(t.subtyping.Is(t.Of("shape"), l), "Shape* <: L");
+        Assert::True(t.subtyping.IsEnum(e), "E is not an enum");
+    }
+
+    public fun void(uint, str...) Bounds = (argC, argV) {
+        var Types* t = SubtypingTest::types();
+        var ArrList[ast.Generic*]* holder = t.model.Nested(t.main, "Holder").generics;
+        Assert::[str]Equal("", t.subtyping.Bound(holder, ArrList::[Type*]New(3U, t.Of("square"), t.Of("shape"), t.Of("kind"))));
+        Assert::[str]Equal("type argument int for U is not a subtype of Shape*", t.subtyping.Bound(holder, ArrList::[Type*]New(3U, t.Of("i"), t.Of("shape"), t.Of("kind"))));
+        Assert::[str]Equal("type argument Big* for L is not a supertype of Square*", t.subtyping.Bound(holder, ArrList::[Type*]New(3U, t.Of("square"), t.Of("big"), t.Of("kind"))));
+        Assert::[str]Equal("type argument int for E is not an enum", t.subtyping.Bound(holder, ArrList::[Type*]New(3U, t.Of("square"), t.Of("shape"), t.Of("i"))));
+        Assert::[str]Equal("", t.subtyping.Bound(holder, ArrList::[Type*]New(1U, t.Of("i"))));
+
+        var ArrList[ast.Generic*]* ord = t.model.Nested(t.main, "Ord").generics;
+        Assert::[str]Equal("", t.subtyping.Bound(ord, ArrList::[Type*]New(1U, t.Of("num"))));
+        Assert::[str]Equal("type argument int for T is not a subtype of Cmp[int]*", t.subtyping.Bound(ord, ArrList::[Type*]New(1U, t.Of("i"))));
+    }
+}
