@@ -1206,7 +1206,7 @@ func (a *DeclAbstract) AllInstanceFields() *base.StaticOrderedMap[string, Field]
 
 // DeclType implements the [Decl] interface.
 func (a *DeclAbstract) DeclType() Type {
-	return newGenericType(a)
+	return tailableDeclType(a)
 }
 
 // GetConcreteDecl implements the [DeclGeneric] interface.
@@ -1434,7 +1434,7 @@ func (c *DeclClass) AllInstanceFields() *base.StaticOrderedMap[string, Field] {
 
 // DeclType implements the [Decl] interface.
 func (c *DeclClass) DeclType() Type {
-	return newGenericType(c)
+	return tailableDeclType(c)
 }
 
 // GetConcreteDecl implements the [DeclGeneric] interface.
@@ -2067,31 +2067,36 @@ func (d *DeclStruct) Accept(visitor FieldVisitor) error {
 	return visitor.VisitDeclStruct(d)
 }
 
-// DeclType implements the [DeclTypeable] interface. A tailed struct is spelled
-// `S~[args]` wherever it is referred to, and the receiver and pointer-pointee
+// DeclType implements the [DeclTypeable] interface.
+func (s *DeclStruct) DeclType() Type {
+	return tailableDeclType(s)
+}
+
+// tailableDeclType is the type naming d. A tailed declaration is spelled
+// `D~[args]` wherever it is referred to, and the receiver and pointer-pointee
 // types a later pass collects from this must match the keys the user wrote
 // against. Returning the non-tailed form would open two concrete entries per
 // instantiation that resolve to the same declaration under separate type ids,
 // and the one created after the type-definition skeleton has been sized would
 // land with no slot of its own.
-func (s *DeclStruct) DeclType() Type {
-	if s.isTailed {
-		t := newGenericType(s)
-		if g, ok := t.(*TypeGeneric); ok {
-			g.Type = &TypeTailed{
-				start:     s.Start(),
-				outerDecl: s,
-				Type:      g.Type.(*TypeReference),
-			}
-			return g
-		}
-		return &TypeTailed{
-			start:     s.Start(),
-			outerDecl: s,
-			Type:      t.(*TypeReference),
-		}
+func tailableDeclType(d DeclTailable) Type {
+	t := newGenericType(d)
+	if !d.IsTailed() {
+		return t
 	}
-	return newGenericType(s)
+	if g, ok := t.(*TypeGeneric); ok {
+		g.Type = &TypeTailed{
+			start:     d.Start(),
+			outerDecl: d,
+			Type:      g.Type.(*TypeReference),
+		}
+		return g
+	}
+	return &TypeTailed{
+		start:     d.Start(),
+		outerDecl: d,
+		Type:      t.(*TypeReference),
+	}
 }
 
 // IsTailed implements the [DeclTailable] interface.

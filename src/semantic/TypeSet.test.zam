@@ -1,0 +1,32 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Subtyping.zam";
+import "Type.zam";
+import "TypeSet.zam";
+
+public namespace TypeSetTest {
+    public fun void(uint, str...) Add = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {}"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var TypeSet* set = TypeSet::New(Subtyping::New(Model::New(parsed.0)));
+        var Type* i = Type.Primitive::New(null, TokenKind::Int);
+        var Type* pointer = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, i);
+        Assert::True(set.Add(pointer), "a new pointer is not added");
+        Assert::False(set.Add(Type.Wrapped::New(null, ast.Type.Wrap::Pointer, Type.Primitive::New(null, TokenKind::Int))), "an equal pointer is added again");
+        Assert::True(set.Add(i), "int is not added");
+        Assert::True(set.Contains(Type.Primitive::New(null, TokenKind::Int)), "int is not held");
+        Assert::False(set.Contains(Type.Primitive::New(null, TokenKind::Uint)), "uint is held");
+        if(Assert::[uint]Equal(2U, set.Len())) {
+            Assert::[str]Equal("int*", set.Get(0U).Text());
+            Assert::[str]Equal("int", set.Get(1U).Text());
+        }
+    }
+}

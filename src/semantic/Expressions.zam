@@ -606,33 +606,11 @@ public class Expressions {
 
     // prefix answers the type of the first last+1 names of p, or null if it is not known
     fun Type*(ast.Expr.Path*, uint) prefix = (p, last) {
-        var Model.Binding* b = this.model.Binding(p);
-        if(b == null) {
+        var ArrList[Type*]* types = this.model.PathTypes(p);
+        if(types == null || last >= types.Len()) {
             return null;
         }
-        var Type* t = b.bound;
-        for(var uint i = 1U; i <= last && t != null; i++) {
-            var str name = p.ids.Get(i).value{str};
-            var Type* tuple = Expressions::selection(t, true);
-            if(tuple != null) {
-                var (uint, bool) at = Expressions::index(name);
-                if(!at.1 || at.0 >= tuple{Type.Tuple*}.types.Len()) {
-                    return null;
-                }
-                t = tuple{Type.Tuple*}.types.Get(at.0);
-                continue;
-            }
-            var Type* target = Expressions::selection(t, false);
-            if(target == null) {
-                return null;
-            }
-            var Members.Field* f = this.members.FindField(target, name);
-            if(f == null) {
-                return null;
-            }
-            t = f.signature;
-        }
-        return t;
+        return types.Get(last);
     }
 
     // member reports whether name selected out of a value of t is a member rather than a method
@@ -672,7 +650,7 @@ public class Expressions {
                 return (this.model.Base(d), true);
             }
             case (TokenKind::Null)
-                return (Type::Null, true);
+                return (Type::Null(), true);
             case (TokenKind::True, TokenKind::False)
                 return (Type.Primitive::New(tok, TokenKind::Bool), true);
             case (TokenKind::CharLiteral)
@@ -709,10 +687,16 @@ public class Expressions {
 
     // path types a name followed by the fields selected out of it in turn
     fun (Type*, bool)(ast.Expr.Path*) path = (e) {
+        var ArrList[Type*]* types = ArrList::[Type*]New(0U);
         var (Type*, bool) t = this.name(e, e.ids.Get(0U));
         for(var uint i = 1U; i < e.ids.Len() && t.1 && t.0 != null; i++) {
+            types.AddLast(t.0);
             t = this.selectField(t.0, e.ids.Get(i), e.start);
         }
+        if(t.0 != null) {
+            types.AddLast(t.0);
+        }
+        this.model.bindPath(e, types);
         return t;
     }
 

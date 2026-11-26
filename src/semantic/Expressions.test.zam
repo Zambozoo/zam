@@ -121,7 +121,7 @@ public namespace ExpressionsTest {
         Assert::True(x.Castable(voidPointer, fn), "void* to a function");
         Assert::True(x.Castable(fn, voidPointer), "a function to void*");
         Assert::False(x.Castable(fn, f), "a function to flt");
-        Assert::True(x.Castable(Type::Null, intPointer), "null to int*");
+        Assert::True(x.Castable(Type::Null(), intPointer), "null to int*");
         Assert::True(x.Castable(Type.Wrapped::New(null, ast.Type.Wrap::Const, i), f), "int$ to flt");
     }
 
@@ -201,6 +201,23 @@ public namespace ExpressionsTest {
             if(Assert::True(t != null, "statement " + i{str} + " is untyped")) {
                 Assert::[str]Equal(want.Get(i), t.Text());
             }
+        }
+    }
+
+    public fun void(uint, str...) Paths = (argC, argV) {
+        var (Model*, ast.Decl*) out = ExpressionsTest::validated(
+            "    class Box {\n" +
+            "        var (int, str) pair;\n" +
+            "    }\n" +
+            "    fun void(Box*) Use = (box) {\n" +
+            "        var (int, str) t = box.pair;\n" +
+            "    }\n");
+        var Model* m = out.0;
+        var ast.Expr.Path* p = ExpressionsTest::initializer(ExpressionsTest::statements(out.1, 1U).Get(0U)){ast.Expr.Path*};
+        var ArrList[Type*]* types = m.PathTypes(p);
+        if(Assert::True(types != null, "the path is untyped") && Assert::[uint]Equal(2U, types.Len())) {
+            Assert::[str]Equal("Box*", types.Get(0U).Text());
+            Assert::[str]Equal("(int, str)", types.Get(1U).Text());
         }
     }
 }

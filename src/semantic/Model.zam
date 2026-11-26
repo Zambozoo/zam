@@ -1,5 +1,6 @@
 import std("data/list/ArrList.zam");
 import std("data/map/HashMap.zam");
+import std("lang/Arr.zam");
 import std("lang/Err.zam");
 import std("lang/Iter.zam");
 import "../syntax/ProjectParser.zam";
@@ -8,6 +9,7 @@ import "../syntax/SourceErr.zam";
 import "../syntax/Token.zam";
 import ast = "../syntax/ast/*";
 import "Type.zam";
+import "TypeSet.zam";
 
 // Model is what semantic analysis finds out about a program
 public class Model {
@@ -29,6 +31,35 @@ public class Model {
             u.at = at;
             u.decl = decl;
             return u;
+        }
+    }
+
+    // MethodInstance is a generic static method given ground type arguments
+    public class MethodInstance {
+        public var ast.Field.Method* method;
+        // owner is the declaration the method is declared in
+        public var ast.Decl* owner;
+        public var ArrList[Type*]* arguments;
+
+        public static fun MethodInstance*(ast.Field.Method*, ast.Decl*, ArrList[Type*]*) New = (method, owner, arguments) {
+            var MethodInstance* i = new(MethodInstance);
+            i.method = method;
+            i.owner = owner;
+            i.arguments = arguments;
+            return i;
+        }
+    }
+
+    // Implementation is an implementor found to have every method an interface asks for
+    public class Implementation {
+        public var Type* implementor;
+        public var Type* iface;
+
+        public static fun Implementation*(Type*, Type*) New = (implementor, iface) {
+            var Implementation* i = new(Implementation);
+            i.implementor = implementor;
+            i.iface = iface;
+            return i;
         }
     }
 
@@ -91,6 +122,21 @@ public class Model {
     var HashMap[ast.Expr.Lambda*, ArrList[str]*]* captures;
     // bindings maps every name written in a body onto what it stands for
     var HashMap[ast.Expr*, Binding*]* bindings;
+    // paths maps every path typed onto the type after each of its names, its first name first
+    var HashMap[ast.Expr.Path*, ArrList[Type*]*]* paths;
+    // instances is every ground instantiation of a generic declaration the program can reach
+    var ArrList[Type*]* instances;
+    // methodInstances is every ground instantiation of a generic static method the program can reach
+    var ArrList[MethodInstance*]* methodInstances;
+    // openTypes maps every generic class, abstract and interface, and every generic method in one, onto the open types it names
+    var HashMap[ast.Field*, TypeSet*]* openTypes;
+    // functionTypes, threadTypes, pointerTypes and tupleTypes are every ground type of their kind the program can reach
+    var TypeSet* functionTypes;
+    var TypeSet* threadTypes;
+    var TypeSet* pointerTypes;
+    var TypeSet* tupleTypes;
+    // implementations is every interface each class, abstract and interface, and each ground instance of one, implements
+    var ArrList[Implementation*]* implementations;
 
     // New answers a model of program with nothing found out yet
     public static fun Model*(ProjectParser.Program*) New = (program) {
@@ -106,6 +152,11 @@ public class Model {
         m.exprTypes = HashMap::[ast.Expr*, Type*]New(0U);
         m.captures = HashMap::[ast.Expr.Lambda*, ArrList[str]*]New(0U);
         m.bindings = HashMap::[ast.Expr*, Binding*]New(0U);
+        m.paths = HashMap::[ast.Expr.Path*, ArrList[Type*]*]New(0U);
+        m.instances = ArrList::[Type*]New(0U);
+        m.methodInstances = ArrList::[MethodInstance*]New(0U);
+        m.openTypes = HashMap::[ast.Field*, TypeSet*]New(0U);
+        m.implementations = ArrList::[Implementation*]New(0U);
         var Iter[(str, Source*)]* all = program.sources.Iter();
         for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
             var Source* s = next.0.1;
@@ -199,6 +250,57 @@ public class Model {
         return this.bindings.Get(e).0;
     }
 
+    // PathTypes answers the type after each name of p as far as it was typed, its first name first, or null
+    public fun ArrList[Type*]*(ast.Expr.Path*) PathTypes = (p) {
+        return this.paths.Get(p).0;
+    }
+
+    // ResolvedTypes answers what every type written resolves to
+    public fun ArrList[Type*]*() ResolvedTypes = () {
+        var ArrList[Type*]* all = ArrList::[Type*]New(0U);
+        var Arr[(ast.Type*, Type*)]* entries = this.types.Arr();
+        for(var uint i = 0U; i < entries.Len(); i++) {
+            all.AddLast(entries.Get(i).1);
+        }
+        return all;
+    }
+
+    // Instances answers every ground instantiation of a generic declaration the program can reach
+    public fun ArrList[Type*]*() Instances = () {
+        return this.instances;
+    }
+
+    // MethodInstances answers every ground instantiation of a generic static method the program can reach
+    public fun ArrList[MethodInstance*]*() MethodInstances = () {
+        return this.methodInstances;
+    }
+
+    // OpenTypes answers the open types each generic template and method names
+    public fun HashMap[ast.Field*, TypeSet*]*() OpenTypes = () {
+        return this.openTypes;
+    }
+
+    public fun TypeSet*() FunctionTypes = () {
+        return this.functionTypes;
+    }
+
+    public fun TypeSet*() ThreadTypes = () {
+        return this.threadTypes;
+    }
+
+    public fun TypeSet*() PointerTypes = () {
+        return this.pointerTypes;
+    }
+
+    public fun TypeSet*() TupleTypes = () {
+        return this.tupleTypes;
+    }
+
+    // Implements answers every interface each class, abstract and interface, and each ground instance of one, implements
+    public fun ArrList[Implementation*]*() Implements = () {
+        return this.implementations;
+    }
+
     // Uses answers every alias written where a type is
     public fun ArrList[Use*]*() Uses = () {
         return this.uses;
@@ -257,6 +359,32 @@ public class Model {
     // bindName records the name written as e as standing for b
     fun void(ast.Expr*, Binding*) bindName = (e, b) {
         this.bindings.Put(e, b);
+    }
+
+    fun void(Type*) addInstance = (t) {
+        this.instances.AddLast(t);
+    }
+
+    fun void(MethodInstance*) addMethodInstance = (i) {
+        this.methodInstances.AddLast(i);
+    }
+
+    // bindTypes records the open types of each template and method and the ground types of each kind
+    fun void(HashMap[ast.Field*, TypeSet*]*, TypeSet*, TypeSet*, TypeSet*, TypeSet*) bindTypes = (open, functions, threads, pointers, tuples) {
+        this.openTypes = open;
+        this.functionTypes = functions;
+        this.threadTypes = threads;
+        this.pointerTypes = pointers;
+        this.tupleTypes = tuples;
+    }
+
+    fun void(Implementation*) addImplementation = (i) {
+        this.implementations.AddLast(i);
+    }
+
+    // bindPath records types as the type after each name of p
+    fun void(ast.Expr.Path*, ArrList[Type*]*) bindPath = (p, types) {
+        this.paths.Put(p, types);
     }
 
     // addUse records u as an alias written where a type is

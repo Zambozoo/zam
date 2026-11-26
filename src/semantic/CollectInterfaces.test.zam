@@ -1,0 +1,59 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "Model.zam";
+import "Semantic.zam";
+
+public namespace CollectInterfacesTest {
+    // implements answers each implementation validating the namespace Main holding body records, as implementor and interface text
+    private fun ArrList[str]*(str) implements = (body) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + body + "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        var ArrList[str]* got = ArrList::[str]New(0U);
+        var ArrList[Model.Implementation*]* all = validated.0.Implements();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            got.AddLast(all.Get(i).implementor.Text() + " " + all.Get(i).iface.Text());
+        }
+        return got;
+    }
+
+    private fun bool(ArrList[str]*, str) holds = (got, pair) {
+        for(var uint i = 0U; i < got.Len(); i++) {
+            if(got.Get(i) == pair) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public fun void(uint, str...) Matrix = (argC, argV) {
+        var ArrList[str]* got = CollectInterfacesTest::implements(
+            "    interface Named { fun str() Name; }\n" +
+            "    interface Getter[T] { fun T() Get; }\n" +
+            "    interface Empty {}\n" +
+            "    class Direct { fun str() Name = () { return \"d\"; } }\n" +
+            "    class Inherited <: Direct* {}\n" +
+            "    class Wrong { fun int() Name = () { return 0; } }\n" +
+            "    class C[T] {\n" +
+            "        var T held;\n" +
+            "        fun T() Get = () { return held; }\n" +
+            "    }\n" +
+            "    static var Getter[int]* getter;\n" +
+            "    static var C[int]* c;\n");
+        Assert::True(CollectInterfacesTest::holds(got, "Direct Named"), "Direct does not implement Named");
+        Assert::True(CollectInterfacesTest::holds(got, "Inherited Named"), "Inherited does not implement Named");
+        Assert::False(CollectInterfacesTest::holds(got, "Wrong Named"), "Wrong implements Named");
+        Assert::True(CollectInterfacesTest::holds(got, "C[int] Getter[int]"), "C[int] does not implement Getter[int]");
+        Assert::False(CollectInterfacesTest::holds(got, "C[T] Getter[int]"), "C[T] implements Getter[int]");
+        Assert::True(CollectInterfacesTest::holds(got, "Wrong Empty"), "Wrong does not implement Empty");
+        Assert::True(CollectInterfacesTest::holds(got, "Named Named"), "Named does not implement itself");
+    }
+}

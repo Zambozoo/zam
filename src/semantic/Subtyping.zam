@@ -189,7 +189,7 @@ public class Subtyping {
                 return this.Is(sub.inner, target{Type.Wrapped*}.inner);
             }
             return this.Is(sub.inner, target);
-        } else if(sub == Type::Null && ((target.kind == Type.Kind::Wrapped && target{Type.Wrapped*}.wrap == ast.Type.Wrap::Pointer) || target.kind == Type.Kind::Function || (target.kind == Type.Kind::Primitive && target{Type.Primitive*}.keyword == TokenKind::String))) {
+        } else if(sub == Type::Null() && ((target.kind == Type.Kind::Wrapped && target{Type.Wrapped*}.wrap == ast.Type.Wrap::Pointer) || target.kind == Type.Kind::Function || (target.kind == Type.Kind::Primitive && target{Type.Primitive*}.keyword == TokenKind::String))) {
             return true;
         } else if(this.above(target, sub) || this.Equal(sub, target)) {
             return true;
@@ -229,9 +229,7 @@ public class Subtyping {
         return false;
     }
 
-    // implements reports whether the class t names has, or inherits, every
-    // instance method the interface iface names asks for, by name, each of a
-    // type standing for the interface's
+    // implements reports whether the class t names has every instance method the interface iface names asks for
     fun bool(Type*, Type*) implements = (t, iface) {
         var ArrList[Members.Method*]* wanted = this.members.Own(iface);
         for(var uint k = 0U; k < wanted.Len(); k++) {

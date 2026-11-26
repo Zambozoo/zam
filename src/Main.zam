@@ -17,6 +17,7 @@ import "syntax/LocalSources.zam";
 import "syntax/PackageArchive.zam";
 import "syntax/Path.zam";
 import "semantic/Model.zam";
+import "semantic/Dump.zam";
 import "semantic/Semantic.zam";
 import "syntax/ProjectParser.zam";
 import "test/TestFiles.zam";
@@ -205,6 +206,13 @@ namespace Main {
             onError(Step::Syntax, program.1.Len(), program.1.Arr().Arr()...);
             var (Model*, ArrList[Err*]*) model = Semantic::Validate(program.0);
             onError(Step::Semantic, model.1.Len(), model.1.Arr().Arr()...);
+            if(env("ZAM_DUMP") == "semantic") {
+                var ArrList[str]* lines = Dump::Lines(model.0);
+                for(var uint i = 0U; i < lines.Len(); i++) {
+                    File::StdOut.WriteStr(lines.Get(i) + "\n");
+                }
+                System::Exit(0);
+            }
         }
         File::StdOut.WriteStr(r.0.Str() + "\n");
     }

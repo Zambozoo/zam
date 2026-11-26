@@ -163,8 +163,8 @@ public class Members {
 
     // SelfType answers the type a declaration's own instances are of
     public fun Type*(ast.Decl*) SelfType = (d) {
-        var Type* t = Type.Named::New(d.start, d, d.name.value{str}, this.model.Source(d).project.archive);
         var bool tailed = ((d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Abstract) && d{ast.Decl.Object*}.tailed) || (d.kind == ast.Field.Kind::Struct && d{ast.Decl.Struct*}.tailed);
+        var Type* t = Type.Named::New(d.start, d, d.name.value{str}, this.model.Source(d).project.archive);
         if(tailed) {
             t = Type.Tailed::New(d.start, t, false, 0U);
         }

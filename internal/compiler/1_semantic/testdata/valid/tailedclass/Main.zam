@@ -1,0 +1,18 @@
+public namespace Main {
+    class Run~ {
+        var uint count;
+        var byte[~] cells;
+
+        fun Run~*() Me = () {
+            return this;
+        }
+    }
+
+    abstract Span~ {
+        var int[~] values;
+
+        fun Span~*() Me = () {
+            return this;
+        }
+    }
+}

@@ -1,0 +1,128 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "Model.zam";
+import "Semantic.zam";
+import "Type.zam";
+import "TypeSet.zam";
+import ast = "../syntax/ast/*";
+
+public namespace MonomorphizeTest {
+    // instances checks that validating the namespace Main holding body reaches exactly the instances want, in any order
+    private fun void(str, uint, str...) instances = (body, n, want) {
+        var Model* m = MonomorphizeTest::validated(body);
+        var ArrList[str]* got = ArrList::[str]New(0U);
+        var ArrList[Type*]* all = m.Instances();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            got.AddLast(all.Get(i).Text());
+        }
+        var ArrList[Model.MethodInstance*]* methods = m.MethodInstances();
+        for(var uint i = 0U; i < methods.Len(); i++) {
+            got.AddLast(methods.Get(i).method.name.value{str} + "[" + Type::texts(methods.Get(i).arguments) + "]");
+        }
+        Assert::[uint]Equal(n, got.Len());
+        for(var uint i = 0U; i < n; i++) {
+            var bool found = false;
+            for(var uint j = 0U; j < got.Len(); j++) {
+                found = found || got.Get(j) == want[i];
+            }
+            Assert::True(found, want[i] + " is not reached");
+        }
+    }
+
+    private fun Model*(str) validated = (body) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + body + "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        return validated.0;
+    }
+
+    public fun void(uint, str...) Transitive = (argC, argV) {
+        MonomorphizeTest::instances(
+            "    abstract A1[T] {}\n" +
+            "    class C1[T] { fun void() F = () { var A1[T]* a; } }\n" +
+            "    class C2 { fun void() F = () { var C1[int] c; } }\n", 2U,
+            "C1[int]", "A1[int]");
+    }
+
+    public fun void(uint, str...) Bases = (argC, argV) {
+        MonomorphizeTest::instances(
+            "    abstract Base[T] {}\n" +
+            "    class Derived[T] <: Base[T]* {}\n" +
+            "    static var Derived[str]* d;\n", 2U,
+            "Derived[str]", "Base[str]");
+    }
+
+    public fun void(uint, str...) Methods = (argC, argV) {
+        MonomorphizeTest::instances(
+            "    static fun[T] T(T) Id = (x) { var Box[T]* b; return x; }\n" +
+            "    class Box[T] {\n" +
+            "        var T held;\n" +
+            "        fun T() Get = () { return Main::[T]Id(held); }\n" +
+            "    }\n" +
+            "    static var Box[int]* box;\n", 2U,
+            "Box[int]", "Id[int]");
+    }
+
+    public fun void(uint, str...) Aliases = (argC, argV) {
+        MonomorphizeTest::instances(
+            "    class Box[T] {}\n" +
+            "    alias Boxed = Box[flt];\n", 1U,
+            "Box[flt]");
+    }
+
+    public fun void(uint, str...) Recursive = (argC, argV) {
+        MonomorphizeTest::instances(
+            "    class Node[T] { var Node[T]* next; var T value; }\n" +
+            "    static var Node[int]* head;\n", 1U,
+            "Node[int]");
+    }
+
+    // holds checks that set holds a type written as each of want
+    private fun void(TypeSet*, str, uint, str...) holds = (set, name, n, want) {
+        if(!Assert::True(set != null, name + " is not recorded")) {
+            return;
+        }
+        for(var uint i = 0U; i < n; i++) {
+            var bool found = false;
+            for(var uint j = 0U; j < set.Len(); j++) {
+                found = found || set.Get(j).Text() == want[i];
+            }
+            Assert::True(found, name + " does not hold " + want[i]);
+        }
+    }
+
+    public fun void(uint, str...) Open = (argC, argV) {
+        var Model* m = MonomorphizeTest::validated(
+            "    abstract Base[T] { var T* inherited; }\n" +
+            "    class Box[T] <: Base[T]* {\n" +
+            "        var Box[T]* next;\n" +
+            "        fun Box[T]*(T...) Me = (xs) { return this; }\n" +
+            "    }\n");
+        var ast.Decl* box = m.Nested(m.Program().main, "Box");
+        var (TypeSet*, bool) open = m.OpenTypes().Get(box);
+        MonomorphizeTest::holds(open.0, "Box", 7U, "Box[T]", "Box[T]*", "T", "T*", "T...", "Box[T]*(T...)", "Base[T]*");
+    }
+
+    public fun void(uint, str...) Ground = (argC, argV) {
+        var Model* m = MonomorphizeTest::validated(
+            "    class Box[T] { var T* held; }\n" +
+            "    static fun int(str) F = (s) { return 0; }\n" +
+            "    fun void(int...) Use = (ns) {\n" +
+            "        var (int, str) pair = (1, \"s\");\n" +
+            "        var thread[int] t = async(Main::F(\"s\"));\n" +
+            "        var Box[flt]* box = new(Box[flt]);\n" +
+            "    }\n");
+        MonomorphizeTest::holds(m.FunctionTypes(), "functions", 2U, "int(str)", "void(int...)");
+        MonomorphizeTest::holds(m.TupleTypes(), "tuples", 1U, "(int, str)");
+        MonomorphizeTest::holds(m.ThreadTypes(), "threads", 1U, "thread[int]");
+        MonomorphizeTest::holds(m.PointerTypes(), "pointers", 3U, "int*", "flt*", "Box[flt]*");
+    }
+}

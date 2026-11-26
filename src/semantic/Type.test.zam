@@ -66,4 +66,16 @@ public namespace TypeTest {
         Assert::True(named.at == at, "a declaration is not written at the use");
         Assert::True(named.decl == box{Type.Named*}.decl, "a declaration is not kept");
     }
+
+    public fun void(uint, str...) ContainsParam = (argC, argV) {
+        var Token* id = Token::New(TokenKind::Identifier, 0U, "T");
+        var Type* param = Type.Param::New(id, ast.Generic::New(id, ast.Generic.Bound::None, null), null);
+        var Type* i = TypeTest::primitive(TokenKind::Int);
+        Assert::True(Type::ContainsParam(param), "T holds no parameter");
+        Assert::False(Type::ContainsParam(i), "int holds a parameter");
+        Assert::True(Type::ContainsParam(Type.Wrapped::New(null, ast.Type.Wrap::Pointer, param)), "T* holds no parameter");
+        Assert::True(Type::ContainsParam(Type.Function::New(null, i, ArrList::[Type*]New(1U, param))), "int(T) holds no parameter");
+        Assert::True(Type::ContainsParam(Type.Generic::New(null, TypeTest::named("Box", ""), ArrList::[Type*]New(1U, Type.Tuple::New(null, ArrList::[Type*]New(2U, i, param))))), "Box[(int, T)] holds no parameter");
+        Assert::False(Type::ContainsParam(Type.Generic::New(null, TypeTest::named("Box", ""), ArrList::[Type*]New(1U, i))), "Box[int] holds a parameter");
+    }
 }

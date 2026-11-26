@@ -1,0 +1,540 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("lang/Iter.zam");
+import "../syntax/Source.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "Expressions.zam";
+import "Members.zam";
+import "Model.zam";
+import "Subtyping.zam";
+import "Type.zam";
+import "TypeSet.zam";
+
+// Monomorphize finds every ground instantiation of a generic declaration or static method the program can reach, and the types codegen numbers: each template's open types and every ground function, thread, pointer and tuple type
+public class Monomorphize <: ast.Walker* {
+    // Work is an instantiation whose template is still to be walked under its bindings
+    class Work {
+        var ast.Decl* decl;
+        var ast.Field.Method* method;
+        var HashMap[ast.Generic*, Type*]* bindings;
+    }
+
+    var Model* model;
+    var Subtyping* subtyping;
+    // bindings is the substitution in effect, or null while the source is walked
+    var HashMap[ast.Generic*, Type*]* bindings;
+    var ArrList[Work*]* queue;
+    var TypeSet* instances;
+    var Members* members;
+    // target is the template or generic method whose open types are being recorded, or null
+    var ast.Field* target;
+    var HashMap[ast.Field*, TypeSet*]* open;
+    var TypeSet* functions;
+    var TypeSet* threads;
+    var TypeSet* pointers;
+    var TypeSet* tuples;
+
+    // Run records on m every instantiation the program it models can reach
+    public static fun void(Model*) Run = (m) {
+        var Monomorphize* v = new(Monomorphize);
+        v.model = m;
+        v.subtyping = Subtyping::New(m);
+        v.queue = ArrList::[Work*]New(0U);
+        v.instances = TypeSet::New(v.subtyping);
+        v.members = Members::New(m);
+        v.open = HashMap::[ast.Field*, TypeSet*]New(0U);
+        v.functions = TypeSet::New(v.subtyping);
+        v.threads = TypeSet::New(v.subtyping);
+        v.pointers = TypeSet::New(v.subtyping);
+        v.tuples = TypeSet::New(v.subtyping);
+        var Iter[(str, Source*)]* all = m.Program().sources.Iter();
+        for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
+            if(next.0.1.file.decl != null) {
+                v.VisitDecl(next.0.1.file.decl);
+            }
+        }
+        for {
+            v.drain();
+            var ArrList[Type*]* resolved = m.ResolvedTypes();
+            for(var uint i = 0U; i < resolved.Len(); i++) {
+                v.materialize(resolved.Get(i));
+            }
+            if(v.queue.Len() == 0U) {
+                break;
+            }
+        }
+        m.bindTypes(v.open, v.functions, v.threads, v.pointers, v.tuples);
+    }
+
+    // drain walks queued instantiations until none remain
+    fun void() drain = () {
+        for(; this.queue.Len() > 0U;) {
+            var Work* w = this.queue.RemoveLast();
+            this.bindings = w.bindings;
+            if(w.method != null) {
+                this.VisitFieldMethod(w.method);
+            } else {
+                this.instance(w.decl);
+            }
+        }
+        this.bindings = null;
+    }
+
+    // instance walks every position of d that may name its generic parameters
+    fun void(ast.Decl*) instance = (d) {
+        this.header(d);
+        this.receiver(d);
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f{ast.Decl*} == null && f.kind != ast.Field.Kind::Value && !ast.Modifier::Static.In(f.modifiers)) {
+                this.VisitField(f);
+            }
+        }
+    }
+
+    // header walks d's generic bounds and base
+    fun void(ast.Decl*) header = (d) {
+        if(d.generics != null) {
+            for(var uint i = 0U; i < d.generics.Len(); i++) {
+                this.VisitGeneric(d.generics.Get(i));
+            }
+        }
+        this.visitResolved(this.model.Base(d));
+    }
+
+    // receiver records the pointer d's receiver is held as, which every instance method is entered through
+    fun void(ast.Decl*) receiver = (d) {
+        if(d.kind != ast.Field.Kind::Namespace) {
+            this.recordGround(Type.Wrapped::New(null, ast.Type.Wrap::Pointer, this.members.SelfType(d)));
+        }
+    }
+
+    // VisitDecl walks a source declaration and those nested in it
+    fun void(ast.Decl*) VisitDecl = (d) {
+        if(d.kind == ast.Field.Kind::Alias) {
+            return;
+        }
+        var ast.Field* previous = this.target;
+        this.target = null;
+        if(d.generics != null && (d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Abstract || d.kind == ast.Field.Kind::Interface)) {
+            this.target = d;
+            var Type* self = this.members.SelfType(d);
+            this.recordOpen(self);
+            this.recordOpen(Type.Wrapped::New(null, ast.Type.Wrap::Pointer, self));
+        }
+        this.header(d);
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f{ast.Decl*} == null && (f.kind == ast.Field.Kind::Value || ast.Modifier::Static.In(f.modifiers))) {
+                this.VisitField(f);
+            }
+        }
+        this.receiver(d);
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f{ast.Decl*} == null && f.kind != ast.Field.Kind::Value && !ast.Modifier::Static.In(f.modifiers)) {
+                this.VisitField(f);
+            }
+        }
+        if((d.kind == ast.Field.Kind::Struct || d.kind == ast.Field.Kind::Enum) && Monomorphize::writesNoStr(d)) {
+            this.recordGround(Type.Function::New(null, Type.Primitive::New(null, TokenKind::String), ArrList::[Type*]New(0U)));
+        }
+        if((d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Abstract) && this.recordingOpen()) {
+            var ArrList[Members.Field*]* fields = this.members.AllFields(this.members.SelfType(d));
+            for(var uint i = 0U; i < fields.Len(); i++) {
+                if(fields.Get(i).owner != d) {
+                    this.recordOpen(fields.Get(i).signature);
+                }
+            }
+        }
+        this.target = null;
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Decl* nested = d.fields.Get(i){ast.Decl*};
+            if(nested != null) {
+                this.VisitDecl(nested);
+            }
+        }
+        this.target = previous;
+    }
+
+    // VisitFieldMethod walks f's signature and body, a generic method of a recorded template recording its own open types
+    fun void(ast.Field.Method*) VisitFieldMethod = (f) {
+        var ast.Field* previous = this.target;
+        if(f.generics != null && this.target != null) {
+            this.target = f;
+        }
+        this.VisitType(f.signature);
+        if(f.body != null) {
+            this.VisitStmt(f.body);
+        }
+        this.target = previous;
+    }
+
+    // VisitType does to what t resolves to what visitResolved does
+    fun void(ast.Type*) VisitType = (t) {
+        this.visitResolved(this.model.TypeOf(t));
+    }
+
+    // visitResolved materializes the instantiations within t, and records its open and ground types
+    fun void(Type*) visitResolved = (t) {
+        this.materialize(this.applied(t));
+        this.recordOpen(t);
+        this.recordGround(t);
+    }
+
+    fun void(ast.Expr.Symbol*) VisitExprSymbol = (e) {
+        this.recordOpen(this.model.ExprType(e));
+    }
+
+    // VisitExprPath records the type of each name and the pointer each field is reached through
+    fun void(ast.Expr.Path*) VisitExprPath = (e) {
+        var ArrList[Type*]* types = this.model.PathTypes(e);
+        if(types == null) {
+            return;
+        }
+        for(var uint i = 0U; i < types.Len(); i++) {
+            this.recordOpen(types.Get(i));
+            if(i > 0U) {
+                this.recordAddressed(types.Get(i - 1U));
+            }
+        }
+    }
+
+    fun void(ast.Expr.Field*) VisitExprField = (e) {
+        this.VisitExpr(e.target);
+        this.recordOpen(this.model.ExprType(e));
+        this.recordAddressed(this.model.ExprType(e.target));
+    }
+
+    fun void(ast.Expr.NAry*) VisitExprNAry = (e) {
+        for(var uint i = 0U; i < e.operands.Len(); i++) {
+            this.VisitExpr(e.operands.Get(i));
+        }
+        this.operation(this.model.ExprType(e));
+    }
+
+    fun void(ast.Expr.Unary*) VisitExprUnary = (e) {
+        this.VisitExpr(e.operand);
+        this.operation(this.model.ExprType(e));
+    }
+
+    fun void(ast.Expr.Ternary*) VisitExprTernary = (e) {
+        this.VisitExpr(e.condition);
+        this.VisitExpr(e.then);
+        this.VisitExpr(e.otherwise);
+        this.operation(this.model.ExprType(e));
+    }
+
+    fun void(ast.Expr.Tuple*) VisitExprTuple = (e) {
+        for(var uint i = 0U; i < e.elements.Len(); i++) {
+            this.VisitExpr(e.elements.Get(i));
+        }
+        this.operation(this.model.ExprType(e));
+    }
+
+    fun void(ast.Expr.Call*) VisitExprCall = (e) {
+        this.VisitExpr(e.callee);
+        for(var uint i = 0U; i < e.arguments.Len(); i++) {
+            this.VisitExpr(e.arguments.Get(i));
+        }
+        this.operation(this.model.ExprType(e));
+    }
+
+    fun void(ast.Expr.Spread*) VisitExprSpread = (e) {
+        this.VisitExpr(e.inner);
+        this.operation(this.model.ExprType(e));
+    }
+
+    // VisitExprIndex records both nodes of what indexing is: the sum that steps to the element, then the element
+    fun void(ast.Expr.Index*) VisitExprIndex = (e) {
+        this.VisitExpr(e.target);
+        this.VisitExpr(e.index);
+        var Type* target = this.model.ExprType(e.target);
+        if(target != null) {
+            var Type* sum = Subtyping::StripConst(target);
+            if(sum.kind == Type.Kind::Array) {
+                sum = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, sum{Type.Array*}.inner);
+            }
+            this.operation(sum);
+        }
+        this.operation(this.model.ExprType(e));
+    }
+
+    fun void(ast.Expr.Async*) VisitExprAsync = (e) {
+        this.VisitExpr(e.call);
+        this.operation(this.model.ExprType(e));
+    }
+
+    fun void(ast.Expr.Wait*) VisitExprWait = (e) {
+        this.VisitExpr(e.waited);
+        this.operation(this.model.ExprType(e));
+    }
+
+    // VisitExprNew records the pointer an allocation evaluates to, which may be written nowhere
+    fun void(ast.Expr.New*) VisitExprNew = (e) {
+        this.VisitType(e.allocated);
+        this.recordGround(this.model.ExprType(e));
+        if(e.count != null) {
+            this.VisitExpr(e.count);
+        }
+        if(e.tail != null) {
+            this.VisitExpr(e.tail);
+        }
+    }
+
+    // operation records what an operator arrives at, which the source may spell nowhere
+    fun void(Type*) operation = (t) {
+        this.recordOpen(t);
+        this.recordGround(t);
+    }
+
+    // recordingOpen reports whether the tree being walked is a template whose open types are recorded
+    fun bool() recordingOpen = () {
+        return this.target != null && this.bindings == null;
+    }
+
+    // recordOpen records on the template being walked t and every open type within it
+    fun void(Type*) recordOpen = (t) {
+        if(t == null || !this.recordingOpen()) {
+            return;
+        }
+        var (TypeSet*, bool) found = this.open.Get(this.target);
+        var TypeSet* set = found.0;
+        if(!found.1) {
+            set = TypeSet::New(this.subtyping);
+            this.open.Put(this.target, set);
+        }
+        this.openWithin(set, t);
+    }
+
+    fun void(TypeSet*, Type*) openWithin = (set, t) {
+        switch(t.kind) {
+            case (Type.Kind::Array, Type.Kind::Tailed, Type.Kind::Tuple, Type.Kind::Function, Type.Kind::Generic, Type.Kind::Param, Type.Kind::Wrapped) {
+                if(Type::ContainsParam(t)) {
+                    set.Add(t);
+                }
+            }
+        }
+        switch(t.kind) {
+            case (Type.Kind::Array)
+                this.openWithin(set, t{Type.Array*}.inner);
+            case (Type.Kind::Tailed)
+                this.openWithin(set, t{Type.Tailed*}.inner);
+            case (Type.Kind::Tuple)
+                this.openWithinAll(set, t{Type.Tuple*}.types);
+            case (Type.Kind::Function) {
+                this.openWithin(set, t{Type.Function*}.returns);
+                this.openWithinAll(set, t{Type.Function*}.parameters);
+            }
+            case (Type.Kind::Generic)
+                this.openWithinAll(set, t{Type.Generic*}.arguments);
+            case (Type.Kind::Wrapped) {
+                var Type.Wrapped* w = t{Type.Wrapped*};
+                if(w.wrap == ast.Type.Wrap::Variadic && Type::ContainsParam(w.inner)) {
+                    set.Add(Type.Wrapped::New(null, ast.Type.Wrap::Pointer, w.inner));
+                }
+                this.openWithin(set, w.inner);
+            }
+        }
+    }
+
+    fun void(TypeSet*, ArrList[Type*]*) openWithinAll = (set, ts) {
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            this.openWithin(set, ts.Get(i));
+        }
+    }
+
+    // recordAddressed records the pointer a method of an inline value with a home is called through
+    fun void(Type*) recordAddressed = (receiver) {
+        if(receiver == null || Expressions::reachedThroughAddress(receiver)) {
+            return;
+        }
+        var Type* bare = Subtyping::StripConst(receiver);
+        if(bare.kind == Type.Kind::Named || bare.kind == Type.Kind::Generic || bare.kind == Type.Kind::Tailed) {
+            this.recordOpen(Type.Wrapped::New(null, ast.Type.Wrap::Pointer, receiver));
+        }
+    }
+
+    // recordGround records every function, thread, pointer and tuple type within t that is ground under the bindings in effect
+    fun void(Type*) recordGround = (t) {
+        if(t != null) {
+            this.groundWithin(this.applied(t));
+        }
+    }
+
+    fun void(Type*) groundWithin = (t) {
+        switch(t.kind) {
+            case (Type.Kind::Array)
+                this.groundWithin(t{Type.Array*}.inner);
+            case (Type.Kind::Tailed)
+                this.groundWithin(t{Type.Tailed*}.inner);
+            case (Type.Kind::Tuple) {
+                if(!Type::ContainsParam(t)) {
+                    this.tuples.Add(t);
+                }
+                this.groundWithinAll(t{Type.Tuple*}.types);
+            }
+            case (Type.Kind::Function) {
+                if(!Type::ContainsParam(t)) {
+                    this.functions.Add(t);
+                }
+                this.groundWithin(t{Type.Function*}.returns);
+                this.groundWithinAll(t{Type.Function*}.parameters);
+            }
+            case (Type.Kind::Generic)
+                this.groundWithinAll(t{Type.Generic*}.arguments);
+            case (Type.Kind::Wrapped) {
+                var Type.Wrapped* w = t{Type.Wrapped*};
+                if(!Type::ContainsParam(t)) {
+                    if(w.wrap == ast.Type.Wrap::Thread) {
+                        this.threads.Add(t);
+                    } else if(w.wrap == ast.Type.Wrap::Pointer) {
+                        this.pointers.Add(t);
+                    } else if(w.wrap == ast.Type.Wrap::Variadic) {
+                        this.pointers.Add(Type.Wrapped::New(null, ast.Type.Wrap::Pointer, w.inner));
+                    }
+                }
+                this.groundWithin(w.inner);
+            }
+        }
+    }
+
+    fun void(ArrList[Type*]*) groundWithinAll = (ts) {
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            this.groundWithin(ts.Get(i));
+        }
+    }
+
+    // VisitExprStatic materializes the instantiation of a generic static method its arguments make ground
+    fun void(ast.Expr.Static*) VisitExprStatic = (e) {
+        this.VisitType(e.owner);
+        this.recordOpen(this.model.ExprType(e));
+        if(e.arguments == null || e.arguments.Len() == 0U) {
+            return;
+        }
+        var ArrList[Type*]* arguments = ArrList::[Type*]New(0U);
+        var bool ground = true;
+        for(var uint i = 0U; i < e.arguments.Len(); i++) {
+            var Type* argument = this.applied(this.model.TypeOf(e.arguments.Get(i)));
+            if(argument == null) {
+                return;
+            }
+            this.materialize(argument);
+            ground = ground && !Type::ContainsParam(argument);
+            arguments.AddLast(argument);
+        }
+        var ast.Decl* owner = Members::DeclOf(this.model.TypeOf(e.owner));
+        var ast.Field.Method* method = Monomorphize::staticMethod(owner, e.name.value{str});
+        if(ground && method != null && method.generics != null && method.generics.Len() == arguments.Len()) {
+            this.materializeMethod(owner, method, arguments);
+        }
+    }
+
+    // materialize records and queues every ground instantiation within t
+    fun void(Type*) materialize = (t) {
+        if(t == null) {
+            return;
+        }
+        switch(t.kind) {
+            case (Type.Kind::Wrapped)
+                this.materialize(t{Type.Wrapped*}.inner);
+            case (Type.Kind::Array)
+                this.materialize(t{Type.Array*}.inner);
+            case (Type.Kind::Tailed)
+                this.materialize(t{Type.Tailed*}.inner);
+            case (Type.Kind::Tuple)
+                this.materializeAll(t{Type.Tuple*}.types);
+            case (Type.Kind::Function) {
+                this.materialize(t{Type.Function*}.returns);
+                this.materializeAll(t{Type.Function*}.parameters);
+            }
+            case (Type.Kind::Generic) {
+                var Type.Generic* g = t{Type.Generic*};
+                if(!Type::ContainsParam(t) && this.instances.Add(t)) {
+                    this.model.addInstance(t);
+                    var ast.Decl* d = Members::DeclOf(t);
+                    if(d != null && d.generics != null) {
+                        var Work* w = new(Work);
+                        w.decl = d;
+                        w.bindings = Monomorphize::bind(d.generics, g.arguments);
+                        this.queue.AddLast(w);
+                    }
+                }
+                this.materializeAll(g.arguments);
+            }
+        }
+    }
+
+    fun void(ArrList[Type*]*) materializeAll = (ts) {
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            this.materialize(ts.Get(i));
+        }
+    }
+
+    // materializeMethod records and queues method of owner given ground arguments, once
+    fun void(ast.Decl*, ast.Field.Method*, ArrList[Type*]*) materializeMethod = (owner, method, arguments) {
+        var ArrList[Model.MethodInstance*]* seen = this.model.MethodInstances();
+        for(var uint i = 0U; i < seen.Len(); i++) {
+            if(seen.Get(i).method == method && this.allEqual(seen.Get(i).arguments, arguments)) {
+                return;
+            }
+        }
+        this.model.addMethodInstance(Model.MethodInstance::New(method, owner, arguments));
+        var Work* w = new(Work);
+        w.method = method;
+        w.bindings = Monomorphize::bind(method.generics, arguments);
+        this.queue.AddLast(w);
+    }
+
+    fun bool(ArrList[Type*]*, ArrList[Type*]*) allEqual = (xs, ys) {
+        for(var uint i = 0U; i < xs.Len(); i++) {
+            if(!this.subtyping.Equal(xs.Get(i), ys.Get(i))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // applied answers t under the bindings in effect
+    fun Type*(Type*) applied = (t) {
+        if(t == null || this.bindings == null) {
+            return t;
+        }
+        return t.Instantiate(this.bindings, t.at);
+    }
+
+    // bind maps each of generics to the argument given for it
+    static fun HashMap[ast.Generic*, Type*]*(ArrList[ast.Generic*]*, ArrList[Type*]*) bind = (generics, arguments) {
+        var HashMap[ast.Generic*, Type*]* bindings = HashMap::[ast.Generic*, Type*]New(0U);
+        for(var uint i = 0U; i < generics.Len() && i < arguments.Len(); i++) {
+            bindings.Put(generics.Get(i), arguments.Get(i));
+        }
+        return bindings;
+    }
+
+    // writesNoStr reports whether d writes no Str, which a struct or enum is then given one of type str() for
+    static fun bool(ast.Decl*) writesNoStr = (d) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f{ast.Decl*} == null && f.name.value{str} == "Str") {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // staticMethod answers the static method d declares under name
+    static fun ast.Field.Method*(ast.Decl*, str) staticMethod = (d, name) {
+        if(d == null) {
+            return null;
+        }
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field.Method* f = d.fields.Get(i){ast.Field.Method*};
+            if(f != null && ast.Modifier::Static.In(f.modifiers) && f.name.value{str} == name) {
+                return f;
+            }
+        }
+        return null;
+    }
+}

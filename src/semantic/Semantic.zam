@@ -3,10 +3,12 @@ import std("lang/Err.zam");
 import "../syntax/ProjectParser.zam";
 import "Alias.zam";
 import "AliasUse.zam";
+import "CollectInterfaces.zam";
 import "GenericCycle.zam";
 import "InheritanceCycle.zam";
 import "MemberCycle.zam";
 import "Model.zam";
+import "Monomorphize.zam";
 import "Resolve.zam";
 import "Static.zam";
 
@@ -39,6 +41,12 @@ public namespace Semantic {
         if(errs.Len() > 0U) {
             return (m, errs);
         }
-        return (m, Static::Run(m));
+        errs = Static::Run(m);
+        if(errs.Len() > 0U) {
+            return (m, errs);
+        }
+        Monomorphize::Run(m);
+        CollectInterfaces::Run(m);
+        return (m, errs);
     }
 }

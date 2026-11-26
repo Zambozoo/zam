@@ -23,14 +23,52 @@ public abstract Type {
     // at is the token the type is written at, or null for one not written
     public var Token* at;
 
-    // Null is the type of null: a void* that stands for every pointer, str and function
-    public static var Type*$ Null = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, Type.Primitive::New(null, TokenKind::Void));
+    // nullType is the type of null once it is first asked for, built then since TokenKind's values are not yet set while statics are
+    static var Type* nullType = null;
+
+    // Null answers the type of null: a void* that stands for every pointer, str and function
+    public static fun Type*() Null = () {
+        if(Type::nullType == null) {
+            Type::nullType = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, Type.Primitive::New(null, TokenKind::Void));
+        }
+        return Type::nullType;
+    }
 
     // Text writes the type as messages name it
     public virtual fun str() Text;
 
     // Instantiate answers a copy of the type written at at
     public virtual fun Type*(HashMap[ast.Generic*, Type*]*, Token*) Instantiate;
+
+    // ContainsParam reports whether a generic parameter appears anywhere in t
+    public static fun bool(Type*) ContainsParam = (t) {
+        switch(t.kind) {
+            case (Kind::Param)
+                return true;
+            case (Kind::Wrapped)
+                return Type::ContainsParam(t{Wrapped*}.inner);
+            case (Kind::Array)
+                return Type::ContainsParam(t{Array*}.inner);
+            case (Kind::Tailed)
+                return Type::ContainsParam(t{Tailed*}.inner);
+            case (Kind::Tuple)
+                return Type::anyParam(t{Tuple*}.types);
+            case (Kind::Function)
+                return Type::ContainsParam(t{Function*}.returns) || Type::anyParam(t{Function*}.parameters);
+            case (Kind::Generic)
+                return Type::ContainsParam(t{Generic*}.inner) || Type::anyParam(t{Generic*}.arguments);
+        }
+        return false;
+    }
+
+    static fun bool(ArrList[Type*]*) anyParam = (types) {
+        for(var uint i = 0U; i < types.Len(); i++) {
+            if(Type::ContainsParam(types.Get(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     // instantiateAll instantiates each of types
     static fun ArrList[Type*]*(ArrList[Type*]*, HashMap[ast.Generic*, Type*]*, Token*) instantiateAll = (types, bindings, at) {

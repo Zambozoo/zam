@@ -140,3 +140,21 @@ func TestValidateASTMemberCycle(t *testing.T) {
 		"member cycle detected: Box.{held}",
 	}, got)
 }
+
+// A tailed class or abstract is named with its tail wherever the program names
+// it, so its receiver and this are pointers to the tailed type too, as a tailed
+// struct's are, rather than to a bare form the program cannot write.
+func TestValidateASTTailedReceiver(t *testing.T) {
+	t.Parallel()
+	ast, errs := parse(t, path.Join("valid", "tailedclass"))
+	require.Empty(t, errs)
+	require.Empty(t, ValidateAST(ast))
+	var pointers []string
+	for p := range ast.PointerTypes.Values() {
+		pointers = append(pointers, p.String())
+	}
+	assert.Contains(t, pointers, "Run~*")
+	assert.Contains(t, pointers, "Span~*")
+	assert.NotContains(t, pointers, "Run*")
+	assert.NotContains(t, pointers, "Span*")
+}

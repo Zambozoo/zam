@@ -1,0 +1,117 @@
+import std("data/list/ArrList.zam");
+import std("lang/Arr.zam");
+import "../syntax/Path.zam";
+import ast = "../syntax/ast/*";
+import "Members.zam";
+import "Model.zam";
+import "Type.zam";
+import "TypeSet.zam";
+
+// Dump writes what monomorphization and interface collection found out about a program, one fact a line, as Go's are compared
+public namespace Dump {
+    // Lines answers the facts m holds
+    public fun ArrList[str]*(Model*) Lines = (m) {
+        var ArrList[str]* lines = ArrList::[str]New(0U);
+        var ArrList[Type*]* instances = m.Instances();
+        for(var uint i = 0U; i < instances.Len(); i++) {
+            var Type* t = instances.Get(i);
+            lines.AddLast("instance " + Dump::id(m, Members::DeclOf(t)) + " " + Dump::text(m, t));
+        }
+        var ArrList[Model.MethodInstance*]* methods = m.MethodInstances();
+        for(var uint i = 0U; i < methods.Len(); i++) {
+            var Model.MethodInstance* mi = methods.Get(i);
+            lines.AddLast("method " + Dump::id(m, mi.owner) + "::" + mi.method.name.value{str} + " [" + Dump::texts(m, mi.arguments) + "]");
+        }
+        var Arr[(ast.Field*, TypeSet*)]* open = m.OpenTypes().Arr();
+        for(var uint i = 0U; i < open.Len(); i++) {
+            var ast.Field* owner = open.Get(i).0;
+            var str id = "";
+            if(owner{ast.Decl*} != null) {
+                id = Dump::id(m, owner{ast.Decl*});
+            } else {
+                id = Dump::id(m, m.Outer(owner)) + "::" + owner.name.value{str};
+            }
+            Dump::set(m, lines, "open " + id, open.Get(i).1);
+        }
+        Dump::set(m, lines, "function", m.FunctionTypes());
+        Dump::set(m, lines, "thread", m.ThreadTypes());
+        Dump::set(m, lines, "pointer", m.PointerTypes());
+        Dump::set(m, lines, "tuple", m.TupleTypes());
+        var ArrList[Model.Implementation*]* implementations = m.Implements();
+        for(var uint i = 0U; i < implementations.Len(); i++) {
+            lines.AddLast("implements " + Dump::text(m, implementations.Get(i).implementor) + " " + Dump::text(m, implementations.Get(i).iface));
+        }
+        return lines;
+    }
+
+    // set adds a line for each type of types, after prefix
+    fun void(Model*, ArrList[str]*, str, TypeSet*) set = (m, lines, prefix, types) {
+        if(types == null) {
+            return;
+        }
+        for(var uint i = 0U; i < types.Len(); i++) {
+            lines.AddLast(prefix + " " + Dump::text(m, types.Get(i)));
+        }
+    }
+
+    // text writes t with every declaration it names written as its id, since a type's own text is however it was written
+    fun str(Model*, Type*) text = (m, t) {
+        switch(t.kind) {
+            case (Type.Kind::Named)
+                return "{" + Dump::id(m, t{Type.Named*}.decl) + "}";
+            case (Type.Kind::Generic)
+                return Dump::text(m, t{Type.Generic*}.inner) + "[" + Dump::texts(m, t{Type.Generic*}.arguments) + "]";
+            case (Type.Kind::Tailed) {
+                var Type.Tailed* tailed = t{Type.Tailed*};
+                if(tailed.sized) {
+                    return Dump::text(m, tailed.inner) + "~" + tailed.size{str};
+                }
+                return Dump::text(m, tailed.inner) + "~";
+            }
+            case (Type.Kind::Array) {
+                var Type.Array* a = t{Type.Array*};
+                if(a.sized) {
+                    return Dump::text(m, a.inner) + "[" + a.size{str} + "]";
+                }
+                return Dump::text(m, a.inner) + "[~]";
+            }
+            case (Type.Kind::Tuple)
+                return "(" + Dump::texts(m, t{Type.Tuple*}.types) + ")";
+            case (Type.Kind::Function)
+                return Dump::text(m, t{Type.Function*}.returns) + "(" + Dump::texts(m, t{Type.Function*}.parameters) + ")";
+            case (Type.Kind::Wrapped) {
+                var Type.Wrapped* w = t{Type.Wrapped*};
+                switch(w.wrap) {
+                    case (ast.Type.Wrap::Thread)
+                        return "thread[" + Dump::text(m, w.inner) + "]";
+                    case (ast.Type.Wrap::Pointer)
+                        return Dump::text(m, w.inner) + "*";
+                    case (ast.Type.Wrap::Variadic)
+                        return Dump::text(m, w.inner) + "...";
+                }
+                return Dump::text(m, w.inner) + "$";
+            }
+        }
+        return t.Text();
+    }
+
+    fun str(Model*, ArrList[Type*]*) texts = (m, ts) {
+        var str out = "";
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            if(i > 0U) {
+                out = out + ", ";
+            }
+            out = out + Dump::text(m, ts.Get(i));
+        }
+        return out;
+    }
+
+    // id names d by the file it is written in and the declarations it is nested in
+    fun str(Model*, ast.Decl*) id = (m, d) {
+        var str name = d.name.value{str};
+        for(var ast.Decl* outer = m.Outer(d); outer != null; outer = m.Outer(outer)) {
+            name = outer.name.value{str} + "." + name;
+        }
+        return Path::Display(m.Source(d).path) + "|" + name;
+    }
+}
