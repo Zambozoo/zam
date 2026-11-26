@@ -118,7 +118,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitDeclAlias(*syntax.D
 func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitDeclStruct(d *syntax.DeclStruct) error {
 	r := p.reader
 	if d.Generics() != nil {
-		for _, entry := range d.Concretes().All() {
+		for _, entry := range orderedConcretes(d) {
 			if entry.Key.ContainsGenericArg() {
 				continue
 			}
@@ -411,7 +411,7 @@ func inlineClassOf(t syntax.Type) (inlineClass, bool) {
 func (p *staticTypesandTypeDefinitionsPopulatorVisitor) VisitFieldMethod(f *syntax.FieldMethod) error {
 	r := p.reader
 	if f.Generics() != nil {
-		for _, concrete := range f.Concretes() {
+		for _, concrete := range orderedMethodConcretes(f) {
 			p.alignStatic(wordByteSize)
 			*concrete.Index() = len(r.staticInstanceMaps)
 			r.staticInstanceMaps = append(r.staticInstanceMaps, int(p.offset))
@@ -570,13 +570,25 @@ func (p *typeResolver) genericTypeInstanceShort(t *syntax.TypeGeneric) typeInsta
 	panic("unreachable")
 }
 
+// groundConcreteCount is how many instantiations of d hold no open generic
+// argument, which are the only ones laid out or numbered.
+func groundConcreteCount(d syntax.DeclGeneric) int {
+	var count int
+	for _, entry := range d.Concretes().All() {
+		if !entry.Key.ContainsGenericArg() {
+			count++
+		}
+	}
+	return count
+}
+
 // assignConcreteIDs numbers each fully-concrete instantiation of a generic
 // class, abstract or interface by its position among concrete-only entries
 // (those whose arguments contain no open generic arguments). Concrete structs
 // are flattened into their own definitions and numbered by type index instead.
 func (cv *typeDefinitionsInstantiatorVisitor) assignConcreteIDs(d syntax.DeclGeneric) {
 	var id uint16
-	for _, entry := range d.Concretes().All() {
+	for _, entry := range orderedConcretes(d) {
 		if entry.Key.ContainsGenericArg() {
 			continue
 		}
@@ -653,10 +665,10 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) genericTypeList(d syntax
 		bindings[entry.Key] = t.ParameterTypes[i]
 	}
 
-	openTypes := d.GenericTypes()
-	ids := make([]typeInstance, openTypes.Len())
-	for open := range openTypes.Values() {
-		ids[openTypes.Index(open)] = p.typeInstanceOf(open.Map(bindings))
+	openTypes := orderedTypes(d.GenericTypes())
+	ids := make([]typeInstance, len(openTypes))
+	for i, open := range openTypes {
+		ids[i] = p.typeInstanceOf(open.Map(bindings))
 	}
 	return typeListInstance{typeIDs: ids}
 }
@@ -764,7 +776,7 @@ func (p *staticTypesandTypeDefinitionsPopulatorVisitor) fillDispatch(
 // serialized as zeroes the runtime would index into.
 func concreteInstantiations(d syntax.DeclGeneric) []concreteInstantiation {
 	concretes := make([]concreteInstantiation, 0, d.Concretes().Len())
-	for _, entry := range d.Concretes().All() {
+	for _, entry := range orderedConcretes(d) {
 		if entry.Key.ContainsGenericArg() {
 			continue
 		}

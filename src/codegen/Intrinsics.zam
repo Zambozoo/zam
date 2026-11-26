@@ -1,0 +1,62 @@
+import std("data/set/HashSet.zam");
+import std("lang/Arr.zam");
+
+// Intrinsics names the natives lowered inline rather than called through the native table
+public namespace Intrinsics {
+    static var HashSet[str]* names = null;
+
+    // Is reports whether the native named name is lowered inline
+    public fun bool(str) Is = (name) {
+        if(Intrinsics::names == null) {
+            Intrinsics::names = HashSet::[str]New(0U);
+            var Arr[str]* all = Arr::[str]New(43U,
+            "STD_BITS_ONES",
+            "STD_BITS_LEADING_ZEROS",
+            "STD_BITS_TRAILING_ZEROS",
+            "STD_BITS_REVERSE_BYTES",
+            "STD_BITS_FROM_FLT",
+            "STD_BITS_TO_FLT",
+            "STD_BITS_FROM_PST",
+            "STD_BITS_TO_PST",
+            "STD_MATH_FLOOR",
+            "STD_MATH_CEIL",
+            "STD_MATH_TRUNC",
+            "STD_MATH_ROUND",
+            "STD_MATH_SQRT",
+            "STD_MATH_FMA",
+            "STD_MATH_CBRT",
+            "STD_MATH_EXP",
+            "STD_MATH_EXP2",
+            "STD_MATH_EXPM1",
+            "STD_MATH_LOG",
+            "STD_MATH_LOG2",
+            "STD_MATH_LOG10",
+            "STD_MATH_LOG1P",
+            "STD_MATH_SIN",
+            "STD_MATH_COS",
+            "STD_MATH_TAN",
+            "STD_MATH_ASIN",
+            "STD_MATH_ACOS",
+            "STD_MATH_ATAN",
+            "STD_MATH_SINH",
+            "STD_MATH_COSH",
+            "STD_MATH_TANH",
+            "STD_MATH_ASINH",
+            "STD_MATH_ACOSH",
+            "STD_MATH_ATANH",
+            "STD_MATH_POW",
+            "STD_MATH_MOD",
+            "STD_MATH_REMAINDER",
+            "STD_MATH_HYPOT",
+            "STD_MATH_ATAN2",
+            "STD_ENUM_LEN",
+            "STD_ENUM_ORDINAL",
+            "STD_ENUM_VALUES",
+            "STD_ENUM_ADDRESS");
+            for(var uint i = 0U; i < all.Len(); i++) {
+                Intrinsics::names.Add(all.Get(i));
+            }
+        }
+        return Intrinsics::names.Contains(name);
+    }
+}

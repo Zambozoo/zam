@@ -1,0 +1,140 @@
+import std("data/list/ArrList.zam");
+import "Quote.zam";
+
+// IrType is a type of LLVM's textual IR, pointers being opaque
+public class IrType {
+    public enum Kind : int {
+        Void(0),
+        Int(1),
+        Double(2),
+        Ptr(3),
+        Array(4),
+        Struct(5),
+        Function(6);
+    }
+
+    public var Kind kind;
+    // bits is how wide an integer type is
+    public var uint bits;
+    // count and element are an array's length and what it holds
+    public var uint count;
+    public var IrType* element;
+    // name is a named struct's name, or "" for a literal one
+    public var str name;
+    // fields is a struct's fields, or a function's parameters
+    public var ArrList[IrType*]* fields;
+    // returns is what a function gives back
+    public var IrType* returns;
+    // variadic says a function takes more arguments than it names
+    public var bool variadic;
+
+    static fun IrType*(Kind) of = (kind) {
+        var IrType* t = new(IrType);
+        t.kind = kind;
+        t.name = "";
+        t.fields = ArrList::[IrType*]New(0U);
+        return t;
+    }
+
+    public static fun IrType*() Void = () {
+        return IrType::of(Kind::Void);
+    }
+
+    public static fun IrType*(uint) Int = (bits) {
+        var IrType* t = IrType::of(Kind::Int);
+        t.bits = bits;
+        return t;
+    }
+
+    public static fun IrType*() Double = () {
+        return IrType::of(Kind::Double);
+    }
+
+    public static fun IrType*() Ptr = () {
+        return IrType::of(Kind::Ptr);
+    }
+
+    public static fun IrType*(uint, IrType*) Array = (count, element) {
+        var IrType* t = IrType::of(Kind::Array);
+        t.count = count;
+        t.element = element;
+        return t;
+    }
+
+    // Struct answers a literal struct of fields
+    public static fun IrType*(ArrList[IrType*]*) Struct = (fields) {
+        var IrType* t = IrType::of(Kind::Struct);
+        t.fields = fields;
+        return t;
+    }
+
+    // Named answers a named struct, its fields set once its body is known
+    public static fun IrType*(str) Named = (name) {
+        var IrType* t = IrType::of(Kind::Struct);
+        t.name = name;
+        return t;
+    }
+
+    public static fun IrType*(IrType*, ArrList[IrType*]*, bool) Function = (returns, parameters, variadic) {
+        var IrType* t = IrType::of(Kind::Function);
+        t.returns = returns;
+        t.fields = parameters;
+        t.variadic = variadic;
+        return t;
+    }
+
+    // Text spells the type as it is written where it is used
+    public fun str() Text = () {
+        switch(this.kind) {
+            case (Kind::Void)
+                return "void";
+            case (Kind::Int)
+                return "i" + this.bits{str};
+            case (Kind::Double)
+                return "double";
+            case (Kind::Ptr)
+                return "ptr";
+            case (Kind::Array)
+                return "[" + this.count{str} + " x " + this.element.Text() + "]";
+            case (Kind::Struct) {
+                if(this.name != "") {
+                    return "%" + Quote::Name(this.name);
+                }
+                return this.Body();
+            }
+        }
+        var str out = this.returns.Text() + " (";
+        for(var uint i = 0U; i < this.fields.Len(); i++) {
+            if(i > 0U) {
+                out = out + ", ";
+            }
+            out = out + this.fields.Get(i).Text();
+        }
+        if(this.variadic) {
+            if(this.fields.Len() > 0U) {
+                out = out + ", ";
+            }
+            out = out + "...";
+        }
+        return out + ")";
+    }
+
+    // Body spells a struct's fields
+    public fun str() Body = () {
+        if(this.fields.Len() == 0U) {
+            return "{}";
+        }
+        var str out = "{ ";
+        for(var uint i = 0U; i < this.fields.Len(); i++) {
+            if(i > 0U) {
+                out = out + ", ";
+            }
+            out = out + this.fields.Get(i).Text();
+        }
+        return out + " }";
+    }
+
+    public fun bool() IsVoid = () {
+        return this.kind == Kind::Void;
+    }
+}

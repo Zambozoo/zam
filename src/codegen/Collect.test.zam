@@ -1,0 +1,51 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "../semantic/Model.zam";
+import "../semantic/Semantic.zam";
+import "Collect.zam";
+import "TypeIds.zam";
+
+public namespace CollectTest {
+    private fun str(ArrList[str]*) joined = (xs) {
+        var str out = "";
+        for(var uint i = 0U; i < xs.Len(); i++) {
+            if(i > 0U) {
+                out = out + ",";
+            }
+            out = out + xs.Get(i);
+        }
+        return out;
+    }
+
+    public fun void(uint, str...) Order = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam",
+            "public namespace Main {\n" +
+            "    enum Level : str { Low(\"enum\"); }\n" +
+            "    struct Note { var int n; fun str() Str = () { return \"str\"; } fun str() Other = () { return \"other\"; } }\n" +
+            "    fun void(uint) Use = (n) {\n" +
+            "        var str s = \"init\";\n" +
+            "        for(var uint i = 0U; i < n; s = s + \"step\") { s = \"body\"; }\n" +
+            "        switch(n) { case (1U) s = \"case\"; }\n" +
+            "        s = n > 1U ? \"then\" : \"else\";\n" +
+            "        native(B){void()}();\n" +
+            "        native(A){void()}();\n" +
+            "        native(B){void()}();\n" +
+            "        native(STD_MATH_SQRT){flt(flt)}(2.0);\n" +
+            "        s = \"init\";\n" +
+            "    }\n" +
+            "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        var Collect* c = Collect::Run(validated.0, TypeIds::New(validated.0, true));
+        Assert::[str]Equal("B,A", CollectTest::joined(c.Natives()));
+        Assert::[str]Equal("init,body,step,case,then,else,enum,str,other", CollectTest::joined(c.Literals()));
+    }
+}

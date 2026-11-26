@@ -2,6 +2,7 @@ import std("data/list/ArrList.zam");
 import std("data/map/HashMap.zam");
 import "../syntax/ProjectParser.zam";
 import "../syntax/Source.zam";
+import "../syntax/TokenKind.zam";
 import ast = "../syntax/ast/*";
 import "Model.zam";
 import "Type.zam";
@@ -74,6 +75,18 @@ public class Members {
             return methods;
         }
         this.declared(d, Members::BindingsOf(t), methods);
+        if(Members::strFirst(d)) {
+            var Method* named = null;
+            for(var uint i = 0U; i < methods.Len() && named == null; i++) {
+                if(methods.Get(i).name == "Str") {
+                    named = methods.Remove(i);
+                }
+            }
+            if(named == null) {
+                named = Method::New("Str", null, Members::strType(), false);
+            }
+            methods.AddFirst(named);
+        }
         if(d.kind != ast.Field.Kind::Interface || this.obj == null) {
             return methods;
         }
@@ -119,6 +132,18 @@ public class Members {
                 fields.AddLast(Field::New(f.name.value{str}, f, signature.Instantiate(bindings, signature.at), d, f.modifiers));
             }
         }
+        if(Members::strFirst(d)) {
+            var Field* named = null;
+            for(var uint i = 0U; i < fields.Len() && named == null; i++) {
+                if(fields.Get(i).name == "Str") {
+                    named = fields.Remove(i);
+                }
+            }
+            if(named == null) {
+                named = Field::New("Str", null, Members::strType(), d, 0U);
+            }
+            fields.AddFirst(named);
+        }
         if(d.kind == ast.Field.Kind::Interface) {
             var ArrList[Method*]* methods = this.Own(t);
             for(var uint i = 0U; i < methods.Len(); i++) {
@@ -159,6 +184,39 @@ public class Members {
             }
         }
         return all;
+    }
+
+    // Layout answers every instance member and method the declaration t names has, in the order its instances lay them out: what it inherits first, an override keeping the slot of what it overrides, then what it declares
+    public fun ArrList[Field*]*(Type*) Layout = (t) {
+        var ArrList[Field*]* fields = ArrList::[Field*]New(0U);
+        var Type* base = this.BaseOf(t);
+        if(base != null) {
+            fields = this.Layout(base);
+        }
+        var ArrList[Field*]* own = this.OwnFields(t);
+        for(var uint i = 0U; i < own.Len(); i++) {
+            var bool replaced = false;
+            for(var uint j = 0U; j < fields.Len() && !replaced; j++) {
+                if(fields.Get(j).name == own.Get(i).name) {
+                    fields.Set(j, own.Get(i));
+                    replaced = true;
+                }
+            }
+            if(!replaced) {
+                fields.AddLast(own.Get(i));
+            }
+        }
+        return fields;
+    }
+
+    // strFirst reports whether d is a struct or enum
+    static fun bool(ast.Decl*) strFirst = (d) {
+        return d.kind == ast.Field.Kind::Struct || d.kind == ast.Field.Kind::Enum;
+    }
+
+    // strType answers str(), the type of the Str a struct or enum is given
+    static fun Type*() strType = () {
+        return Type.Function::New(null, Type.Primitive::New(null, TokenKind::String), ArrList::[Type*]New(0U));
     }
 
     // SelfType answers the type a declaration's own instances are of

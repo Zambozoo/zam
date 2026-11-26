@@ -1,0 +1,48 @@
+import std("lang/Strs.zam");
+
+// Quote spells names and byte strings the way LLVM's textual IR reads them
+public namespace Quote {
+    // Name answers name as an identifier, quoted when it holds anything an identifier cannot
+    public fun str(str) Name = (name) {
+        var (byte*, uint) bytes = Strs::ToBytes(name);
+        var bool plain = bytes.1 > 0U && !(bytes.0[0U] >= '0'{byte} && bytes.0[0U] <= '9'{byte});
+        for(var uint i = 0U; i < bytes.1 && plain; i++) {
+            var byte c = bytes.0[i];
+            plain = (c >= 'a'{byte} && c <= 'z'{byte}) || (c >= 'A'{byte} && c <= 'Z'{byte}) || (c >= '0'{byte} && c <= '9'{byte}) || c == '_'{byte} || c == '.'{byte} || c == '$'{byte} || c == '-'{byte};
+        }
+        if(plain) {
+            return name;
+        }
+        return "\"" + Quote::escaped(bytes.0, bytes.1) + "\"";
+    }
+
+    // Bytes answers n bytes at b as a c"..." string
+    public fun str(byte*, uint) Bytes = (b, n) {
+        return "c\"" + Quote::escaped(b, n) + "\"";
+    }
+
+    // escaped answers n bytes at b with a quote, a backslash and every byte that is not printable written as \XX
+    fun str(byte*, uint) escaped = (b, n) {
+        var str out = "";
+        for(var uint i = 0U; i < n; i++) {
+            var byte c = b[i];
+            if(c < ' '{byte} || c > '~'{byte} || c == '"'{byte} || c == '\\'{byte}) {
+                out = out + "\\" + Quote::Hex(c{uint}, 2U);
+            } else {
+                out = out + Strs::FromBytes(&(b[i]), 1U);
+            }
+        }
+        return out;
+    }
+
+    // Hex answers v as uppercase hexadecimal, at least digits wide
+    public fun str(uint, uint) Hex = (v, digits) {
+        var (byte*, uint) alphabet = Strs::ToBytes("0123456789ABCDEF");
+        var str out = "";
+        for(var uint i = 0U; i < digits || v != 0U; i++) {
+            out = Strs::FromBytes(&(alphabet.0[v & 15U]), 1U) + out;
+            v = v >> 4U;
+        }
+        return out;
+    }
+}

@@ -1,0 +1,211 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "../semantic/Canonical.zam";
+import "../semantic/Members.zam";
+import "../semantic/Model.zam";
+import "../semantic/Type.zam";
+
+// Layout lays instances out as C lays out a struct
+public class Layout {
+    // Shape is how an instance of one declaration is laid out
+    public class Shape {
+        public var uint size;
+        // tail is the stride of one element of an unsized tail, or 0 for none
+        public var uint tail;
+        public var uint align;
+        // offsets is where each member lies, by name, net of the header
+        public var HashMap[str, uint]* offsets;
+        // fields is the instance members and methods in layout order
+        public var ArrList[Members.Field*]* fields;
+    }
+
+    public static var uint$ Word = 8U;
+
+    var Model* model;
+    var Members* members;
+    var HashMap[str, Shape*]* shapes;
+
+    public static fun Layout*(Model*) New = (m) {
+        var Layout* l = new(Layout);
+        l.model = m;
+        l.members = Members::New(m);
+        l.shapes = HashMap::[str, Shape*]New(0U);
+        return l;
+    }
+
+    // Of answers how an instance of the declaration t names is laid out
+    public fun Shape*(Type*) Of = (t) {
+        if(t.kind == Type.Kind::Tailed) {
+            t = t{Type.Tailed*}.inner;
+        }
+        var str key = Canonical::Text(this.model, t);
+        var (Shape*, bool) found = this.shapes.Get(key);
+        if(found.1) {
+            return found.0;
+        }
+        var Shape* shape = new(Shape);
+        shape.offsets = HashMap::[str, uint]New(0U);
+        shape.fields = this.members.Layout(t);
+        var ast.Decl* d = Members::DeclOf(t);
+        var uint header = Layout::Header(d);
+        var uint offset = 0U;
+        shape.align = 1U;
+        if(header != 0U) {
+            offset = header;
+            shape.align = Layout::Word;
+        }
+        var bool tailed = false;
+        for(var uint i = 0U; i < shape.fields.Len(); i++) {
+            var Members.Field* f = shape.fields.Get(i);
+            if(f.IsMethod()) {
+                continue;
+            }
+            var Type* ft = f.signature;
+            if(Layout::unbounded(ft)) {
+                var (uint, uint) element = this.tailInfo(ft);
+                shape.align = Layout::max(shape.align, element.1);
+                offset = Layout::AlignUp(offset, element.1);
+                shape.offsets.Put(f.name, offset - header);
+                shape.tail = element.0;
+                tailed = true;
+                continue;
+            }
+            var (uint, uint) info = this.FieldInfo(ft);
+            shape.align = Layout::max(shape.align, info.1);
+            offset = Layout::AlignUp(offset, info.1);
+            shape.offsets.Put(f.name, offset - header);
+            offset = offset + info.0;
+        }
+        if(tailed) {
+            shape.size = offset;
+        } else {
+            shape.size = Layout::AlignUp(offset, shape.align);
+        }
+        this.shapes.Put(key, shape);
+        return shape;
+    }
+
+    // FieldInfo answers the size and alignment a member of t is held inline with
+    public fun (uint, uint)(Type*) FieldInfo = (t) {
+        switch(t.kind) {
+            case (Type.Kind::Wrapped) {
+                if(t{Type.Wrapped*}.wrap == ast.Type.Wrap::Const) {
+                    return this.FieldInfo(t{Type.Wrapped*}.inner);
+                }
+                return (Layout::Word, Layout::Word);
+            }
+            case (Type.Kind::Primitive)
+                return Layout::primitive(t{Type.Primitive*}.keyword);
+            case (Type.Kind::Array) {
+                var Type.Array* a = t{Type.Array*};
+                if(!a.sized) {
+                    return (Layout::Word, Layout::Word);
+                }
+                var (uint, uint) element = this.FieldInfo(a.inner);
+                return (a.size * element.0, element.1);
+            }
+            case (Type.Kind::Tailed) {
+                var Type.Tailed* tailed = t{Type.Tailed*};
+                if(!tailed.sized) {
+                    return (Layout::Word, Layout::Word);
+                }
+                var Shape* shape = this.Of(tailed.inner);
+                return (shape.size + tailed.size * shape.tail, shape.align);
+            }
+            case (Type.Kind::Named, Type.Kind::Generic) {
+                var ast.Decl* d = Members::DeclOf(t);
+                if(d != null && (d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Struct || d.kind == ast.Field.Kind::Enum)) {
+                    var Shape* shape = this.Of(t);
+                    return (shape.size, shape.align);
+                }
+                return (Layout::Word, Layout::Word);
+            }
+            case (Type.Kind::Tuple) {
+                var (uint, uint, ArrList[uint]*) tuple = this.Tuple(t{Type.Tuple*});
+                return (tuple.0, tuple.1);
+            }
+        }
+        return (Layout::Word, Layout::Word);
+    }
+
+    // Tuple answers the size, alignment and element offsets of a tuple
+    public fun (uint, uint, ArrList[uint]*)(Type.Tuple*) Tuple = (t) {
+        var uint offset = 0U;
+        var uint align = 1U;
+        var ArrList[uint]* offsets = ArrList::[uint]New(0U);
+        for(var uint i = 0U; i < t.types.Len(); i++) {
+            var (uint, uint) info = this.FieldInfo(t.types.Get(i));
+            align = Layout::max(align, info.1);
+            offset = Layout::AlignUp(offset, info.1);
+            offsets.AddLast(offset);
+            offset = offset + info.0;
+        }
+        return (Layout::AlignUp(offset, align), align, offsets);
+    }
+
+    // tailInfo answers the stride and alignment of one element of an unsized tail
+    fun (uint, uint)(Type*) tailInfo = (t) {
+        if(t.kind == Type.Kind::Array) {
+            return this.FieldInfo(t{Type.Array*}.inner);
+        }
+        var Shape* shape = this.Of(t{Type.Tailed*}.inner);
+        return (shape.tail, shape.align);
+    }
+
+    // Header answers the room an instance of d keeps ahead of its members
+    public static fun uint(ast.Decl*) Header = (d) {
+        switch(d.kind) {
+            case (ast.Field.Kind::Class, ast.Field.Kind::Abstract) {
+                if(d{ast.Decl.Object*}.tailed) {
+                    return 3U * Layout::Word;
+                }
+                return 2U * Layout::Word;
+            }
+            case (ast.Field.Kind::Struct) {
+                if(d{ast.Decl.Struct*}.tailed) {
+                    return Layout::Word;
+                }
+                return 0U;
+            }
+            case (ast.Field.Kind::Enum)
+                return Layout::Word;
+        }
+        return 0U;
+    }
+
+    // AlignUp answers offset rounded up to a multiple of align
+    public static fun uint(uint, uint) AlignUp = (offset, align) {
+        if(align == 0U) {
+            return offset;
+        }
+        return (offset + align - 1U) / align * align;
+    }
+
+    // unbounded reports whether t is an unsized array or tail
+    static fun bool(Type*) unbounded = (t) {
+        return (t.kind == Type.Kind::Array && !t{Type.Array*}.sized) || (t.kind == Type.Kind::Tailed && !t{Type.Tailed*}.sized);
+    }
+
+    static fun (uint, uint)(TokenKind) primitive = (keyword) {
+        switch(keyword) {
+            case (TokenKind::Void)
+                return (0U, 1U);
+            case (TokenKind::Bool, TokenKind::Byte)
+                return (1U, 1U);
+            case (TokenKind::Char)
+                return (4U, 4U);
+            case (TokenKind::Type)
+                return (3U * Layout::Word, Layout::Word);
+        }
+        return (Layout::Word, Layout::Word);
+    }
+
+    static fun uint(uint, uint) max = (a, b) {
+        if(a > b) {
+            return a;
+        }
+        return b;
+    }
+}

@@ -1,0 +1,37 @@
+import std("data/list/ArrList.zam");
+import std("lang/Strs.zam");
+
+// Strings writes strings as the image lays them out
+public namespace Strings {
+    // Mark is the mark word every interned literal carries
+    public var uint$ Mark = 32U;
+
+    // Literal appends s as a length-prefixed, NUL-terminated, word-padded run
+    public fun void(ArrList[byte]*, str) Literal = (out, s) {
+        var (byte*, uint) bytes = Strs::ToBytes(s);
+        Strings::word(out, bytes.1);
+        for(var uint i = 0U; i < bytes.1; i++) {
+            out.AddLast(bytes.0[i]);
+        }
+        for(var uint i = 8U + bytes.1; i < Strings::ByteCount(s); i++) {
+            out.AddLast(0{byte});
+        }
+    }
+
+    // Interned appends s as it lies in the static region
+    public fun void(ArrList[byte]*, str) Interned = (out, s) {
+        Strings::word(out, Strings::Mark);
+        Strings::Literal(out, s);
+    }
+
+    // ByteCount answers how wide the literal of s is
+    public fun uint(str) ByteCount = (s) {
+        return (8U + Strs::ByteLen(s) + 1U + 7U) / 8U * 8U;
+    }
+
+    fun void(ArrList[byte]*, uint) word = (out, w) {
+        for(var uint i = 0U; i < 8U; i++) {
+            out.AddLast((w >> (8U * i) & 255U){byte});
+        }
+    }
+}

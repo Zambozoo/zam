@@ -1,0 +1,21 @@
+import std("data/list/ArrList.zam");
+import std("test/Assert.zam");
+import "Strings.zam";
+
+public namespace StringsTest {
+    public fun void(uint, str...) Padding = (argC, argV) {
+        Assert::[uint]Equal(16U, Strings::ByteCount(""));
+        Assert::[uint]Equal(16U, Strings::ByteCount("1234567"));
+        Assert::[uint]Equal(24U, Strings::ByteCount("12345678"));
+        var ArrList[byte]* out = ArrList::[byte]New(0U);
+        Strings::Literal(out, "12345678");
+        Assert::[uint]Equal(24U, out.Len());
+        Assert::[uint]Equal(8U, out.Get(0U){uint});
+        Assert::[uint]Equal('1'{uint}, out.Get(8U){uint});
+        Assert::[uint]Equal(0U, out.Get(16U){uint});
+        var ArrList[byte]* interned = ArrList::[byte]New(0U);
+        Strings::Interned(interned, "");
+        Assert::[uint]Equal(24U, interned.Len());
+        Assert::[uint]Equal(Strings::Mark, interned.Get(0U){uint});
+    }
+}

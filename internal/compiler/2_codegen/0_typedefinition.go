@@ -545,22 +545,22 @@ func buildTypeDefinitionSkeletons(ast *syntax.AST, reader *codegenReader) *synta
 	// signature, so neither needs a definition type of its own: the type
 	// instance and the type list already serialize as the runtime reads them.
 	var i int
-	for t := range ast.ThreadTypes.Values() {
+	for _, t := range orderedTypes(&ast.ThreadTypes) {
 		visitor.typeIndices.Set(t, i)
 		i++
 		reader.threadTypeDefinitions = append(reader.threadTypeDefinitions, &typeInstance{})
 	}
-	for t := range ast.FunctionTypes.Values() {
+	for _, t := range orderedTypes(&ast.FunctionTypes) {
 		visitor.typeIndices.Set(t, i)
 		i++
 		reader.functionTypeDefinitions = append(reader.functionTypeDefinitions, &typeListInstance{})
 	}
-	for t := range ast.PointerTypes.Values() {
+	for _, t := range orderedTypes(&ast.PointerTypes) {
 		visitor.typeIndices.Set(t, i)
 		i++
 		reader.pointerDefinitions = append(reader.pointerDefinitions, &pointerDefinition{})
 	}
-	for t := range ast.TupleTypes.Values() {
+	for _, t := range orderedTypes(&ast.TupleTypes) {
 		visitor.typeIndices.Set(t, i)
 		i++
 		size, _, offsets := tupleLayout(t.(*syntax.TypeTuple))
@@ -597,14 +597,15 @@ func (cv *typeDefinitionsInstantiatorVisitor) VisitDeclStruct(d *syntax.DeclStru
 	if d.Generics() != nil {
 		// Generic structs are flattened: one definition per concrete, each with
 		// its own unique index.
-		for _, entry := range d.Concretes().All() {
+		for _, entry := range orderedConcretes(d) {
+			if entry.Key.ContainsGenericArg() {
+				continue
+			}
 			def := &typeDefinitionStruct{
 				instanceMethods: make([]methodDefinition, instanceFieldCount[*syntax.FieldMethod](entry.Value)),
 				instanceMembers: make([]memberDefinition, instanceFieldCount[*syntax.FieldMember](entry.Value)),
 			}
-			if !entry.Key.ContainsGenericArg() {
-				def.instanceByteSize, def.instanceTailByteSize, _ = layoutOf(entry.Value)
-			}
+			def.instanceByteSize, def.instanceTailByteSize, _ = layoutOf(entry.Value)
 			*entry.Value.TypeIndex() = len(r.genericStructDefinitions)
 			r.genericStructDefinitions = append(r.genericStructDefinitions, def)
 		}
@@ -667,7 +668,7 @@ func (cv *typeDefinitionsInstantiatorVisitor) VisitDeclClass(d *syntax.DeclClass
 	if d.Generics() != nil {
 		*d.TypeIndex() = len(r.genericClassDefinitions)
 		r.genericClassDefinitions = append(r.genericClassDefinitions, &typeDefinitionGenericClass{
-			concreteTypesSizeMap: make([]genericClassMapEntry, d.Concretes().Len()),
+			concreteTypesSizeMap: make([]genericClassMapEntry, groundConcreteCount(d)),
 			methodCount:          instanceFieldCount[*syntax.FieldMethod](d),
 		})
 		cv.assignConcreteIDs(d)
@@ -691,7 +692,7 @@ func (cv *typeDefinitionsInstantiatorVisitor) VisitDeclAbstract(d *syntax.DeclAb
 	if d.Generics() != nil {
 		*d.TypeIndex() = len(r.genericAbstractDefinitions)
 		r.genericAbstractDefinitions = append(r.genericAbstractDefinitions, &typeDefinitionGenericAbstract{
-			concreteTypesSizeMap: make([]genericMapEntry, d.Concretes().Len()),
+			concreteTypesSizeMap: make([]genericMapEntry, groundConcreteCount(d)),
 			methodCount:          instanceFieldCount[*syntax.FieldMethod](d),
 		})
 		cv.assignConcreteIDs(d)
@@ -713,7 +714,7 @@ func (cv *typeDefinitionsInstantiatorVisitor) VisitDeclInterface(d *syntax.DeclI
 	if d.Generics() != nil {
 		*d.TypeIndex() = len(r.genericInterfaceDefinitions)
 		r.genericInterfaceDefinitions = append(r.genericInterfaceDefinitions, &typeDefinitionGenericInterface{
-			concreteSupertypeSets: make([]map[typeInstanceShort]struct{}, d.Concretes().Len()),
+			concreteSupertypeSets: make([]map[typeInstanceShort]struct{}, groundConcreteCount(d)),
 		})
 		cv.assignConcreteIDs(d)
 	} else {
@@ -764,7 +765,7 @@ func populateTypeDefinitions(ast *syntax.AST, reader *codegenReader, typeIndices
 	// they were built because each one names other types, and a type cannot be
 	// resolved to an id until every declaration has been given one.
 	var i int
-	for t := range ast.ThreadTypes.Values() {
+	for _, t := range orderedTypes(&ast.ThreadTypes) {
 		// A thread is interned whole, as a pointer is, so that it never shares a
 		// key with the type it yields when that type is interned too.
 		def := reader.threadTypeDefinitions[i].(*typeInstance)
@@ -773,21 +774,21 @@ func populateTypeDefinitions(ast *syntax.AST, reader *codegenReader, typeIndices
 	}
 
 	i = 0
-	for t := range ast.FunctionTypes.Values() {
+	for _, t := range orderedTypes(&ast.FunctionTypes) {
 		def := reader.functionTypeDefinitions[i].(*typeListInstance)
 		*def = populator.functionTypeList(t)
 		i++
 	}
 
 	i = 0
-	for t := range ast.PointerTypes.Values() {
+	for _, t := range orderedTypes(&ast.PointerTypes) {
 		def := reader.pointerDefinitions[i].(*pointerDefinition)
 		def.pointee = populator.typeInstanceOf(t.(*syntax.TypeWrapped).Type)
 		i++
 	}
 
 	i = 0
-	for t := range ast.TupleTypes.Values() {
+	for _, t := range orderedTypes(&ast.TupleTypes) {
 		def := reader.tupleDefinitions[i].(*tupleDefinition)
 		for _, element := range t.(*syntax.TypeTuple).Types {
 			def.types.typeIDs = append(def.types.typeIDs, populator.typeInstanceOf(element))

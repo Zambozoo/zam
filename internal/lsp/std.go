@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/zambozoo/zam/internal/base"
-	"github.com/zambozoo/zam/internal/std"
+	"github.com/zambozoo/zam/src/std"
 )
 
 // stdRootOf returns the root of the standard library's source when a file on

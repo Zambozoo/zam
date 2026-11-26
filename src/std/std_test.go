@@ -9,7 +9,7 @@ import (
 	"github.com/zambozoo/zam/internal/cli"
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	semantic "github.com/zambozoo/zam/internal/compiler/1_semantic"
-	"github.com/zambozoo/zam/internal/std"
+	"github.com/zambozoo/zam/src/std"
 )
 
 // TestStdFSHasExpectedFiles pins the standard library's embedded contents to

@@ -1,0 +1,69 @@
+import std("data/list/ArrList.zam");
+import "../syntax/Path.zam";
+import ast = "../syntax/ast/*";
+import "Model.zam";
+import "Type.zam";
+
+// Canonical writes types the same way whichever way they were written, which is what two compilers can be compared and ordered by
+public namespace Canonical {
+    // Text writes t with every declaration it names written as Decl names it, which is the same however the type happened to be written
+    public fun str(Model*, Type*) Text = (m, t) {
+        switch(t.kind) {
+            case (Type.Kind::Named)
+                return "{" + Canonical::Decl(m, t{Type.Named*}.decl) + "}";
+            case (Type.Kind::Generic)
+                return Canonical::Text(m, t{Type.Generic*}.inner) + "[" + Canonical::Texts(m, t{Type.Generic*}.arguments) + "]";
+            case (Type.Kind::Tailed) {
+                var Type.Tailed* tailed = t{Type.Tailed*};
+                if(tailed.sized) {
+                    return Canonical::Text(m, tailed.inner) + "~" + tailed.size{str};
+                }
+                return Canonical::Text(m, tailed.inner) + "~";
+            }
+            case (Type.Kind::Array) {
+                var Type.Array* a = t{Type.Array*};
+                if(a.sized) {
+                    return Canonical::Text(m, a.inner) + "[" + a.size{str} + "]";
+                }
+                return Canonical::Text(m, a.inner) + "[~]";
+            }
+            case (Type.Kind::Tuple)
+                return "(" + Canonical::Texts(m, t{Type.Tuple*}.types) + ")";
+            case (Type.Kind::Function)
+                return Canonical::Text(m, t{Type.Function*}.returns) + "(" + Canonical::Texts(m, t{Type.Function*}.parameters) + ")";
+            case (Type.Kind::Wrapped) {
+                var Type.Wrapped* w = t{Type.Wrapped*};
+                switch(w.wrap) {
+                    case (ast.Type.Wrap::Thread)
+                        return "thread[" + Canonical::Text(m, w.inner) + "]";
+                    case (ast.Type.Wrap::Pointer)
+                        return Canonical::Text(m, w.inner) + "*";
+                    case (ast.Type.Wrap::Variadic)
+                        return Canonical::Text(m, w.inner) + "...";
+                }
+                return Canonical::Text(m, w.inner) + "$";
+            }
+        }
+        return t.Text();
+    }
+
+    public fun str(Model*, ArrList[Type*]*) Texts = (m, ts) {
+        var str out = "";
+        for(var uint i = 0U; i < ts.Len(); i++) {
+            if(i > 0U) {
+                out = out + ", ";
+            }
+            out = out + Canonical::Text(m, ts.Get(i));
+        }
+        return out;
+    }
+
+    // Decl names d by the file it is written in and the declarations it is nested in
+    public fun str(Model*, ast.Decl*) Decl = (m, d) {
+        var str name = d.name.value{str};
+        for(var ast.Decl* outer = m.Outer(d); outer != null; outer = m.Outer(outer)) {
+            name = outer.name.value{str} + "." + name;
+        }
+        return Path::Display(m.Source(d).path) + "|" + name;
+    }
+}

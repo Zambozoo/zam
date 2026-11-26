@@ -1,0 +1,208 @@
+import std("data/list/ArrList.zam");
+import "IrType.zam";
+import "Module.zam";
+import "Value.zam";
+
+// Builder appends instructions to the end of a block of a function
+public class Builder {
+    var Module.Function* function;
+    var Module.Block* block;
+
+    public static fun Builder*(Module.Function*) New = (f) {
+        var Builder* b = new(Builder);
+        b.function = f;
+        return b;
+    }
+
+    // At moves the builder to the end of block
+    public fun void(Module.Block*) At = (block) {
+        this.block = block;
+    }
+
+    // Block answers the block the builder appends to
+    public fun Module.Block*() Block = () {
+        return this.block;
+    }
+
+    // emit appends text as an instruction
+    fun void(str) emit = (text) {
+        var Module.Instr* i = new(Module.Instr);
+        i.text = text;
+        this.block.instrs.AddLast(i);
+    }
+
+    // Instr appends text as an instruction, answering it so it can be rewritten once more is known
+    public fun Module.Instr*(str) Instr = (text) {
+        var Module.Instr* i = new(Module.Instr);
+        i.text = text;
+        this.block.instrs.AddLast(i);
+        return i;
+    }
+
+    // Terminated reports whether the block being appended to has ended
+    public fun bool() Terminated = () {
+        return this.block.terminated;
+    }
+
+    // value appends rhs as an instruction whose result is of t, answering the result
+    fun Value*(IrType*, str) value = (t, rhs) {
+        var str name = this.function.Fresh();
+        this.emit(name + " = " + rhs);
+        return Value::New(t, name);
+    }
+
+    fun void(str) terminate = (text) {
+        this.emit(text);
+        this.block.terminated = true;
+    }
+
+    // Binary appends an arithmetic, bitwise or shift operation op over a and b
+    public fun Value*(str, Value*, Value*) Binary = (op, a, b) {
+        return this.value(a.ty, op + " " + a.Typed() + ", " + b.ref);
+    }
+
+    // Not appends the bitwise complement of a
+    public fun Value*(Value*) Not = (a) {
+        return this.value(a.ty, "xor " + a.Typed() + ", -1");
+    }
+
+    public fun Value*(Value*) FNeg = (a) {
+        return this.value(a.ty, "fneg " + a.Typed());
+    }
+
+    // ICmp appends an integer or pointer comparison under predicate
+    public fun Value*(str, Value*, Value*) ICmp = (predicate, a, b) {
+        return this.value(IrType::Int(1U), "icmp " + predicate + " " + a.Typed() + ", " + b.ref);
+    }
+
+    public fun Value*(str, Value*, Value*) FCmp = (predicate, a, b) {
+        return this.value(IrType::Int(1U), "fcmp " + predicate + " " + a.Typed() + ", " + b.ref);
+    }
+
+    // Cast appends the conversion op of v to t
+    public fun Value*(str, Value*, IrType*) Cast = (op, v, t) {
+        return this.value(t, op + " " + v.Typed() + " to " + t.Text());
+    }
+
+    // Alloca appends a stack slot for count elements of t, or one when count is null
+    public fun Value*(IrType*, Value*, uint) Alloca = (t, count, align) {
+        var str rhs = "alloca " + t.Text();
+        if(count != null) {
+            rhs = rhs + ", " + count.Typed();
+        }
+        if(align != 0U) {
+            rhs = rhs + ", align " + align{str};
+        }
+        return this.value(IrType::Ptr(), rhs);
+    }
+
+    public fun Value*(IrType*, Value*, bool, uint) Load = (t, address, volatile, align) {
+        var str rhs = "load ";
+        if(volatile) {
+            rhs = rhs + "volatile ";
+        }
+        rhs = rhs + t.Text() + ", " + address.Typed();
+        if(align != 0U) {
+            rhs = rhs + ", align " + align{str};
+        }
+        return this.value(t, rhs);
+    }
+
+    public fun void(Value*, Value*, bool, uint) Store = (v, address, volatile, align) {
+        var str text = "store ";
+        if(volatile) {
+            text = text + "volatile ";
+        }
+        text = text + v.Typed() + ", " + address.Typed();
+        if(align != 0U) {
+            text = text + ", align " + align{str};
+        }
+        this.emit(text);
+    }
+
+    // Gep appends the address indices reach into base, an element of t
+    public fun Value*(IrType*, Value*, ArrList[Value*]*, bool) Gep = (t, base, indices, inbounds) {
+        var str rhs = "getelementptr ";
+        if(inbounds) {
+            rhs = rhs + "inbounds ";
+        }
+        rhs = rhs + t.Text() + ", " + base.Typed();
+        for(var uint i = 0U; i < indices.Len(); i++) {
+            rhs = rhs + ", " + indices.Get(i).Typed();
+        }
+        return this.value(IrType::Ptr(), rhs);
+    }
+
+    public fun Value*(Value*, Value*, Value*) Select = (condition, a, b) {
+        return this.value(a.ty, "select " + condition.Typed() + ", " + a.Typed() + ", " + b.Typed());
+    }
+
+    // Phi appends a phi of t, open for incoming values
+    public fun Module.Instr*(IrType*) Phi = (t) {
+        var Module.Instr* i = new(Module.Instr);
+        i.phi = true;
+        i.result = this.function.Fresh();
+        i.ty = t;
+        i.values = ArrList::[Value*]New(0U);
+        i.blocks = ArrList::[Module.Block*]New(0U);
+        this.block.instrs.AddLast(i);
+        return i;
+    }
+
+    // Incoming adds v, arriving from block, to phi
+    public static fun void(Module.Instr*, Value*, Module.Block*) Incoming = (phi, v, block) {
+        phi.values.AddLast(v);
+        phi.blocks.AddLast(block);
+    }
+
+    // PhiValue answers the value a phi produces
+    public static fun Value*(Module.Instr*) PhiValue = (phi) {
+        return Value::New(phi.ty, phi.result);
+    }
+
+    // Call appends a call through callee, of the function type t, answering its result, or null for void
+    public fun Value*(IrType*, Value*, ArrList[Value*]*) Call = (t, callee, args) {
+        var str rhs = "call " + t.Text() + " " + callee.ref + "(";
+        for(var uint i = 0U; i < args.Len(); i++) {
+            if(i > 0U) {
+                rhs = rhs + ", ";
+            }
+            rhs = rhs + args.Get(i).Typed();
+        }
+        rhs = rhs + ")";
+        if(t.returns.IsVoid()) {
+            this.emit(rhs);
+            return null;
+        }
+        return this.value(t.returns, rhs);
+    }
+
+    public fun void(Module.Block*) Br = (target) {
+        this.terminate("br label %" + target.name);
+    }
+
+    public fun void(Value*, Module.Block*, Module.Block*) CondBr = (condition, then, otherwise) {
+        this.terminate("br " + condition.Typed() + ", label %" + then.name + ", label %" + otherwise.name);
+    }
+
+    // Switch appends a switch on v to the block at the same index as each of values, otherwise to fallback
+    public fun void(Value*, Module.Block*, ArrList[Value*]*, ArrList[Module.Block*]*) Switch = (v, fallback, values, targets) {
+        var str text = "switch " + v.Typed() + ", label %" + fallback.name + " [";
+        for(var uint i = 0U; i < values.Len(); i++) {
+            text = text + " " + values.Get(i).Typed() + ", label %" + targets.Get(i).name;
+        }
+        this.terminate(text + " ]");
+    }
+
+    public fun void(Value*) Ret = (v) {
+        this.terminate("ret " + v.Typed());
+    }
+
+    public fun void() RetVoid = () {
+        this.terminate("ret void");
+    }
+
+    public fun void() Unreachable = () {
+        this.terminate("unreachable");
+    }
+}

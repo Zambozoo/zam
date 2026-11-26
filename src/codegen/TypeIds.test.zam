@@ -1,0 +1,54 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "../semantic/Model.zam";
+import "../semantic/Semantic.zam";
+import "../semantic/Type.zam";
+import "TypeIds.zam";
+
+public namespace TypeIdsTest {
+    private fun Model*(str) validated = (body) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + body + "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        return validated.0;
+    }
+
+    public fun void(uint, str...) Numbering = (argC, argV) {
+        var Model* m = TypeIdsTest::validated(
+            "    struct Point { var int x; }\n" +
+            "    struct Pair[T] { var T a; }\n" +
+            "    class Box[T] { var T held; }\n" +
+            "    class Plain {}\n" +
+            "    static var Pair[str] ps;\n" +
+            "    static var Pair[int] pi;\n" +
+            "    static var Box[str]* bs;\n" +
+            "    static var Box[int]* bi;\n" +
+            "    static var Point[3] points;\n");
+        var TypeIds* ids = TypeIds::New(m, true);
+        var ast.Decl* main = m.Program().main;
+        Assert::[uint]Equal(4U, ids.Instance(Type.Primitive::New(null, TokenKind::Int)).typeID);
+        Assert::[uint]Equal(10U, ids.Instance(Type.Primitive::New(null, TokenKind::Posit)).typeID);
+        var Type* point = Type.Named::New(null, m.Nested(main, "Point"), "Point", "");
+        var TypeIds.Instance* points = ids.Instance(Type.Array::New(null, point, true, 3U));
+        Assert::[uint]Equal(ids.Start(TypeIds.Bucket::Struct{uint}), points.typeID);
+        Assert::[uint]Equal(3U, points.arrayLength);
+        var Type* pair = Type.Named::New(null, m.Nested(main, "Pair"), "Pair", "");
+        var uint pairs = ids.Start(TypeIds.Bucket::GenericStruct{uint});
+        Assert::[uint]Equal(pairs, ids.Instance(Type.Generic::New(null, pair, ArrList::[Type*]New(1U, Type.Primitive::New(null, TokenKind::Int)))).typeID);
+        Assert::[uint]Equal(pairs + 1U, ids.Instance(Type.Generic::New(null, pair, ArrList::[Type*]New(1U, Type.Primitive::New(null, TokenKind::String)))).typeID);
+        var Type* box = Type.Named::New(null, m.Nested(main, "Box"), "Box", "");
+        var TypeIds.Instance* boxStr = ids.Instance(Type.Generic::New(null, box, ArrList::[Type*]New(1U, Type.Primitive::New(null, TokenKind::String))));
+        Assert::[uint]Equal(ids.Start(TypeIds.Bucket::GenericClass{uint}), boxStr.typeID);
+        Assert::[uint]Equal(1U, boxStr.genericID);
+    }
+}

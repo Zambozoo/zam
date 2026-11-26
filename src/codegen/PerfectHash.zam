@@ -1,0 +1,177 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("lang/System.zam");
+
+// PerfectHash is a two-level perfect hash of fixed width, built by the Fredman-Komlós-Szemerédi method
+public class PerfectHash {
+    // slotFactor is how many slots a key is given
+    static var uint$ slotFactor = 3U;
+    // seedLimit is how many seeds one bucket is tried at before the level-1 seed is given up on
+    static var uint$ seedLimit = 65536U;
+    static var uint$ half = 4294967295U;
+
+    var uint seed;
+    // buckets hold a block's start in the high half and the block's seed in the low half, and run one past the last bucket
+    var ArrList[uint]* buckets;
+    var ArrList[uint]* slots;
+
+    // Write appends the perfect hash mapping each of keys onto the value at its index to out
+    public static fun void(ArrList[byte]*, ArrList[uint]*, ArrList[uint]*) Write = (out, keys, values) {
+        var PerfectHash* h = PerfectHash::Build(keys, values);
+        PerfectHash::word(out, h.seed);
+        PerfectHash::word(out, h.slots.Len());
+        PerfectHash::word(out, h.buckets.Len());
+        for(var uint i = 0U; i < h.buckets.Len(); i++) {
+            PerfectHash::word(out, h.buckets.Get(i));
+        }
+        for(var uint i = 0U; i < h.slots.Len(); i++) {
+            PerfectHash::word(out, h.slots.Get(i));
+        }
+    }
+
+    // Len answers how many slots the table holds
+    public fun uint() Len = () {
+        return this.slots.Len();
+    }
+
+    // ByteCount answers how wide the table over count keys is
+    public static fun uint(uint) ByteCount = (count) {
+        if(count == 0U) {
+            return 24U;
+        }
+        return (3U + count + 1U + PerfectHash::slotFactor * count) * 8U;
+    }
+
+    // Lookup resolves key as the runtime does
+    public fun uint(uint) Lookup = (key) {
+        var uint index = PerfectHash::index(key, this.seed, this.buckets.Len() - 1U);
+        var uint bucket = this.buckets.Get(index);
+        var uint offset = bucket >> 32U;
+        var uint width = (this.buckets.Get(index + 1U) >> 32U) - offset;
+        return this.slots.Get(offset + PerfectHash::index(key, bucket & PerfectHash::half, width));
+    }
+
+    // Build constructs the hash mapping each of keys onto the value at its index, the keys sorted first so that the construction is decided by them alone
+    public static fun PerfectHash*(ArrList[uint]*, ArrList[uint]*) Build = (keys, values) {
+        var PerfectHash* h = new(PerfectHash);
+        h.buckets = ArrList::[uint]New(0U);
+        h.slots = ArrList::[uint]New(0U);
+        if(keys.Len() == 0U) {
+            return h;
+        }
+        var ArrList[uint]* sorted = ArrList::[uint]New(0U);
+        var HashMap[uint, uint]* entries = HashMap::[uint, uint]New(0U);
+        for(var uint i = 0U; i < keys.Len(); i++) {
+            var uint key = keys.Get(i);
+            if(entries.Contains(key)) {
+                continue;
+            }
+            entries.Put(key, values.Get(i));
+            var uint at = sorted.Len();
+            for(; at > 0U && sorted.Get(at - 1U) > key; at--) {}
+            sorted.Add(at, key);
+        }
+        for(var uint seed = 1U; ; seed++) {
+            var PerfectHash* tried = PerfectHash::attempt(entries, sorted, seed);
+            if(tried != null) {
+                for(var uint i = 0U; i < sorted.Len(); i++) {
+                    if(tried.Lookup(sorted.Get(i)) != entries.Get(sorted.Get(i)).0) {
+                        System::Panic("perfect hash resolved a key wrongly");
+                    }
+                }
+                return tried;
+            }
+        }
+        return h;
+    }
+
+    // attempt builds the hash under seed, or answers null if its buckets ask for more slots than the keys were given
+    static fun PerfectHash*(HashMap[uint, uint]*, ArrList[uint]*, uint) attempt = (entries, keys, seed) {
+        var uint count = keys.Len();
+        var ArrList[ArrList[uint]*]* buckets = ArrList::[ArrList[uint]*]New(0U);
+        for(var uint i = 0U; i < count; i++) {
+            buckets.AddLast(ArrList::[uint]New(0U));
+        }
+        for(var uint i = 0U; i < count; i++) {
+            buckets.Get(PerfectHash::index(keys.Get(i), seed, count)).AddLast(keys.Get(i));
+        }
+        var uint total = 0U;
+        for(var uint i = 0U; i < count; i++) {
+            total = total + buckets.Get(i).Len() * buckets.Get(i).Len();
+        }
+        if(total > PerfectHash::slotFactor * count) {
+            return null;
+        }
+        var PerfectHash* h = new(PerfectHash);
+        h.seed = seed;
+        h.buckets = ArrList::[uint]New(0U);
+        h.slots = ArrList::[uint]New(0U);
+        for(var uint i = 0U; i < PerfectHash::slotFactor * count; i++) {
+            h.slots.AddLast(0U);
+        }
+        var uint offset = 0U;
+        for(var uint i = 0U; i < count; i++) {
+            var ArrList[uint]* bucket = buckets.Get(i);
+            var uint width = bucket.Len() * bucket.Len();
+            var (uint, bool) resolved = PerfectHash::resolve(entries, bucket, h.slots, offset, width);
+            if(!resolved.1) {
+                return null;
+            }
+            h.buckets.AddLast(offset << 32U | resolved.0);
+            offset = offset + width;
+        }
+        h.buckets.AddLast(offset << 32U);
+        return h;
+    }
+
+    // resolve finds a seed landing every key of one bucket in a slot of its own within the block of width slots at offset, and fills the block in
+    static fun (uint, bool)(HashMap[uint, uint]*, ArrList[uint]*, ArrList[uint]*, uint, uint) resolve = (entries, keys, slots, offset, width) {
+        if(keys.Len() == 0U) {
+            return (0U, true);
+        }
+        var ArrList[uint]* taken = ArrList::[uint]New(0U);
+        for(var uint seed = 1U; seed <= PerfectHash::seedLimit; seed++) {
+            taken.Clear();
+            var bool fits = true;
+            for(var uint i = 0U; i < keys.Len() && fits; i++) {
+                var uint slot = PerfectHash::index(keys.Get(i), seed, width);
+                for(var uint j = 0U; j < taken.Len(); j++) {
+                    if(taken.Get(j) == slot) {
+                        fits = false;
+                    }
+                }
+                taken.AddLast(slot);
+            }
+            if(!fits) {
+                continue;
+            }
+            for(var uint i = 0U; i < keys.Len(); i++) {
+                slots.Set(offset + taken.Get(i), entries.Get(keys.Get(i)).0);
+            }
+            return (seed, true);
+        }
+        return (0U, false);
+    }
+
+    // index hashes key under seed and reduces it into [0, n)
+    static fun uint(uint, uint, uint) index = (key, seed, n) {
+        return ((PerfectHash::mix(key, seed) >> 32U) * n) >> 32U;
+    }
+
+    // mix is the 64-bit finalizer, which avalanches every bit of the key into every bit of the answer
+    static fun uint(uint, uint) mix = (key, seed) {
+        var uint h = key ^ seed;
+        h = h ^ (h >> 33U);
+        h = h * 18397679294719823053U;
+        h = h ^ (h >> 33U);
+        h = h * 14181476777654086739U;
+        h = h ^ (h >> 33U);
+        return h;
+    }
+
+    static fun void(ArrList[byte]*, uint) word = (out, w) {
+        for(var uint i = 0U; i < 8U; i++) {
+            out.AddLast((w >> (8U * i) & 255U){byte});
+        }
+    }
+}

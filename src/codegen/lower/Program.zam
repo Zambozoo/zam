@@ -1,0 +1,615 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("lang/Arr.zam");
+import std("lang/Strs.zam");
+import "../../syntax/Path.zam";
+import "../../syntax/ProjectParser.zam";
+import "../../syntax/Source.zam";
+import ast = "../../syntax/ast/*";
+import "../../semantic/Canonical.zam";
+import "../../semantic/Members.zam";
+import "../../semantic/Model.zam";
+import "../../semantic/Type.zam";
+import "../ir/Builder.zam";
+import "../ir/IrType.zam";
+import "../ir/Module.zam";
+import "../ir/Value.zam";
+import "../Layout.zam";
+import "../Runtime.zam";
+import "../Statics.zam";
+import "../TypeIds.zam";
+import "Function.zam";
+
+// Program lowers a validated program into a module
+public class Program {
+    // Pending is a function declared and not yet compiled
+    class Pending {
+        var ast.Field.Method* method;
+        // owner is the declaration that instantiates the generic declaration method belongs to, or null
+        var Type* owner;
+        // implicit is the struct or enum whose implicit Str this is, when method is null
+        var ast.Decl* implicit;
+        var Module.Function* fn;
+    }
+
+    // Class is one entry of the class table
+    class Class {
+        var uint short;
+        var Value* methods;
+        var uint count;
+        var uint flags;
+    }
+
+    public var Module* module;
+    public var Model* model;
+    public var Layout* layout;
+    public var IrType* entryType;
+    public var IrType* frameInfoType;
+    public var IrType* rootType;
+    var TypeIds* ids;
+    var Members* members;
+    var IrType* typeIDType;
+    var HashMap[str, Module.Function*]* runtime;
+    var ArrList[Pending*]* pending;
+    var HashMap[ast.Field*, Module.Function*]* functions;
+    var HashMap[str, Module.Function*]* owned;
+    var HashMap[ast.Decl*, Module.Function*]* strs;
+    var ArrList[str]* names;
+    var ArrList[str]* files;
+    var HashMap[str, Module.Global*]* texts;
+    var uint unnamed;
+    // traps says what each function compiled as a trap could not compile
+    var ArrList[str]* traps;
+
+    // Lower answers the module the program m models compiles to
+    public static fun Module*(Model*, str, ArrList[byte]*, TypeIds*, Layout*, Arr[str]*, HashMap[str, str]*) Lower = (m, triple, image, ids, layout, natives, tables) {
+        var Program* p = new(Program);
+        p.model = m;
+        p.ids = ids;
+        p.layout = layout;
+        p.members = Members::New(m);
+        p.module = Module::New();
+        p.module.triple = triple;
+        p.runtime = HashMap::[str, Module.Function*]New(0U);
+        p.pending = ArrList::[Pending*]New(0U);
+        p.functions = HashMap::[ast.Field*, Module.Function*]New(0U);
+        p.owned = HashMap::[str, Module.Function*]New(0U);
+        p.strs = HashMap::[ast.Decl*, Module.Function*]New(0U);
+        p.names = ArrList::[str]New(0U);
+        p.files = ArrList::[str]New(0U);
+        p.texts = HashMap::[str, Module.Global*]New(0U);
+        p.traps = ArrList::[str]New(0U);
+        var IrType* ptr = IrType::Ptr();
+        var IrType* i32 = IrType::Int(32U);
+        var IrType* i64 = IrType::Int(64U);
+        p.entryType = IrType::Function(IrType::Void(), ArrList::[IrType*]New(4U, ptr, ptr, ptr, ptr), false);
+        p.frameInfoType = IrType::Struct(ArrList::[IrType*]New(4U, i64, i64, i64, ptr));
+        p.typeIDType = IrType::Struct(ArrList::[IrType*]New(3U, i32, i64, i64));
+        p.rootType = IrType::Struct(ArrList::[IrType*]New(4U, i32, i32, i32, p.typeIDType));
+        p.declare("zamrt_frame_push", IrType::Void(), ArrList::[IrType*]New(3U, ptr, ptr, ptr), false);
+        p.declare("zamrt_frame_pop", IrType::Void(), ArrList::[IrType*]New(2U, ptr, ptr), false);
+        p.declare("zamrt_safepoint", IrType::Void(), ArrList::[IrType*]New(1U, ptr), false);
+        p.declare("zamrt_unsupported", IrType::Void(), ArrList::[IrType*]New(2U, ptr, ptr), true);
+
+        var Arr[byte]* bytes = image.Arr();
+        var Module.Global* imageData = p.module.AddGlobal("zam_image", IrType::Array(bytes.Len(), IrType::Int(8U)), Value::Bytes(bytes.Arr(), bytes.Len()));
+        imageData.constant = true;
+        imageData.linkage = "private";
+        imageData.align = 8U;
+        p.projectNatives(natives);
+        p.stdNatives(natives, tables);
+
+        var ArrList[Module.Function*]* initializers = p.staticInitializers();
+        p.functionFor(Program::mainOf(m));
+        p.reachable();
+        var Module.Function* staticInit = p.staticInit(initializers);
+        var (Value*, uint) classes = p.classTable();
+        var Module.Function* entry = p.programEntry(staticInit, p.functions.Get(Program::mainOf(m)).0);
+        var (Value*, uint) functionNames = p.functionNames();
+
+        var Module.Function* start = p.declare("zamrt_start", IrType::Void(), ArrList::[IrType*]New(11U, i32, ptr, ptr, i64, ptr, ptr, i64, ptr, i64, ptr, i64), true);
+        var Module.Function* cMain = p.module.AddFunction("main", IrType::Function(i32, ArrList::[IrType*]New(2U, i32, ptr), false));
+        var Builder* b = Builder::New(cMain);
+        b.At(cMain.AddBlock());
+        b.Call(start.ty, start.Ref(), ArrList::[Value*]New(11U, cMain.params.Get(0U), cMain.params.Get(1U), imageData.Ref(), Program::Word(bytes.Len()), entry.Ref(),
+            classes.0, Program::Word(classes.1), functionNames.0, Program::Word(functionNames.1), Value::Null(), Program::Word(0U)));
+        b.Unreachable();
+        return p.module;
+    }
+
+    // Word answers the 64-bit constant n
+    public static fun Value*(uint) Word = (n) {
+        return Value::Uint(IrType::Int(64U), n);
+    }
+
+    // Call calls the runtime function name through b
+    public fun Value*(Builder*, str, ArrList[Value*]*) Call = (b, name, args) {
+        var Module.Function* f = this.runtime.Get(name).0;
+        return b.Call(f.ty, f.Ref(), args);
+    }
+
+    // Name records the name and file a trace gives the next function compiled, answering its function id
+    public fun uint(str, ast.Decl*) Name = (name, decl) {
+        this.names.AddLast(name);
+        if(decl == null) {
+            this.files.AddLast("");
+        } else {
+            this.files.AddLast(this.model.Source(decl).path);
+        }
+        return this.names.Len();
+    }
+
+    // Text answers a private constant holding s and a NUL, one for each distinct s
+    public fun Module.Global*(str) Text = (s) {
+        var (Module.Global*, bool) found = this.texts.Get(s);
+        if(found.1) {
+            return found.0;
+        }
+        var (byte*, uint) text = Strs::ToBytes(s);
+        var byte* bytes = new(byte, text.1 + 1U);
+        for(var uint i = 0U; i < text.1; i++) {
+            bytes[i] = text.0[i];
+        }
+        bytes[text.1] = 0{byte};
+        var Module.Global* g = this.module.AddGlobal("zam.text." + this.unnamed{str}, IrType::Array(text.1 + 1U, IrType::Int(8U)), Value::Bytes(bytes, text.1 + 1U));
+        this.unnamed++;
+        g.constant = true;
+        g.linkage = "private";
+        this.texts.Put(s, g);
+        return g;
+    }
+
+    // Trapped records that a function was compiled as a trap, and why
+    public fun void(str) Trapped = (what) {
+        this.traps.AddLast(what);
+    }
+
+    // Rooted reports whether a local of t holds a value the collector visits
+    public fun bool(Type*) Rooted = (t) {
+        t = Program::stripConst(t);
+        switch(t.kind) {
+            case (Type.Kind::Primitive) {
+                var str k = t.Text();
+                return k == "str" || k == "any";
+            }
+            case (Type.Kind::Function)
+                return true;
+            case (Type.Kind::Wrapped) {
+                var Type.Wrapped* w = t{Type.Wrapped*};
+                if(w.wrap == ast.Type.Wrap::Thread) {
+                    return true;
+                }
+                var ast.Decl* d = Members::DeclOf(w.inner);
+                return w.wrap == ast.Type.Wrap::Pointer && d != null && (d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Abstract || d.kind == ast.Field.Kind::Interface);
+            }
+        }
+        return false;
+    }
+
+    // RootOf answers the frame root naming slot as holding a value of t
+    public fun Value*(uint, Type*) RootOf = (slot, t) {
+        var TypeIds.Instance* i = this.ids.Instance(t);
+        var IrType* i32 = IrType::Int(32U);
+        var Value* typeID = Value::Struct(this.typeIDType, ArrList::[Value*]New(3U,
+            Value::Uint(i32, i.typeID << 16U | i.genericID), Program::Word(i.arrayLength), Program::Word(i.tailedLength)));
+        return Value::Struct(this.rootType, ArrList::[Value*]New(4U, Value::Uint(i32, 0U), Value::Uint(i32, slot), Value::Uint(i32, 0U), typeID));
+    }
+
+    fun Module.Function*(str, IrType*, ArrList[IrType*]*, bool) declare = (name, returns, parameters, noreturn) {
+        var Module.Function* f = this.module.AddFunction(name, IrType::Function(returns, parameters, false));
+        if(noreturn) {
+            f.attributes.AddLast("noreturn");
+        }
+        this.runtime.Put(name, f);
+        return f;
+    }
+
+    // newFunction declares an internal function of the entry type named name
+    fun Module.Function*(str) newFunction = (name) {
+        var Module.Function* f = this.module.AddFunction(name, this.entryType);
+        f.linkage = "internal";
+        return f;
+    }
+
+    // functionFor answers the function method compiles to, declared the first time it is asked for
+    fun Module.Function*(ast.Field.Method*) functionFor = (method) {
+        var (Module.Function*, bool) found = this.functions.Get(method);
+        if(found.1) {
+            return found.0;
+        }
+        var Module.Function* fn = this.newFunction(this.qualified(this.model.Outer(method)) + "." + method.name.value{str});
+        this.functions.Put(method, fn);
+        var Pending* p = new(Pending);
+        p.method = method;
+        p.fn = fn;
+        this.pending.AddLast(p);
+        return fn;
+    }
+
+    // methodFunction answers the function owner's method compiles to
+    fun Module.Function*(ast.Field.Method*, Type*) methodFunction = (method, owner) {
+        var ast.Decl* outer = this.model.Outer(method);
+        var Type* instance = this.instantiating(owner, outer);
+        if(instance == null) {
+            return this.functionFor(method);
+        }
+        var str name = this.qualified(outer) + "[" + instance.Text() + "]." + method.name.value{str};
+        var (Module.Function*, bool) found = this.owned.Get(name);
+        if(found.1) {
+            return found.0;
+        }
+        var Module.Function* fn = this.newFunction(name);
+        this.owned.Put(name, fn);
+        var Pending* p = new(Pending);
+        p.method = method;
+        p.owner = instance;
+        p.fn = fn;
+        this.pending.AddLast(p);
+        return fn;
+    }
+
+    // strFunction answers the function the implicit Str of the struct or enum d compiles to
+    fun Module.Function*(ast.Decl*) strFunction = (d) {
+        var (Module.Function*, bool) found = this.strs.Get(d);
+        if(found.1) {
+            return found.0;
+        }
+        var Module.Function* fn = this.newFunction(this.qualified(d) + ".Str");
+        this.strs.Put(d, fn);
+        var Pending* p = new(Pending);
+        p.implicit = d;
+        p.fn = fn;
+        this.pending.AddLast(p);
+        return fn;
+    }
+
+    // instantiating answers the type, owner or one it inherits from, that instantiates the generic declaration template, or null
+    fun Type*(Type*, ast.Decl*) instantiating = (owner, template) {
+        for(var Type* t = owner; t != null; t = this.members.BaseOf(t)) {
+            var Type* bare = t;
+            if(bare.kind == Type.Kind::Tailed) {
+                bare = bare{Type.Tailed*}.inner;
+            }
+            if(bare.kind == Type.Kind::Generic && Members::DeclOf(bare) == template) {
+                return bare;
+            }
+        }
+        return null;
+    }
+
+    // emitPending compiles every function declared and not yet compiled, including those they ask for
+    fun void() emitPending = () {
+        for(; this.pending.Len() > 0U;) {
+            var Pending* next = this.pending.RemoveFirst();
+            if(next.method == null) {
+                var Function* e = Function::New(this, next.fn, next.implicit);
+                e.Named(this.qualified(next.implicit) + ".Str");
+                e.Unsupported("an implicit Str");
+                e.Finish();
+                continue;
+            }
+            var ast.Decl* outer = this.model.Outer(next.method);
+            var Function* e = Function::New(this, next.fn, outer);
+            e.Named(this.qualified(outer) + "." + next.method.name.value{str});
+            var Type* signature = this.model.TypeOf(next.method.signature);
+            if(next.owner != null && signature != null) {
+                signature = signature.Instantiate(Members::BindingsOf(next.owner), null);
+            }
+            if(signature == null || signature.kind != Type.Kind::Function) {
+                e.Unsupported("a method of this type");
+            } else if(next.method.body == null) {
+                e.Unsupported("method " + next.method.name.value{str} + " with no body");
+            } else {
+                var Type* receiver = null;
+                if(!ast.Modifier::Static.In(next.method.modifiers)) {
+                    var Type* self = next.owner;
+                    if(self == null) {
+                        self = this.members.SelfType(outer);
+                    }
+                    receiver = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, self);
+                }
+                e.Body(signature{Type.Function*}, receiver, next.method.parameters, next.method.body);
+            }
+            e.Finish();
+        }
+    }
+
+    // reachable compiles every function the program can reach
+    fun void() reachable = () {
+        for {
+            this.emitPending();
+            this.eachClass(false);
+            if(this.pending.Len() == 0U) {
+                return;
+            }
+        }
+    }
+
+    // eachClass gathers the class table entries of every class, struct and enum instance, declaring the functions they name
+    fun ArrList[Class*]*(bool) eachClass = (lay) {
+        var ArrList[Class*]* classes = ArrList::[Class*]New(0U);
+        var ArrList[Source*]* files = this.ids.Files();
+        for(var uint i = 0U; i < files.Len(); i++) {
+            this.visitClasses(files.Get(i).file.decl, classes, lay);
+        }
+        return classes;
+    }
+
+    fun void(ast.Decl*, ArrList[Class*]*, bool) visitClasses = (d, classes, lay) {
+        var bool strOnly = d.kind == ast.Field.Kind::Struct || d.kind == ast.Field.Kind::Enum;
+        if(d.kind == ast.Field.Kind::Class || strOnly) {
+            if(d.generics == null) {
+                this.addClass(this.members.SelfType(d), d, strOnly, classes, lay);
+            } else if(d.kind != ast.Field.Kind::Enum) {
+                var ArrList[Type*]* instances = this.ids.InstancesOf(d);
+                for(var uint i = 0U; i < instances.Len(); i++) {
+                    this.addClass(instances.Get(i), d, strOnly, classes, lay);
+                }
+            }
+        }
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Decl* nested = d.fields.Get(i){ast.Decl*};
+            if(nested != null) {
+                this.visitClasses(nested, classes, lay);
+            }
+        }
+    }
+
+    // addClass declares the functions the class table names for t, an instance of d, and lays its entry out when lay
+    fun void(Type*, ast.Decl*, bool, ArrList[Class*]*, bool) addClass = (t, d, strOnly, classes, lay) {
+        var ArrList[Members.Field*]* fields = this.layout.Of(t).fields;
+        var ArrList[Value*]* methods = ArrList::[Value*]New(0U);
+        var uint index = 0U;
+        var uint flags = 0U;
+        for(var uint i = 0U; i < fields.Len(); i++) {
+            var Members.Field* f = fields.Get(i);
+            if(!f.IsMethod()) {
+                continue;
+            }
+            if(strOnly && index > 0U) {
+                break;
+            }
+            var Value* fn = Value::Null();
+            if(f.field == null && f.name == "Str" && strOnly) {
+                fn = this.strFunction(d).Ref();
+            } else if(f.field != null) {
+                var ast.Field.Method* method = f.field{ast.Field.Method*};
+                if(method.body != null && method.generics == null && (strOnly || index <= 5U)) {
+                    fn = this.methodFunction(method, t).Ref();
+                }
+                if(!strOnly && f.name == "Mark" && !this.fromObj(method)) {
+                    flags = flags | 1U;
+                }
+                if(!strOnly && f.name == "Delete" && !this.fromObj(method)) {
+                    flags = flags | 2U;
+                }
+            }
+            methods.AddLast(fn);
+            index++;
+        }
+        if(!lay) {
+            return;
+        }
+        var uint count = methods.Len();
+        if(methods.Len() == 0U) {
+            methods.AddLast(Value::Null());
+        }
+        var Module.Global* table = this.module.AddGlobal(this.qualified(d) + ".methods." + this.unnamed{str}, IrType::Array(methods.Len(), IrType::Ptr()), Value::Array(IrType::Ptr(), methods));
+        this.unnamed++;
+        table.constant = true;
+        table.linkage = "private";
+        var TypeIds.Instance* id = this.ids.Instance(t);
+        var Class* c = new(Class);
+        c.short = id.typeID << 16U | id.genericID;
+        c.methods = table.Ref();
+        c.count = count;
+        c.flags = flags;
+        var uint at = classes.Len();
+        for(; at > 0U && classes.Get(at - 1U).short > c.short; at--) {}
+        classes.Add(at, c);
+    }
+
+    // fromObj reports whether method is Obj's own
+    fun bool(ast.Field.Method*) fromObj = (method) {
+        return this.model.Source(this.model.Outer(method)).path == ProjectParser::ObjPath;
+    }
+
+    // classTable lays out the class table, sorted by short id, answering where it lies and how many entries it has
+    fun (Value*, uint)() classTable = () {
+        var ArrList[Class*]* classes = this.eachClass(true);
+        if(classes.Len() == 0U) {
+            return (Value::Null(), 0U);
+        }
+        var IrType* i32 = IrType::Int(32U);
+        var IrType* entryType = IrType::Struct(ArrList::[IrType*]New(5U, i32, i32, IrType::Ptr(), IrType::Ptr(), i32));
+        var ArrList[Value*]* entries = ArrList::[Value*]New(0U);
+        for(var uint i = 0U; i < classes.Len(); i++) {
+            var Class* c = classes.Get(i);
+            entries.AddLast(Value::Struct(entryType, ArrList::[Value*]New(5U, Value::Uint(i32, c.short), Value::Uint(i32, c.count), c.methods, Value::Null(), Value::Uint(i32, c.flags))));
+        }
+        var Module.Global* table = this.module.AddGlobal("zam.classes", IrType::Array(entries.Len(), entryType), Value::Array(entryType, entries));
+        table.constant = true;
+        table.linkage = "private";
+        return (table.Ref(), classes.Len());
+    }
+
+    // staticInitializers compiles what every static member and enum value is initialized to
+    fun ArrList[Module.Function*]*() staticInitializers = () {
+        var ArrList[Module.Function*]* fns = ArrList::[Module.Function*]New(0U);
+        var ArrList[Source*]* files = this.ids.Files();
+        for(var uint pass = 0U; pass < 2U; pass++) {
+            for(var uint i = 0U; i < files.Len(); i++) {
+                var ArrList[ast.Field*]* fields = ArrList::[ast.Field*]New(0U);
+                this.collectStatics(files.Get(i).file.decl, fields);
+                for(var uint j = 0U; j < fields.Len(); j++) {
+                    var ast.Field* f = fields.Get(j);
+                    if(this.initializedFirst(f) != (pass == 0U)) {
+                        continue;
+                    }
+                    var ast.Decl* outer = this.model.Outer(f);
+                    var Module.Function* fn = this.newFunction("zam_static." + this.qualified(outer) + "." + f.name.value{str});
+                    var Function* e = Function::New(this, fn, outer);
+                    e.Named("<static init>");
+                    e.Safepoint();
+                    e.Unsupported("a static initializer");
+                    e.Finish();
+                    fns.AddLast(fn);
+                }
+            }
+        }
+        return fns;
+    }
+
+    // collectStatics gathers the static members and enum values of d and the declarations nested in it, in the order they are written
+    fun void(ast.Decl*, ArrList[ast.Field*]*) collectStatics = (d, fields) {
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f{ast.Decl*} != null) {
+                this.collectStatics(f{ast.Decl*}, fields);
+            } else if(f.kind == ast.Field.Kind::Value || (f.kind == ast.Field.Kind::Member && ast.Modifier::Static.In(f.modifiers))) {
+                var uint at = fields.Len();
+                for(; at > 0U && fields.Get(at - 1U).start.offset > f.start.offset; at--) {}
+                fields.Add(at, f);
+            }
+        }
+    }
+
+    // initializedFirst reports whether f is initialized before every other static
+    fun bool(ast.Field*) initializedFirst = (f) {
+        if(f.kind == ast.Field.Kind::Value) {
+            return f{ast.Field.Value*}.value != null;
+        }
+        var Type* t = this.model.TypeOf(f{ast.Field.Member*}.declared);
+        return t != null && t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Const;
+    }
+
+    // staticInit compiles what runs before main: each of initializers
+    fun Module.Function*(ArrList[Module.Function*]*) staticInit = (initializers) {
+        var Module.Function* fn = this.newFunction("zam_static_init");
+        var Function* e = Function::New(this, fn, this.model.Program().main);
+        e.Named("<static init>");
+        e.Safepoint();
+        for(var uint i = 0U; i < initializers.Len(); i++) {
+            e.CallEntry(initializers.Get(i).Ref());
+        }
+        e.Finish();
+        return fn;
+    }
+
+    // programEntry compiles the entry the runtime starts the program at: the static initializer, then main
+    fun Module.Function*(Module.Function*, Module.Function*) programEntry = (staticInit, main) {
+        var Module.Function* fn = this.module.AddFunction("zam_entry", this.entryType);
+        fn.linkage = "internal";
+        var Builder* b = Builder::New(fn);
+        b.At(fn.AddBlock());
+        var Value* none = Value::Null();
+        b.Call(this.entryType, staticInit.Ref(), ArrList::[Value*]New(4U, fn.params.Get(0U), none, none, none));
+        b.Call(this.entryType, main.Ref(), ArrList::[Value*]New(4U, fn.params.Get(0U), fn.params.Get(1U), fn.params.Get(2U), fn.params.Get(3U)));
+        b.RetVoid();
+        return fn;
+    }
+
+    // functionNames lays out what traces name every compiled function by, in function id order
+    fun (Value*, uint)() functionNames = () {
+        if(this.names.Len() == 0U) {
+            return (Value::Null(), 0U);
+        }
+        var IrType* entryType = IrType::Struct(ArrList::[IrType*]New(2U, IrType::Ptr(), IrType::Ptr()));
+        var ArrList[Value*]* entries = ArrList::[Value*]New(0U);
+        for(var uint i = 0U; i < this.names.Len(); i++) {
+            entries.AddLast(Value::Struct(entryType, ArrList::[Value*]New(2U, this.Text(this.names.Get(i)).Ref(), this.Text(this.files.Get(i)).Ref())));
+        }
+        var Module.Global* table = this.module.AddGlobal("zam_function_names", IrType::Array(entries.Len(), entryType), Value::Array(entryType, entries));
+        table.constant = true;
+        table.linkage = "private";
+        return (table.Ref(), entries.Len());
+    }
+
+    // projectNatives lays out the table the runtime finds the project's own natives in, each bound to the C function of its name
+    fun void(Arr[str]*) projectNatives = (names) {
+        var IrType* ptr = IrType::Ptr();
+        var IrType* entryType = IrType::Struct(ArrList::[IrType*]New(2U, ptr, ptr));
+        var IrType* nativeType = IrType::Function(IrType::Void(), ArrList::[IrType*]New(1U, ptr), false);
+        var ArrList[Value*]* entries = ArrList::[Value*]New(0U);
+        for(var uint i = 0U; i < names.Len(); i++) {
+            var str name = names.Get(i);
+            if(Strs::HasPrefix(name, "STD_")) {
+                continue;
+            }
+            var Module.Function* fn = this.module.AddFunction(name, nativeType);
+            entries.AddLast(Value::Struct(entryType, ArrList::[Value*]New(2U, this.Text(name).Ref(), fn.Ref())));
+        }
+        var uint count = entries.Len();
+        if(count == 0U) {
+            entries.AddLast(Value::Zero(entryType));
+        }
+        var Module.Global* table = this.module.AddGlobal("zamProjectNativeTable", IrType::Array(entries.Len(), entryType), Value::Array(entryType, entries));
+        table.constant = true;
+        var Module.Global* tableCount = this.module.AddGlobal("zamProjectNativeTableCount", IrType::Int(64U), Program::Word(count));
+        tableCount.constant = true;
+    }
+
+    // stdNatives lays out the standard library's tables of natives the program calls into, beyond the core one every program has
+    fun void(Arr[str]*, HashMap[str, str]*) stdNatives = (names, tables) {
+        var ArrList[str]* used = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < names.Len(); i++) {
+            var (str, bool) table = tables.Get(names.Get(i));
+            if(!table.1 || table.0 == Runtime::Core) {
+                continue;
+            }
+            var bool seen = false;
+            for(var uint j = 0U; j < used.Len() && !seen; j++) {
+                seen = used.Get(j) == table.0;
+            }
+            if(!seen) {
+                var uint at = used.Len();
+                for(; at > 0U && used.Get(at - 1U) > table.0; at--) {}
+                used.Add(at, table.0);
+            }
+        }
+        var IrType* ptr = IrType::Ptr();
+        var IrType* entryType = IrType::Struct(ArrList::[IrType*]New(2U, ptr, ptr));
+        var ArrList[Value*]* entries = ArrList::[Value*]New(0U);
+        for(var uint i = 0U; i < used.Len(); i++) {
+            var Module.Global* table = this.module.AddGlobal(used.Get(i), IrType::Int(8U), null);
+            var Module.Global* count = this.module.AddGlobal(used.Get(i) + "Count", IrType::Int(64U), null);
+            entries.AddLast(Value::Struct(entryType, ArrList::[Value*]New(2U, table.Ref(), count.Ref())));
+        }
+        var uint count = entries.Len();
+        if(count == 0U) {
+            entries.AddLast(Value::Zero(entryType));
+        }
+        var Module.Global* list = this.module.AddGlobal("zamStdNativeTables", IrType::Array(entries.Len(), entryType), Value::Array(entryType, entries));
+        list.constant = true;
+        var Module.Global* listCount = this.module.AddGlobal("zamStdNativeTableCount", IrType::Int(64U), Program::Word(count));
+        listCount.constant = true;
+    }
+
+    // qualified names d by the declarations it is nested in, outermost first
+    fun str(ast.Decl*) qualified = (d) {
+        var str name = d.name.value{str};
+        for(var ast.Decl* outer = this.model.Outer(d); outer != null; outer = this.model.Outer(outer)) {
+            name = outer.name.value{str} + "." + name;
+        }
+        return name;
+    }
+
+    // mainOf answers the static main of the main code declaration
+    static fun ast.Field.Method*(Model*) mainOf = (m) {
+        var ast.Decl* d = m.Program().main;
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field.Method* f = d.fields.Get(i){ast.Field.Method*};
+            if(f != null && ast.Modifier::Static.In(f.modifiers) && f.name.value{str} == "main") {
+                return f;
+            }
+        }
+        return null;
+    }
+
+    static fun Type*(Type*) stripConst = (t) {
+        if(t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Const) {
+            return t{Type.Wrapped*}.inner;
+        }
+        return t;
+    }
+}

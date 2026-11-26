@@ -1,0 +1,238 @@
+import std("data/list/ArrList.zam");
+import std("lang/Strs.zam");
+import "../../syntax/SourceErr.zam";
+import "../../syntax/Token.zam";
+import "../../syntax/TokenKind.zam";
+import ast = "../../syntax/ast/*";
+import "../../semantic/Members.zam";
+import "../../semantic/Type.zam";
+import "../ir/Builder.zam";
+import "../ir/IrType.zam";
+import "../ir/Module.zam";
+import "../ir/Value.zam";
+import "../Layout.zam";
+import "Program.zam";
+
+// Function compiles one function
+public class Function {
+    // headerWords is how many words of a frame come before its slots
+    static var uint$ headerWords = 3U;
+    // lineWord is the word of a frame its line is
+    static var uint$ lineWord = 2U;
+
+    var Program* p;
+    var Module.Function* fn;
+    var Builder* b;
+    // decl is the declaration the function is compiled in, whose file its lines are in
+    var ast.Decl* decl;
+    var Module.Block* entry;
+    var Module.Block* body;
+    var Module.Instr* alloca;
+    var str frame;
+    var Value* slots;
+    var Module.Global* info;
+    var uint slotCount;
+    var uint nextSlot;
+    var ArrList[Value*]* roots;
+    var uint functionID;
+    var Type* returns;
+    var uint returnSlot;
+    // reason is what the function could not compile, or "" while it can
+    var str reason;
+
+    // New starts the body of fn, compiled in decl
+    public static fun Function*(Program*, Module.Function*, ast.Decl*) New = (p, fn, decl) {
+        var Function* e = new(Function);
+        e.p = p;
+        e.fn = fn;
+        e.decl = decl;
+        e.roots = ArrList::[Value*]New(0U);
+        e.reason = "";
+        e.b = Builder::New(fn);
+        e.entry = fn.AddBlock();
+        e.body = fn.AddBlock();
+        e.b.At(e.entry);
+        e.frame = fn.Fresh();
+        e.alloca = e.b.Instr("");
+        e.info = p.module.AddGlobal(fn.name + ".frame", p.frameInfoType, Value::Zero(p.frameInfoType));
+        e.info.constant = true;
+        e.info.linkage = "private";
+        p.Call(e.b, "zamrt_frame_push", ArrList::[Value*]New(3U, e.threadValue(), e.frameValue(), e.info.Ref()));
+        e.slots = e.b.Gep(IrType::Int(64U), e.frameValue(), ArrList::[Value*]New(1U, Program::Word(Function::headerWords)), true);
+        e.b.At(e.body);
+        return e;
+    }
+
+    // Named gives the function the name a trace calls it by, in the file of the declaration it is compiled in
+    public fun void(str) Named = (name) {
+        this.functionID = this.p.Name(name, this.decl);
+    }
+
+    // Body compiles a body over the parameters of t named names, the receiver of type receiver ahead of them when there is one
+    public fun void(Type.Function*, Type*, ArrList[Token*]*, ast.Stmt*) Body = (t, receiver, names, body) {
+        var Value* args = this.fn.params.Get(2U);
+        var uint word = 0U;
+        if(receiver != null) {
+            this.copyArgument(args, word, receiver);
+            word++;
+        }
+        for(var uint i = 0U; i < t.parameters.Len() && this.reason == ""; i++) {
+            var Type* bound = Function::bound(t.parameters.Get(i));
+            if(this.p.layout.FieldInfo(bound).0 > Layout::Word) {
+                this.Unsupported("parameter of type " + bound.Text());
+                return;
+            }
+            this.copyArgument(args, word, bound);
+            word++;
+        }
+        this.p.Call(this.b, "zamrt_safepoint", ArrList::[Value*]New(1U, this.threadValue()));
+        if(t.returns.kind != Type.Kind::Primitive || t.returns{Type.Primitive*}.keyword != TokenKind::Void) {
+            if(this.p.layout.FieldInfo(t.returns).0 > Layout::Word) {
+                this.Unsupported("a return of type " + t.returns.Text());
+                return;
+            }
+            this.returns = t.returns;
+            this.returnSlot = this.local(t.returns);
+        }
+        this.stmt(body);
+    }
+
+    // Safepoint polls for a collection, which nothing may run before a function's values are rooted
+    public fun void() Safepoint = () {
+        this.p.Call(this.b, "zamrt_safepoint", ArrList::[Value*]New(1U, this.threadValue()));
+    }
+
+    // CallEntry calls fn, a compiled function, with no receiver, arguments or result
+    public fun void(Value*) CallEntry = (target) {
+        var Value* none = Value::Null();
+        this.b.Call(this.p.entryType, target, ArrList::[Value*]New(4U, this.threadValue(), none, none, none));
+    }
+
+    // Unsupported marks the function as one native compilation cannot compile yet, for why
+    public fun void(str) Unsupported = (why) {
+        if(this.reason == "") {
+            this.reason = why;
+        }
+    }
+
+    // Finish ends the function: returning from the end of its body and sizing its frame, or else replacing it with a trap
+    public fun void() Finish = () {
+        if(this.reason != "") {
+            this.trap();
+            return;
+        }
+        if(!this.b.Terminated()) {
+            this.fallthrough();
+        }
+        this.b.At(this.entry);
+        this.b.Br(this.body);
+        this.alloca.text = this.frame + " = alloca i64, i64 " + (Function::headerWords + this.slotCount){str};
+        var Value* rootTable = Value::Null();
+        if(this.roots.Len() > 0U) {
+            var Module.Global* table = this.p.module.AddGlobal(this.fn.name + ".roots", IrType::Array(this.roots.Len(), this.p.rootType), Value::Array(this.p.rootType, this.roots));
+            table.constant = true;
+            table.linkage = "private";
+            rootTable = table.Ref();
+        }
+        this.info.init = Value::Struct(this.p.frameInfoType, ArrList::[Value*]New(4U,
+            Program::Word(this.functionID), Program::Word(this.slotCount), Program::Word(this.roots.Len()), rootTable));
+    }
+
+    // trap replaces the function's body with one that ends the program saying why it could not be compiled
+    fun void() trap = () {
+        this.fn.blocks.Clear();
+        var str what = this.fn.name + ": " + this.reason;
+        var Module.Global* message = this.p.Text(what);
+        var Builder* b = Builder::New(this.fn);
+        b.At(this.fn.AddBlock());
+        this.p.Call(b, "zamrt_unsupported", ArrList::[Value*]New(2U, this.threadValue(), message.Ref()));
+        b.Unreachable();
+        this.p.Trapped(what);
+    }
+
+    fun void(ast.Stmt*) stmt = (s) {
+        if(s == null || this.reason != "") {
+            return;
+        }
+        if(s.kind != ast.Stmt.Kind::Block) {
+            this.at(s.start);
+        }
+        switch(s.kind) {
+            case (ast.Stmt.Kind::Block) {
+                var ArrList[ast.Stmt*]* statements = s{ast.Stmt.Block*}.statements;
+                for(var uint i = 0U; i < statements.Len() && !this.b.Terminated(); i++) {
+                    this.stmt(statements.Get(i));
+                }
+            }
+            case (ast.Stmt.Kind::Return) {
+                if(s{ast.Stmt.Value*}.value != null) {
+                    this.Unsupported("a return of a value");
+                    return;
+                }
+                this.fallthrough();
+            }
+        } else {
+            this.Unsupported("a statement of this kind");
+        }
+    }
+
+    // at records that the function is at the line tok lies on, for a trace to find
+    fun void(Token*) at = (tok) {
+        if(tok == null || this.decl == null) {
+            return;
+        }
+        var (uint, uint) position = SourceErr::Position(this.p.model.Source(this.decl).lineStarts, tok.offset);
+        var Value* line = this.b.Gep(IrType::Int(64U), this.frameValue(), ArrList::[Value*]New(1U, Program::Word(Function::lineWord)), true);
+        this.b.Store(Program::Word(position.0), line, true, 0U);
+    }
+
+    // fallthrough returns from the function, answering what its return slot holds
+    fun void() fallthrough = () {
+        if(this.returns != null) {
+            var Value* word = this.b.Load(IrType::Int(64U), this.slot(this.returnSlot), false, 0U);
+            this.b.Store(word, this.fn.params.Get(3U), false, 0U);
+        }
+        this.p.Call(this.b, "zamrt_frame_pop", ArrList::[Value*]New(2U, this.threadValue(), this.frameValue()));
+        this.b.RetVoid();
+    }
+
+    // copyArgument copies the argument word at word of args into a slot of a local of type t
+    fun void(Value*, uint, Type*) copyArgument = (args, word, t) {
+        var Value* from = this.b.Gep(IrType::Int(64U), args, ArrList::[Value*]New(1U, Program::Word(word)), true);
+        var Value* value = this.b.Load(IrType::Int(64U), from, false, 0U);
+        this.b.Store(value, this.slot(this.local(t)), false, 0U);
+    }
+
+    // local gives a local of type t a slot of its own, rooted when t is one the collector visits
+    fun uint(Type*) local = (t) {
+        var uint slot = this.nextSlot;
+        this.nextSlot++;
+        if(this.nextSlot > this.slotCount) {
+            this.slotCount = this.nextSlot;
+        }
+        if(this.p.Rooted(t)) {
+            this.roots.AddLast(this.p.RootOf(slot, t));
+        }
+        return slot;
+    }
+
+    fun Value*(uint) slot = (slot) {
+        return this.b.Gep(IrType::Int(64U), this.slots, ArrList::[Value*]New(1U, Program::Word(slot)), true);
+    }
+
+    fun Value*() threadValue = () {
+        return this.fn.params.Get(0U);
+    }
+
+    fun Value*() frameValue = () {
+        return Value::New(IrType::Ptr(), this.frame);
+    }
+
+    // bound answers the type a parameter of t is held as, a variadic arriving as a pointer
+    static fun Type*(Type*) bound = (t) {
+        if(t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Variadic) {
+            return Type.Wrapped::New(t.at, ast.Type.Wrap::Pointer, t{Type.Wrapped*}.inner);
+        }
+        return t;
+    }
+}

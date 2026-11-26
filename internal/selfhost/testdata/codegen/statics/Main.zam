@@ -1,0 +1,51 @@
+import std("io/local/File.zam");
+
+namespace Main {
+    class Cell {
+        var int value;
+    }
+
+    class Holder {
+        var bool flag;
+        var Cell cell;
+    }
+
+    class Run~ {
+        var int n;
+        var char[~] chars;
+    }
+
+    struct Pair {
+        var byte a;
+        var int b;
+    }
+
+    enum Color : int {
+        Red(1),
+        Green(2);
+
+        class Nested {
+            static var char sign = 'x';
+        }
+    }
+
+    var bool on = true;
+    var char letter = 'z';
+    var (int, byte) tuple;
+    var Pair pair;
+    var Cell cell;
+    var Cell[2] cells;
+    var Run~3 run;
+    var Holder holder;
+    var str greeting = "hi";
+
+    fun[T] T(T) Id = (x) {
+        return x;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int n = Main::[int]Id(1);
+        var str s = Main::[str]Id("there");
+        File::StdOut.WriteStr(Main::greeting + " " + s + "\n");
+    }
+}

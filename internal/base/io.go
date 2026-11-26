@@ -12,7 +12,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/zambozoo/zam/internal/std"
+	"github.com/zambozoo/zam/src/std"
 )
 
 const (

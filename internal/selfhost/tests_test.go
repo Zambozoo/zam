@@ -73,7 +73,7 @@ func zamTestErrors(t *testing.T, zam, target string) []string {
 	t.Helper()
 	var stderr bytes.Buffer
 	cmd := exec.Command(zam, "test", target)
-	cmd.Env = append(os.Environ(), "ZAM_STD="+filepath.Join(root, "internal", "std"), "ZAMPATH="+t.TempDir())
+	cmd.Env = append(os.Environ(), "ZAM_STD="+filepath.Join(root, "src", "std"), "ZAMPATH="+t.TempDir())
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	var exit *exec.ExitError

@@ -1,0 +1,9 @@
+import std("io/local/File.zam");
+
+namespace Main {
+    var str greeting = "hello";
+
+    fun void(uint, str...) main = (argC, argV) {
+        File::StdOut.WriteStr(Main::greeting + ", world\n");
+    }
+}

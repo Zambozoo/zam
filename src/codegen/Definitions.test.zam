@@ -1,0 +1,69 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "../semantic/Model.zam";
+import "../semantic/Semantic.zam";
+import "../semantic/Type.zam";
+import "Collect.zam";
+import "Definitions.zam";
+import "Layout.zam";
+import "Statics.zam";
+import "TypeIds.zam";
+
+public namespace DefinitionsTest {
+    private fun Model*(str) validated = (body) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + body + "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        return validated.0;
+    }
+
+    // word answers the little-endian word at index i of bytes
+    private fun uint(ArrList[byte]*, uint) word = (bytes, i) {
+        var uint w = 0U;
+        for(var uint k = 0U; k < 8U; k++) {
+            w = w | bytes.Get(8U * i + k){uint} << (8U * k);
+        }
+        return w;
+    }
+
+    public fun void(uint, str...) Records = (argC, argV) {
+        var Model* m = DefinitionsTest::validated(
+            "    struct Padded { var byte b; var int i; fun int() Get = () { return i; } }\n" +
+            "    struct Pair[A] { var A first; }\n" +
+            "    enum Code : int { A(1), B(2); }\n" +
+            "    static var Pair[str] pair;\n");
+        var TypeIds* ids = TypeIds::New(m, true);
+        var Layout* layout = Layout::New(m);
+        var Definitions* defs = Definitions::New(m, ids, layout, Statics::Lay(m, ids, layout, Collect::Run(m, ids)));
+
+        var ArrList[byte]* padded = defs.Of(TypeIds.Bucket::Struct{uint}, ids.Entries(TypeIds.Bucket::Struct{uint}).Get(0U));
+        Assert::[uint]Equal(2U, DefinitionsTest::word(padded, 0U));
+        Assert::[uint]Equal(2U, DefinitionsTest::word(padded, 1U));
+        Assert::[uint]Equal(16U, DefinitionsTest::word(padded, 2U));
+        Assert::[uint]Equal(0U, DefinitionsTest::word(padded, 3U));
+        Assert::[uint]Equal(0U, DefinitionsTest::word(padded, 6U));
+        Assert::[uint]Equal(3U << 16U << 32U, DefinitionsTest::word(padded, 7U));
+        Assert::[uint]Equal(8U, DefinitionsTest::word(padded, 10U));
+        Assert::[uint]Equal(4U << 16U << 32U, DefinitionsTest::word(padded, 11U));
+
+        var ArrList[byte]* pair = defs.Of(TypeIds.Bucket::GenericStruct{uint}, ids.Entries(TypeIds.Bucket::GenericStruct{uint}).Get(0U));
+        Assert::[uint]Equal(1U, DefinitionsTest::word(pair, 1U));
+        Assert::[uint]Equal(6U << 16U << 32U, DefinitionsTest::word(pair, 6U));
+
+        var ArrList[byte]* code = defs.Of(TypeIds.Bucket::Enum{uint}, ids.Entries(TypeIds.Bucket::Enum{uint}).Get(0U));
+        Assert::[uint]Equal(8U, DefinitionsTest::word(code, 2U));
+        Assert::[uint]Equal(2U, DefinitionsTest::word(code, 3U));
+        Assert::[uint]Equal(3U, DefinitionsTest::word(code, 4U));
+        Assert::[uint]Equal(4U << 16U, DefinitionsTest::word(code, 5U));
+    }
+}

@@ -1,0 +1,251 @@
+import std("data/list/ArrList.zam");
+import "IrType.zam";
+import "Quote.zam";
+import "Value.zam";
+
+// Module is a whole program in LLVM's textual IR
+public class Module {
+    // Global is a global variable or constant, declared when it has no initializer
+    public class Global {
+        public var str name;
+        public var IrType* ty;
+        public var bool constant;
+        // linkage is "", "private", "internal" or another linkage LLVM reads
+        public var str linkage;
+        public var bool unnamed;
+        public var uint align;
+        public var Value* init;
+
+        // Ref answers the global as a value: its address
+        public fun Value*() Ref = () {
+            return Value::New(IrType::Ptr(), "@" + Quote::Name(this.name));
+        }
+
+        public fun str() Text = () {
+            var str out = "@" + Quote::Name(this.name) + " = ";
+            if(this.init == null) {
+                out = out + "external ";
+            } else if(this.linkage != "") {
+                out = out + this.linkage + " ";
+            }
+            if(this.unnamed) {
+                out = out + "unnamed_addr ";
+            }
+            if(this.constant) {
+                out = out + "constant ";
+            } else {
+                out = out + "global ";
+            }
+            out = out + this.ty.Text();
+            if(this.init != null) {
+                out = out + " " + this.init.ref;
+            }
+            if(this.align != 0U) {
+                out = out + ", align " + this.align{str};
+            }
+            return out;
+        }
+    }
+
+    // Instr is one instruction of a block; a phi is kept open so incoming values can be added after it is built
+    public class Instr {
+        public var str text;
+        public var bool phi;
+        public var str result;
+        public var IrType* ty;
+        public var ArrList[Value*]* values;
+        public var ArrList[Block*]* blocks;
+
+        public fun str() Text = () {
+            if(!this.phi) {
+                return this.text;
+            }
+            var str out = this.result + " = phi " + this.ty.Text() + " ";
+            for(var uint i = 0U; i < this.values.Len(); i++) {
+                if(i > 0U) {
+                    out = out + ", ";
+                }
+                out = out + "[ " + this.values.Get(i).ref + ", %" + this.blocks.Get(i).name + " ]";
+            }
+            return out;
+        }
+    }
+
+    // Block is a label and the instructions under it
+    public class Block {
+        public var str name;
+        public var ArrList[Instr*]* instrs;
+        // terminated says the block already ends in a branch, a return or an unreachable
+        public var bool terminated;
+    }
+
+    // Function is a function, declared when it has no blocks
+    public class Function {
+        public var str name;
+        public var IrType* ty;
+        public var str linkage;
+        public var ArrList[str]* attributes;
+        public var ArrList[Value*]* params;
+        public var ArrList[Block*]* blocks;
+        var uint next;
+
+        // Ref answers the function as a value: its address
+        public fun Value*() Ref = () {
+            return Value::New(IrType::Ptr(), "@" + Quote::Name(this.name));
+        }
+
+        // AddBlock appends a block, labelled uniquely within the function
+        public fun Block*() AddBlock = () {
+            var Block* b = new(Block);
+            b.name = "b" + this.next{str};
+            this.next++;
+            b.instrs = ArrList::[Instr*]New(0U);
+            this.blocks.AddLast(b);
+            return b;
+        }
+
+        // Fresh answers a local name no other value of the function holds
+        public fun str() Fresh = () {
+            var str name = "%v" + this.next{str};
+            this.next++;
+            return name;
+        }
+
+        public fun str() Text = () {
+            var str head = "";
+            if(this.blocks.Len() == 0U) {
+                head = "declare ";
+            } else {
+                head = "define ";
+                if(this.linkage != "") {
+                    head = head + this.linkage + " ";
+                }
+            }
+            head = head + this.ty.returns.Text() + " @" + Quote::Name(this.name) + "(";
+            for(var uint i = 0U; i < this.ty.fields.Len(); i++) {
+                if(i > 0U) {
+                    head = head + ", ";
+                }
+                head = head + this.ty.fields.Get(i).Text();
+                if(this.blocks.Len() > 0U) {
+                    head = head + " " + this.params.Get(i).ref;
+                }
+            }
+            if(this.ty.variadic) {
+                if(this.ty.fields.Len() > 0U) {
+                    head = head + ", ";
+                }
+                head = head + "...";
+            }
+            head = head + ")";
+            for(var uint i = 0U; i < this.attributes.Len(); i++) {
+                head = head + " " + this.attributes.Get(i);
+            }
+            if(this.blocks.Len() == 0U) {
+                return head + "\n";
+            }
+            var str out = head + " {\n";
+            for(var uint i = 0U; i < this.blocks.Len(); i++) {
+                var Block* b = this.blocks.Get(i);
+                out = out + b.name + ":\n";
+                for(var uint j = 0U; j < b.instrs.Len(); j++) {
+                    out = out + "  " + b.instrs.Get(j).Text() + "\n";
+                }
+            }
+            return out + "}\n";
+        }
+    }
+
+    public var str triple;
+    public var str dataLayout;
+    var ArrList[IrType*]* structs;
+    var ArrList[Global*]* globals;
+    var ArrList[Function*]* functions;
+    var ArrList[str]* flags;
+
+    public static fun Module*() New = () {
+        var Module* m = new(Module);
+        m.triple = "";
+        m.dataLayout = "";
+        m.structs = ArrList::[IrType*]New(0U);
+        m.globals = ArrList::[Global*]New(0U);
+        m.functions = ArrList::[Function*]New(0U);
+        m.flags = ArrList::[str]New(0U);
+        return m;
+    }
+
+    // AddStruct adds a named struct of fields, answering its type
+    public fun IrType*(str, ArrList[IrType*]*) AddStruct = (name, fields) {
+        var IrType* t = IrType::Named(name);
+        t.fields = fields;
+        this.structs.AddLast(t);
+        return t;
+    }
+
+    // AddGlobal adds a global of t named name, defined by init, or declared when init is null
+    public fun Global*(str, IrType*, Value*) AddGlobal = (name, t, init) {
+        var Global* g = new(Global);
+        g.name = name;
+        g.ty = t;
+        g.linkage = "";
+        g.init = init;
+        this.globals.AddLast(g);
+        return g;
+    }
+
+    // AddFunction adds a function of t named name, declared until a block is added to it
+    public fun Function*(str, IrType*) AddFunction = (name, t) {
+        var Function* f = new(Function);
+        f.name = name;
+        f.ty = t;
+        f.linkage = "";
+        f.attributes = ArrList::[str]New(0U);
+        f.params = ArrList::[Value*]New(0U);
+        f.blocks = ArrList::[Block*]New(0U);
+        for(var uint i = 0U; i < t.fields.Len(); i++) {
+            f.params.AddLast(Value::New(t.fields.Get(i), "%p" + i{str}));
+        }
+        this.functions.AddLast(f);
+        return f;
+    }
+
+    // AddFlag adds a module flag of the given behavior, name and value
+    public fun void(uint, str, uint) AddFlag = (behavior, name, value) {
+        this.flags.AddLast("!{i32 " + behavior{str} + ", !\"" + name + "\", i32 " + value{str} + "}");
+    }
+
+    // Text spells the whole module
+    public fun str() Text = () {
+        var str out = "";
+        if(this.dataLayout != "") {
+            out = out + "target datalayout = \"" + this.dataLayout + "\"\n";
+        }
+        if(this.triple != "") {
+            out = out + "target triple = \"" + this.triple + "\"\n";
+        }
+        for(var uint i = 0U; i < this.structs.Len(); i++) {
+            var IrType* t = this.structs.Get(i);
+            out = out + "%" + Quote::Name(t.name) + " = type " + t.Body() + "\n";
+        }
+        for(var uint i = 0U; i < this.globals.Len(); i++) {
+            out = out + this.globals.Get(i).Text() + "\n";
+        }
+        for(var uint i = 0U; i < this.functions.Len(); i++) {
+            out = out + "\n" + this.functions.Get(i).Text();
+        }
+        if(this.flags.Len() > 0U) {
+            out = out + "\n!llvm.module.flags = !{";
+            for(var uint i = 0U; i < this.flags.Len(); i++) {
+                if(i > 0U) {
+                    out = out + ", ";
+                }
+                out = out + "!" + i{str};
+            }
+            out = out + "}\n";
+            for(var uint i = 0U; i < this.flags.Len(); i++) {
+                out = out + "!" + i{str} + " = " + this.flags.Get(i) + "\n";
+            }
+        }
+        return out;
+    }
+}

@@ -1,0 +1,66 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "../semantic/Model.zam";
+import "../semantic/Semantic.zam";
+import "Collect.zam";
+import "Layout.zam";
+import "Statics.zam";
+import "TypeIds.zam";
+
+public namespace StaticsTest {
+    private fun uint(ArrList[byte]*, uint) word = (bytes, at) {
+        var uint w = 0U;
+        for(var uint k = 0U; k < 8U; k++) {
+            w = w | bytes.Get(at + k){uint} << (8U * k);
+        }
+        return w;
+    }
+
+    public fun void(uint, str...) Layout = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam",
+            "public namespace Main {\n" +
+            "    class Cell { var int value; }\n" +
+            "    enum Color : int {\n" +
+            "        Red(1), Green(2);\n" +
+            "        class Nested { static var char sign = 'x'; }\n" +
+            "    }\n" +
+            "    static var bool on;\n" +
+            "    static var Cell cell;\n" +
+            "    static var Cell[2] cells;\n" +
+            "    static var str greeting = \"hi\";\n" +
+            "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        var Model* m = validated.0;
+        var TypeIds* ids = TypeIds::New(m, true);
+        var Statics* s = Statics::Lay(m, ids, Layout::New(m), Collect::Run(m, ids));
+        var ArrList[uint]* offsets = s.Offsets();
+        var ArrList[uint]* want = ArrList::[uint]New(10U, 24U, 32U, 56U, 104U, 112U, 120U, 128U, 136U, 144U, 0U);
+        if(Assert::[uint]Equal(want.Len(), offsets.Len())) {
+            for(var uint i = 0U; i < want.Len(); i++) {
+                Assert::[uint]Equal(want.Get(i), offsets.Get(i));
+            }
+        }
+        Assert::[uint]Equal(152U, s.Size());
+        Assert::[uint]Equal(7U, s.ValueSlot(m.Nested(m.Program().main, "Color")));
+        Assert::[uint]Equal(9U, s.LiteralSlot("hi"));
+        Assert::[uint]Equal(9U, s.Roots().Len());
+        var ArrList[byte]* image = s.Image();
+        Assert::[uint]Equal(32U, StaticsTest::word(image, 0U));
+        Assert::[uint]Equal(2U, StaticsTest::word(image, 8U));
+        Assert::[uint]Equal(36U, StaticsTest::word(image, 32U));
+        Assert::[uint]Equal(1U, StaticsTest::word(image, 40U) >> 32U);
+        Assert::[uint]Equal(36U, StaticsTest::word(image, 56U));
+        Assert::[uint]Equal(2U, StaticsTest::word(image, 64U) >> 32U);
+        Assert::[uint]Equal(4U | 32U | 24U << 8U, StaticsTest::word(image, 80U));
+        Assert::[uint]Equal(1U, StaticsTest::word(image, 88U) >> 32U);
+    }
+}

@@ -1,0 +1,57 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("io/local/FS.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "../../cli/Target.zam";
+import "../../syntax/MapSources.test.zam";
+import "../../syntax/ProjectParser.zam";
+import "../../semantic/Model.zam";
+import "../../semantic/Semantic.zam";
+import "../Layout.zam";
+import "../TypeIds.zam";
+import "../Zig.zam";
+import "../ir/Module.zam";
+import "Program.zam";
+
+public namespace ProgramTest {
+    private fun Module*(str) lowered = (body) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + body + "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        var Model* m = validated.0;
+        return Program::Lower(m, "", ArrList::[byte]New(3U, 1{byte}, 2{byte}, 3{byte}), TypeIds::New(m, true), Layout::New(m), Arr::[str]New(0U), HashMap::[str, str]New(0U));
+    }
+
+    public fun void(uint, str...) Empty = (argC, argV) {
+        var Module* m = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) {}\n");
+        var str text = m.Text();
+        Assert::True(Strs::Contains(text, "@zam_image = private constant [3 x i8] c\"\\01\\02\\03\", align 8\n"), text);
+        Assert::True(Strs::Contains(text, "@zamProjectNativeTableCount = constant i64 0\n"), text);
+        Assert::True(Strs::Contains(text, "@zamStdNativeTableCount = constant i64 0\n"), text);
+        Assert::True(Strs::Contains(text, "define internal void @Main.main(ptr %p0, ptr %p1, ptr %p2, ptr %p3) {\n"), text);
+        Assert::True(Strs::Contains(text, "@zamrt_frame_pop(ptr %p0, ptr %v"), text);
+        Assert::True(Strs::Contains(text, "define internal void @zam_entry("), text);
+        Assert::True(Strs::Contains(text, "@zamrt_start(i32 %p0, ptr %p1, ptr @zam_image, i64 3, ptr @zam_entry,"), text);
+
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            m.triple = host.0.triple;
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir());
+            Assert::True(object.1 == null, "the module does not compile");
+        }
+    }
+
+    public fun void(uint, str...) Traps = (argC, argV) {
+        var str text = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) { var int x = 1; }\n").Text();
+        Assert::True(Strs::Contains(text, "@zamrt_unsupported(ptr %p0, ptr @zam.text."), text);
+        Assert::True(Strs::Contains(text, "Main.main: a statement of this kind"), text);
+    }
+}

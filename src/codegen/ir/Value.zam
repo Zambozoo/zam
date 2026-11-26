@@ -1,0 +1,90 @@
+import std("data/list/ArrList.zam");
+import std("lang/Flts.zam");
+import "IrType.zam";
+import "Quote.zam";
+
+// Value is something an instruction can be handed: a local, a global, or a constant, with its type
+public class Value {
+    public var IrType* ty;
+    // ref is how the value is written where it is used
+    public var str ref;
+
+    public static fun Value*(IrType*, str) New = (t, ref) {
+        var Value* v = new(Value);
+        v.ty = t;
+        v.ref = ref;
+        return v;
+    }
+
+    // Typed spells the value with its type ahead of it, as an operand is written
+    public fun str() Typed = () {
+        return this.ty.Text() + " " + this.ref;
+    }
+
+    public static fun Value*(IrType*, int) Int = (t, v) {
+        return Value::New(t, v{str});
+    }
+
+    public static fun Value*(IrType*, uint) Uint = (t, v) {
+        return Value::New(t, v{str});
+    }
+
+    public static fun Value*(flt) Double = (v) {
+        return Value::New(IrType::Double(), "0x" + Quote::Hex(Flts::ToBits(v), 16U));
+    }
+
+    public static fun Value*() Null = () {
+        return Value::New(IrType::Ptr(), "null");
+    }
+
+    public static fun Value*(IrType*) Zero = (t) {
+        return Value::New(t, "zeroinitializer");
+    }
+
+    public static fun Value*(IrType*) Undef = (t) {
+        return Value::New(t, "undef");
+    }
+
+    // Array answers a constant array of element holding values
+    public static fun Value*(IrType*, ArrList[Value*]*) Array = (element, values) {
+        return Value::New(IrType::Array(values.Len(), element), "[" + Value::typedList(values) + "]");
+    }
+
+    // Bytes answers a constant array of the n bytes at b
+    public static fun Value*(byte*, uint) Bytes = (b, n) {
+        return Value::New(IrType::Array(n, IrType::Int(8U)), Quote::Bytes(b, n));
+    }
+
+    // Struct answers a constant of the struct t, named or literal, holding values
+    public static fun Value*(IrType*, ArrList[Value*]*) Struct = (t, values) {
+        if(values.Len() == 0U) {
+            return Value::New(t, "{}");
+        }
+        return Value::New(t, "{ " + Value::typedList(values) + " }");
+    }
+
+    // PtrToInt answers v, a constant pointer, as the integer t
+    public static fun Value*(Value*, IrType*) PtrToInt = (v, t) {
+        return Value::New(t, "ptrtoint (" + v.Typed() + " to " + t.Text() + ")");
+    }
+
+    // Gep answers the constant address the indices reach into base, an element of t
+    public static fun Value*(IrType*, Value*, ArrList[Value*]*) Gep = (t, base, indices) {
+        var str out = "getelementptr inbounds (" + t.Text() + ", " + base.Typed();
+        for(var uint i = 0U; i < indices.Len(); i++) {
+            out = out + ", " + indices.Get(i).Typed();
+        }
+        return Value::New(IrType::Ptr(), out + ")");
+    }
+
+    static fun str(ArrList[Value*]*) typedList = (values) {
+        var str out = "";
+        for(var uint i = 0U; i < values.Len(); i++) {
+            if(i > 0U) {
+                out = out + ", ";
+            }
+            out = out + values.Get(i).Typed();
+        }
+        return out;
+    }
+}

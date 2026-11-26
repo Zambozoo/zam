@@ -1,0 +1,116 @@
+import std("data/map/HashMap.zam");
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+
+// Runtime reads what the runtime's C sources say about the natives they answer
+public namespace Runtime {
+    // Core is the table of the natives every program links, whatever it calls
+    public var str$ Core = "zamNativeTable";
+
+    // Dir answers the runtime's directory: $ZAM_RUNTIME, or else a runtime directory beside std
+    public fun str(str) Dir = (std) {
+        var (str, bool) env = System::Env("ZAM_RUNTIME");
+        if(env.1 && env.0 != "") {
+            return FS::ToSlash(env.0);
+        }
+        return Paths::Join(Paths::Dir(std), "runtime");
+    }
+
+    // Tables answers, for each standard library native, the table of the runtime source that answers it
+    public fun (HashMap[str, str]*, Err*)(str) Tables = (dir) {
+        var HashMap[str, str]* tables = HashMap::[str, str]New(0U);
+        var str src = Paths::Join(dir, "src");
+        var (Arr[str]*, Err*) names = FS::ReadDir(src);
+        if(names.1 != null) {
+            return (null, names.1);
+        }
+        for(var uint i = 0U; i < names.0.Len(); i++) {
+            if(!Strs::HasSuffix(names.0.Get(i), ".c")) {
+                continue;
+            }
+            var (str, Err*) text = FS::ReadFile(Paths::Join(src, names.0.Get(i)));
+            if(text.1 != null) {
+                return (null, text.1);
+            }
+            var Err* err = Runtime::scan(text.0, tables);
+            if(err != null) {
+                return (null, err);
+            }
+        }
+        return (tables, null);
+    }
+
+    // Validate answers why one of names is not a native the program can call: a standard one no table answers, or another that is no C identifier
+    public fun Err*(Arr[str]*, HashMap[str, str]*) Validate = (names, tables) {
+        for(var uint i = 0U; i < names.Len(); i++) {
+            var str name = names.Get(i);
+            if(Strs::HasPrefix(name, "STD_")) {
+                if(!tables.Contains(name)) {
+                    return StrErr::New("native " + Strs::Quote(name) + " is not one the runtime answers");
+                }
+            } else if(!Runtime::symbol(name)) {
+                return StrErr::New("native " + Strs::Quote(name) + " is not a valid C identifier");
+            }
+        }
+        return null;
+    }
+
+    // scan records the natives each native table text declares
+    fun Err*(str, HashMap[str, str]*) scan = (text, tables) {
+        var str marker = "const ZamNativeEntry ";
+        var str rest = text;
+        for {
+            var (uint, bool) at = Strs::Index(rest, marker);
+            if(!at.1) {
+                return null;
+            }
+            rest = Strs::Slice(rest, at.0 + Strs::ByteLen(marker), Strs::ByteLen(rest));
+            var (uint, bool) open = Strs::Index(rest, "[] = {");
+            var (uint, bool) close = Strs::Index(rest, "};");
+            if(!open.1 || !close.1 || close.0 < open.0) {
+                continue;
+            }
+            var str table = Strs::Slice(rest, 0U, open.0);
+            if(!Strs::HasPrefix(table, "zam") || !Strs::HasSuffix(table, "NativeTable") || !Runtime::symbol(table)) {
+                continue;
+            }
+            var str body = Strs::Slice(rest, open.0, close.0);
+            for {
+                var (uint, bool) name = Strs::Index(body, "{\"STD_");
+                if(!name.1) {
+                    break;
+                }
+                body = Strs::Slice(body, name.0 + 2U, Strs::ByteLen(body));
+                var (uint, bool) end = Strs::Index(body, "\"");
+                var str entry = Strs::Slice(body, 0U, end.0);
+                var (str, bool) other = tables.Get(entry);
+                if(other.1) {
+                    return StrErr::New("native " + entry + " is answered by both " + other.0 + " and " + table);
+                }
+                tables.Put(entry, table);
+            }
+            rest = Strs::Slice(rest, close.0, Strs::ByteLen(rest));
+        }
+        return null;
+    }
+
+    // symbol reports whether name is a C identifier
+    fun bool(str) symbol = (name) {
+        var (byte*, uint) b = Strs::ToBytes(name);
+        if(b.1 == 0U || (b.0[0U] >= '0'{byte} && b.0[0U] <= '9'{byte})) {
+            return false;
+        }
+        for(var uint i = 0U; i < b.1; i++) {
+            var byte c = b.0[i];
+            if(!((c >= 'a'{byte} && c <= 'z'{byte}) || (c >= 'A'{byte} && c <= 'Z'{byte}) || (c >= '0'{byte} && c <= '9'{byte}) || c == '_'{byte})) {
+                return false;
+            }
+        }
+        return true;
+    }
+}

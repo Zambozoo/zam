@@ -1,0 +1,85 @@
+import std("io/local/File.zam");
+
+namespace Main {
+    interface Named {
+        fun str() Name;
+    }
+
+    abstract Shape {
+        virtual fun int() Sides;
+        fun str() Name = () {
+            return "shape";
+        }
+    }
+
+    class Square <: Shape* {
+        var int side;
+        fun int() Sides = () {
+            return 4;
+        }
+    }
+
+    interface Getter[T] {
+        fun T() Get;
+    }
+
+    interface Sided {
+        fun int() Sides;
+    }
+
+    class Cube <: Square* {
+        fun str() Name = () {
+            return "cube";
+        }
+    }
+
+    class Box[T] {
+        var T held;
+        fun T() Get = () {
+            return held;
+        }
+    }
+
+    enum Color : int {
+        Red(1),
+        Blue(2);
+    }
+
+    struct Point {
+        var int x;
+        var int y;
+        fun int() Sum = () {
+            return x + y;
+        }
+    }
+
+    struct Pair[A, B] {
+        var A first;
+        var B second;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Square* square = new(Square);
+        var Named* named = square;
+        var Box[int]* box = new(Box[int]);
+        var Getter[int]* getter = box;
+        var Getter[str]* words = new(Box[str]);
+        var Cube* cube = new(Cube);
+        var Sided* sided = cube;
+        var Named* cubed = cube;
+        var Point p;
+        p.x = box.Get() + square.Sides();
+        var (int, str) pair = (p.x, named.Name());
+        var (Point, char, byte) packed = (p, 'c', 1{byte});
+        var Pair[int, Point] near;
+        near.second = p;
+        var Pair[str, byte] far;
+        far.first = "far";
+        var int(int) twice = lambda int(int): (n) {
+            return n * 2;
+        };
+        if(Color::Red == Color::Blue) {
+            File::StdOut.WriteStr(pair.1 + "\n");
+        }
+    }
+}

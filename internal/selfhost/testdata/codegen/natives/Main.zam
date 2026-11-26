@@ -1,0 +1,26 @@
+import std("io/local/File.zam");
+import std("lang/Flts.zam");
+import std("lang/Strs.zam");
+
+namespace Main {
+    enum Level : str {
+        Low("low"),
+        High("high");
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var str out = "";
+        for(var uint i = 0U; i < 2U; out = out + "step") {
+            i++;
+        }
+        switch(argC) {
+            case (5U)
+                out = out + "five";
+        }
+        var str picked = argC > 1U ? "many" : "one";
+        var uint bits = Flts::ToBits(1.5);
+        var str text = Strs::Repeat("ab", 2U);
+        File::StdOut.WriteStr(text + picked + "\n");
+        File::StdOut.WriteStr(Level::High{str} + "\n");
+    }
+}

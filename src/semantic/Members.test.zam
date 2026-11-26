@@ -1,0 +1,66 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import ast = "../syntax/ast/*";
+import "Members.zam";
+import "Model.zam";
+import "Semantic.zam";
+
+public namespace MembersTest {
+    private fun Model*(str) validated = (body) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + body + "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        return validated.0;
+    }
+
+    // names answers the names of fields, in order
+    private fun str(ArrList[Members.Field*]*) names = (fields) {
+        var str out = "";
+        for(var uint i = 0U; i < fields.Len(); i++) {
+            if(i > 0U) {
+                out = out + " ";
+            }
+            out = out + fields.Get(i).name;
+        }
+        return out;
+    }
+
+    public fun void(uint, str...) ImplicitStr = (argC, argV) {
+        var Model* m = MembersTest::validated(
+            "    struct Bare { var int x; fun int() Get = () { return x; } }\n" +
+            "    struct Written { var int x; fun str() Str = () { return \"w\"; } }\n" +
+            "    enum Code { A; fun int() Get = () { return 0; } }\n" +
+            "    fun void(Bare) Use = (b) { var str s = b.Str(); }\n");
+        var Members* members = Members::New(m);
+        var ast.Decl* main = m.Program().main;
+        Assert::[str]Equal("Str x Get", MembersTest::names(members.OwnFields(members.SelfType(m.Nested(main, "Bare")))));
+        Assert::[str]Equal("Str x", MembersTest::names(members.OwnFields(members.SelfType(m.Nested(main, "Written")))));
+        Assert::[str]Equal("Str Get", MembersTest::names(members.OwnFields(members.SelfType(m.Nested(main, "Code")))));
+        Assert::True(members.Find(members.SelfType(m.Nested(main, "Bare")), "Str") != null, "Bare has no Str method");
+    }
+
+    public fun void(uint, str...) LayoutOrder = (argC, argV) {
+        var Model* m = MembersTest::validated(
+            "    abstract A { var int a; fun int() F = () { return 1; } }\n" +
+            "    abstract B <: A* { var int b; fun int() G = () { return 2; } }\n" +
+            "    class C <: B* { var int c; fun int() F = () { return 3; } }\n");
+        var Members* members = Members::New(m);
+        var ArrList[Members.Field*]* layout = members.Layout(members.SelfType(m.Nested(m.Program().main, "C")));
+        Assert::[str]Equal("a F b G c", MembersTest::names(layout));
+        var Members.Field* f = null;
+        for(var uint i = 0U; i < layout.Len(); i++) {
+            if(layout.Get(i).name == "F") {
+                f = layout.Get(i);
+            }
+        }
+        Assert::True(f != null && f.owner == m.Nested(m.Program().main, "C"), "F keeps A's slot but is not C's override");
+    }
+}

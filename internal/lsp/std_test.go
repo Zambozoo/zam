@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	protocol "github.com/tliron/glsp/protocol_3_16"
 	"github.com/zambozoo/zam/internal/base"
-	"github.com/zambozoo/zam/internal/std"
+	"github.com/zambozoo/zam/src/std"
 )
 
 // TestServerChecksStdSourceAsTheStdLibrary opens a file of a copy of the

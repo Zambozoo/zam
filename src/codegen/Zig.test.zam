@@ -1,0 +1,58 @@
+import std("data/list/ArrList.zam");
+import std("io/local/FS.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+import std("test/Assert.zam");
+import "../cli/Target.zam";
+import "Zig.zam";
+import "ir/Builder.zam";
+import "ir/IrType.zam";
+import "ir/Module.zam";
+import "ir/Value.zam";
+
+public namespace ZigTest {
+    public fun void(uint, str...) Host = (argC, argV) {
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            Assert::True(host.0.os == "macos" || host.0.os == "linux" || host.0.os == "windows", host.0.name);
+        }
+    }
+
+    public fun void(uint, str...) Compiles = (argC, argV) {
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(!Assert::True(host.1 == null, "zig reports no host")) {
+            return;
+        }
+        var Module* m = Module::New();
+        m.triple = host.0.triple;
+        var IrType* i64 = IrType::Int(64U);
+        var Module.Function* f = m.AddFunction("answer", IrType::Function(i64, ArrList::[IrType*]New(0U), false));
+        var Builder* b = Builder::New(f);
+        b.At(f.AddBlock());
+        b.Ret(Value::Int(i64, 42));
+        var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir());
+        if(!Assert::True(object.1 == null, "the module does not compile") || !Assert::True(object.0.Len() > 4U, "the object is empty")) {
+            return;
+        }
+        var uint b0 = object.0.Get(0U){uint};
+        var uint b1 = object.0.Get(1U){uint};
+        var bool macho = b0 == 207U && b1 == 250U;
+        var bool elf = b0 == 127U && b1 == 69U;
+        var bool coff = (b0 == 100U && b1 == 134U) || (b0 == 100U && b1 == 170U);
+        Assert::True(macho || elf || coff, "the object opens with no object file's magic");
+    }
+
+    public fun void(uint, str...) Refuses = (argC, argV) {
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(!Assert::True(host.1 == null, "zig reports no host")) {
+            return;
+        }
+        var Module* m = Module::New();
+        m.AddGlobal("broken", IrType::Named("Missing"), Value::Zero(IrType::Named("Missing")));
+        var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir());
+        if(Assert::True(object.1 != null, "IR naming an undefined type compiles")) {
+            Assert::True(Strs::Contains(object.1.Err(), "cannot compile the program's IR"), object.1.Err());
+        }
+    }
+}

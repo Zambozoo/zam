@@ -1,0 +1,250 @@
+import std("data/list/ArrList.zam");
+import ast = "../syntax/ast/*";
+import "../semantic/Members.zam";
+import "../semantic/Model.zam";
+import "../semantic/Subtyping.zam";
+import "../semantic/Type.zam";
+import "../semantic/TypeSet.zam";
+import "Layout.zam";
+import "PerfectHash.zam";
+import "Statics.zam";
+import "TypeIds.zam";
+
+// Definitions writes what the runtime is told about each declaration
+public class Definitions {
+    var Model* model;
+    var Members* members;
+    var TypeIds* ids;
+    var Layout* layout;
+    var Subtyping* subtyping;
+    var Statics* statics;
+
+    public static fun Definitions*(Model*, TypeIds*, Layout*, Statics*) New = (m, ids, layout, statics) {
+        var Definitions* d = new(Definitions);
+        d.model = m;
+        d.members = Members::New(m);
+        d.ids = ids;
+        d.layout = layout;
+        d.subtyping = Subtyping::New(m);
+        d.statics = statics;
+        return d;
+    }
+
+    // Of answers the definition of e, an entry of the declaration bucket numbered b
+    public fun ArrList[byte]*(uint, TypeIds.Entry*) Of = (b, e) {
+        var ArrList[byte]* out = ArrList::[byte]New(0U);
+        if(b == TypeIds.Bucket::Struct{uint}) {
+            this.structure(out, this.members.SelfType(e.decl));
+        } else if(b == TypeIds.Bucket::GenericStruct{uint}) {
+            this.structure(out, e.instance);
+        } else if(b == TypeIds.Bucket::Enum{uint}) {
+            this.enumeration(out, e.decl);
+        } else if(b == TypeIds.Bucket::Class{uint} || b == TypeIds.Bucket::Abstract{uint}) {
+            var Type* self = this.members.SelfType(e.decl);
+            this.structure(out, self);
+            this.supertypes(out, self);
+            if(b == TypeIds.Bucket::Class{uint}) {
+                this.dispatch(out, self);
+            }
+        } else if(b == TypeIds.Bucket::GenericClass{uint} || b == TypeIds.Bucket::GenericAbstract{uint}) {
+            this.generic(out, e.decl, b == TypeIds.Bucket::GenericClass{uint});
+        } else if(b == TypeIds.Bucket::Interface{uint}) {
+            this.supertypes(out, this.members.SelfType(e.decl));
+        } else {
+            var ArrList[Type*]* instances = this.ids.InstancesOf(e.decl);
+            Definitions::word(out, instances.Len());
+            for(var uint i = 0U; i < instances.Len(); i++) {
+                this.supertypes(out, instances.Get(i));
+            }
+        }
+        return out;
+    }
+
+    // structure writes the method and member counts, the instance and tail sizes, then the methods and members of t
+    fun void(ArrList[byte]*, Type*) structure = (out, t) {
+        var Layout.Shape* shape = this.layout.Of(t);
+        var ArrList[Members.Field*]* methods = Definitions::methodsOf(shape);
+        var ArrList[Members.Field*]* members = Definitions::membersOf(shape);
+        Definitions::word(out, methods.Len());
+        Definitions::word(out, members.Len());
+        Definitions::word(out, shape.size);
+        Definitions::word(out, shape.tail);
+        this.methodIDs(out, methods);
+        this.memberDefinitions(out, shape, members);
+    }
+
+    // enumeration writes an enum
+    fun void(ArrList[byte]*, ast.Decl*) enumeration = (out, d) {
+        var Layout.Shape* shape = this.layout.Of(this.members.SelfType(d));
+        var ArrList[Members.Field*]* methods = Definitions::methodsOf(shape);
+        var ArrList[Members.Field*]* members = Definitions::membersOf(shape);
+        var uint count = 0U;
+        var uint slot = 0U;
+        var uint primitive = 0U;
+        var Type* backing = null;
+        if(d{ast.Decl.Enum*}.primitive != null) {
+            backing = this.model.TypeOf(d{ast.Decl.Enum*}.primitive);
+        }
+        if(backing != null) {
+            for(var uint i = 0U; i < d.fields.Len(); i++) {
+                if(d.fields.Get(i).kind == ast.Field.Kind::Value) {
+                    count++;
+                }
+            }
+            primitive = Definitions::short(this.ids.Instance(backing));
+            slot = this.statics.ValueSlot(d);
+        }
+        Definitions::word(out, methods.Len());
+        Definitions::word(out, members.Len());
+        Definitions::word(out, shape.size);
+        Definitions::word(out, count);
+        Definitions::word(out, slot);
+        Definitions::word(out, primitive);
+        this.methodIDs(out, methods);
+        this.memberDefinitions(out, shape, members);
+    }
+
+    // generic writes a generic class or abstract
+    fun void(ArrList[byte]*, ast.Decl*, bool) generic = (out, d, isClass) {
+        var ArrList[Type*]* instances = this.ids.InstancesOf(d);
+        Definitions::word(out, Definitions::methodsOf(this.layout.Of(this.members.SelfType(d))).Len());
+        Definitions::word(out, instances.Len());
+        var ArrList[Type*]* open = ArrList::[Type*]New(0U);
+        var (TypeSet*, bool) recorded = this.model.OpenTypes().Get(d);
+        if(recorded.1) {
+            for(var uint i = 0U; i < recorded.0.Len(); i++) {
+                open.AddLast(recorded.0.Get(i));
+            }
+        }
+        open = this.ids.Ordered(open);
+        for(var uint i = 0U; i < instances.Len(); i++) {
+            var Type* instance = instances.Get(i);
+            var Layout.Shape* shape = this.layout.Of(instance);
+            var ArrList[Members.Field*]* methods = Definitions::methodsOf(shape);
+            var ArrList[Members.Field*]* members = Definitions::membersOf(shape);
+            Definitions::word(out, shape.size);
+            Definitions::word(out, shape.tail);
+            Definitions::word(out, open.Len());
+            Definitions::word(out, members.Len());
+            Definitions::word(out, methods.Len());
+            for(var uint k = 0U; k < open.Len(); k++) {
+                this.typeInstance(out, open.Get(k).Instantiate(Members::BindingsOf(instance), null));
+            }
+            this.memberDefinitions(out, shape, members);
+            this.methodIDs(out, methods);
+            this.supertypes(out, instance);
+            if(isClass) {
+                this.dispatch(out, instance);
+            }
+        }
+    }
+
+    // supertypes writes the perfect hash of every type a value of t may be read as
+    fun void(ArrList[byte]*, Type*) supertypes = (out, t) {
+        var ArrList[uint]* keys = ArrList::[uint]New(0U);
+        keys.AddLast(Definitions::short(this.ids.Instance(t)));
+        for(var Type* base = this.members.BaseOf(t); base != null; base = this.members.BaseOf(base)) {
+            keys.AddLast(Definitions::short(this.ids.Instance(base)));
+        }
+        var ArrList[Type*]* interfaces = this.implemented(t);
+        for(var uint i = 0U; i < interfaces.Len(); i++) {
+            keys.AddLast(Definitions::short(this.ids.Instance(interfaces.Get(i))));
+        }
+        PerfectHash::Write(out, keys, keys);
+    }
+
+    // dispatch writes the perfect hash of every interface method t implements, keyed by the interface and the method's index in it, to the index of t's method implementing it
+    fun void(ArrList[byte]*, Type*) dispatch = (out, t) {
+        var ArrList[Members.Field*]* own = Definitions::methodsOf(this.layout.Of(t));
+        var ArrList[uint]* keys = ArrList::[uint]New(0U);
+        var ArrList[uint]* values = ArrList::[uint]New(0U);
+        var ArrList[Type*]* interfaces = this.implemented(t);
+        for(var uint i = 0U; i < interfaces.Len(); i++) {
+            var uint iface = Definitions::short(this.ids.Instance(interfaces.Get(i)));
+            var ArrList[Members.Field*]* asked = Definitions::methodsOf(this.layout.Of(interfaces.Get(i)));
+            for(var uint k = 0U; k < asked.Len(); k++) {
+                for(var uint j = 0U; j < own.Len(); j++) {
+                    if(own.Get(j).name == asked.Get(k).name) {
+                        keys.AddLast(iface << 32U | k);
+                        values.AddLast(j);
+                    }
+                }
+            }
+        }
+        PerfectHash::Write(out, keys, values);
+    }
+
+    // implemented answers the interfaces t implements
+    fun ArrList[Type*]*(Type*) implemented = (t) {
+        var Type* template = this.members.SelfType(Members::DeclOf(t));
+        var ArrList[Type*]* interfaces = ArrList::[Type*]New(0U);
+        var ArrList[Model.Implementation*]* all = this.model.Implements();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            var Model.Implementation* impl = all.Get(i);
+            if(!this.subtyping.Equal(impl.implementor, t) && !this.subtyping.Equal(impl.implementor, template)) {
+                continue;
+            }
+            var bool seen = false;
+            for(var uint j = 0U; j < interfaces.Len() && !seen; j++) {
+                seen = this.subtyping.Equal(interfaces.Get(j), impl.iface);
+            }
+            if(!seen) {
+                interfaces.AddLast(impl.iface);
+            }
+        }
+        return interfaces;
+    }
+
+    fun void(ArrList[byte]*, ArrList[Members.Field*]*) methodIDs = (out, methods) {
+        for(var uint i = 0U; i < methods.Len(); i++) {
+            Definitions::word(out, this.ids.Instance(methods.Get(i).signature).typeID);
+        }
+    }
+
+    fun void(ArrList[byte]*, Layout.Shape*, ArrList[Members.Field*]*) memberDefinitions = (out, shape, members) {
+        for(var uint i = 0U; i < members.Len(); i++) {
+            Definitions::word(out, shape.offsets.Get(members.Get(i).name).0);
+            this.typeInstance(out, members.Get(i).signature);
+        }
+    }
+
+    // typeInstance writes the three words t is named by
+    fun void(ArrList[byte]*, Type*) typeInstance = (out, t) {
+        var TypeIds.Instance* i = this.ids.Instance(t);
+        Definitions::word(out, Definitions::short(i) << 32U);
+        Definitions::word(out, i.arrayLength);
+        Definitions::word(out, i.tailedLength);
+    }
+
+    // short answers the type id and generic id of i packed into one half word
+    static fun uint(TypeIds.Instance*) short = (i) {
+        return i.typeID << 16U | i.genericID;
+    }
+
+    static fun ArrList[Members.Field*]*(Layout.Shape*) methodsOf = (shape) {
+        var ArrList[Members.Field*]* methods = ArrList::[Members.Field*]New(0U);
+        for(var uint i = 0U; i < shape.fields.Len(); i++) {
+            if(shape.fields.Get(i).IsMethod()) {
+                methods.AddLast(shape.fields.Get(i));
+            }
+        }
+        return methods;
+    }
+
+    static fun ArrList[Members.Field*]*(Layout.Shape*) membersOf = (shape) {
+        var ArrList[Members.Field*]* members = ArrList::[Members.Field*]New(0U);
+        for(var uint i = 0U; i < shape.fields.Len(); i++) {
+            if(!shape.fields.Get(i).IsMethod()) {
+                members.AddLast(shape.fields.Get(i));
+            }
+        }
+        return members;
+    }
+
+    // word appends w to out as a little-endian word
+    static fun void(ArrList[byte]*, uint) word = (out, w) {
+        for(var uint i = 0U; i < 8U; i++) {
+            out.AddLast((w >> (8U * i) & 255U){byte});
+        }
+    }
+}

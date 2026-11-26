@@ -1,0 +1,76 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "../semantic/Members.zam";
+import "../semantic/Model.zam";
+import "../semantic/Semantic.zam";
+import "../semantic/Type.zam";
+import "Layout.zam";
+
+public namespace LayoutTest {
+    private fun Model*(str) validated = (body) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + body + "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        return validated.0;
+    }
+
+    public fun void(uint, str...) Primitives = (argC, argV) {
+        var Model* m = LayoutTest::validated("");
+        var Layout* l = Layout::New(m);
+        Assert::[uint]Equal(1U, l.FieldInfo(Type.Primitive::New(null, TokenKind::Bool)).0);
+        Assert::[uint]Equal(4U, l.FieldInfo(Type.Primitive::New(null, TokenKind::Char)).1);
+        Assert::[uint]Equal(24U, l.FieldInfo(Type.Primitive::New(null, TokenKind::Type)).0);
+        Assert::[uint]Equal(0U, l.FieldInfo(Type.Primitive::New(null, TokenKind::Void)).0);
+        Assert::[uint]Equal(8U, l.FieldInfo(Type.Primitive::New(null, TokenKind::String)).0);
+    }
+
+    public fun void(uint, str...) Declarations = (argC, argV) {
+        var Model* m = LayoutTest::validated(
+            "    struct Padded { var byte b; var int i; var char c; }\n" +
+            "    class Holder { var bool flag; var Padded inline; }\n" +
+            "    enum Code { A; }\n" +
+            "    struct Run~ { var int n; var char[~] cells; }\n" +
+            "    class Node~ { var byte b; var Run~ run; }\n");
+        var Layout* l = Layout::New(m);
+        var Members* members = Members::New(m);
+        var ast.Decl* main = m.Program().main;
+        var Layout.Shape* padded = l.Of(members.SelfType(m.Nested(main, "Padded")));
+        Assert::[uint]Equal(24U, padded.size);
+        Assert::[uint]Equal(8U, padded.offsets.Get("i").0);
+        Assert::[uint]Equal(16U, padded.offsets.Get("c").0);
+        var Layout.Shape* holder = l.Of(members.SelfType(m.Nested(main, "Holder")));
+        Assert::[uint]Equal(48U, holder.size);
+        Assert::[uint]Equal(0U, holder.offsets.Get("flag").0);
+        Assert::[uint]Equal(8U, holder.offsets.Get("inline").0);
+        Assert::[uint]Equal(8U, l.Of(members.SelfType(m.Nested(main, "Code"))).size);
+        var Layout.Shape* run = l.Of(members.SelfType(m.Nested(main, "Run")));
+        Assert::[uint]Equal(16U, run.size);
+        Assert::[uint]Equal(4U, run.tail);
+        Assert::[uint]Equal(8U, run.offsets.Get("cells").0);
+        var Layout.Shape* node = l.Of(members.SelfType(m.Nested(main, "Node")));
+        Assert::[uint]Equal(32U, node.size);
+        Assert::[uint]Equal(4U, node.tail);
+        Assert::[uint]Equal(8U, node.offsets.Get("run").0);
+    }
+
+    public fun void(uint, str...) Tuples = (argC, argV) {
+        var Model* m = LayoutTest::validated("");
+        var Layout* l = Layout::New(m);
+        var (uint, uint, ArrList[uint]*) tuple = l.Tuple(Type.Tuple::New(null, ArrList::[Type*]New(3U, Type.Primitive::New(null, TokenKind::Byte), Type.Primitive::New(null, TokenKind::Char), Type.Primitive::New(null, TokenKind::Int))));
+        Assert::[uint]Equal(16U, tuple.0);
+        Assert::[uint]Equal(8U, tuple.1);
+        Assert::[uint]Equal(0U, tuple.2.Get(0U));
+        Assert::[uint]Equal(4U, tuple.2.Get(1U));
+        Assert::[uint]Equal(8U, tuple.2.Get(2U));
+    }
+}

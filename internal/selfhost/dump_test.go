@@ -74,7 +74,7 @@ func zamDump(t *testing.T, zam, entry string) []string {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command(zam, arguments(entry, false)[1:]...)
-	cmd.Env = append(os.Environ(), "ZAM_STD="+filepath.Join(root, "internal", "std"), "ZAM_DUMP=semantic")
+	cmd.Env = append(os.Environ(), "ZAM_STD="+filepath.Join(root, "src", "std"), "ZAM_DUMP=semantic")
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()

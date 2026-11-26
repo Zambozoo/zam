@@ -1,0 +1,364 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("lang/Iter.zam");
+import "../syntax/Source.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "../semantic/Canonical.zam";
+import "../semantic/Members.zam";
+import "../semantic/Model.zam";
+import "../semantic/Type.zam";
+import "../semantic/TypeSet.zam";
+
+// TypeIds numbers every type the runtime knows
+public class TypeIds {
+    // Bucket is a run of definitions whose type ids are consecutive
+    public enum Bucket : uint {
+        Thread(0U),
+        Function(1U),
+        Pointer(2U),
+        Tuple(3U),
+        Struct(4U),
+        GenericStruct(5U),
+        Enum(6U),
+        Class(7U),
+        GenericClass(8U),
+        Abstract(9U),
+        GenericAbstract(10U),
+        Interface(11U),
+        GenericInterface(12U);
+    }
+
+    // Entry is one definition of a declaration bucket: the declaration, and the ground instance it describes for a generic struct
+    public class Entry {
+        public var ast.Decl* decl;
+        public var Type* instance;
+    }
+
+    // Instance is what names a type on the wire
+    public class Instance {
+        public var uint typeID;
+        public var uint genericID;
+        public var uint arrayLength;
+        public var uint tailedLength;
+    }
+
+    // Reserved is how many type ids the primitives hold below every definition
+    public static var uint$ Reserved = 11U;
+
+    var Model* model;
+    // lengths is how many definitions each bucket holds, in bucket order
+    var ArrList[uint]* lengths;
+    // interned maps each thread, function, pointer and tuple type, by canonical text, onto its index among them
+    var HashMap[str, uint]* interned;
+    // indices maps each declaration onto its index within its bucket
+    var HashMap[ast.Decl*, uint]* indices;
+    // concretes maps each ground instance, by canonical text, onto its index in the generic struct bucket or its generic id
+    var HashMap[str, uint]* concretes;
+    // decls is every declaration with a definition, in the order buckets are filled
+    var ArrList[ast.Decl*]* decls;
+    // internedTypes is the thread, function, pointer and tuple types, each bucket in id order
+    var ArrList[ArrList[Type*]*]* internedTypes;
+    // entries is each bucket's definitions in id order, empty for the interned buckets
+    var ArrList[ArrList[Entry*]*]* entries;
+    // canonical says the lists the passes filled are put in canonical order
+    var bool canonical;
+    // files is the files that declare something, by path
+    var ArrList[Source*]* files;
+
+    // New numbers the types of the program m models, putting the lists the passes filled in canonical order when canonical
+    public static fun TypeIds*(Model*, bool) New = (m, canonical) {
+        var TypeIds* ids = new(TypeIds);
+        ids.model = m;
+        ids.lengths = ArrList::[uint]New(0U);
+        ids.interned = HashMap::[str, uint]New(0U);
+        ids.indices = HashMap::[ast.Decl*, uint]New(0U);
+        ids.concretes = HashMap::[str, uint]New(0U);
+        ids.decls = ArrList::[ast.Decl*]New(0U);
+        ids.internedTypes = ArrList::[ArrList[Type*]*]New(0U);
+        ids.entries = ArrList::[ArrList[Entry*]*]New(0U);
+        ids.canonical = canonical;
+        for(var uint b = 0U; b < 13U; b++) {
+            ids.lengths.AddLast(0U);
+            ids.entries.AddLast(ArrList::[Entry*]New(0U));
+        }
+        ids.intern(Bucket::Thread, m.ThreadTypes(), canonical);
+        ids.intern(Bucket::Function, m.FunctionTypes(), canonical);
+        ids.intern(Bucket::Pointer, m.PointerTypes(), canonical);
+        ids.intern(Bucket::Tuple, m.TupleTypes(), canonical);
+        ids.files = TypeIds::sortedFiles(m);
+        for(var uint i = 0U; i < ids.files.Len(); i++) {
+            ids.visit(ids.files.Get(i).file.decl, canonical);
+        }
+        return ids;
+    }
+
+    // Start answers the type id the bucket numbered b begins at
+    public fun uint(uint) Start = (b) {
+        var uint start = TypeIds::Reserved;
+        for(var uint k = 0U; k < b; k++) {
+            start = start + this.lengths.Get(k);
+        }
+        return start;
+    }
+
+    // Count answers how many type ids there are, primitives among them
+    public fun uint() Count = () {
+        return this.Start(Bucket::GenericInterface{uint}) + this.lengths.Get(Bucket::GenericInterface{uint});
+    }
+
+    // Instance answers what names t on the wire, its variadic and const peeled, and its tail and array lengths counted
+    public fun Instance*(Type*) Instance = (t) {
+        var Instance* i = new(Instance);
+        for {
+            if(t.kind == Type.Kind::Wrapped && (t{Type.Wrapped*}.wrap == ast.Type.Wrap::Variadic || t{Type.Wrapped*}.wrap == ast.Type.Wrap::Const)) {
+                t = t{Type.Wrapped*}.inner;
+            } else if(t.kind == Type.Kind::Tailed) {
+                if(t{Type.Tailed*}.sized) {
+                    i.tailedLength = t{Type.Tailed*}.size;
+                }
+                t = t{Type.Tailed*}.inner;
+            } else if(t.kind == Type.Kind::Array) {
+                if(t{Type.Array*}.sized) {
+                    i.arrayLength = t{Type.Array*}.size;
+                }
+                t = t{Type.Array*}.inner;
+            } else {
+                break;
+            }
+        }
+        switch(t.kind) {
+            case (Type.Kind::Primitive)
+                i.typeID = TypeIds::primitive(t{Type.Primitive*}.keyword);
+            case (Type.Kind::Function, Type.Kind::Wrapped, Type.Kind::Tuple)
+                i.typeID = this.internedID(t);
+            case (Type.Kind::Named)
+                i.typeID = this.declID(t{Type.Named*}.decl);
+            case (Type.Kind::Generic) {
+                var ast.Decl* d = Members::DeclOf(t);
+                var uint at = this.concretes.Get(Canonical::Text(this.model, t)).0;
+                if(d.kind == ast.Field.Kind::Struct) {
+                    i.typeID = this.Start(Bucket::GenericStruct{uint}) + at;
+                } else {
+                    i.typeID = this.declID(d);
+                    i.genericID = at;
+                }
+            }
+        }
+        return i;
+    }
+
+    // internedID answers the type id of a thread, function, pointer or tuple type
+    fun uint(Type*) internedID = (t) {
+        return TypeIds::Reserved + this.interned.Get(Canonical::Text(this.model, t)).0;
+    }
+
+    // declID answers the type id of a declaration with a definition of its own
+    fun uint(ast.Decl*) declID = (d) {
+        return this.Start(TypeIds::bucketOf(d){uint}) + this.indices.Get(d).0;
+    }
+
+    // intern numbers the types of set as the next run of the interned buckets
+    fun void(Bucket, TypeSet*, bool) intern = (b, set, canonical) {
+        var ArrList[Type*]* types = this.ordered(TypeIds::all(set), canonical);
+        var uint base = this.interned.Len();
+        for(var uint i = 0U; i < types.Len(); i++) {
+            this.interned.Put(Canonical::Text(this.model, types.Get(i)), base + i);
+        }
+        this.lengths.Set(b{uint}, types.Len());
+        this.internedTypes.AddLast(types);
+    }
+
+    // Interned answers the types of the thread, function, pointer or tuple bucket numbered b, in id order
+    public fun ArrList[Type*]*(uint) Interned = (b) {
+        return this.internedTypes.Get(b);
+    }
+
+    // visit numbers d and the declarations nested in it, d first
+    fun void(ast.Decl*, bool) visit = (d, canonical) {
+        if(d.kind != ast.Field.Kind::Alias && d.kind != ast.Field.Kind::Namespace) {
+            var Bucket b = TypeIds::bucketOf(d);
+            if(b == Bucket::GenericStruct) {
+                var ArrList[Type*]* instances = this.InstancesOf(d);
+                for(var uint i = 0U; i < instances.Len(); i++) {
+                    this.concretes.Put(Canonical::Text(this.model, instances.Get(i)), this.lengths.Get(b{uint}));
+                    this.lengths.Set(b{uint}, this.lengths.Get(b{uint}) + 1U);
+                    this.entry(b, d, instances.Get(i));
+                }
+            } else {
+                this.indices.Put(d, this.lengths.Get(b{uint}));
+                this.lengths.Set(b{uint}, this.lengths.Get(b{uint}) + 1U);
+                this.decls.AddLast(d);
+                this.entry(b, d, null);
+                if(d.generics != null) {
+                    var ArrList[Type*]* instances = this.InstancesOf(d);
+                    for(var uint i = 0U; i < instances.Len(); i++) {
+                        this.concretes.Put(Canonical::Text(this.model, instances.Get(i)), i);
+                    }
+                }
+            }
+        }
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Decl* nested = d.fields.Get(i){ast.Decl*};
+            if(nested != null) {
+                this.visit(nested, canonical);
+            }
+        }
+    }
+
+    // Files answers the files of the program that declare something, by path, which is the order everything after the type ids walks them in
+    public fun ArrList[Source*]*() Files = () {
+        return this.files;
+    }
+
+    // Entries answers the definitions of the declaration bucket numbered b, in id order
+    public fun ArrList[Entry*]*(uint) Entries = (b) {
+        return this.entries.Get(b);
+    }
+
+    // Ordered answers types in canonical order when this numbering asks for it, and as they are otherwise
+    public fun ArrList[Type*]*(ArrList[Type*]*) Ordered = (types) {
+        return this.ordered(types, this.canonical);
+    }
+
+    fun void(Bucket, ast.Decl*, Type*) entry = (b, d, instance) {
+        var Entry* e = new(Entry);
+        e.decl = d;
+        e.instance = instance;
+        this.entries.Get(b{uint}).AddLast(e);
+    }
+
+    // MethodInstancesOf answers the ground instances of the generic static method method, in canonical order when this numbering asks for it
+    public fun ArrList[Model.MethodInstance*]*(ast.Field.Method*) MethodInstancesOf = (method) {
+        var ArrList[Model.MethodInstance*]* instances = ArrList::[Model.MethodInstance*]New(0U);
+        var ArrList[str]* keys = ArrList::[str]New(0U);
+        var ArrList[Model.MethodInstance*]* all = this.model.MethodInstances();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            if(all.Get(i).method != method) {
+                continue;
+            }
+            var str key = Canonical::Texts(this.model, all.Get(i).arguments);
+            var uint at = instances.Len();
+            if(this.canonical) {
+                for(; at > 0U && keys.Get(at - 1U) > key; at--) {}
+            }
+            keys.Add(at, key);
+            instances.Add(at, all.Get(i));
+        }
+        return instances;
+    }
+
+    // InstancesOf answers the ground instances of the generic declaration d, in generic id order
+    public fun ArrList[Type*]*(ast.Decl*) InstancesOf = (d) {
+        var bool canonical = this.canonical;
+        var ArrList[Type*]* instances = ArrList::[Type*]New(0U);
+        var ArrList[Type*]* all = this.model.Instances();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            if(Members::DeclOf(all.Get(i)) == d) {
+                instances.AddLast(all.Get(i));
+            }
+        }
+        return this.ordered(instances, canonical);
+    }
+
+    // ordered answers types in canonical order when canonical, and as they are otherwise
+    fun ArrList[Type*]*(ArrList[Type*]*, bool) ordered = (types, canonical) {
+        if(!canonical) {
+            return types;
+        }
+        var ArrList[str]* keys = ArrList::[str]New(0U);
+        var ArrList[Type*]* sorted = ArrList::[Type*]New(0U);
+        for(var uint i = 0U; i < types.Len(); i++) {
+            var str key = Canonical::Text(this.model, types.Get(i));
+            var uint at = keys.Len();
+            for(; at > 0U && keys.Get(at - 1U) > key; at--) {}
+            keys.Add(at, key);
+            sorted.Add(at, types.Get(i));
+        }
+        return sorted;
+    }
+
+    // sortedFiles answers the files of the program m models that declare something, by path
+    static fun ArrList[Source*]*(Model*) sortedFiles = (m) {
+        var ArrList[Source*]* files = ArrList::[Source*]New(0U);
+        var Iter[(str, Source*)]* all = m.Program().sources.Iter();
+        for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
+            var Source* s = next.0.1;
+            if(s.file.decl == null) {
+                continue;
+            }
+            var uint at = files.Len();
+            for(; at > 0U && files.Get(at - 1U).path > s.path; at--) {}
+            files.Add(at, s);
+        }
+        return files;
+    }
+
+    static fun ArrList[Type*]*(TypeSet*) all = (set) {
+        var ArrList[Type*]* types = ArrList::[Type*]New(0U);
+        if(set != null) {
+            for(var uint i = 0U; i < set.Len(); i++) {
+                types.AddLast(set.Get(i));
+            }
+        }
+        return types;
+    }
+
+    // bucketOf answers the bucket d's definition is built into
+    static fun Bucket(ast.Decl*) bucketOf = (d) {
+        var bool generic = d.generics != null;
+        switch(d.kind) {
+            case (ast.Field.Kind::Struct) {
+                if(generic) {
+                    return Bucket::GenericStruct;
+                }
+                return Bucket::Struct;
+            }
+            case (ast.Field.Kind::Enum)
+                return Bucket::Enum;
+            case (ast.Field.Kind::Class) {
+                if(generic) {
+                    return Bucket::GenericClass;
+                }
+                return Bucket::Class;
+            }
+            case (ast.Field.Kind::Abstract) {
+                if(generic) {
+                    return Bucket::GenericAbstract;
+                }
+                return Bucket::Abstract;
+            }
+        }
+        if(generic) {
+            return Bucket::GenericInterface;
+        }
+        return Bucket::Interface;
+    }
+
+    // primitive answers the type id of the primitive keyword names, which is its kind's number
+    static fun uint(TokenKind) primitive = (keyword) {
+        switch(keyword) {
+            case (TokenKind::Void)
+                return 0U;
+            case (TokenKind::Bool)
+                return 1U;
+            case (TokenKind::Char)
+                return 2U;
+            case (TokenKind::Byte)
+                return 3U;
+            case (TokenKind::Int)
+                return 4U;
+            case (TokenKind::Float)
+                return 5U;
+            case (TokenKind::String)
+                return 6U;
+            case (TokenKind::Type)
+                return 7U;
+            case (TokenKind::Any)
+                return 8U;
+            case (TokenKind::Uint)
+                return 9U;
+        }
+        return 10U;
+    }
+}

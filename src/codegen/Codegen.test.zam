@@ -1,0 +1,41 @@
+import std("data/list/ArrList.zam");
+import std("test/Assert.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "../semantic/Model.zam";
+import "../semantic/Semantic.zam";
+import "Codegen.zam";
+
+public namespace CodegenTest {
+    public fun void(uint, str...) Hex = (argC, argV) {
+        Assert::[str]Equal("", Codegen::Hex(ArrList::[byte]New(0U)));
+        Assert::[str]Equal("00ff0a7f80", Codegen::Hex(ArrList::[byte]New(5U, 0{byte}, 255{byte}, 10{byte}, 127{byte}, 128{byte})));
+    }
+
+    // mainErr answers what checking the entry of a program holding body says
+    private fun Err*(str) mainErr = (body) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + body + "}\n"));
+        if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
+            Assert::Fatal(parsed.1.Get(0U).Err());
+        }
+        var (Model*, ArrList[Err*]*) validated = Semantic::Validate(parsed.0);
+        for(var uint i = 0U; i < validated.1.Len(); i++) {
+            Assert::True(false, validated.1.Get(i).Err());
+        }
+        return Codegen::Main(validated.0);
+    }
+
+    public fun void(uint, str...) Main = (argC, argV) {
+        var Err* missing = CodegenTest::mainErr("    fun void() Other = () {}\n");
+        if(Assert::True(missing != null, "a program without main is accepted")) {
+            Assert::True(Strs::HasPrefix(missing.Err(), "main method not found in main code declaration Main ("), missing.Err());
+        }
+        var Err* wrong = CodegenTest::mainErr("    fun int() main = () { return 0; }\n");
+        if(Assert::True(wrong != null, "a main of the wrong type is accepted")) {
+            Assert::True(Strs::HasPrefix(wrong.Err(), "main method Main::main is of type \"int()\", not \"void(uint, str...)\" ("), wrong.Err());
+        }
+        Assert::True(CodegenTest::mainErr("    fun void(uint, str...) main = (argC, argV) {}\n") == null, "a valid main is refused");
+    }
+}

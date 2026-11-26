@@ -1,0 +1,39 @@
+import std("data/list/ArrList.zam");
+import std("test/Assert.zam");
+import "PerfectHash.zam";
+
+public namespace PerfectHashTest {
+    // resolves checks every one of n keys spread far apart resolves to its own value
+    private fun void(uint) resolves = (n) {
+        var ArrList[uint]* keys = ArrList::[uint]New(0U);
+        var ArrList[uint]* values = ArrList::[uint]New(0U);
+        for(var uint i = 0U; i < n; i++) {
+            keys.AddLast((i + 1U) * 2654435761U << 16U | i);
+            values.AddLast(i * 7U);
+        }
+        var PerfectHash* h = PerfectHash::Build(keys, values);
+        for(var uint i = 0U; i < n; i++) {
+            Assert::[uint]Equal(values.Get(i), h.Lookup(keys.Get(i)));
+        }
+        Assert::[uint]Equal(3U * n, h.Len());
+        var ArrList[byte]* out = ArrList::[byte]New(0U);
+        PerfectHash::Write(out, keys, values);
+        Assert::[uint]Equal(PerfectHash::ByteCount(n), out.Len());
+    }
+
+    public fun void(uint, str...) Lookups = (argC, argV) {
+        PerfectHashTest::resolves(1U);
+        PerfectHashTest::resolves(2U);
+        PerfectHashTest::resolves(7U);
+        PerfectHashTest::resolves(100U);
+    }
+
+    public fun void(uint, str...) Empty = (argC, argV) {
+        var ArrList[byte]* out = ArrList::[byte]New(0U);
+        PerfectHash::Write(out, ArrList::[uint]New(0U), ArrList::[uint]New(0U));
+        Assert::[uint]Equal(24U, out.Len());
+        for(var uint i = 0U; i < out.Len(); i++) {
+            Assert::[uint]Equal(0U, out.Get(i){uint});
+        }
+    }
+}

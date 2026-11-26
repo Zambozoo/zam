@@ -1,0 +1,349 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import "../syntax/Source.zam";
+import ast = "../syntax/ast/*";
+import "../semantic/Canonical.zam";
+import "../semantic/Members.zam";
+import "../semantic/Model.zam";
+import "../semantic/Type.zam";
+import "Collect.zam";
+import "Layout.zam";
+import "Strings.zam";
+import "TypeIds.zam";
+
+// Statics lays out the static region
+public class Statics {
+    // Root is a slot the collector reads the static region by, and the type of what lies in it
+    public class Root {
+        public var uint slot;
+        public var Type* bound;
+    }
+
+    // InlineClass is the class a location holds inline, and how many of it lie in a row
+    class InlineClass {
+        var Type* bound;
+        var uint count;
+        var uint stride;
+        var uint tail;
+    }
+
+    var Model* model;
+    var TypeIds* ids;
+    var Layout* layout;
+    // offsets is each slot's byte offset in the static region
+    var ArrList[uint]* offsets;
+    // literals is which slots hold literals, which stay put when the statics move past them
+    var ArrList[bool]* literal;
+    var HashMap[ast.Field*, uint]* fields;
+    var HashMap[str, uint]* instances;
+    var HashMap[ast.Decl*, uint]* values;
+    var HashMap[str, uint]* strings;
+    var ArrList[Root*]* roots;
+    var ArrList[byte]* image;
+    var uint cursor;
+    var uint align;
+    var uint size;
+
+    // Lay lays out the statics of the program m models, then the literals collected, ahead of them all
+    public static fun Statics*(Model*, TypeIds*, Layout*, Collect*) Lay = (m, ids, layout, collected) {
+        var Statics* s = new(Statics);
+        s.model = m;
+        s.ids = ids;
+        s.layout = layout;
+        s.offsets = ArrList::[uint]New(0U);
+        s.literal = ArrList::[bool]New(0U);
+        s.fields = HashMap::[ast.Field*, uint]New(0U);
+        s.instances = HashMap::[str, uint]New(0U);
+        s.values = HashMap::[ast.Decl*, uint]New(0U);
+        s.strings = HashMap::[str, uint]New(0U);
+        s.roots = ArrList::[Root*]New(0U);
+        s.image = ArrList::[byte]New(0U);
+        var ArrList[Source*]* files = ids.Files();
+        for(var uint i = 0U; i < files.Len(); i++) {
+            s.decl(files.Get(i).file.decl);
+        }
+        s.size = s.cursor;
+        s.literals(collected.Literals());
+        return s;
+    }
+
+    public fun ArrList[uint]*() Offsets = () {
+        return this.offsets;
+    }
+
+    public fun ArrList[byte]*() Image = () {
+        return this.image;
+    }
+
+    public fun ArrList[Root*]*() Roots = () {
+        return this.roots;
+    }
+
+    // Size answers how many bytes of static region the program needs
+    public fun uint() Size = () {
+        return this.size;
+    }
+
+    // FieldSlot answers the slot of a static member, a static method or an enum value
+    public fun uint(ast.Field*) FieldSlot = (f) {
+        return this.fields.Get(f).0;
+    }
+
+    // InstanceSlot answers the slot of the instance of the generic static method method of owner given arguments
+    public fun uint(ast.Decl*, ast.Field.Method*, ArrList[Type*]*) InstanceSlot = (owner, method, arguments) {
+        return this.instances.Get(this.instanceKey(owner, method, arguments)).0;
+    }
+
+    // ValueSlot answers the slot of the first primitive an enum's values are backed by
+    public fun uint(ast.Decl*) ValueSlot = (d) {
+        return this.values.Get(d).0;
+    }
+
+    // LiteralSlot answers the slot of a string literal
+    public fun uint(str) LiteralSlot = (s) {
+        return this.strings.Get(s).0;
+    }
+
+    // decl lays out d's static fields as written, then the declarations nested in it, then an enum's primitive values
+    fun void(ast.Decl*) decl = (d) {
+        if(d.kind == ast.Field.Kind::Alias) {
+            return;
+        }
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f{ast.Decl*} != null) {
+                continue;
+            }
+            if(f.kind == ast.Field.Kind::Value) {
+                this.value(d, f);
+            } else if(ast.Modifier::Static.In(f.modifiers) && f.kind == ast.Field.Kind::Member) {
+                this.member(f{ast.Field.Member*});
+            } else if(ast.Modifier::Static.In(f.modifiers) && f.kind == ast.Field.Kind::Method) {
+                this.method(d, f{ast.Field.Method*});
+            }
+        }
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Decl* nested = d.fields.Get(i){ast.Decl*};
+            if(nested != null) {
+                this.decl(nested);
+            }
+        }
+        if(d.kind == ast.Field.Kind::Enum && d{ast.Decl.Enum*}.primitive != null) {
+            this.primitives(d);
+        }
+    }
+
+    fun void(ast.Field.Member*) member = (f) {
+        var Type* t = this.model.TypeOf(f.declared);
+        var (uint, uint) info = this.layout.FieldInfo(t);
+        var uint slot = this.slot(info.1);
+        this.fields.Put(f, slot);
+        this.root(slot, t);
+        this.stamp(this.cursor, t);
+        this.cursor = this.cursor + info.0;
+    }
+
+    fun void(ast.Decl*, ast.Field.Method*) method = (owner, f) {
+        var Type* signature = this.model.TypeOf(f.signature);
+        if(f.generics == null) {
+            var uint slot = this.slot(Layout::Word);
+            this.fields.Put(f, slot);
+            this.root(slot, signature);
+            this.cursor = this.cursor + Layout::Word;
+            return;
+        }
+        var ArrList[Model.MethodInstance*]* instances = this.ids.MethodInstancesOf(f);
+        for(var uint i = 0U; i < instances.Len(); i++) {
+            var Model.MethodInstance* instance = instances.Get(i);
+            var uint slot = this.slot(Layout::Word);
+            this.instances.Put(this.instanceKey(owner, f, instance.arguments), slot);
+            var HashMap[ast.Generic*, Type*]* bindings = HashMap::[ast.Generic*, Type*]New(0U);
+            for(var uint k = 0U; k < f.generics.Len() && k < instance.arguments.Len(); k++) {
+                bindings.Put(f.generics.Get(k), instance.arguments.Get(k));
+            }
+            this.root(slot, signature.Instantiate(bindings, null));
+            this.cursor = this.cursor + Layout::Word;
+        }
+    }
+
+    fun void(ast.Decl*, ast.Field*) value = (d, f) {
+        var Type* enumeration = Type.Named::New(null, d, d.name.value{str}, "");
+        var Layout.Shape* shape = this.layout.Of(enumeration);
+        var uint slot = this.slot(shape.align);
+        this.fields.Put(f, slot);
+        this.root(slot, enumeration);
+        this.cursor = this.cursor + shape.size;
+    }
+
+    // primitives lays the primitives an enum's values are backed by back to back, in declaration order
+    fun void(ast.Decl*) primitives = (d) {
+        var Type* primitive = this.model.TypeOf(d{ast.Decl.Enum*}.primitive);
+        var (uint, uint) info = this.layout.FieldInfo(primitive);
+        this.alignTo(info.1);
+        this.values.Put(d, this.offsets.Len());
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            if(d.fields.Get(i).kind != ast.Field.Kind::Value) {
+                continue;
+            }
+            var uint slot = this.offsets.Len();
+            this.offsets.AddLast(this.cursor);
+            this.literal.AddLast(false);
+            this.root(slot, primitive);
+            this.cursor = this.cursor + info.0;
+        }
+    }
+
+    // literals lays each literal out in a region of its own, then moves every static past it
+    fun void(ArrList[str]*) literals = (all) {
+        if(all.Len() == 0U) {
+            return;
+        }
+        var ArrList[byte]* region = ArrList::[byte]New(0U);
+        for(var uint i = 0U; i < all.Len(); i++) {
+            this.strings.Put(all.Get(i), this.offsets.Len());
+            this.offsets.AddLast(region.Len());
+            this.literal.AddLast(true);
+            Strings::Interned(region, all.Get(i));
+        }
+        var uint widest = this.align;
+        if(widest < Layout::Word) {
+            widest = Layout::Word;
+        }
+        var uint shift = Layout::AlignUp(region.Len(), widest);
+        for(var uint i = 0U; i < this.offsets.Len(); i++) {
+            if(!this.literal.Get(i)) {
+                this.offsets.Set(i, this.offsets.Get(i) + shift);
+            }
+        }
+        if(this.image.Len() > 0U) {
+            for(; region.Len() < shift;) {
+                region.AddLast(0{byte});
+            }
+            for(var uint i = 0U; i < this.image.Len(); i++) {
+                region.AddLast(this.image.Get(i));
+            }
+        }
+        this.image = region;
+        this.size = this.size + shift;
+    }
+
+    // slot aligns the cursor to align and gives the next slot the offset it lands on
+    fun uint(uint) slot = (align) {
+        this.alignTo(align);
+        var uint slot = this.offsets.Len();
+        this.offsets.AddLast(this.cursor);
+        this.literal.AddLast(false);
+        return slot;
+    }
+
+    fun void(uint) alignTo = (align) {
+        this.cursor = Layout::AlignUp(this.cursor, align);
+        if(align > this.align) {
+            this.align = align;
+        }
+    }
+
+    // root records slot as holding a value of t, unless t is still open in a template
+    fun void(uint, Type*) root = (slot, t) {
+        if(t == null || Type::ContainsParam(t)) {
+            return;
+        }
+        var Root* r = new(Root);
+        r.slot = slot;
+        r.bound = t;
+        this.roots.AddLast(r);
+    }
+
+    // stamp writes the headers a value of t held at offset begins with, if it holds a class inline
+    fun void(uint, Type*) stamp = (offset, t) {
+        var InlineClass* value = this.inlineClassOf(t);
+        if(value != null) {
+            this.stampInline(offset, value, value.count, 0U);
+        }
+    }
+
+    // stampInline writes a run's headers, then the headers of each element's class members, then those of each element behind the front
+    fun void(uint, InlineClass*, uint, uint) stampInline = (offset, value, count, back) {
+        var bool tailed = value.tail != 0U;
+        var uint kind = 1U;
+        var uint header = 2U * Layout::Word;
+        if(tailed) {
+            kind = 2U;
+            header = 3U * Layout::Word;
+        }
+        var TypeIds.Instance* id = this.ids.Instance(value.bound);
+        this.put(offset, kind << 2U | 1U << 5U | back << 8U);
+        this.put(offset + Layout::Word, (id.typeID << 16U | id.genericID) | count << 32U);
+        if(tailed) {
+            this.put(offset + 2U * Layout::Word, value.tail);
+        }
+        var Layout.Shape* shape = this.layout.Of(value.bound);
+        for(var uint i = 0U; i < shape.fields.Len(); i++) {
+            var Members.Field* f = shape.fields.Get(i);
+            if(f.IsMethod()) {
+                continue;
+            }
+            var InlineClass* member = this.inlineClassOf(f.signature);
+            if(member == null) {
+                continue;
+            }
+            var uint at = header + shape.offsets.Get(f.name).0;
+            this.stampInline(offset + at, member, member.count, at);
+        }
+        for(var uint index = 1U; index < count; index++) {
+            var uint at = index * value.stride;
+            this.stampInline(offset + at, value, 1U, at);
+        }
+    }
+
+    // inlineClassOf answers the class a location of t holds inline, through sized arrays and tails, or null
+    fun InlineClass*(Type*) inlineClassOf = (t) {
+        var InlineClass* value = new(InlineClass);
+        value.count = 1U;
+        var Type* element = t;
+        for {
+            if(t.kind == Type.Kind::Wrapped && (t{Type.Wrapped*}.wrap == ast.Type.Wrap::Variadic || t{Type.Wrapped*}.wrap == ast.Type.Wrap::Const)) {
+                t = t{Type.Wrapped*}.inner;
+            } else if(t.kind == Type.Kind::Tailed) {
+                if(!t{Type.Tailed*}.sized) {
+                    return null;
+                }
+                value.tail = t{Type.Tailed*}.size;
+                t = t{Type.Tailed*}.inner;
+            } else if(t.kind == Type.Kind::Array) {
+                if(!t{Type.Array*}.sized) {
+                    return null;
+                }
+                value.count = value.count * t{Type.Array*}.size;
+                element = t{Type.Array*}.inner;
+                t = t{Type.Array*}.inner;
+            } else {
+                break;
+            }
+        }
+        if(t.kind != Type.Kind::Named && t.kind != Type.Kind::Generic) {
+            return null;
+        }
+        var ast.Decl* d = Members::DeclOf(t);
+        if(d == null || d.kind != ast.Field.Kind::Class) {
+            return null;
+        }
+        value.bound = t;
+        value.stride = this.layout.FieldInfo(element).0;
+        return value;
+    }
+
+    // put writes w as the little-endian word at offset of the image, growing it with zeroes to reach it
+    fun void(uint, uint) put = (offset, w) {
+        for(; this.image.Len() < offset + 8U;) {
+            this.image.AddLast(0{byte});
+        }
+        for(var uint i = 0U; i < 8U; i++) {
+            this.image.Set(offset + i, (w >> (8U * i) & 255U){byte});
+        }
+    }
+
+    fun str(ast.Decl*, ast.Field.Method*, ArrList[Type*]*) instanceKey = (owner, method, arguments) {
+        return Canonical::Decl(this.model, owner) + "::" + method.name.value{str} + "[" + Canonical::Texts(this.model, arguments) + "]";
+    }
+}

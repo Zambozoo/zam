@@ -12,10 +12,10 @@ version=$2
 platform=$3
 cd "$(dirname "$0")/../.."
 
-# The directories internal/std/std.go embeds.
+# The directories src/std/std.go embeds.
 rm -rf dist/std
 mkdir -p dist/std
-(cd internal/std && cp -R ./*.yml codec crypto data io lang math sync test ../../dist/std/)
+(cd src/std && cp -R ./*.yml codec crypto data io lang math sync test ../../dist/std/)
 
 case $(uname -s) in
 MINGW* | MSYS*)

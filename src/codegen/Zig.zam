@@ -1,0 +1,90 @@
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("io/local/Process.zam");
+import std("lang/Arr.zam");
+import std("lang/Enums.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+import "../cli/Target.zam";
+import "ir/Module.zam";
+
+// Zig runs zig, found on the PATH, which compiles IR into objects the way it compiles C
+public namespace Zig {
+    // Host answers the target of the machine zam runs on, as zig reports it
+    public fun (Target, Err*)(str) Host = (cache) {
+        var (Process.Result, Err*) run = Process::Run("", Arr::[str]New(2U, "zig", "env"), Zig::env(cache));
+        if(run.1 != null) {
+            return (Target::AArch64LinuxMusl, run.1);
+        } else if(run.0.code != 0) {
+            return (Target::AArch64LinuxMusl, StrErr::New("zig env failed: " + run.0.output));
+        }
+        var (uint, bool) at = Strs::Index(run.0.output, ".target = \"");
+        if(!at.1) {
+            return (Target::AArch64LinuxMusl, StrErr::New("zig env reports no target"));
+        }
+        var str rest = Strs::Slice(run.0.output, at.0 + Strs::ByteLen(".target = \""), Strs::ByteLen(run.0.output));
+        var Arr[str]* parts = Strs::Split(rest, '-'{byte});
+        var str arch = parts.Get(0U);
+        var str os = "";
+        if(parts.Len() > 1U) {
+            os = Strs::Split(parts.Get(1U), '.'{byte}).Get(0U);
+        }
+        var Arr[Target]* all = Enums::[Target]All();
+        for(var uint i = 0U; i < all.Len(); i++) {
+            if(all.Get(i).arch == arch && all.Get(i).os == os) {
+                return (all.Get(i), null);
+            }
+        }
+        return (Target::AArch64LinuxMusl, StrErr::New("native code is not supported on " + os + "/" + arch));
+    }
+
+    // Compile compiles module for target into the bytes of an object file
+    public fun (ArrList[byte]*, Err*)(Module*, Target, str) Compile = (module, target, cache) {
+        var (str, Err*) dir = FS::MakeTempDir(FS::TempDir(), "zam-object");
+        if(dir.1 != null) {
+            return (null, dir.1);
+        }
+        var str source = Paths::Join(dir.0, "module.ll");
+        var str object = Paths::Join(dir.0, "module.o");
+        var Err* written = FS::WriteFile(source, module.Text());
+        if(written != null) {
+            FS::RemoveAll(dir.0);
+            return (null, written);
+        }
+        var (Process.Result, Err*) run = Process::Run("", Arr::[str]New(10U, "zig", "cc", "-c", "-target", target.zig, "-fPIC", "-O0", "-Wno-override-module", source, "-o" + object), Zig::env(cache));
+        if(run.1 != null) {
+            FS::RemoveAll(dir.0);
+            return (null, run.1);
+        } else if(run.0.code != 0) {
+            FS::RemoveAll(dir.0);
+            return (null, StrErr::New("cannot compile the program's IR: " + run.0.output));
+        }
+        var (str, Err*) read = FS::ReadFile(object);
+        FS::RemoveAll(dir.0);
+        if(read.1 != null) {
+            return (null, read.1);
+        }
+        var (byte*, uint) bytes = Strs::ToBytes(read.0);
+        var ArrList[byte]* out = ArrList::[byte]New(0U);
+        for(var uint i = 0U; i < bytes.1; i++) {
+            out.AddLast(bytes.0[i]);
+        }
+        return (out, null);
+    }
+
+    // env answers zig's cache settings: as inherited, or else beneath cache
+    fun Arr[str]*(str) env = (cache) {
+        return Arr::[str]New(2U, Zig::setting("ZIG_GLOBAL_CACHE_DIR", cache), Zig::setting("ZIG_LOCAL_CACHE_DIR", cache));
+    }
+
+    fun str(str, str) setting = (name, cache) {
+        var (str, bool) inherited = System::Env(name);
+        if(inherited.1 && inherited.0 != "") {
+            return name + "=" + inherited.0;
+        }
+        return name + "=" + Paths::Join(cache, "zig");
+    }
+}

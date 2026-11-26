@@ -1,0 +1,26 @@
+import std("data/map/HashMap.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/System.zam");
+import std("test/Assert.zam");
+import "Runtime.zam";
+
+public namespace RuntimeTest {
+    public fun void(uint, str...) Tables = (argC, argV) {
+        var (HashMap[str, str]*, Err*) tables = Runtime::Tables(Runtime::Dir(""));
+        if(!Assert::True(tables.1 == null, "cannot read the runtime's tables")) {
+            Assert::Fatal(tables.1.Err());
+        }
+        Assert::[str]Equal("zamArenaNativeTable", tables.0.Get("STD_ARENA_MAKE").0);
+        Assert::[str]Equal("zamNativeTable", tables.0.Get("STD_FILE_INIT").0);
+        Assert::True(Runtime::Validate(Arr::[str]New(2U, "STD_ARENA_MAKE", "my_native"), tables.0) == null, "valid natives are refused");
+        var Err* unknown = Runtime::Validate(Arr::[str]New(1U, "STD_NO_SUCH"), tables.0);
+        if(Assert::True(unknown != null, "an unknown standard native is accepted")) {
+            Assert::[str]Equal("native \"STD_NO_SUCH\" is not one the runtime answers", unknown.Err());
+        }
+        var Err* symbol = Runtime::Validate(Arr::[str]New(1U, "not-c"), tables.0);
+        if(Assert::True(symbol != null, "a native that is no C identifier is accepted")) {
+            Assert::[str]Equal("native \"not-c\" is not a valid C identifier", symbol.Err());
+        }
+    }
+}

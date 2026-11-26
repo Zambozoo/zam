@@ -1,0 +1,129 @@
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("io/local/Process.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+import std("test/Assert.zam");
+import "Builder.zam";
+import "IrType.zam";
+import "Module.zam";
+import "Quote.zam";
+import "Value.zam";
+
+public namespace IrTest {
+    private fun Value*(int) i64 = (v) {
+        return Value::Int(IrType::Int(64U), v);
+    }
+
+    public fun void(uint, str...) Constants = (argC, argV) {
+        var IrType* i64 = IrType::Int(64U);
+        Assert::[str]Equal("[2 x i64]", IrType::Array(2U, i64).Text());
+        Assert::[str]Equal("{ i64, ptr }", IrType::Struct(ArrList::[IrType*]New(2U, i64, IrType::Ptr())).Text());
+        Assert::[str]Equal("void (i64, ...)", IrType::Function(IrType::Void(), ArrList::[IrType*]New(1U, i64), true).Text());
+        Assert::[str]Equal("double 0x3FF8000000000000", Value::Double(1.5).Typed());
+        Assert::[str]Equal("[2 x i64] [i64 1, i64 2]", Value::Array(i64, ArrList::[Value*]New(2U, IrTest::i64(1), IrTest::i64(2))).Typed());
+        var (byte*, uint) hi = Strs::ToBytes("h\"\n");
+        Assert::[str]Equal("[3 x i8] c\"h\\22\\0A\"", Value::Bytes(hi.0, hi.1).Typed());
+        Assert::[str]Equal("plain.name$1", Quote::Name("plain.name$1"));
+        Assert::[str]Equal("\"Main.main(uint)\"", Quote::Name("Main.main(uint)"));
+        Assert::[str]Equal("i64 ptrtoint (ptr @g to i64)", Value::PtrToInt(Value::New(IrType::Ptr(), "@g"), i64).Typed());
+    }
+
+    // module builds a module holding a loop, an indirect call, a switch and a select
+    private fun Module*() module = () {
+        var IrType* i64 = IrType::Int(64U);
+        var Module* m = Module::New();
+        m.AddStruct("Pair", ArrList::[IrType*]New(2U, i64, IrType::Ptr()));
+        var (byte*, uint) hi = Strs::ToBytes("hi");
+        var Module.Global* greeting = m.AddGlobal("greeting", IrType::Array(2U, IrType::Int(8U)), Value::Bytes(hi.0, hi.1));
+        greeting.constant = true;
+        greeting.linkage = "private";
+        greeting.unnamed = true;
+        greeting.align = 1U;
+
+        var IrType* unary = IrType::Function(i64, ArrList::[IrType*]New(1U, i64), false);
+        var Module.Function* sum = m.AddFunction("sum", unary);
+        var Builder* b = Builder::New(sum);
+        var Module.Block* entry = sum.AddBlock();
+        var Module.Block* loop = sum.AddBlock();
+        var Module.Block* done = sum.AddBlock();
+        b.At(entry);
+        b.Br(loop);
+        b.At(loop);
+        var Module.Instr* i = b.Phi(i64);
+        var Module.Instr* total = b.Phi(i64);
+        var Value* next = b.Binary("add", Builder::PhiValue(i), IrTest::i64(1));
+        var Value* grown = b.Binary("add", Builder::PhiValue(total), next);
+        Builder::Incoming(i, IrTest::i64(0), entry);
+        Builder::Incoming(i, next, loop);
+        Builder::Incoming(total, IrTest::i64(0), entry);
+        Builder::Incoming(total, grown, loop);
+        b.CondBr(b.ICmp("ult", next, sum.params.Get(0U)), loop, done);
+        b.At(done);
+        b.Ret(grown);
+
+        var Module.Function* apply = m.AddFunction("apply", IrType::Function(i64, ArrList::[IrType*]New(2U, IrType::Ptr(), i64), false));
+        apply.attributes.AddLast("nounwind");
+        b = Builder::New(apply);
+        b.At(apply.AddBlock());
+        b.Ret(b.Call(unary, apply.params.Get(0U), ArrList::[Value*]New(1U, apply.params.Get(1U))));
+
+        var Module.Function* pick = m.AddFunction("pick", unary);
+        b = Builder::New(pick);
+        var Module.Block* start = pick.AddBlock();
+        var Module.Block* one = pick.AddBlock();
+        var Module.Block* other = pick.AddBlock();
+        b.At(start);
+        b.Switch(pick.params.Get(0U), other, ArrList::[Value*]New(1U, IrTest::i64(1)), ArrList::[Module.Block*]New(1U, one));
+        b.At(one);
+        b.Ret(b.Call(unary, sum.Ref(), ArrList::[Value*]New(1U, IrTest::i64(10))));
+        b.At(other);
+        var Value* slot = b.Alloca(i64, null, 8U);
+        b.Store(pick.params.Get(0U), slot, true, 8U);
+        var Value* loaded = b.Load(i64, slot, true, 8U);
+        var Value* big = b.ICmp("sgt", loaded, IrTest::i64(100));
+        var Value* address = b.Gep(IrType::Array(2U, IrType::Int(8U)), greeting.Ref(), ArrList::[Value*]New(2U, IrTest::i64(0), IrTest::i64(1)), true);
+        var Value* letter = b.Cast("zext", b.Load(IrType::Int(8U), address, false, 1U), i64);
+        b.Ret(b.Select(big, letter, loaded));
+        return m;
+    }
+
+    public fun void(uint, str...) Text = (argC, argV) {
+        var str text = IrTest::module().Text();
+        Assert::True(Strs::Contains(text, "%Pair = type { i64, ptr }\n"), text);
+        Assert::True(Strs::Contains(text, "@greeting = private unnamed_addr constant [2 x i8] c\"hi\", align 1\n"), text);
+        Assert::True(Strs::Contains(text, "define i64 @sum(i64 %p0) {\nb0:\n  br label %b1\nb1:\n  %v3 = phi i64 [ 0, %b0 ], [ %v5, %b1 ]\n"), text);
+        Assert::True(Strs::Contains(text, "define i64 @apply(ptr %p0, i64 %p1) nounwind {\nb0:\n  %v1 = call i64 (i64) %p0(i64 %p1)\n  ret i64 %v1\n}\n"), text);
+        Assert::True(Strs::Contains(text, "  switch i64 %p0, label %b2 [ i64 1, label %b1 ]\n"), text);
+    }
+
+    // cache answers the setting of the zig cache variable name: as inherited, or else a directory in dir
+    private fun str(str, str) cache = (name, dir) {
+        var (str, bool) inherited = System::Env(name);
+        if(inherited.1 && inherited.0 != "") {
+            return name + "=" + inherited.0;
+        }
+        return name + "=" + Paths::Join(dir, "zig");
+    }
+
+    // Compiles checks zig compiles the module into an object file
+    public fun void(uint, str...) Compiles = (argC, argV) {
+        var (str, Err*) dir = FS::MakeTempDir(FS::TempDir(), "zam-ir");
+        if(!Assert::True(dir.1 == null, "cannot make a temporary directory")) {
+            return;
+        }
+        var str source = Paths::Join(dir.0, "module.ll");
+        var str object = Paths::Join(dir.0, "module.o");
+        Assert::True(FS::WriteFile(source, IrTest::module().Text()) == null, "cannot write the module");
+        var Arr[str]* env = Arr::[str]New(2U, IrTest::cache("ZIG_GLOBAL_CACHE_DIR", dir.0), IrTest::cache("ZIG_LOCAL_CACHE_DIR", dir.0));
+        var (Process.Result, Err*) run = Process::Run("", Arr::[str]New(5U, "zig", "cc", "-c", source, "-o" + object), env);
+        if(Assert::True(run.1 == null, "cannot run zig")) {
+            Assert::True(run.0.code == 0, run.0.output);
+            Assert::True(FS::Exists(object), "zig wrote no object file");
+        }
+        FS::RemoveAll(dir.0);
+    }
+}

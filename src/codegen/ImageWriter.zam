@@ -1,0 +1,188 @@
+import std("data/list/ArrList.zam");
+import std("lang/Flts.zam");
+import std("lang/Strs.zam");
+import ast = "../syntax/ast/*";
+import "../cli/Command.zam";
+import "../semantic/Model.zam";
+import "../semantic/Type.zam";
+import "Collect.zam";
+import "Definitions.zam";
+import "Layout.zam";
+import "Statics.zam";
+import "Strings.zam";
+import "TypeIds.zam";
+
+// ImageWriter writes the runtime image
+public class ImageWriter {
+    // magic is the eight bytes every image opens with
+    static var str$ magic = "ZAM_LANG";
+    // version is the image version, major, minor and patch each in a field of its own
+    static var uint$ version = 0U << 32U | 3U << 16U | 0U;
+    // configurationWords is how many words of runtime configuration open the body
+    static var uint$ configurationWords = 10U;
+
+    var Model* model;
+    var Command* cmd;
+    var TypeIds* ids;
+    var Layout* layout;
+    // body is everything after the header
+    var ArrList[byte]* body;
+
+    // Write answers the image of the program m models, built as cmd configures it
+    public static fun ArrList[byte]*(Model*, Command*, TypeIds*) Write = (m, cmd, ids) {
+        var ImageWriter* w = new(ImageWriter);
+        w.model = m;
+        w.cmd = cmd;
+        w.ids = ids;
+        w.layout = Layout::New(m);
+        w.body = ArrList::[byte]New(0U);
+        w.configuration();
+
+        var ArrList[ArrList[byte]*]* definitions = ArrList::[ArrList[byte]*]New(0U);
+        for(var uint b = 0U; b < 4U; b++) {
+            var ArrList[Type*]* types = ids.Interned(b);
+            for(var uint i = 0U; i < types.Len(); i++) {
+                definitions.AddLast(w.interned(b, types.Get(i)));
+            }
+        }
+        var Collect* collected = Collect::Run(m, ids);
+        var Statics* statics = Statics::Lay(m, ids, w.layout, collected);
+        var Definitions* declared = Definitions::New(m, ids, w.layout, statics);
+        for(var uint b = 4U; b < 13U; b++) {
+            var ArrList[TypeIds.Entry*]* entries = ids.Entries(b);
+            for(var uint i = 0U; i < entries.Len(); i++) {
+                definitions.AddLast(declared.Of(b, entries.Get(i)));
+            }
+        }
+
+        var uint count = ids.Count();
+        var uint offset = ImageWriter::configurationWords * 8U + count * 8U;
+        for(var uint i = 0U; i < TypeIds::Reserved; i++) {
+            ImageWriter::word(w.body, 0U);
+        }
+        for(var uint i = 0U; i < count - TypeIds::Reserved; i++) {
+            ImageWriter::word(w.body, offset);
+            if(i < definitions.Len()) {
+                offset = offset + definitions.Get(i).Len();
+            }
+        }
+        for(var uint i = 0U; i < definitions.Len(); i++) {
+            ImageWriter::append(w.body, definitions.Get(i));
+        }
+        var uint staticInstanceMaps = w.body.Len();
+        var ArrList[uint]* slots = statics.Offsets();
+        for(var uint i = 0U; i < slots.Len(); i++) {
+            ImageWriter::word(w.body, slots.Get(i));
+        }
+        var uint staticImage = w.body.Len();
+        ImageWriter::append(w.body, statics.Image());
+        var uint natives = w.body.Len();
+        var ArrList[str]* names = collected.Natives();
+        ImageWriter::word(w.body, names.Len());
+        for(var uint i = 0U; i < names.Len(); i++) {
+            Strings::Literal(w.body, names.Get(i));
+        }
+        var uint staticRoots = w.body.Len();
+        var ArrList[Statics.Root*]* roots = statics.Roots();
+        ImageWriter::word(w.body, roots.Len());
+        for(var uint i = 0U; i < roots.Len(); i++) {
+            ImageWriter::word(w.body, roots.Get(i).slot);
+            w.typeInstance(w.body, roots.Get(i).bound);
+        }
+
+        var ArrList[byte]* image = ArrList::[byte]New(0U);
+        var (byte*, uint) magic = Strs::ToBytes(ImageWriter::magic);
+        for(var uint i = 0U; i < magic.1; i++) {
+            image.AddLast(magic.0[i]);
+        }
+        ImageWriter::word(image, ImageWriter::version);
+        ImageWriter::word(image, count);
+        for(var uint b = 0U; b < 13U; b++) {
+            ImageWriter::word(image, ids.Start(b));
+        }
+        ImageWriter::word(image, staticInstanceMaps);
+        ImageWriter::word(image, statics.Size());
+        ImageWriter::word(image, staticImage);
+        ImageWriter::word(image, natives);
+        ImageWriter::word(image, staticRoots);
+        ImageWriter::append(image, w.body);
+        return image;
+    }
+
+    // configuration writes the runtime's configuration, the collector's settings as cmd gives them
+    fun void() configuration = () {
+        ImageWriter::word(this.body, Flts::ToBits(this.cmd.gcTriggerRatio));
+        ImageWriter::word(this.body, this.cmd.initialStackSize{uint});
+        ImageWriter::word(this.body, this.cmd.initialHeapSize{uint});
+        ImageWriter::word(this.body, this.cmd.nurserySize{uint});
+        ImageWriter::word(this.body, this.cmd.maxHeapSize{uint});
+        ImageWriter::word(this.body, this.cmd.gcMarkers{uint});
+        var uint concurrent = 0U;
+        if(this.cmd.gcConcurrent) {
+            concurrent = 1U;
+        }
+        ImageWriter::word(this.body, concurrent);
+        ImageWriter::word(this.body, Flts::ToBits(this.cmd.gcRemarkGrowth));
+        ImageWriter::word(this.body, this.cmd.gcPrecleanPasses{uint});
+        ImageWriter::word(this.body, this.cmd.gcReturnAge{uint});
+    }
+
+    // interned answers the definition of t, a type of the thread, function, pointer or tuple bucket numbered b
+    fun ArrList[byte]*(uint, Type*) interned = (b, t) {
+        var ArrList[byte]* d = ArrList::[byte]New(0U);
+        switch(b) {
+            case (0U, 2U)
+                this.typeInstance(d, t{Type.Wrapped*}.inner);
+            case (1U) {
+                var Type.Function* f = t{Type.Function*};
+                ImageWriter::word(d, f.parameters.Len() + 1U);
+                this.typeInstance(d, f.returns);
+                for(var uint i = 0U; i < f.parameters.Len(); i++) {
+                    this.typeInstance(d, ImageWriter::bound(f.parameters.Get(i)));
+                }
+            }
+            case (3U) {
+                var Type.Tuple* tuple = t{Type.Tuple*};
+                var (uint, uint, ArrList[uint]*) layout = this.layout.Tuple(tuple);
+                ImageWriter::word(d, layout.0);
+                ImageWriter::word(d, tuple.types.Len());
+                for(var uint i = 0U; i < tuple.types.Len(); i++) {
+                    this.typeInstance(d, tuple.types.Get(i));
+                }
+                for(var uint i = 0U; i < layout.2.Len(); i++) {
+                    ImageWriter::word(d, layout.2.Get(i));
+                }
+            }
+        }
+        return d;
+    }
+
+    // typeInstance writes the three words t is named by
+    fun void(ArrList[byte]*, Type*) typeInstance = (d, t) {
+        var TypeIds.Instance* i = this.ids.Instance(t);
+        ImageWriter::word(d, (i.typeID << 16U | i.genericID) << 32U);
+        ImageWriter::word(d, i.arrayLength);
+        ImageWriter::word(d, i.tailedLength);
+    }
+
+    // bound answers the type a parameter of t is held as, a variadic arriving as a pointer to what was packed
+    static fun Type*(Type*) bound = (t) {
+        if(t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Variadic) {
+            return Type.Wrapped::New(t.at, ast.Type.Wrap::Pointer, t{Type.Wrapped*}.inner);
+        }
+        return t;
+    }
+
+    // word appends w to d as a little-endian word
+    static fun void(ArrList[byte]*, uint) word = (d, w) {
+        for(var uint i = 0U; i < 8U; i++) {
+            d.AddLast((w >> (8U * i) & 255U){byte});
+        }
+    }
+
+    static fun void(ArrList[byte]*, ArrList[byte]*) append = (d, bytes) {
+        for(var uint i = 0U; i < bytes.Len(); i++) {
+            d.AddLast(bytes.Get(i));
+        }
+    }
+}

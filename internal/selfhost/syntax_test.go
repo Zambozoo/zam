@@ -57,12 +57,21 @@ var compiler = sync.OnceValues(func() (string, error) {
 		return "", err
 	}
 	out := host.Executable(filepath.Join(dir, "zam"))
-	opts := build.Options{Project: ast.MainCodeDecl.File().Project, OutputPath: out, Target: host}
-	if err := build.LinkObject(object.Bytes, opts); err != nil {
+	if err := link(object.Bytes, ast, out); err != nil {
 		return "", err
 	}
 	return out, nil
 })
+
+// link links object, generated for the program ast holds, into an executable
+// for the host at out.
+func link(object []byte, ast *syntax.AST, out string) error {
+	host, err := target.Host()
+	if err != nil {
+		return err
+	}
+	return build.LinkObject(object, build.Options{Project: ast.MainCodeDecl.File().Project, OutputPath: out, Target: host})
+}
 
 // TestSyntaxMatchesGo parses every program in the Go parser's testdata with
 // the compiler written in zam and with the Go one, and expects the same errors
@@ -177,7 +186,7 @@ func zamErrors(t *testing.T, zam, entry string, noProject bool, step string) []s
 	t.Helper()
 	var stderr bytes.Buffer
 	cmd := exec.Command(zam, arguments(entry, noProject)[1:]...)
-	cmd.Env = append(os.Environ(), "ZAM_STD="+filepath.Join(root, "internal", "std"))
+	cmd.Env = append(os.Environ(), "ZAM_STD="+filepath.Join(root, "src", "std"))
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	var exit *exec.ExitError
