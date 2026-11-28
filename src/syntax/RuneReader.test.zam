@@ -1,7 +1,9 @@
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "RuneReader.zam";
+import {
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "RuneReader.zam";
+}
 
 public namespace RuneReaderTest {
     // bytes answers the str whose UTF-8 is the n bytes bs.

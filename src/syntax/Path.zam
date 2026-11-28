@@ -1,8 +1,10 @@
-import std("io/Paths.zam");
-import std("io/local/FS.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
+import {
+    std("io/Paths.zam");
+    std("io/local/FS.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+}
 
 // Path works with the paths source files
 public namespace Path {

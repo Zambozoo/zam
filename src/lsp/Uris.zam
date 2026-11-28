@@ -1,9 +1,11 @@
-import std("io/local/FS.zam");
-import std("io/web/URL.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("lang/System.zam");
+import {
+    std("io/local/FS.zam");
+    std("io/web/URL.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("lang/System.zam");
+}
 
 // Uris converts between the file URIs an editor names documents by and the paths the compiler reads them at
 public namespace Uris {

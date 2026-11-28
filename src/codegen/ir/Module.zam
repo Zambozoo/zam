@@ -1,8 +1,10 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import "IrType.zam";
-import "Quote.zam";
-import "Value.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    "IrType.zam";
+    "Quote.zam";
+    "Value.zam";
+}
 
 // Module is a whole program in LLVM's textual IR
 public class Module {

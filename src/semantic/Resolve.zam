@@ -1,17 +1,19 @@
-import std("data/list/ArrList.zam");
-import std("data/sort/Sort.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/Iter.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import "../syntax/Path.zam";
-import "../syntax/ProjectParser.zam";
-import "../syntax/Source.zam";
-import "../syntax/SourceErr.zam";
-import ast = "../syntax/ast/*";
-import "Model.zam";
-import "Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/sort/Sort.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/Iter.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    "../syntax/Path.zam";
+    "../syntax/ProjectParser.zam";
+    "../syntax/Source.zam";
+    "../syntax/SourceErr.zam";
+    ast = "../syntax/ast/*";
+    "Model.zam";
+    "Type.zam";
+}
 
 // Resolve binds every type written in a program to what it names
 public class Resolve <: ast.Walker* {

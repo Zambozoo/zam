@@ -1,26 +1,28 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("lang/System.zam");
-import std("lang/Arr.zam");
-import "../cli/Command.zam";
-import "../cli/Target.zam";
-import "../syntax/TokenKind.zam";
-import ast = "../syntax/ast/*";
-import "../semantic/Model.zam";
-import "../semantic/Subtyping.zam";
-import "../semantic/Type.zam";
-import "ImageWriter.zam";
-import "Zig.zam";
-import "Collect.zam";
-import "Layout.zam";
-import "Runtime.zam";
-import "Statics.zam";
-import "ir/Module.zam";
-import "lower/Program.zam";
-import "TypeIds.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("lang/System.zam");
+    std("lang/Arr.zam");
+    "../cli/Command.zam";
+    "../cli/Target.zam";
+    "../syntax/TokenKind.zam";
+    ast = "../syntax/ast/*";
+    "../semantic/Model.zam";
+    "../semantic/Subtyping.zam";
+    "../semantic/Type.zam";
+    "ImageWriter.zam";
+    "Zig.zam";
+    "Collect.zam";
+    "Layout.zam";
+    "Runtime.zam";
+    "Statics.zam";
+    "ir/Module.zam";
+    "lower/Program.zam";
+    "TypeIds.zam";
+}
 
 // Codegen generates what a validated program is run from
 public namespace Codegen {

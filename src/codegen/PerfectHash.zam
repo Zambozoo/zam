@@ -1,6 +1,8 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import std("lang/System.zam");
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    std("lang/System.zam");
+}
 
 // PerfectHash is a two-level perfect hash of fixed width, built by the Fredman-Komlós-Szemerédi method
 public class PerfectHash {

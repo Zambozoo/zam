@@ -1,15 +1,17 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/Iter.zam");
-import "../syntax/ProjectParser.zam";
-import "../syntax/Source.zam";
-import "../syntax/SourceErr.zam";
-import "../syntax/Token.zam";
-import ast = "../syntax/ast/*";
-import "Type.zam";
-import "TypeSet.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/Iter.zam");
+    "../syntax/ProjectParser.zam";
+    "../syntax/Source.zam";
+    "../syntax/SourceErr.zam";
+    "../syntax/Token.zam";
+    ast = "../syntax/ast/*";
+    "Type.zam";
+    "TypeSet.zam";
+}
 
 // Model is what semantic analysis finds out about a program
 public class Model {

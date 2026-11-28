@@ -1,9 +1,11 @@
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "Flag.zam";
-import "FlagSet.zam";
+import {
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "Flag.zam";
+    "FlagSet.zam";
+}
 
 public namespace FlagSetTest {
     private fun Arr[str]*(str) argv = (line) {

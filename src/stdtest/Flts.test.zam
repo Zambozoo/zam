@@ -1,6 +1,8 @@
-import bits = std("lang/Flts.zam");
-import std("math/Flts.zam");
-import std("test/Assert.zam");
+import {
+    bits = std("lang/Flts.zam");
+    std("math/Flts.zam");
+    std("test/Assert.zam");
+}
 
 public namespace FltsTest {
     public fun void(uint, str...) Fixed = (argC, argV) {

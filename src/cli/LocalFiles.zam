@@ -1,6 +1,8 @@
-import std("io/local/FS.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
+import {
+    std("io/local/FS.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+}
 
 // LocalFiles is the files of the machine the compiler runs on
 public class LocalFiles {

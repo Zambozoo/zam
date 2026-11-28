@@ -1,8 +1,10 @@
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "Lexer.zam";
-import "Token.zam";
+import {
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "Lexer.zam";
+    "Token.zam";
+}
 
 public namespace LexerTest {
     var char nul = '\0';

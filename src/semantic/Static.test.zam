@@ -1,11 +1,13 @@
-import std("data/list/ArrList.zam");
-import std("data/map/TreeMap.zam");
-import std("lang/Err.zam");
-import std("test/Assert.zam");
-import "../syntax/MapSources.test.zam";
-import "../syntax/Path.zam";
-import "../syntax/ProjectParser.zam";
-import "Semantic.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/TreeMap.zam");
+    std("lang/Err.zam");
+    std("test/Assert.zam");
+    "../syntax/MapSources.test.zam";
+    "../syntax/Path.zam";
+    "../syntax/ProjectParser.zam";
+    "Semantic.zam";
+}
 
 public namespace StaticTest {
     // reports checks that validating the program in files finds the errors

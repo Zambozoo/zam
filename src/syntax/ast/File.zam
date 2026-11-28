@@ -1,7 +1,9 @@
-import std("data/list/ArrList.zam");
-import "../Token.zam";
-import "Decl.zam";
-import "Import.zam";
+import {
+    std("data/list/ArrList.zam");
+    "../Token.zam";
+    "Decl.zam";
+    "Import.zam";
+}
 
 // File is a source file as it is written: its imports and its declaration
 public class File {

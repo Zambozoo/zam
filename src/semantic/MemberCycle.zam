@@ -1,13 +1,15 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import std("data/set/HashSet.zam");
-import std("lang/Err.zam");
-import std("lang/Iter.zam");
-import std("lang/StrErr.zam");
-import "../syntax/Source.zam";
-import ast = "../syntax/ast/*";
-import "Model.zam";
-import "Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    std("data/set/HashSet.zam");
+    std("lang/Err.zam");
+    std("lang/Iter.zam");
+    std("lang/StrErr.zam");
+    "../syntax/Source.zam";
+    ast = "../syntax/ast/*";
+    "Model.zam";
+    "Type.zam";
+}
 
 // MemberCycle rejects a declaration that holds itself by value, directly or through others
 public class MemberCycle {

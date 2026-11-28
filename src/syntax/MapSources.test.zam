@@ -1,15 +1,17 @@
-import std("data/list/ArrList.zam");
-import std("data/map/TreeMap.zam");
-import std("io/Paths.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/Iter.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "Path.zam";
-import "Project.zam";
-import "ProjectParser.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/TreeMap.zam");
+    std("io/Paths.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/Iter.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "Path.zam";
+    "Project.zam";
+    "ProjectParser.zam";
+}
 
 public namespace MapSourcesTest {
     // Sources serves sources from a map of paths to their text

@@ -1,11 +1,13 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import "../syntax/ProjectParser.zam";
-import "../syntax/Source.zam";
-import "../syntax/TokenKind.zam";
-import ast = "../syntax/ast/*";
-import "Model.zam";
-import "Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    "../syntax/ProjectParser.zam";
+    "../syntax/Source.zam";
+    "../syntax/TokenKind.zam";
+    ast = "../syntax/ast/*";
+    "Model.zam";
+    "Type.zam";
+}
 
 // Members answers the fields a declaration has
 public class Members {

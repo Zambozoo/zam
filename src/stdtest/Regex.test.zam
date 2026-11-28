@@ -1,7 +1,9 @@
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import std("codec/text/Regex.zam");
+import {
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    std("codec/text/Regex.zam");
+}
 
 public namespace RegexTest {
     private fun void(str, str, bool) check = (pattern, text, want) {

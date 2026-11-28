@@ -1,17 +1,19 @@
-import std("codec/text/Hex.zam");
-import std("data/list/ArrList.zam");
-import std("crypto/hash/SHA256.zam");
-import std("io/Paths.zam");
-import std("io/local/File.zam");
-import std("io/local/FS.zam");
-import std("io/web/HTTP.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("lang/System.zam");
-import "../cli/Target.zam";
-import "../syntax/PackageArchive.zam";
+import {
+    std("codec/text/Hex.zam");
+    std("data/list/ArrList.zam");
+    std("crypto/hash/SHA256.zam");
+    std("io/Paths.zam");
+    std("io/local/File.zam");
+    std("io/local/FS.zam");
+    std("io/web/HTTP.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("lang/System.zam");
+    "../cli/Target.zam";
+    "../syntax/PackageArchive.zam";
+}
 
 // Pack finds a target's pack
 public namespace Pack {

@@ -1,13 +1,15 @@
-import std("data/list/ArrList.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import "Parser.zam";
-import "Token.zam";
-import "TokenKind.zam";
-import "TypeParser.zam";
-import "ast/Generic.zam";
-import "ast/Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    "Parser.zam";
+    "Token.zam";
+    "TokenKind.zam";
+    "TypeParser.zam";
+    "ast/Generic.zam";
+    "ast/Type.zam";
+}
 
 // GenericParser reads the generic parameters a declaration or method is declared with
 public namespace GenericParser {

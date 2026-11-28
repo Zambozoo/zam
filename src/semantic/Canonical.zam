@@ -1,8 +1,10 @@
-import std("data/list/ArrList.zam");
-import "../syntax/Path.zam";
-import ast = "../syntax/ast/*";
-import "Model.zam";
-import "Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    "../syntax/Path.zam";
+    ast = "../syntax/ast/*";
+    "Model.zam";
+    "Type.zam";
+}
 
 // Canonical writes types the same way whichever way they were written, which is what two compilers can be compared and ordered by
 public namespace Canonical {

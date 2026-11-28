@@ -1,6 +1,8 @@
-import std("lang/Err.zam");
-import std("test/Assert.zam");
-import "Project.zam";
+import {
+    std("lang/Err.zam");
+    std("test/Assert.zam");
+    "Project.zam";
+}
 
 public namespace ProjectTest {
     public fun void(uint, str...) Parse = (argC, argV) {

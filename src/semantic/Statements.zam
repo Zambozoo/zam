@@ -1,15 +1,17 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import std("lang/Strs.zam");
-import "../syntax/Token.zam";
-import "../syntax/TokenKind.zam";
-import ast = "../syntax/ast/*";
-import "Model.zam";
-import "Expressions.zam";
-import "Static.zam";
-import "Subtyping.zam";
-import "Termination.zam";
-import "Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    std("lang/Strs.zam");
+    "../syntax/Token.zam";
+    "../syntax/TokenKind.zam";
+    ast = "../syntax/ast/*";
+    "Model.zam";
+    "Expressions.zam";
+    "Static.zam";
+    "Subtyping.zam";
+    "Termination.zam";
+    "Type.zam";
+}
 
 // Statements checks the statements of a body
 public class Statements {

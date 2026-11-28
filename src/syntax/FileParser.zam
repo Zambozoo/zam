@@ -1,17 +1,19 @@
-import std("data/list/ArrList.zam");
-import std("data/set/TreeSet.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import "DeclParser.zam";
-import "FieldParser.zam";
-import "ImportParser.zam";
-import "Parser.zam";
-import "Token.zam";
-import "TokenKind.zam";
-import "ast/Decl.zam";
-import "ast/File.zam";
-import "ast/Import.zam";
-import "ast/Modifier.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/set/TreeSet.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    "DeclParser.zam";
+    "FieldParser.zam";
+    "ImportParser.zam";
+    "Parser.zam";
+    "Token.zam";
+    "TokenKind.zam";
+    "ast/Decl.zam";
+    "ast/File.zam";
+    "ast/Import.zam";
+    "ast/Modifier.zam";
+}
 
 // FileParser reads source files
 public namespace FileParser {

@@ -1,5 +1,7 @@
-import std("lang/Chars.zam");
-import std("test/Assert.zam");
+import {
+    std("lang/Chars.zam");
+    std("test/Assert.zam");
+}
 
 public namespace CharsTest {
     public fun void(uint, str...) IsLetter = (argC, argV) {

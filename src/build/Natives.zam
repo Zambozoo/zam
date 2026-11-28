@@ -1,17 +1,19 @@
-import std("data/list/ArrList.zam");
-import std("io/Paths.zam");
-import std("io/local/File.zam");
-import std("io/local/FS.zam");
-import std("io/local/Process.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import "../cli/Target.zam";
-import "../codegen/Zig.zam";
-import "../syntax/Path.zam";
-import "../syntax/Project.zam";
-import "RuntimeArchive.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("io/Paths.zam");
+    std("io/local/File.zam");
+    std("io/local/FS.zam");
+    std("io/local/Process.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    "../cli/Target.zam";
+    "../codegen/Zig.zam";
+    "../syntax/Path.zam";
+    "../syntax/Project.zam";
+    "RuntimeArchive.zam";
+}
 
 // Natives compiles a project's own native C, which its project file names
 public namespace Natives {

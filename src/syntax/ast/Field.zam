@@ -1,10 +1,12 @@
-import std("data/list/ArrList.zam");
-import "../Token.zam";
-import "Expr.zam";
-import "Generic.zam";
-import "Modifier.zam";
-import "Stmt.zam";
-import "Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    "../Token.zam";
+    "Expr.zam";
+    "Generic.zam";
+    "Modifier.zam";
+    "Stmt.zam";
+    "Type.zam";
+}
 
 // Field is a member of a declaration as it is written
 public abstract Field {

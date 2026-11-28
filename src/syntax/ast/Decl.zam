@@ -1,9 +1,11 @@
-import std("data/list/ArrList.zam");
-import "../Token.zam";
-import "Field.zam";
-import "Generic.zam";
-import "Modifier.zam";
-import "Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    "../Token.zam";
+    "Field.zam";
+    "Generic.zam";
+    "Modifier.zam";
+    "Type.zam";
+}
 
 // Decl is a declaration as it is written
 public abstract Decl <: Field* {

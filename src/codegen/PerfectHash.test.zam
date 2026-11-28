@@ -1,6 +1,8 @@
-import std("data/list/ArrList.zam");
-import std("test/Assert.zam");
-import "PerfectHash.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("test/Assert.zam");
+    "PerfectHash.zam";
+}
 
 public namespace PerfectHashTest {
     // resolves checks every one of n keys spread far apart resolves to its own value

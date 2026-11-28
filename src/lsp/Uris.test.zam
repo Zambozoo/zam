@@ -1,7 +1,9 @@
-import std("lang/Err.zam");
-import std("lang/System.zam");
-import std("test/Assert.zam");
-import "Uris.zam";
+import {
+    std("lang/Err.zam");
+    std("lang/System.zam");
+    std("test/Assert.zam");
+    "Uris.zam";
+}
 
 public namespace UrisTest {
     public fun void(uint, str...) Paths = (argC, argV) {

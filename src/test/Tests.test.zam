@@ -1,5 +1,7 @@
-import std("test/Assert.zam");
-import "Tests.zam";
+import {
+    std("test/Assert.zam");
+    "Tests.zam";
+}
 
 public namespace TestsTest {
     public fun void(uint, str...) WindowsStatus = (argC, argV) {

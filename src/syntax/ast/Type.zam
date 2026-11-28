@@ -1,6 +1,8 @@
-import std("data/list/ArrList.zam");
-import "../Token.zam";
-import "../TokenKind.zam";
+import {
+    std("data/list/ArrList.zam");
+    "../Token.zam";
+    "../TokenKind.zam";
+}
 
 // Type is a type as it is written
 public abstract Type {

@@ -1,8 +1,10 @@
-import std("lang/Err.zam");
-import std("test/Assert.zam");
-import "Parser.zam";
-import "Token.zam";
-import "TokenKind.zam";
+import {
+    std("lang/Err.zam");
+    std("test/Assert.zam");
+    "Parser.zam";
+    "Token.zam";
+    "TokenKind.zam";
+}
 
 public namespace ParserTest {
     // sequence parses source as identifiers each ended by a ;, up to its end

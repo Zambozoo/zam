@@ -1,7 +1,9 @@
-import std("lang/Err.zam");
-import std("lang/Ints.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
+import {
+    std("lang/Err.zam");
+    std("lang/Ints.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+}
 
 // ByteSize reads, writes bytes with optional suffixes
 public namespace ByteSize {

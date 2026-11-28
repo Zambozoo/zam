@@ -1,15 +1,17 @@
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "FieldParser.zam";
-import "Parser.zam";
-import "Token.zam";
-import "TokenKind.zam";
-import "TypeParser.zam";
-import "ast/Field.zam";
-import "ast/Modifier.zam";
-import "ast/Stmt.zam";
-import "ast/Type.zam";
+import {
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "FieldParser.zam";
+    "Parser.zam";
+    "Token.zam";
+    "TokenKind.zam";
+    "TypeParser.zam";
+    "ast/Field.zam";
+    "ast/Modifier.zam";
+    "ast/Stmt.zam";
+    "ast/Type.zam";
+}
 
 public namespace FieldParserTest {
     // parses checks that source reads whole as the field want, given the

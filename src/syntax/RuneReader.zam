@@ -1,8 +1,10 @@
-import std("codec/text/UTF8.zam");
-import std("data/list/ArrList.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
+import {
+    std("codec/text/UTF8.zam");
+    std("data/list/ArrList.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+}
 
 // RuneReader decodes the UTF-8 of a source one char at a time
 public class RuneReader {

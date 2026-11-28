@@ -1,15 +1,17 @@
-import std("codec/text/UTF8.zam");
-import std("data/list/ArrList.zam");
-import std("lang/Chars.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("lang/Uints.zam");
-import m = std("math/Psts.zam");
-import "RuneReader.zam";
-import "Token.zam";
-import "TokenKind.zam";
-import "Trie.zam";
+import {
+    std("codec/text/UTF8.zam");
+    std("data/list/ArrList.zam");
+    std("lang/Chars.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("lang/Uints.zam");
+    m = std("math/Psts.zam");
+    "RuneReader.zam";
+    "Token.zam";
+    "TokenKind.zam";
+    "Trie.zam";
+}
 
 // Lexer reads the tokens of a source one at a time
 public class Lexer {

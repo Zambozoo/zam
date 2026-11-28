@@ -1,5 +1,7 @@
-import std("data/list/ArrList.zam");
-import "Quote.zam";
+import {
+    std("data/list/ArrList.zam");
+    "Quote.zam";
+}
 
 // IrType is a type of LLVM's textual IR, pointers being opaque
 public class IrType {

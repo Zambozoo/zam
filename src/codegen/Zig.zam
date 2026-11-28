@@ -1,16 +1,18 @@
-import std("data/list/ArrList.zam");
-import std("io/Paths.zam");
-import std("io/local/FS.zam");
-import std("io/local/Process.zam");
-import std("lang/Arr.zam");
-import std("lang/Enums.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("lang/System.zam");
-import "../cli/Optimization.zam";
-import "../cli/Target.zam";
-import "ir/Module.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("io/Paths.zam");
+    std("io/local/FS.zam");
+    std("io/local/Process.zam");
+    std("lang/Arr.zam");
+    std("lang/Enums.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("lang/System.zam");
+    "../cli/Optimization.zam";
+    "../cli/Target.zam";
+    "ir/Module.zam";
+}
 
 // Zig runs zig, found on the PATH, which compiles IR into objects the way it compiles C
 public namespace Zig {

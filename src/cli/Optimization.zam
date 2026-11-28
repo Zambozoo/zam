@@ -1,5 +1,7 @@
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
+import {
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+}
 
 // Optimization is how far native compilation optimizes a program
 public enum Optimization : str {

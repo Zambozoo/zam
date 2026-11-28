@@ -1,5 +1,7 @@
-import std("lang/Strs.zam");
-import "../Token.zam";
+import {
+    std("lang/Strs.zam");
+    "../Token.zam";
+}
 
 // Import is a file or directory a file or block imports, as it is written
 public class Import {

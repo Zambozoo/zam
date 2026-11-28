@@ -1,6 +1,8 @@
-import std("data/list/ArrList.zam");
-import "../syntax/TokenKind.zam";
-import ast = "../syntax/ast/*";
+import {
+    std("data/list/ArrList.zam");
+    "../syntax/TokenKind.zam";
+    ast = "../syntax/ast/*";
+}
 
 // Termination says whether control can run past a statement
 public namespace Termination {

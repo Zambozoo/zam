@@ -1,6 +1,8 @@
-import bits = "../lang/Flts.zam";
-import "../lang/Strs.zam";
-import "BigInt.zam";
+import {
+    bits = "../lang/Flts.zam";
+    "../lang/Strs.zam";
+    "BigInt.zam";
+}
 
 // Mathematical functions and constants of flt, through the C library.
 public namespace Flts {

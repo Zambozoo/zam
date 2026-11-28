@@ -1,10 +1,12 @@
-import std("data/list/ArrList.zam");
-import std("lang/Err.zam");
-import std("test/Assert.zam");
-import "../syntax/MapSources.test.zam";
-import "../syntax/ProjectParser.zam";
-import "Model.zam";
-import "Semantic.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Err.zam");
+    std("test/Assert.zam");
+    "../syntax/MapSources.test.zam";
+    "../syntax/ProjectParser.zam";
+    "Model.zam";
+    "Semantic.zam";
+}
 
 public namespace SemanticTest {
     // validated answers what validating the program entered at /p/Main.zam,

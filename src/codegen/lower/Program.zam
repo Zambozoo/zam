@@ -1,28 +1,30 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import std("lang/Arr.zam");
-import std("lang/Strs.zam");
-import "../../syntax/Path.zam";
-import "../../syntax/ProjectParser.zam";
-import "../../syntax/Source.zam";
-import "../../syntax/Token.zam";
-import ast = "../../syntax/ast/*";
-import "../../semantic/Canonical.zam";
-import "../../semantic/Members.zam";
-import "../../semantic/Model.zam";
-import "../../semantic/Subtyping.zam";
-import "../../semantic/Type.zam";
-import "../ir/Builder.zam";
-import "../ir/IrType.zam";
-import "../ir/Module.zam";
-import "../ir/Value.zam";
-import "../Collect.zam";
-import "../Layout.zam";
-import "../Runtime.zam";
-import "../Statics.zam";
-import "../TypeIds.zam";
-import "Debug.zam";
-import "Function.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    std("lang/Arr.zam");
+    std("lang/Strs.zam");
+    "../../syntax/Path.zam";
+    "../../syntax/ProjectParser.zam";
+    "../../syntax/Source.zam";
+    "../../syntax/Token.zam";
+    ast = "../../syntax/ast/*";
+    "../../semantic/Canonical.zam";
+    "../../semantic/Members.zam";
+    "../../semantic/Model.zam";
+    "../../semantic/Subtyping.zam";
+    "../../semantic/Type.zam";
+    "../ir/Builder.zam";
+    "../ir/IrType.zam";
+    "../ir/Module.zam";
+    "../ir/Value.zam";
+    "../Collect.zam";
+    "../Layout.zam";
+    "../Runtime.zam";
+    "../Statics.zam";
+    "../TypeIds.zam";
+    "Debug.zam";
+    "Function.zam";
+}
 
 // Program lowers a validated program into a module
 public class Program {

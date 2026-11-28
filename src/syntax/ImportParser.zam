@@ -1,10 +1,12 @@
-import std("data/list/ArrList.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import "Parser.zam";
-import "Token.zam";
-import "TokenKind.zam";
-import "ast/Import.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    "Parser.zam";
+    "Token.zam";
+    "TokenKind.zam";
+    "ast/Import.zam";
+}
 
 // ImportParser reads import statements
 public namespace ImportParser {

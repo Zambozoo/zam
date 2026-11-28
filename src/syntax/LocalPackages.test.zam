@@ -1,12 +1,14 @@
-import std("io/Paths.zam");
-import std("io/local/FS.zam");
-import std("io/local/Process.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "LocalPackages.zam";
-import "PackageArchive.zam";
+import {
+    std("io/Paths.zam");
+    std("io/local/FS.zam");
+    std("io/local/Process.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "LocalPackages.zam";
+    "PackageArchive.zam";
+}
 
 public namespace LocalPackagesTest {
     // git runs git with args in dir as a user committing without signing

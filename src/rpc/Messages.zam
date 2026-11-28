@@ -1,9 +1,11 @@
-import std("codec/format/JSON.zam");
-import std("io/local/Stream.zam");
-import std("io/local/Streams.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
+import {
+    std("codec/format/JSON.zam");
+    std("io/local/Stream.zam");
+    std("io/local/Streams.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+}
 
 // Messages reads and writes messages as the debug adapter and language server protocols frame them
 public namespace Messages {

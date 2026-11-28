@@ -1,9 +1,11 @@
-import std("lang/Err.zam");
-import std("test/Assert.zam");
-import "../syntax/FileParser.zam";
-import "../syntax/Parser.zam";
-import ast = "../syntax/ast/*";
-import "Termination.zam";
+import {
+    std("lang/Err.zam");
+    std("test/Assert.zam");
+    "../syntax/FileParser.zam";
+    "../syntax/Parser.zam";
+    ast = "../syntax/ast/*";
+    "Termination.zam";
+}
 
 public namespace TerminationTest {
     // terminates checks whether body, as the body of a method, terminates

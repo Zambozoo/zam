@@ -1,28 +1,30 @@
-import std("codec/format/JSON.zam");
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import std("io/local/Stream.zam");
-import std("lang/System.zam");
-import std("lang/time/Duration.zam");
-import std("lang/time/Timer.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("sync/Mutex.zam");
-import "../rpc/Messages.zam";
-import "../syntax/ProjectParser.zam";
-import "../syntax/SourceProvider.zam";
-import std("codec/text/Regex.zam");
-import "../semantic/References.zam";
-import "../syntax/Path.zam";
-import "../syntax/Source.zam";
-import ast = "../syntax/ast/*";
-import "../test/TestFiles.zam";
-import "Analysis.zam";
-import "Doc.zam";
-import "Navigation.zam";
-import "Overlay.zam";
-import "Tokens.zam";
-import "Uris.zam";
+import {
+    std("codec/format/JSON.zam");
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    std("io/local/Stream.zam");
+    std("lang/System.zam");
+    std("lang/time/Duration.zam");
+    std("lang/time/Timer.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("sync/Mutex.zam");
+    "../rpc/Messages.zam";
+    "../syntax/ProjectParser.zam";
+    "../syntax/SourceProvider.zam";
+    std("codec/text/Regex.zam");
+    "../semantic/References.zam";
+    "../syntax/Path.zam";
+    "../syntax/Source.zam";
+    ast = "../syntax/ast/*";
+    "../test/TestFiles.zam";
+    "Analysis.zam";
+    "Doc.zam";
+    "Navigation.zam";
+    "Overlay.zam";
+    "Tokens.zam";
+    "Uris.zam";
+}
 
 // Server is a language server for zam, speaking the language server protocol's JSON-RPC over a pair of streams
 public class Server {

@@ -1,21 +1,23 @@
-import std("codec/archive/Archive.zam");
-import std("codec/archive/TAR.zam");
-import std("codec/compress/ZSTD.zam");
-import std("codec/text/Base64.zam");
-import std("codec/text/Hex.zam");
-import std("crypto/hash/SHA256.zam");
-import std("data/list/ArrList.zam");
-import std("data/map/TreeMap.zam");
-import std("data/set/HashSet.zam");
-import std("data/sort/Sort.zam");
-import std("io/Paths.zam");
-import std("io/local/File.zam");
-import std("io/local/FS.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/Iter.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
+import {
+    std("codec/archive/Archive.zam");
+    std("codec/archive/TAR.zam");
+    std("codec/compress/ZSTD.zam");
+    std("codec/text/Base64.zam");
+    std("codec/text/Hex.zam");
+    std("crypto/hash/SHA256.zam");
+    std("data/list/ArrList.zam");
+    std("data/map/TreeMap.zam");
+    std("data/set/HashSet.zam");
+    std("data/sort/Sort.zam");
+    std("io/Paths.zam");
+    std("io/local/File.zam");
+    std("io/local/FS.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/Iter.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+}
 
 // PackageArchive keeps a dependency as a zstd-compressed tar of its files
 public namespace PackageArchive {

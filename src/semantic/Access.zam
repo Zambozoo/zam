@@ -1,9 +1,11 @@
-import std("io/Paths.zam");
-import std("lang/Strs.zam");
-import "../syntax/Path.zam";
-import ast = "../syntax/ast/*";
-import "Model.zam";
-import "Type.zam";
+import {
+    std("io/Paths.zam");
+    std("lang/Strs.zam");
+    "../syntax/Path.zam";
+    ast = "../syntax/ast/*";
+    "Model.zam";
+    "Type.zam";
+}
 
 // Access says where a declaration or field may be named from
 public namespace Access {

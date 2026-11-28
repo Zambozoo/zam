@@ -1,11 +1,13 @@
-import std("data/list/ArrList.zam");
-import std("lang/Arr.zam");
-import ast = "../syntax/ast/*";
-import "Canonical.zam";
-import "Members.zam";
-import "Model.zam";
-import "Type.zam";
-import "TypeSet.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Arr.zam");
+    ast = "../syntax/ast/*";
+    "Canonical.zam";
+    "Members.zam";
+    "Model.zam";
+    "Type.zam";
+    "TypeSet.zam";
+}
 
 // Dump writes what monomorphization and interface collection found out about a program, one fact a line, as Go's are compared
 public namespace Dump {

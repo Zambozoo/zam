@@ -1,29 +1,31 @@
-import std("codec/format/JSON.zam");
-import std("data/list/ArrList.zam");
-import std("io/Paths.zam");
-import std("io/local/FS.zam");
-import std("io/local/Process.zam");
-import std("io/local/Stream.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("lang/System.zam");
-import std("sync/Mutex.zam");
-import "../build/Build.zam";
-import "../cli/Command.zam";
-import "../cli/LocalFiles.zam";
-import "../cli/Optimization.zam";
-import "../codegen/Codegen.zam";
-import "../rpc/Messages.zam";
-import "../semantic/Model.zam";
-import "../semantic/Semantic.zam";
-import "../syntax/Path.zam";
-import "../syntax/Project.zam";
-import "../syntax/ProjectParser.zam";
-import "../syntax/SourceProvider.zam";
-import "../test/TestFiles.zam";
-import "../test/Tests.zam";
+import {
+    std("codec/format/JSON.zam");
+    std("data/list/ArrList.zam");
+    std("io/Paths.zam");
+    std("io/local/FS.zam");
+    std("io/local/Process.zam");
+    std("io/local/Stream.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("lang/System.zam");
+    std("sync/Mutex.zam");
+    "../build/Build.zam";
+    "../cli/Command.zam";
+    "../cli/LocalFiles.zam";
+    "../cli/Optimization.zam";
+    "../codegen/Codegen.zam";
+    "../rpc/Messages.zam";
+    "../semantic/Model.zam";
+    "../semantic/Semantic.zam";
+    "../syntax/Path.zam";
+    "../syntax/Project.zam";
+    "../syntax/ProjectParser.zam";
+    "../syntax/SourceProvider.zam";
+    "../test/TestFiles.zam";
+    "../test/Tests.zam";
+}
 
 // Proxy is one debugging session passed between an editor and lldb-dap
 public class Proxy {

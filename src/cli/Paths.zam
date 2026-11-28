@@ -1,7 +1,9 @@
-import io = std("io/Paths.zam");
-import std("io/local/FS.zam");
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
+import {
+    io = std("io/Paths.zam");
+    std("io/local/FS.zam");
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+}
 
 // Paths reads the paths a command line is written with
 public namespace Paths {

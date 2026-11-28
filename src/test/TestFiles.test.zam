@@ -1,14 +1,16 @@
-import io = std("io/Paths.zam");
-import std("data/list/ArrList.zam");
-import std("io/local/FS.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("codec/text/Regex.zam");
-import std("test/Assert.zam");
-import "../syntax/MapSources.test.zam";
-import "../syntax/ProjectParser.zam";
-import "TestFiles.zam";
+import {
+    io = std("io/Paths.zam");
+    std("data/list/ArrList.zam");
+    std("io/local/FS.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("codec/text/Regex.zam");
+    std("test/Assert.zam");
+    "../syntax/MapSources.test.zam";
+    "../syntax/ProjectParser.zam";
+    "TestFiles.zam";
+}
 
 public namespace TestFilesTest {
     // tree answers a new directory of test files, one beside others, one in

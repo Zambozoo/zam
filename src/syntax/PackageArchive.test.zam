@@ -1,14 +1,16 @@
-import std("codec/archive/Archive.zam");
-import std("codec/archive/TAR.zam");
-import std("codec/compress/ZSTD.zam");
-import std("io/Paths.zam");
-import std("io/local/File.zam");
-import std("io/local/FS.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "PackageArchive.zam";
+import {
+    std("codec/archive/Archive.zam");
+    std("codec/archive/TAR.zam");
+    std("codec/compress/ZSTD.zam");
+    std("io/Paths.zam");
+    std("io/local/File.zam");
+    std("io/local/FS.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "PackageArchive.zam";
+}
 
 public namespace PackageArchiveTest {
     // tree answers a new directory holding a.txt, dir/b.zam and a .git directory

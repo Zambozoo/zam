@@ -1,9 +1,11 @@
-import std("data/list/ArrList.zam");
-import std("lang/Strs.zam");
-import "../Token.zam";
-import "../TokenKind.zam";
-import "Stmt.zam";
-import "Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Strs.zam");
+    "../Token.zam";
+    "../TokenKind.zam";
+    "Stmt.zam";
+    "Type.zam";
+}
 
 // Expr is an expression as it is written
 public abstract Expr {

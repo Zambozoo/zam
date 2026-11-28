@@ -1,17 +1,19 @@
-import std("codec/text/Hex.zam");
-import std("crypto/hash/Digest.zam");
-import std("crypto/hash/SHA256.zam");
-import std("data/list/ArrList.zam");
-import std("io/Paths.zam");
-import std("io/local/FS.zam");
-import std("io/local/Process.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import "../cli/Target.zam";
-import "../codegen/Zig.zam";
-import "Pack.zam";
+import {
+    std("codec/text/Hex.zam");
+    std("crypto/hash/Digest.zam");
+    std("crypto/hash/SHA256.zam");
+    std("data/list/ArrList.zam");
+    std("io/Paths.zam");
+    std("io/local/FS.zam");
+    std("io/local/Process.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    "../cli/Target.zam";
+    "../codegen/Zig.zam";
+    "Pack.zam";
+}
 
 // RuntimeArchive compiles the C runtime for a target into a static archive, cached by what it is built from
 public namespace RuntimeArchive {

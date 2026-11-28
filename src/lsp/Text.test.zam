@@ -1,5 +1,7 @@
-import std("test/Assert.zam");
-import "Text.zam";
+import {
+    std("test/Assert.zam");
+    "Text.zam";
+}
 
 public namespace TextTest {
     public fun void(uint, str...) Positions = (argC, argV) {

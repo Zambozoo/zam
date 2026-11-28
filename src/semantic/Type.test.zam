@@ -1,10 +1,12 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import std("test/Assert.zam");
-import "../syntax/Token.zam";
-import "../syntax/TokenKind.zam";
-import ast = "../syntax/ast/*";
-import "Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    std("test/Assert.zam");
+    "../syntax/Token.zam";
+    "../syntax/TokenKind.zam";
+    ast = "../syntax/ast/*";
+    "Type.zam";
+}
 
 public namespace TypeTest {
     // named answers a reference named name to a declaration of that name

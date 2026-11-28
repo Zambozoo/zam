@@ -1,7 +1,9 @@
-import std("data/list/ArrList.zam");
-import std("lang/Flts.zam");
-import "IrType.zam";
-import "Quote.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Flts.zam");
+    "IrType.zam";
+    "Quote.zam";
+}
 
 // Value is something an instruction can be handed: a local, a global, or a constant, with its type
 public class Value {

@@ -1,22 +1,24 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import std("lang/Flts.zam");
-import std("lang/Psts.zam");
-import std("lang/Strs.zam");
-import "../../syntax/Token.zam";
-import "../../syntax/TokenKind.zam";
-import ast = "../../syntax/ast/*";
-import "../../semantic/Members.zam";
-import "../../semantic/Model.zam";
-import "../../semantic/Type.zam";
-import "../ir/Builder.zam";
-import "../ir/IrType.zam";
-import "../ir/Module.zam";
-import "../ir/Value.zam";
-import "../Intrinsics.zam";
-import "../Layout.zam";
-import "Function.zam";
-import "Program.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    std("lang/Flts.zam");
+    std("lang/Psts.zam");
+    std("lang/Strs.zam");
+    "../../syntax/Token.zam";
+    "../../syntax/TokenKind.zam";
+    ast = "../../syntax/ast/*";
+    "../../semantic/Members.zam";
+    "../../semantic/Model.zam";
+    "../../semantic/Type.zam";
+    "../ir/Builder.zam";
+    "../ir/IrType.zam";
+    "../ir/Module.zam";
+    "../ir/Value.zam";
+    "../Intrinsics.zam";
+    "../Layout.zam";
+    "Function.zam";
+    "Program.zam";
+}
 
 // Expressions lowers the expressions of the function it compiles, each to the word it comes to
 class Expressions {

@@ -1,6 +1,8 @@
-import std("data/list/ArrList.zam");
-import "Subtyping.zam";
-import "Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    "Subtyping.zam";
+    "Type.zam";
+}
 
 // TypeSet is types in the order first added, each the same type as none before it
 public class TypeSet {

@@ -1,8 +1,10 @@
-import std("io/Paths.zam");
-import std("io/local/FS.zam");
-import std("lang/Err.zam");
-import std("test/Assert.zam");
-import "Path.zam";
+import {
+    std("io/Paths.zam");
+    std("io/local/FS.zam");
+    std("lang/Err.zam");
+    std("test/Assert.zam");
+    "Path.zam";
+}
 
 public namespace PathTest {
     public fun void(uint, str...) Resolve = (argC, argV) {

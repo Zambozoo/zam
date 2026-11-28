@@ -1,5 +1,7 @@
-import std("data/set/HashSet.zam");
-import std("lang/Arr.zam");
+import {
+    std("data/set/HashSet.zam");
+    std("lang/Arr.zam");
+}
 
 // Intrinsics names the natives lowered inline rather than called through the native table
 public namespace Intrinsics {

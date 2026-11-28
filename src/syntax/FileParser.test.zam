@@ -1,9 +1,11 @@
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "FileParser.zam";
-import "Parser.zam";
-import "ast/File.zam";
+import {
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "FileParser.zam";
+    "Parser.zam";
+    "ast/File.zam";
+}
 
 public namespace FileParserTest {
     // fails checks that source fails to read as a file with an error

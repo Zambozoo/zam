@@ -1,11 +1,13 @@
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "Parser.zam";
-import "Token.zam";
-import "TokenKind.zam";
-import "TypeParser.zam";
-import "ast/Type.zam";
+import {
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "Parser.zam";
+    "Token.zam";
+    "TokenKind.zam";
+    "TypeParser.zam";
+    "ast/Type.zam";
+}
 
 public namespace TypeParserTest {
     // parses checks that source reads whole as the type want.

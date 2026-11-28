@@ -1,8 +1,10 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import "../syntax/Token.zam";
-import "../syntax/TokenKind.zam";
-import ast = "../syntax/ast/*";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    "../syntax/Token.zam";
+    "../syntax/TokenKind.zam";
+    ast = "../syntax/ast/*";
+}
 
 // Type is a type with the names in it resolved
 public abstract Type {

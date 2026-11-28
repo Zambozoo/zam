@@ -1,10 +1,12 @@
-import std("io/Paths.zam");
-import std("io/local/FS.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("lang/System.zam");
+import {
+    std("io/Paths.zam");
+    std("io/local/FS.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("lang/System.zam");
+}
 
 // Adapter finds the lldb-dap zam debug passes a debugging session to
 public namespace Adapter {

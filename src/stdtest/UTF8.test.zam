@@ -1,6 +1,8 @@
-import std("codec/text/UTF8.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
+import {
+    std("codec/text/UTF8.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+}
 
 public namespace UTF8Test {
     // bytes answers a run of the n bytes bs.

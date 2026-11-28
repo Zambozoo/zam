@@ -1,10 +1,12 @@
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "ExprParser.zam";
-import "Parser.zam";
-import "TokenKind.zam";
-import "ast/Expr.zam";
+import {
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "ExprParser.zam";
+    "Parser.zam";
+    "TokenKind.zam";
+    "ast/Expr.zam";
+}
 
 public namespace ExprParserTest {
     // parses checks that source reads whole as the expression want.

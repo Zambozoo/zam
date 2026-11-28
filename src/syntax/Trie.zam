@@ -1,10 +1,12 @@
-import std("data/trie/HashTrieMap.zam");
-import std("lang/Arr.zam");
-import std("lang/Enums.zam");
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import "RuneReader.zam";
-import "TokenKind.zam";
+import {
+    std("data/trie/HashTrieMap.zam");
+    std("lang/Arr.zam");
+    std("lang/Enums.zam");
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    "RuneReader.zam";
+    "TokenKind.zam";
+}
 
 // Trie matches the symbols or the keywords written at a reader's position
 public class Trie {

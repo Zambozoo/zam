@@ -1,13 +1,15 @@
-import std("lang/Err.zam");
-import std("test/Assert.zam");
-import "../FileParser.zam";
-import "../Parser.zam";
-import "File.zam";
-import "Field.zam";
-import "Import.zam";
-import "Stmt.zam";
-import "Type.zam";
-import "Walker.zam";
+import {
+    std("lang/Err.zam");
+    std("test/Assert.zam");
+    "../FileParser.zam";
+    "../Parser.zam";
+    "File.zam";
+    "Field.zam";
+    "Import.zam";
+    "Stmt.zam";
+    "Type.zam";
+    "Walker.zam";
+}
 
 public namespace WalkerTest {
     // Recorder writes the imports and references it is walked over, with

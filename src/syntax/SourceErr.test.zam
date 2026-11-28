@@ -1,8 +1,10 @@
-import std("data/list/ArrList.zam");
-import std("lang/StrErr.zam");
-import std("test/Assert.zam");
-import "Path.zam";
-import "SourceErr.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("lang/StrErr.zam");
+    std("test/Assert.zam");
+    "Path.zam";
+    "SourceErr.zam";
+}
 
 public namespace SourceErrTest {
     public fun void(uint, str...) Position = (argC, argV) {

@@ -1,16 +1,18 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import ast = "../../syntax/ast/*";
-import "../../semantic/Members.zam";
-import "../../semantic/Type.zam";
-import "../ir/IrType.zam";
-import "../ir/Module.zam";
-import "../ir/Quote.zam";
-import "../ir/Value.zam";
-import "../Layout.zam";
-import "Expressions.zam";
-import "Function.zam";
-import "Program.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    ast = "../../syntax/ast/*";
+    "../../semantic/Members.zam";
+    "../../semantic/Type.zam";
+    "../ir/IrType.zam";
+    "../ir/Module.zam";
+    "../ir/Quote.zam";
+    "../ir/Value.zam";
+    "../Layout.zam";
+    "Expressions.zam";
+    "Function.zam";
+    "Program.zam";
+}
 
 // Debug is the DWARF a module describes its program with
 public class Debug {

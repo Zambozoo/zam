@@ -1,27 +1,29 @@
-import std("codec/text/Regex.zam");
-import std("data/list/ArrList.zam");
-import io = std("io/Paths.zam");
-import std("io/local/File.zam");
-import std("io/local/FS.zam");
-import std("io/local/Process.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("lang/System.zam");
-import std("lang/time/Duration.zam");
-import std("lang/time/Time.zam");
-import std("math/Flts.zam");
-import "../build/Build.zam";
-import "../cli/Command.zam";
-import "../codegen/Codegen.zam";
-import "../codegen/Collect.zam";
-import "../semantic/Model.zam";
-import "../syntax/Path.zam";
-import "../syntax/ProjectParser.zam";
-import "../syntax/SourceProvider.zam";
-import "Runner.zam";
-import "TestFiles.zam";
+import {
+    std("codec/text/Regex.zam");
+    std("data/list/ArrList.zam");
+    io = std("io/Paths.zam");
+    std("io/local/File.zam");
+    std("io/local/FS.zam");
+    std("io/local/Process.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("lang/System.zam");
+    std("lang/time/Duration.zam");
+    std("lang/time/Time.zam");
+    std("math/Flts.zam");
+    "../build/Build.zam";
+    "../cli/Command.zam";
+    "../codegen/Codegen.zam";
+    "../codegen/Collect.zam";
+    "../semantic/Model.zam";
+    "../syntax/Path.zam";
+    "../syntax/ProjectParser.zam";
+    "../syntax/SourceProvider.zam";
+    "Runner.zam";
+    "TestFiles.zam";
+}
 
 // Tests compiles the tests in test files into one program
 public namespace Tests {

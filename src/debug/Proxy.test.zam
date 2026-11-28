@@ -1,22 +1,24 @@
-import std("codec/format/JSON.zam");
-import std("io/Paths.zam");
-import std("io/local/FS.zam");
-import std("io/local/Pipe.zam");
-import std("io/local/Process.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("lang/System.zam");
-import std("test/Assert.zam");
-import "../build/Build.zam";
-import "../cli/Target.zam";
-import "../codegen/Runtime.zam";
-import "../codegen/Zig.zam";
-import "../rpc/Messages.zam";
-import "../syntax/LocalPackages.zam";
-import "../syntax/LocalSources.zam";
-import "Proxy.zam";
+import {
+    std("codec/format/JSON.zam");
+    std("io/Paths.zam");
+    std("io/local/FS.zam");
+    std("io/local/Pipe.zam");
+    std("io/local/Process.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("lang/System.zam");
+    std("test/Assert.zam");
+    "../build/Build.zam";
+    "../cli/Target.zam";
+    "../codegen/Runtime.zam";
+    "../codegen/Zig.zam";
+    "../rpc/Messages.zam";
+    "../syntax/LocalPackages.zam";
+    "../syntax/LocalSources.zam";
+    "Proxy.zam";
+}
 
 public namespace ProxyTest {
     // exchange writes message to the proxy and answers what it writes back

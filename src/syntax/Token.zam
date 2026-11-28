@@ -1,5 +1,7 @@
-import std("lang/Strs.zam");
-import "TokenKind.zam";
+import {
+    std("lang/Strs.zam");
+    "TokenKind.zam";
+}
 
 // Token is a kind and value lexed at an offset
 public class Token {

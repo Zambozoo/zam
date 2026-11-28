@@ -1,20 +1,22 @@
-import std("data/list/ArrList.zam");
-import std("io/Paths.zam");
-import std("io/local/File.zam");
-import std("io/local/FS.zam");
-import std("io/local/Process.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("lang/System.zam");
-import "../cli/Command.zam";
-import "../cli/Target.zam";
-import "../codegen/Zig.zam";
-import "../syntax/Project.zam";
-import "Natives.zam";
-import "Pack.zam";
-import "RuntimeArchive.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("io/Paths.zam");
+    std("io/local/File.zam");
+    std("io/local/FS.zam");
+    std("io/local/Process.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("lang/System.zam");
+    "../cli/Command.zam";
+    "../cli/Target.zam";
+    "../codegen/Zig.zam";
+    "../syntax/Project.zam";
+    "Natives.zam";
+    "Pack.zam";
+    "RuntimeArchive.zam";
+}
 
 // Build links a program's object into an executable
 public namespace Build {

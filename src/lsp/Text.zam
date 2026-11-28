@@ -1,6 +1,8 @@
-import std("data/list/ArrList.zam");
-import std("lang/Arr.zam");
-import std("lang/Strs.zam");
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Arr.zam");
+    std("lang/Strs.zam");
+}
 
 // Text is a document's source indexed the way the compiler and the editor each count positions
 public class Text {

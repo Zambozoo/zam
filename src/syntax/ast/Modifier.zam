@@ -1,5 +1,7 @@
-import std("lang/Arr.zam");
-import std("lang/Enums.zam");
+import {
+    std("lang/Arr.zam");
+    std("lang/Enums.zam");
+}
 
 // Modifier is a keyword written before a field that says who sees it and how it is bound
 public enum Modifier : str {

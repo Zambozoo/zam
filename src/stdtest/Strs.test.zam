@@ -1,8 +1,10 @@
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/Iter.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
+import {
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/Iter.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+}
 
 public namespace StrsTest {
     // splits answers the runs Strs::Splits gives for s and sep, each in brackets

@@ -1,8 +1,10 @@
-import std("codec/format/JSON.zam");
-import std("io/local/Pipe.zam");
-import std("lang/Err.zam");
-import std("test/Assert.zam");
-import "Messages.zam";
+import {
+    std("codec/format/JSON.zam");
+    std("io/local/Pipe.zam");
+    std("lang/Err.zam");
+    std("test/Assert.zam");
+    "Messages.zam";
+}
 
 public namespace MessagesTest {
     // reader answers a Reader over text, all of it written ahead

@@ -1,14 +1,16 @@
-import std("data/list/ArrList.zam");
-import std("data/set/HashSet.zam");
-import "../syntax/Path.zam";
-import "../syntax/Source.zam";
-import "../syntax/SourceErr.zam";
-import "../syntax/Token.zam";
-import "../syntax/TokenKind.zam";
-import ast = "../syntax/ast/*";
-import "../semantic/Model.zam";
-import "Intrinsics.zam";
-import "TypeIds.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/set/HashSet.zam");
+    "../syntax/Path.zam";
+    "../syntax/Source.zam";
+    "../syntax/SourceErr.zam";
+    "../syntax/Token.zam";
+    "../syntax/TokenKind.zam";
+    ast = "../syntax/ast/*";
+    "../semantic/Model.zam";
+    "Intrinsics.zam";
+    "TypeIds.zam";
+}
 
 // Collect gathers the natives and string literals a program names, in the order Go's collector meets them, which is what numbers their slots
 public class Collect {

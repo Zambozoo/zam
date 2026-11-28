@@ -1,5 +1,7 @@
-import std("data/list/ArrList.zam");
-import std("lang/Strs.zam");
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Strs.zam");
+}
 
 // Quote spells names and byte strings the way LLVM's textual IR reads them
 public namespace Quote {

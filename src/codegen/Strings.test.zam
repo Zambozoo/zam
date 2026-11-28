@@ -1,6 +1,8 @@
-import std("data/list/ArrList.zam");
-import std("test/Assert.zam");
-import "Strings.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("test/Assert.zam");
+    "Strings.zam";
+}
 
 public namespace StringsTest {
     public fun void(uint, str...) Padding = (argC, argV) {

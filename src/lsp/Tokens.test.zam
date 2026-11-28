@@ -1,5 +1,7 @@
-import std("test/Assert.zam");
-import "Tokens.zam";
+import {
+    std("test/Assert.zam");
+    "Tokens.zam";
+}
 
 public namespace TokensTest {
     public fun void(uint, str...) Semantic = (argC, argV) {

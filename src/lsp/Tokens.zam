@@ -1,8 +1,10 @@
-import std("codec/format/JSON.zam");
-import std("data/list/ArrList.zam");
-import "../syntax/Lexer.zam";
-import "../syntax/TokenKind.zam";
-import "Text.zam";
+import {
+    std("codec/format/JSON.zam");
+    std("data/list/ArrList.zam");
+    "../syntax/Lexer.zam";
+    "../syntax/TokenKind.zam";
+    "Text.zam";
+}
 
 // Tokens colors a document by its tokens alone
 public namespace Tokens {

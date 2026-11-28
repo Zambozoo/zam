@@ -1,7 +1,9 @@
-import std("data/list/ArrList.zam");
-import "IrType.zam";
-import "Module.zam";
-import "Value.zam";
+import {
+    std("data/list/ArrList.zam");
+    "IrType.zam";
+    "Module.zam";
+    "Value.zam";
+}
 
 // Builder appends instructions to the end of a block of a function
 public class Builder {

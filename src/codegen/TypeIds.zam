@@ -1,14 +1,16 @@
-import std("data/list/ArrList.zam");
-import std("data/map/HashMap.zam");
-import std("lang/Iter.zam");
-import "../syntax/Source.zam";
-import "../syntax/TokenKind.zam";
-import ast = "../syntax/ast/*";
-import "../semantic/Canonical.zam";
-import "../semantic/Members.zam";
-import "../semantic/Model.zam";
-import "../semantic/Type.zam";
-import "../semantic/TypeSet.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/map/HashMap.zam");
+    std("lang/Iter.zam");
+    "../syntax/Source.zam";
+    "../syntax/TokenKind.zam";
+    ast = "../syntax/ast/*";
+    "../semantic/Canonical.zam";
+    "../semantic/Members.zam";
+    "../semantic/Model.zam";
+    "../semantic/Type.zam";
+    "../semantic/TypeSet.zam";
+}
 
 // TypeIds numbers every type the runtime knows
 public class TypeIds {

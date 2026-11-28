@@ -1,25 +1,27 @@
-import std("data/list/ArrList.zam");
-import std("data/set/TreeSet.zam");
-import std("lang/Arr.zam");
-import std("lang/Enums.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import "DeclParser.zam";
-import "ExprParser.zam";
-import "GenericParser.zam";
-import "Parser.zam";
-import "StmtParser.zam";
-import "Token.zam";
-import "TokenKind.zam";
-import "TypeParser.zam";
-import "ast/Decl.zam";
-import "ast/Expr.zam";
-import "ast/Field.zam";
-import "ast/Generic.zam";
-import "ast/Modifier.zam";
-import "ast/Stmt.zam";
-import "ast/Type.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("data/set/TreeSet.zam");
+    std("lang/Arr.zam");
+    std("lang/Enums.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    "DeclParser.zam";
+    "ExprParser.zam";
+    "GenericParser.zam";
+    "Parser.zam";
+    "StmtParser.zam";
+    "Token.zam";
+    "TokenKind.zam";
+    "TypeParser.zam";
+    "ast/Decl.zam";
+    "ast/Expr.zam";
+    "ast/Field.zam";
+    "ast/Generic.zam";
+    "ast/Modifier.zam";
+    "ast/Stmt.zam";
+    "ast/Type.zam";
+}
 
 // FieldParser reads the modifiers and fields of declarations
 public namespace FieldParser {

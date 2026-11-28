@@ -1,18 +1,20 @@
-import std("data/list/ArrList.zam");
-import std("io/Paths.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import "Parser.zam";
-import "Path.zam";
-import "Project.zam";
-import "Source.zam";
-import "SourceProvider.zam";
-import "Token.zam";
-import "ast/File.zam";
-import "ast/Import.zam";
-import "ast/Stmt.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("io/Paths.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    "Parser.zam";
+    "Path.zam";
+    "Project.zam";
+    "Source.zam";
+    "SourceProvider.zam";
+    "Token.zam";
+    "ast/File.zam";
+    "ast/Import.zam";
+    "ast/Stmt.zam";
+}
 
 // Resolver answers the paths the imports of a file name
 public namespace Resolver {

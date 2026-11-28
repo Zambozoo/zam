@@ -1,16 +1,18 @@
-import std("data/list/ArrList.zam");
-import std("lang/Err.zam");
-import "../syntax/ProjectParser.zam";
-import "Alias.zam";
-import "AliasUse.zam";
-import "CollectInterfaces.zam";
-import "GenericCycle.zam";
-import "InheritanceCycle.zam";
-import "MemberCycle.zam";
-import "Model.zam";
-import "Monomorphize.zam";
-import "Resolve.zam";
-import "Static.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Err.zam");
+    "../syntax/ProjectParser.zam";
+    "Alias.zam";
+    "AliasUse.zam";
+    "CollectInterfaces.zam";
+    "GenericCycle.zam";
+    "InheritanceCycle.zam";
+    "MemberCycle.zam";
+    "Model.zam";
+    "Monomorphize.zam";
+    "Resolve.zam";
+    "Static.zam";
+}
 
 // Semantic checks what a parsed program means
 public namespace Semantic {

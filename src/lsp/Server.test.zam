@@ -1,19 +1,21 @@
-import std("codec/format/JSON.zam");
-import std("io/Paths.zam");
-import std("io/local/FS.zam");
-import std("io/local/Pipe.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("lang/System.zam");
-import std("lang/time/Duration.zam");
-import std("test/Assert.zam");
-import "../rpc/Messages.zam";
-import "../syntax/LocalPackages.zam";
-import "../syntax/LocalSources.zam";
-import "../syntax/Path.zam";
-import "Server.zam";
-import "Uris.zam";
+import {
+    std("codec/format/JSON.zam");
+    std("io/Paths.zam");
+    std("io/local/FS.zam");
+    std("io/local/Pipe.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("lang/System.zam");
+    std("lang/time/Duration.zam");
+    std("test/Assert.zam");
+    "../rpc/Messages.zam";
+    "../syntax/LocalPackages.zam";
+    "../syntax/LocalSources.zam";
+    "../syntax/Path.zam";
+    "Server.zam";
+    "Uris.zam";
+}
 
 public namespace ServerTest {
     // ask writes request to the server and answers what it writes back

@@ -1,14 +1,16 @@
-import std("data/list/ArrList.zam");
-import std("lang/Err.zam");
-import std("test/Assert.zam");
-import "../syntax/MapSources.test.zam";
-import "../syntax/ProjectParser.zam";
-import "../syntax/TokenKind.zam";
-import ast = "../syntax/ast/*";
-import "../semantic/Model.zam";
-import "../semantic/Semantic.zam";
-import "../semantic/Type.zam";
-import "TypeIds.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Err.zam");
+    std("test/Assert.zam");
+    "../syntax/MapSources.test.zam";
+    "../syntax/ProjectParser.zam";
+    "../syntax/TokenKind.zam";
+    ast = "../syntax/ast/*";
+    "../semantic/Model.zam";
+    "../semantic/Semantic.zam";
+    "../semantic/Type.zam";
+    "TypeIds.zam";
+}
 
 public namespace TypeIdsTest {
     private fun Model*(str) validated = (body) {

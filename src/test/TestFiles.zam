@@ -1,19 +1,21 @@
-import io = std("io/Paths.zam");
-import std("data/list/ArrList.zam");
-import std("data/set/HashSet.zam");
-import std("data/sort/Sort.zam");
-import std("io/local/FS.zam");
-import std("lang/Arr.zam");
-import std("lang/Err.zam");
-import std("lang/StrErr.zam");
-import std("lang/Strs.zam");
-import std("codec/text/Regex.zam");
-import ast = "../syntax/ast/*";
-import "../cli/Paths.zam";
-import "../syntax/Path.zam";
-import "../syntax/ProjectParser.zam";
-import "../syntax/Source.zam";
-import "../syntax/SourceErr.zam";
+import {
+    io = std("io/Paths.zam");
+    std("data/list/ArrList.zam");
+    std("data/set/HashSet.zam");
+    std("data/sort/Sort.zam");
+    std("io/local/FS.zam");
+    std("lang/Arr.zam");
+    std("lang/Err.zam");
+    std("lang/StrErr.zam");
+    std("lang/Strs.zam");
+    std("codec/text/Regex.zam");
+    ast = "../syntax/ast/*";
+    "../cli/Paths.zam";
+    "../syntax/Path.zam";
+    "../syntax/ProjectParser.zam";
+    "../syntax/Source.zam";
+    "../syntax/SourceErr.zam";
+}
 
 // TestFiles finds the test files the targets of zam test name
 public namespace TestFiles {

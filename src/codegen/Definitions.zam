@@ -1,14 +1,16 @@
-import std("data/list/ArrList.zam");
-import ast = "../syntax/ast/*";
-import "../semantic/Members.zam";
-import "../semantic/Model.zam";
-import "../semantic/Subtyping.zam";
-import "../semantic/Type.zam";
-import "../semantic/TypeSet.zam";
-import "Layout.zam";
-import "PerfectHash.zam";
-import "Statics.zam";
-import "TypeIds.zam";
+import {
+    std("data/list/ArrList.zam");
+    ast = "../syntax/ast/*";
+    "../semantic/Members.zam";
+    "../semantic/Model.zam";
+    "../semantic/Subtyping.zam";
+    "../semantic/Type.zam";
+    "../semantic/TypeSet.zam";
+    "Layout.zam";
+    "PerfectHash.zam";
+    "Statics.zam";
+    "TypeIds.zam";
+}
 
 // Definitions writes what the runtime is told about each declaration
 public class Definitions {

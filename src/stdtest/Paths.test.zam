@@ -1,5 +1,7 @@
-import std("io/Paths.zam");
-import std("test/Assert.zam");
+import {
+    std("io/Paths.zam");
+    std("test/Assert.zam");
+}
 
 public namespace PathsTest {
     public fun void(uint, str...) Clean = (argC, argV) {

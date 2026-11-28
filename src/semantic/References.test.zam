@@ -1,13 +1,15 @@
-import std("data/list/ArrList.zam");
-import std("lang/Err.zam");
-import std("lang/Strs.zam");
-import std("test/Assert.zam");
-import "../syntax/MapSources.test.zam";
-import "../syntax/ProjectParser.zam";
-import "../syntax/Source.zam";
-import "Model.zam";
-import "References.zam";
-import "Semantic.zam";
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Err.zam");
+    std("lang/Strs.zam");
+    std("test/Assert.zam");
+    "../syntax/MapSources.test.zam";
+    "../syntax/ProjectParser.zam";
+    "../syntax/Source.zam";
+    "Model.zam";
+    "References.zam";
+    "Semantic.zam";
+}
 
 public namespace ReferencesTest {
     // source is the program the tests ask about

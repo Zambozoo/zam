@@ -1,5 +1,7 @@
-import std("data/list/ArrList.zam");
-import std("lang/Strs.zam");
+import {
+    std("data/list/ArrList.zam");
+    std("lang/Strs.zam");
+}
 
 // Strings writes strings as the image lays them out
 public namespace Strings {
