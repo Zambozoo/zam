@@ -8,6 +8,7 @@ import {
     std("codec/text/Regex.zam");
     std("test/Assert.zam");
     "../syntax/MapSources.test.zam";
+    "../syntax/Path.zam";
     "../syntax/ProjectParser.zam";
     "TestFiles.zam";
 }
@@ -93,9 +94,9 @@ public namespace TestFilesTest {
             TestFilesTest::discovered("", 6U, "/p/A.test.zam", a, "/p/None.test.zam", none, "/p/B.test.zam", b));
         Assert::[str]Equal("/p/A.test.zam:ATest.First", TestFilesTest::discovered("ATest\\.F", 4U, "/p/A.test.zam", a, "/p/B.test.zam", b));
         Assert::[str]Equal("", TestFilesTest::discovered("Missing", 2U, "/p/A.test.zam", a));
-        Assert::[str]Equal("the root declaration of a test file C.test.zam must be named CTest, not ATest (/p/C.test.zam[1:8])",
+        Assert::[str]Equal("the root declaration of a test file C.test.zam must be named CTest, not ATest (" + Path::Display("/p/C.test.zam") + "[1:8])",
             TestFilesTest::discovered("", 2U, "/p/C.test.zam", a));
-        Assert::[str]Equal("the root declaration of a test file P.test.zam must be public (/p/P.test.zam[1:1])",
+        Assert::[str]Equal("the root declaration of a test file P.test.zam must be public (" + Path::Display("/p/P.test.zam") + "[1:1])",
             TestFilesTest::discovered("", 2U, "/p/P.test.zam", "namespace PTest {\n}\n"));
     }
 }

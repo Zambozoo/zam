@@ -25,7 +25,7 @@ public namespace BuildTest {
         }
         FS::WriteFile(Paths::Join(dir, "main.c"), "int main(void) {\n    return 0;\n}\n");
         var str objectPath = Paths::Join(dir, "main.o");
-        var (Process.Result, Err*) cc = Process::Run(dir, Arr::[str]New(9U, "zig", "cc", "-target", host.0.zig, "-g", "-c", "main.c", "-o", objectPath), Zig::Env(dir));
+        var (Process.Result, Err*) cc = Process::Run(dir, Arr::[str]New(9U, "zig", "cc", "-target", host.0.zig, "-gdwarf", "-c", "main.c", "-o", objectPath), Zig::Env(dir));
         if(!Assert::True(cc.1 == null && cc.0.code == 0, cc.1 == null ? cc.0.output : cc.1.Err())) {
             return;
         }
