@@ -1,4 +1,6 @@
 import bits = "../lang/Flts.zam";
+import "../lang/Strs.zam";
+import "BigInt.zam";
 
 // Mathematical functions and constants of flt, through the C library.
 public namespace Flts {
@@ -287,5 +289,51 @@ public namespace Flts {
 
     public static fun flt(flt) ToDegrees = (radians) {
         return radians * 180.0 / Flts::Pi;
+    }
+
+    // Fixed writes f in decimal with digits digits after the point, rounded
+    // from f's exact value to the nearest, a tie to the even digit: NaN, +Inf
+    // or -Inf for those, and a minus sign for any negative f, zero too.
+    public static fun str(flt, uint) Fixed = (f, digits) {
+        var uint u = bits.Flts::ToBits(f);
+        var bool negative = (u >> 63U) != 0U;
+        var uint exponent = (u >> 52U) & 2047U;
+        var uint mantissa = u & 4503599627370495U;
+        if(exponent == 2047U) {
+            if(mantissa != 0U) {
+                return "NaN";
+            }
+            return negative ? "-Inf" : "+Inf";
+        }
+        var int shift = -1074;
+        if(exponent != 0U) {
+            mantissa = mantissa | 4503599627370496U;
+            shift = exponent{int} - 1075;
+        }
+        var BigInt* scaled = BigInt::FromUint(mantissa).Mul(BigInt::FromUint(10U).Pow(digits));
+        var BigInt* unit = BigInt::FromUint(1U);
+        if(shift >= 0) {
+            scaled = scaled.Shl(shift{uint});
+        } else {
+            unit = unit.Shl((0 - shift){uint});
+        }
+        var (BigInt*, BigInt*) divided = scaled.DivMod(unit);
+        var BigInt* rounded = divided.0;
+        var int half = divided.1.Shl(1U).Cmp(unit);
+        if(half > 0 || (half == 0 && rounded.Bit(0U))) {
+            rounded = rounded.Add(BigInt::FromUint(1U));
+        }
+        var str s = rounded.Str();
+        if(digits > 0U) {
+            for(; Strs::ByteLen(s) <= digits;) {
+                s = "0" + s;
+            }
+            var uint point = Strs::ByteLen(s) - digits;
+            s = Strs::Slice(s, 0U, point) + "." + Strs::Slice(s, point, Strs::ByteLen(s));
+        }
+        if(negative) {
+            return "-" + s;
+        }
+        return s;
     }
 }

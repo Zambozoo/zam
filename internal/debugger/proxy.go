@@ -46,11 +46,17 @@ func Run(files *base.FileProvider, packages *base.PackageProvider) error {
 	if err != nil {
 		return err
 	}
+	return Serve(files, packages, adapter, os.Stdin, os.Stdout)
+}
+
+// Serve serves the debug adapter protocol over in and out in front of the
+// lldb-dap at adapter, as Run does over stdin and stdout.
+func Serve(files *base.FileProvider, packages *base.PackageProvider, adapter string, in io.Reader, out io.Writer) error {
 	p, err := newProxy(files, packages, exec.Command(adapter))
 	if err != nil {
 		return err
 	}
-	return p.serve(os.Stdin, os.Stdout)
+	return p.serve(in, out)
 }
 
 // findAdapter is the lldb-dap to debug through.

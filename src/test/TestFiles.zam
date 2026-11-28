@@ -7,8 +7,13 @@ import std("lang/Arr.zam");
 import std("lang/Err.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
+import std("codec/text/Regex.zam");
+import ast = "../syntax/ast/*";
 import "../cli/Paths.zam";
 import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/Source.zam";
+import "../syntax/SourceErr.zam";
 
 // TestFiles finds the test files the targets of zam test name
 public namespace TestFiles {
@@ -24,10 +29,74 @@ public namespace TestFiles {
         public fun Err*(str, Err*) Unlistable = (dir, err) {
             return StrErr::New("cannot list test files in " + Strs::Quote(Path::Display(dir)) + ": " + err.Err());
         }
+
+        public fun Err*(str) Unparsed = (path) {
+            return StrErr::New(Path::Display(path) + " was not parsed");
+        }
+
+        public fun Err*(str, str, str) Misnamed = (file, want, got) {
+            return StrErr::New("the root declaration of a test file " + file + " must be named " + want + ", not " + got);
+        }
+
+        public fun Err*(str) Private = (file) {
+            return StrErr::New("the root declaration of a test file " + file + " must be public");
+        }
     }
 
     // RecursiveSuffix ends a target naming every directory beneath it too
     public var str$ RecursiveSuffix = "/...";
+    // RootSuffix ends the name of a test file's root declaration
+    public var str$ RootSuffix = "Test";
+    // mainType is the type of a main method, as it is written
+    var str$ mainType = "void(uint, str...)";
+
+    // File is a test file and the tests found in it
+    public class File {
+        public var str path;
+        // decl is the name of its root declaration
+        public var str decl;
+        // tests is the names of its test methods, in the order they are written
+        public var ArrList[str]* tests;
+    }
+
+    // Discover answers the tests of each of paths in program
+    public fun (ArrList[TestFiles.File*]*, Err*)(ProjectParser.Program*, ArrList[str]*, Regex*) Discover = (program, paths, pattern) {
+        var ArrList[TestFiles.File*]* files = ArrList::[TestFiles.File*]New(0U);
+        for(var uint i = 0U; i < paths.Len(); i++) {
+            var (Source*, bool) source = program.sources.Get(paths.Get(i));
+            if(!source.1) {
+                return (null, Errs::Unparsed(paths.Get(i)));
+            }
+            var ast.Decl* d = source.0.file.decl;
+            var str base = io.Paths::Base(paths.Get(i));
+            var str want = Strs::Slice(base, 0U, Strs::ByteLen(base) - Strs::ByteLen(Path::TestExtension)) + TestFiles::RootSuffix;
+            var str name = d.name.value{str};
+            if(name != want) {
+                return (null, SourceErr::At(Errs::Misnamed(base, want, name), source.0.path, source.0.lineStarts, d.start));
+            } else if(!ast.Modifier::Public.In(d.modifiers)) {
+                return (null, SourceErr::At(Errs::Private(base), source.0.path, source.0.lineStarts, d.start));
+            }
+
+            var TestFiles.File* file = new(TestFiles.File);
+            file.path = paths.Get(i);
+            file.decl = name;
+            file.tests = ArrList::[str]New(0U);
+            for(var uint j = 0U; j < d.fields.Len(); j++) {
+                var ast.Field.Method* method = d.fields.Get(j){ast.Field.Method*};
+                if(method == null || !ast.Modifier::Static.In(method.modifiers) || !ast.Modifier::Public.In(method.modifiers) || method.signature.Text() != TestFiles::mainType) {
+                    continue;
+                }
+                var str test = method.name.value{str};
+                if(pattern.Match(name + "." + test)) {
+                    file.tests.AddLast(test);
+                }
+            }
+            if(file.tests.Len() > 0U) {
+                files.AddLast(file);
+            }
+        }
+        return (files, null);
+    }
 
     // Resolve answers the test files targets name
     public fun (ArrList[str]*, Err*)(Arr[str]*) Resolve = (targets) {

@@ -232,7 +232,7 @@ func linkCOFF(t target.Target, pack, output string, inputs, links []string, debu
 
 // lldbFormatters is the lldb script zam's values are shown with.
 //
-//go:embed zam_lldb.py
+//go:embed runtime/zam_lldb.py
 var lldbFormatters []byte
 
 // LLDBFormatters is the lldb script that shows zam's values: the text of a

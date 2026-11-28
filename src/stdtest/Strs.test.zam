@@ -92,5 +92,10 @@ public namespace StrsTest {
         Assert::True(Strs::ParseFlt("1.5x").1 != null, "1.5x is a flt");
         Assert::True(Strs::ParseFlt(" 1").1 != null, "a leading space is allowed");
         Assert::True(Strs::ParseFlt("1e999").1 != null, "1e999 fits a flt");
+        Assert::True(Strs::ParseFlt("-1e999").1 != null, "-1e999 fits a flt");
+        var (flt, Err*) subnormal = Strs::ParseFlt("5e-324");
+        Assert::True(subnormal.1 == null && subnormal.0 > 0.0, "5e-324 is no subnormal flt");
+        var (flt, Err*) underflow = Strs::ParseFlt("1e-400");
+        Assert::True(underflow.1 == null && underflow.0 == 0.0, "1e-400 does not round to zero");
     }
 }

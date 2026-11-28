@@ -1,0 +1,57 @@
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("io/local/Process.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "../cli/Command.zam";
+import "../cli/LocalFiles.zam";
+import "../cli/Target.zam";
+import "../codegen/Runtime.zam";
+import "../codegen/Zig.zam";
+import "Build.zam";
+
+public namespace BuildTest {
+    public fun void(uint, str...) Debuggable = (argC, argV) {
+        var str dir = FS::MakeTempDir(FS::TempDir(), "build-").0;
+        defer FS::RemoveAll(dir);
+        var (Target, Err*) host = Zig::Host(dir);
+        if(!Assert::True(host.1 == null, "zig reports no host")) {
+            return;
+        }
+        FS::WriteFile(Paths::Join(dir, "main.c"), "int main(void) {\n    return 0;\n}\n");
+        var str objectPath = Paths::Join(dir, "main.o");
+        var (Process.Result, Err*) cc = Process::Run(dir, Arr::[str]New(9U, "zig", "cc", "-target", host.0.zig, "-g", "-c", "main.c", "-o", objectPath), Zig::Env(dir));
+        if(!Assert::True(cc.1 == null && cc.0.code == 0, cc.1 == null ? cc.0.output : cc.1.Err())) {
+            return;
+        }
+        var (byte*, uint) bytes = Strs::ToBytes(FS::ReadFile(objectPath).0);
+        var ArrList[byte]* object = ArrList::[byte]New(0U);
+        for(var uint i = 0U; i < bytes.1; i++) {
+            object.AddLast(bytes.0[i]);
+        }
+        var str entry = Paths::Join(dir, "Main.zam");
+        FS::WriteFile(entry, "");
+        var (Command*, Err*) cmd = Command::New(Arr::[str]New(3U, "zam", "build", entry), LocalFiles::New());
+        if(!Assert::True(cmd.1 == null, cmd.1 == null ? "" : cmd.1.Err())) {
+            return;
+        }
+
+        var str runtime = Runtime::Dir("");
+        var (str, Err*) debug = Build::Link(object, cmd.0, Paths::Join(dir, "debug"), null, dir, runtime, true);
+        var (str, Err*) plain = Build::Link(object, cmd.0, Paths::Join(dir, "plain"), null, dir, runtime, false);
+        if(!Assert::True(debug.1 == null && plain.1 == null, debug.1 != null ? debug.1.Err() : (plain.1 != null ? plain.1.Err() : ""))) {
+            return;
+        }
+        if(host.0.os == "macos") {
+            Assert::True(FS::IsDir(debug.0 + ".dSYM"), "a debuggable link writes no .dSYM");
+            Assert::False(FS::Exists(plain.0 + ".dSYM"), "a plain link writes a .dSYM");
+        } else {
+            Assert::True(Strs::Contains(FS::ReadFile(debug.0).0, ".debug_info"), "a debuggable link drops its DWARF");
+            Assert::False(Strs::Contains(FS::ReadFile(plain.0).0, ".debug_info"), "a plain link keeps its DWARF");
+        }
+        Assert::True(FS::Exists(Build::Formatters(runtime)), Build::Formatters(runtime));
+    }
+}

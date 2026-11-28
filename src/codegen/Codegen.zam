@@ -53,19 +53,36 @@ public namespace Codegen {
         return null;
     }
 
-    // Object answers the object file the program m models compiles to, built as cmd configures it
-    public fun (ArrList[byte]*, ArrList[str]*, Err*)(Model*, Command*, str, str) Object = (m, cmd, cache, runtime) {
+    // MainName answers the name the main method of the program m models is compiled under
+    public fun str(Model*) MainName = (m) {
+        var ast.Decl* d = m.Program().main;
+        var str name = d.name.value{str};
+        for(var ast.Decl* outer = m.Outer(d); outer != null; outer = m.Outer(outer)) {
+            name = outer.name.value{str} + "." + name;
+        }
+        return name + ".main";
+    }
+
+    // Compiled is a program's object file, its trapped functions, and the statements it covers
+    public class Compiled {
+        public var ArrList[byte]* object;
+        public var ArrList[str]* traps;
+        public var ArrList[Collect.Statement*]* covered;
+    }
+
+    // Object compiles the program m models, built as cmd configures it
+    public fun (Codegen.Compiled*, Err*)(Model*, Command*, str, str) Object = (m, cmd, cache, runtime) {
         var Target target = cmd.target;
         if(!cmd.hasTarget) {
             var (Target, Err*) host = Zig::Host(cache);
             if(host.1 != null) {
-                return (null, null, host.1);
+                return (null, host.1);
             }
             target = host.0;
         }
         var (HashMap[str, str]*, Err*) tables = Runtime::Tables(runtime);
         if(tables.1 != null) {
-            return (null, null, tables.1);
+            return (null, tables.1);
         }
         var TypeIds* ids = TypeIds::New(m, Codegen::canonical());
         var Layout* layout = Layout::New(m);
@@ -73,7 +90,7 @@ public namespace Codegen {
         var Arr[str]* natives = collected.Natives().Arr();
         var Err* invalid = Runtime::Validate(natives, tables.0);
         if(invalid != null) {
-            return (null, null, invalid);
+            return (null, invalid);
         }
         var ArrList[Collect.Statement*]* covered = null;
         if(cmd.coverProfile != "") {
@@ -81,7 +98,14 @@ public namespace Codegen {
         }
         var (Module*, ArrList[str]*) lowered = Program::Lower(m, target.triple, Codegen::Image(m, cmd), ids, layout, Statics::Lay(m, ids, layout, collected), natives, tables.0, covered);
         var (ArrList[byte]*, Err*) object = Zig::Compile(lowered.0, target, cache, cmd.optimization);
-        return (object.0, lowered.1, object.1);
+        if(object.1 != null) {
+            return (null, object.1);
+        }
+        var Codegen.Compiled* c = new(Codegen.Compiled);
+        c.object = object.0;
+        c.traps = lowered.1;
+        c.covered = covered == null ? ArrList::[Collect.Statement*]New(0U) : covered;
+        return (c, null);
     }
 
     // canonical reports whether the lists the passes filled are to be put in canonical order

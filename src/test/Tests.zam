@@ -1,0 +1,333 @@
+import std("codec/text/Regex.zam");
+import std("data/list/ArrList.zam");
+import io = std("io/Paths.zam");
+import std("io/local/File.zam");
+import std("io/local/FS.zam");
+import std("io/local/Process.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+import std("lang/time/Duration.zam");
+import std("lang/time/Time.zam");
+import std("math/Flts.zam");
+import "../build/Build.zam";
+import "../cli/Command.zam";
+import "../codegen/Codegen.zam";
+import "../codegen/Collect.zam";
+import "../semantic/Model.zam";
+import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/SourceProvider.zam";
+import "Runner.zam";
+import "TestFiles.zam";
+
+// Tests compiles the tests in test files into one program
+public namespace Tests {
+    public namespace Errs {
+        // NoTests is what Prepare answers when no test is picked
+        public var Err*$ NoTests = StrErr::New("no tests to run");
+
+        public fun Err*(str) RunnerExists = (path) {
+            return StrErr::New(Path::Display(path) + " is the test runner's own path and must not exist");
+        }
+    }
+
+    // Prepared is the runner of a set of tests, parsed, and the test files whose tests it runs
+    public class Prepared {
+        public var ProjectParser.Program* program;
+        public var ArrList[TestFiles.File*]* files;
+    }
+
+    // Prepare finds the tests of the test files at paths in program and parses their runner
+    public fun (Tests.Prepared*, ArrList[Err*]*)(Command*, ProjectParser.Program*, ArrList[str]*, SourceProvider*, ProjectParser.PackageProvider*) Prepare = (cmd, program, paths, sources, packages) {
+        var (Regex*, Err*) pattern = Regex::Compile(cmd.runPattern);
+        if(pattern.1 != null) {
+            return (null, ArrList::[Err*]New(1U, pattern.1));
+        }
+        var (ArrList[TestFiles.File*]*, Err*) files = TestFiles::Discover(program, paths, pattern.0);
+        if(files.1 != null) {
+            return (null, ArrList::[Err*]New(1U, files.1));
+        } else if(files.0.Len() == 0U) {
+            return (null, ArrList::[Err*]New(1U, Errs::NoTests));
+        }
+        var str runner = Runner::PathFor(files.0.Get(0U).path);
+        if(FS::Exists(runner)) {
+            return (null, ArrList::[Err*]New(1U, Errs::RunnerExists(runner)));
+        }
+        var (str, Err*) source = Runner::Source(files.0);
+        if(source.1 != null) {
+            return (null, ArrList::[Err*]New(1U, source.1));
+        }
+        var ProjectParser* parser = ProjectParser::New(Runner.Sources::New(sources, runner, source.0), packages, cmd.maxThreads{uint}, cmd.noProject, cmd.writeProject);
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = parser.Parse(runner, Arr::[str]New(0U));
+        if(parsed.1.Len() > 0U) {
+            return (null, parsed.1);
+        }
+        var Tests.Prepared* p = new(Tests.Prepared);
+        p.program = parsed.0;
+        p.files = files.0;
+        return (p, null);
+    }
+
+    // Linked is the runner compiled and linked into a directory of its own and the statements it records running
+    public class Linked {
+        public var str dir;
+        public var str binary;
+        public var ArrList[Collect.Statement*]* covered;
+    }
+
+    // Link compiles the runner m models as cmd configures it and links it into a directory of its own
+    public fun (Tests.Linked*, Err*)(Model*, Command*, str, str) Link = (m, cmd, cache, runtime) {
+        var (Codegen.Compiled*, Err*) compiled = Codegen::Object(m, cmd, cache, runtime);
+        if(compiled.1 != null) {
+            return (null, compiled.1);
+        }
+        var (str, Err*) dir = FS::MakeTempDir(FS::TempDir(), "zam-test-");
+        if(dir.1 != null) {
+            return (null, StrErr::New("cannot create test directory: " + dir.1.Err()));
+        }
+        var (str, Err*) binary = Build::Link(compiled.0.object, cmd, io.Paths::Join(dir.0, "test"), m.Source(m.Program().main).project, cache, runtime, false);
+        if(binary.1 != null) {
+            FS::RemoveAll(dir.0);
+            return (null, binary.1);
+        }
+        var Tests.Linked* l = new(Tests.Linked);
+        l.dir = dir.0;
+        l.binary = binary.0;
+        l.covered = compiled.0.covered;
+        return (l, null);
+    }
+
+    // Result is how a run of one file's tests went
+    class Result {
+        var str output;
+        // status is the exit status, or -1 for a run that did not exit by itself
+        var int status;
+        // ending says what ended a run that did not exit by itself
+        var str ending;
+        var Duration duration;
+        var Err* err;
+    }
+
+    // CoverageVariable names the file a program compiled for coverage writes which of its statements ran to
+    public var str$ CoverageVariable = "ZAM_COVERAGE";
+
+    // Run runs the linked runner once for each of files and reports whether every test passed
+    public fun (bool, Err*)(Command*, ArrList[TestFiles.File*]*, Tests.Linked*) Run = (cmd, files, linked) {
+        var str cwd = "";
+        var (str, Err*) wd = FS::Cwd();
+        if(wd.1 == null) {
+            cwd = FS::ToSlash(wd.0);
+        }
+        var ArrList[thread[Tests.Result*]]* running = ArrList::[thread[Tests.Result*]]New(0U);
+        var uint window = cmd.parallel{uint};
+        var bool passed = true;
+        for(var uint i = 0U; i < files.Len(); i++) {
+            for(var uint next = running.Len(); next < files.Len() && next < i + window; next++) {
+                var str cover = "";
+                if(cmd.coverProfile != "") {
+                    cover = Tests::coverFile(linked.dir, next);
+                }
+                running.AddLast(async(Tests::runFile(linked.binary, next, cmd.runArgs, cover)));
+            }
+            var Tests.Result* r = wait(running.Get(i));
+            if(r.err != null) {
+                for(var uint j = i + 1U; j < running.Len(); j++) {
+                    wait(running.Get(j));
+                }
+                return (false, r.err);
+            }
+            File::StdOut.WriteStr(r.output);
+            var str name = FS::FromSlash(Tests::relative(cwd, files.Get(i).path));
+            if(r.status == 0) {
+                File::StdOut.WriteStr("ok   " + name + " " + Tests::milliseconds(r.duration) + "\n");
+            } else if(r.status == 1) {
+                passed = false;
+                File::StdOut.WriteStr("FAIL " + name + " " + Tests::milliseconds(r.duration) + "\n");
+            } else if(r.status == -1) {
+                passed = false;
+                File::StdOut.WriteStr("FAIL " + name + " (" + r.ending + ")\n");
+            } else {
+                passed = false;
+                File::StdOut.WriteStr("FAIL " + name + " (exit " + r.status{str} + ")\n");
+            }
+        }
+        if(cmd.coverProfile == "") {
+            return (passed, null);
+        }
+        var ArrList[str]* runs = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < files.Len(); i++) {
+            runs.AddLast(Tests::coverFile(linked.dir, i));
+        }
+        return (passed, Tests::WriteCoverage(cmd.coverProfile, linked.covered, runs));
+    }
+
+    // coverFile answers the file the process running the tests of the file at index writes its coverage to in dir
+    fun str(str, uint) coverFile = (dir, index) {
+        return io.Paths::Join(dir, "cover-" + index{str});
+    }
+
+    // WriteCoverage writes the coverage of statements that the processes recorded in runs to path as LCOV
+    public fun Err*(str, ArrList[Collect.Statement*]*, ArrList[str]*) WriteCoverage = (path, statements, runs) {
+        var bool* ran = new(bool, statements.Len());
+        for(var uint i = 0U; i < runs.Len(); i++) {
+            if(!FS::Exists(runs.Get(i))) {
+                continue;
+            }
+            var (str, Err*) counters = FS::ReadFile(runs.Get(i));
+            if(counters.1 != null) {
+                return StrErr::New("cannot read coverage: " + counters.1.Err());
+            }
+            var (byte*, uint) bytes = Strs::ToBytes(counters.0);
+            if(bytes.1 != statements.Len()) {
+                return StrErr::New("coverage of " + bytes.1{str} + " statements recorded for " + statements.Len(){str});
+            }
+            for(var uint j = 0U; j < bytes.1; j++) {
+                ran[j] = ran[j] || bytes.0[j] != 0{byte};
+            }
+        }
+
+        var str profile = "";
+        var uint covered = 0U;
+        var uint at = 0U;
+        for(; at < statements.Len();) {
+            var str file = statements.Get(at).path;
+            var str records = "";
+            var uint found = 0U;
+            var uint hit = 0U;
+            for(; at < statements.Len() && statements.Get(at).path == file;) {
+                var uint line = statements.Get(at).line;
+                var bool lineRan = false;
+                for(; at < statements.Len() && statements.Get(at).path == file && statements.Get(at).line == line; at++) {
+                    if(ran[at]) {
+                        lineRan = true;
+                        covered++;
+                    }
+                }
+                found++;
+                if(lineRan) {
+                    hit++;
+                }
+                records = records + "DA:" + line{str} + "," + (lineRan ? "1" : "0") + "\n";
+            }
+            profile = profile + "SF:" + FS::FromSlash(file) + "\n" + records + "LF:" + found{str} + "\nLH:" + hit{str} + "\nend_of_record\n";
+        }
+        var Err* written = FS::WriteFile(path, profile);
+        if(written != null) {
+            return StrErr::New("cannot write coverage: " + written.Err());
+        }
+
+        if(statements.Len() == 0U) {
+            File::StdOut.WriteStr("coverage: [no statements]\n");
+        } else {
+            File::StdOut.WriteStr("coverage: " + Flts::Fixed(100.0 * covered{flt} / statements.Len(){flt}, 1U) + "% of statements\n");
+        }
+        return null;
+    }
+
+    // runFile runs the tests of the file at index in binar and writing its coverage
+    fun Tests.Result*(str, uint, Arr[str]*, str) runFile = (binary, index, args, cover) {
+        var ArrList[str]* argv = ArrList::[str]New(2U, FS::FromSlash(binary), index{str});
+        for(var uint i = 0U; i < args.Len(); i++) {
+            argv.AddLast(args.Get(i));
+        }
+        var Time start = Time::Now();
+        var Tests.Result* r = new(Tests.Result);
+        r.ending = "";
+        var Arr[str]* env = Arr::[str]New(0U);
+        if(cover != "") {
+            env = Arr::[str]New(1U, Tests::CoverageVariable + "=" + FS::FromSlash(cover));
+        }
+        var (Process.Child*, Err*) child = Process::Start("", argv.Arr(), env, Process.Stdio::Combine, Arr::[System.Signal]New(0U));
+        if(child.1 != null) {
+            r.duration = Time::Since(start);
+            r.err = StrErr::New("cannot run tests: " + child.1.Err());
+            return r;
+        }
+        var (str, Err*) output = child.0.Out().ReadAll();
+        child.0.Out().Close();
+        var (int, Err*) code = child.0.Wait();
+        r.duration = Time::Since(start);
+        if(output.1 != null || code.1 != null) {
+            r.err = StrErr::New("cannot run tests: " + (output.1 != null ? output.1 : code.1).Err());
+            return r;
+        }
+        r.output = output.0;
+        r.status = code.0;
+        var (System.Signal, bool) ended = child.0.EndedBy();
+        if(ended.1) {
+            r.status = -1;
+            r.ending = "signal " + ended.0.Str();
+        }
+        if(System::OS() == "windows") {
+            var (int, str) status = Tests::WindowsStatus(r.status);
+            r.status = status.0;
+            r.ending = status.1;
+        }
+        return r;
+    }
+
+    // WindowsStatus answers a Windows process's exit code as a POSIX status
+    public fun (int, str)(int) WindowsStatus = (code) {
+        var uint c = code{uint} & 4294967295U;
+        if(c >= 3221225472U && c < 3489660928U) {
+            var str digits = "0123456789abcdef";
+            var str hex = "";
+            for(var uint i = 0U; i < 8U; i++) {
+                var uint digit = (c >> ((7U - i) * 4U)) & 15U;
+                hex = hex + Strs::Slice(digits, digit, digit + 1U);
+            }
+            return (-1, "exception 0x" + hex);
+        }
+        return ((c & 255U){int}, "");
+    }
+
+    // milliseconds writes d rounded to the millisecond
+    fun str(Duration) milliseconds = (d) {
+        return Duration::Milliseconds((d.InNanoseconds() + 500000) / 1000000).Str();
+    }
+
+    // relative answers path relative to dir, both slashed and absolute, or path itself when it has no such path
+    fun str(str, str) relative = (dir, path) {
+        if(dir == "" || io.Paths::Volume(dir) != io.Paths::Volume(path)) {
+            return path;
+        }
+        var Arr[str]* from = Tests::parts(dir);
+        var Arr[str]* to = Tests::parts(path);
+        var uint common = 0U;
+        for(; common < from.Len() && common < to.Len() && from.Get(common) == to.Get(common); common++) {}
+        var str out = "";
+        for(var uint i = common; i < from.Len(); i++) {
+            out = io.Paths::Join(out, "..");
+        }
+        for(var uint i = common; i < to.Len(); i++) {
+            out = io.Paths::Join(out, to.Get(i));
+        }
+        if(out == "") {
+            return ".";
+        }
+        return out;
+    }
+
+    // parts answers the names a clean path is made of, after its volume
+    fun Arr[str]*(str) parts = (path) {
+        var str clean = io.Paths::Clean(path);
+        clean = Strs::Slice(clean, Strs::ByteLen(io.Paths::Volume(clean)), Strs::ByteLen(clean));
+        var ArrList[str]* names = ArrList::[str]New(0U);
+        var str name = "";
+        var (byte*, uint) bytes = Strs::ToBytes(clean);
+        for(var uint i = 0U; i <= bytes.1; i++) {
+            if(i == bytes.1 || bytes.0[i] == '/'{byte}) {
+                if(name != "") {
+                    names.AddLast(name);
+                }
+                name = "";
+            } else {
+                name = name + Strs::Slice(clean, i, i + 1U);
+            }
+        }
+        return names.Arr();
+    }
+}

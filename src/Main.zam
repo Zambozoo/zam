@@ -14,6 +14,8 @@ import "cli/LocalFiles.zam";
 import "cli/Verb.zam";
 import "codegen/Codegen.zam";
 import "codegen/Runtime.zam";
+import "debug/Adapter.zam";
+import "debug/Proxy.zam";
 import "build/Build.zam";
 import "build/Pack.zam";
 import "syntax/LocalPackages.zam";
@@ -26,6 +28,7 @@ import "semantic/Dump.zam";
 import "semantic/Semantic.zam";
 import "syntax/ProjectParser.zam";
 import "test/TestFiles.zam";
+import "test/Tests.zam";
 
 namespace Main {
     namespace Errs {
@@ -45,6 +48,7 @@ namespace Main {
         Run("run"),
         Get("get"),
         Clean("clean"),
+        Debug("debug"),
         Test("test");
     }
 
@@ -189,6 +193,21 @@ namespace Main {
             System::Exit(0);
         }
 
+        if(r.0.verb == Verb::Debug) {
+            var (str, Err*) adapter = Adapter::Find();
+            onError(Step::Debug, 1U, adapter.1);
+            var (str, Err*) root = stdRoot();
+            onError(Step::Std, 1U, root.1);
+            var (str, Err*) pkg = packages();
+            onError(Step::Debug, 1U, pkg.1);
+            var (str, Err*) cached = cache();
+            onError(Step::Debug, 1U, cached.1);
+            var (Proxy*, Err*) proxy = Proxy::New(LocalSources::New(root.0), LocalPackages::New(pkg.0), cached.0, Runtime::Dir(root.0), adapter.0);
+            onError(Step::Debug, 1U, proxy.1);
+            onError(Step::Debug, 1U, proxy.0.Serve(File::StdIn, File::StdOut));
+            System::Exit(0);
+        }
+
         if(r.0.verb == Verb::Get || r.0.verb == Verb::Build || r.0.verb == Verb::Run || r.0.verb == Verb::Test) {
             var (str, Err*) root = stdRoot();
             onError(Step::Std, 1U, root.1);
@@ -208,20 +227,47 @@ namespace Main {
 
             var str entry = r.0.inputPath;
             var Arr[str]* extra = Arr::[str]New(0U);
+            var ArrList[str]* tests = null;
             if(r.0.verb == Verb::Test) {
-                var (ArrList[str]*, Err*) tests = TestFiles::Resolve(r.0.testTargets);
-                onError(Step::Test, 1U, tests.1);
-                if(tests.0.Len() == 0U) {
+                var (ArrList[str]*, Err*) resolved = TestFiles::Resolve(r.0.testTargets);
+                onError(Step::Test, 1U, resolved.1);
+                if(resolved.0.Len() == 0U) {
                     File::StdOut.WriteStr("no test files\n");
                     System::Exit(0);
                 }
-                entry = tests.0.RemoveFirst();
-                extra = tests.0.Arr();
+                tests = resolved.0;
+                entry = tests.Get(0U);
+                var ArrList[str]* rest = ArrList::[str]New(0U);
+                for(var uint i = 1U; i < tests.Len(); i++) {
+                    rest.AddLast(tests.Get(i));
+                }
+                extra = rest.Arr();
             }
 
             var ProjectParser* parser = ProjectParser::New(sources, fetcher, r.0.maxThreads{uint}, r.0.noProject, r.0.writeProject);
             var (ProjectParser.Program*, ArrList[Err*]*) program = parser.Parse(entry, extra);
             onError(Step::Syntax, program.1.Len(), program.1.Arr().Arr()...);
+            if(r.0.verb == Verb::Test && env("ZAM_DUMP") == "") {
+                var (Tests.Prepared*, ArrList[Err*]*) prepared = Tests::Prepare(r.0, program.0, tests, sources, fetcher);
+                if(prepared.1 != null && prepared.1.Len() == 1U && prepared.1.Get(0U) == Tests.Errs::NoTests) {
+                    File::StdOut.WriteStr("no tests to run\n");
+                    System::Exit(0);
+                } else if(prepared.1 != null) {
+                    onError(Step::Test, prepared.1.Len(), prepared.1.Arr().Arr()...);
+                }
+                var (Model*, ArrList[Err*]*) runner = Semantic::Validate(prepared.0.program);
+                onError(Step::Semantic, runner.1.Len(), runner.1.Arr().Arr()...);
+                var (str, Err*) cached = cache();
+                onError(Step::Test, 1U, cached.1);
+                var (str, Err*) std = stdRoot();
+                onError(Step::Test, 1U, std.1);
+                var (Tests.Linked*, Err*) linked = Tests::Link(runner.0, r.0, cached.0, Runtime::Dir(std.0));
+                onError(Step::Test, 1U, linked.1);
+                var (bool, Err*) passed = Tests::Run(r.0, prepared.0.files, linked.0);
+                FS::RemoveAll(linked.0.dir);
+                onError(Step::Test, 1U, passed.1);
+                System::Exit(passed.0 ? 0 : 1);
+            }
             var (Model*, ArrList[Err*]*) model = Semantic::Validate(program.0);
             onError(Step::Semantic, model.1.Len(), model.1.Arr().Arr()...);
             var str objectPath = env("ZAM_OBJECT");
@@ -233,12 +279,12 @@ namespace Main {
                 onError(Step::Codegen, 1U, cached.1);
                 var (str, Err*) std = stdRoot();
                 onError(Step::Codegen, 1U, std.1);
-                var (ArrList[byte]*, ArrList[str]*, Err*) object = Codegen::Object(model.0, r.0, cached.0, Runtime::Dir(std.0));
-                onError(Step::Codegen, 1U, object.2);
-                trapped(object.1);
+                var (Codegen.Compiled*, Err*) object = Codegen::Object(model.0, r.0, cached.0, Runtime::Dir(std.0));
+                onError(Step::Codegen, 1U, object.1);
+                trapped(object.0.traps);
                 var (File*, Err*) file = File::Create(objectPath);
                 onError(Step::Codegen, 1U, file.1);
-                var Arr[byte]* bytes = object.0.Arr();
+                var Arr[byte]* bytes = object.0.object.Arr();
                 onError(Step::Codegen, 2U, file.0.Write(bytes.Arr(), bytes.Len()).1, file.0.Close());
                 System::Exit(0);
             }
@@ -252,16 +298,16 @@ namespace Main {
                 onError(Step::Codegen, 1U, cached.1);
                 var (str, Err*) std = stdRoot();
                 onError(Step::Codegen, 1U, std.1);
-                var (ArrList[byte]*, ArrList[str]*, Err*) object = Codegen::Object(model.0, r.0, cached.0, Runtime::Dir(std.0));
-                onError(Step::Codegen, 1U, object.2);
-                trapped(object.1);
+                var (Codegen.Compiled*, Err*) object = Codegen::Object(model.0, r.0, cached.0, Runtime::Dir(std.0));
+                onError(Step::Codegen, 1U, object.1);
+                trapped(object.0.traps);
                 var Project* project = model.0.Source(model.0.Program().main).project;
                 if(r.0.verb == Verb::Run) {
-                    var (int, Err*) status = Build::Run(object.0, r.0, project, cached.0, Runtime::Dir(std.0));
+                    var (int, Err*) status = Build::Run(object.0.object, r.0, project, cached.0, Runtime::Dir(std.0));
                     onError(Step::Run, 1U, status.1);
                     System::Exit(status.0);
                 }
-                onError(Step::Build, 1U, Build::Link(object.0, r.0, r.0.outputPath, project, cached.0, Runtime::Dir(std.0)).1);
+                onError(Step::Build, 1U, Build::Link(object.0.object, r.0, r.0.outputPath, project, cached.0, Runtime::Dir(std.0), false).1);
                 System::Exit(0);
             }
             if(env("ZAM_DUMP") == "semantic") {

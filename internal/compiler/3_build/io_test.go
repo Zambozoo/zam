@@ -246,6 +246,81 @@ namespace Main {
 	assert.Equal(t, "ready 7 0 1 true\n", stdout)
 }
 
+// TestProcessEndedBy waits on a program that a signal ends, on one that exits
+// with the same code, and on one a signal numbered differently by each OS
+// ends, and expects the signals named as on every OS.
+func TestProcessEndedBy(t *testing.T) {
+	t.Parallel()
+	if testTarget().OS == target.Windows {
+		t.Skip("Windows ends no program by a signal")
+	}
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        var Arr[str]* none = Arr::[str]New(0U, new(str, 0U)...);
+        var Arr[System.Signal]* forwarded = Arr::[System.Signal]New(0U);
+        var Process.Child* aborted = Process::Start("", Arr::[str]New(3U, "sh", "-c", "kill -ABRT $$"), none, Process.Stdio::Inherit, forwarded).0;
+        var int abortedCode = aborted.Wait().0;
+        var (System.Signal, bool) abortedBy = aborted.EndedBy();
+        var Process.Child* exited = Process::Start("", Arr::[str]New(3U, "sh", "-c", "exit 134"), none, Process.Stdio::Inherit, forwarded).0;
+        var int exitedCode = exited.Wait().0;
+        var (System.Signal, bool) exitedBy = exited.EndedBy();
+        var Process.Child* bus = Process::Start("", Arr::[str]New(3U, "sh", "-c", "kill -BUS $$"), none, Process.Stdio::Inherit, forwarded).0;
+        bus.Wait();
+        var (System.Signal, bool) busBy = bus.EndedBy();
+        File::StdOut.WriteStr(abortedCode{str} + " " + abortedBy.1{str} + " " + abortedBy.0.Str() + " " + exitedCode{str} + " " + exitedBy.1{str} + " " + System.Signal::SIGTERM.Str() + " " + busBy.1{str} + " " + busBy.0.Str() + "\n");
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	assert.Equal(t, "134 true SIGABRT 134 false SIGTERM true SIGBUS\n", stdout)
+}
+
+// TestSignalAvailable reports which of the signals only some OSes have this
+// one has, and expects a signal it lacks to do nothing when raised, handled or
+// blocked, and to be refused by Start.
+func TestSignalAvailable(t *testing.T) {
+	t.Parallel()
+	binary := compile(t, `import std("lang/*");
+import std("io/local/*");
+
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        var Arr[System.Signal]* some = Arr::[System.Signal]New(5U, System.Signal::SIGEMT, System.Signal::SIGINFO, System.Signal::SIGSTKFLT, System.Signal::SIGPWR, System.Signal::SIGINT);
+        var str s = "";
+        for(var uint i = 0U; i < some.Len(); i++) {
+            s = s + some.Get(i).Available(){str} + " ";
+        }
+        var Arr[System.Signal]* all = Enums::[System.Signal]All();
+        var System.Signal absent = System.Signal::SIGINT;
+        for(var uint i = all.Len(); i > 0U; i--) {
+            if(!all.Get(i - 1U).Available()) {
+                absent = all.Get(i - 1U);
+            }
+        }
+        absent.Handle(lambda void(): () {});
+        absent.Block();
+        absent.Raise();
+        s = s + absent.IsBlocked(){str} + " ";
+        var Arr[str]* none = Arr::[str]New(0U, new(str, 0U)...);
+        s = s + Process::Start("", Arr::[str]New(1U, "zam-no-such-program"), none, Process.Stdio::Inherit, Arr::[System.Signal]New(1U, absent)).1.Err() + "\n";
+        File::StdOut.WriteStr(s);
+    }
+}
+`)
+	stdout, stderr, status := run(t, binary)
+	require.Zero(t, status, stderr)
+	want := map[target.OS]string{
+		target.MacOS:   "true true false false true false SIGSTKFLT",
+		target.Linux:   "false false true true true false SIGEMT",
+		target.Windows: "false false false false true false SIGHUP",
+	}[testTarget().OS]
+	assert.Equal(t, want+" is not a signal on this OS\n", stdout)
+}
+
 // goos answers the operating system t is for, as Go names it.
 func goos(t target.Target) string {
 	switch t.OS {

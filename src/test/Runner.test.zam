@@ -1,0 +1,69 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/Path.zam";
+import "Runner.zam";
+import "TestFiles.zam";
+
+public namespace RunnerTest {
+    // file answers a test file at path, its root declaration decl, with the n tests named
+    private fun TestFiles.File*(str, str, uint, str...) file = (path, decl, n, tests) {
+        var TestFiles.File* f = new(TestFiles.File);
+        f.path = path;
+        f.decl = decl;
+        f.tests = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < n; i++) {
+            f.tests.AddLast(tests[i]);
+        }
+        return f;
+    }
+
+    public fun void(uint, str...) PathFor = (argC, argV) {
+        Assert::[str]Equal("/p/a/ZamTestMain.test.zam", Runner::PathFor("/p/a/A.test.zam"));
+    }
+
+    public fun void(uint, str...) Source = (argC, argV) {
+        var ArrList[TestFiles.File*]* files = ArrList::[TestFiles.File*]New(2U,
+            RunnerTest::file("/p/A.test.zam", "ATest", 2U, "First", "Second"),
+            RunnerTest::file("/p/b/B.test.zam", "BTest", 1U, "Only"));
+        var (str, Err*) source = Runner::Source(files);
+        Assert::True(source.1 == null, "the runner has no source");
+        Assert::[str]Equal("import std(\"test/Test.zam\");\n" +
+            "import t0 = \"/p/A.test.zam\";\n" +
+            "import t1 = \"/p/b/B.test.zam\";\n" +
+            "\n" +
+            "namespace ZamTestMain {\n" +
+            "    fun void(uint, str...) main = (argC, argV) {\n" +
+            "        var uint n = argC - 1U;\n" +
+            "        var str* args = new(str, argC);\n" +
+            "        for (var uint i = 0U; i < n; i = i + 1U) {\n" +
+            "            args[i] = argV[i + 1U];\n" +
+            "        }\n" +
+            "        if (argV[0] == \"0\") {\n" +
+            "            Test::Begin(\"ATest.First\");\n" +
+            "            t0.ATest::First(n, args...);\n" +
+            "            Test::End();\n" +
+            "            Test::Begin(\"ATest.Second\");\n" +
+            "            t0.ATest::Second(n, args...);\n" +
+            "            Test::End();\n" +
+            "        } else if (argV[0] == \"1\") {\n" +
+            "            Test::Begin(\"BTest.Only\");\n" +
+            "            t1.BTest::Only(n, args...);\n" +
+            "            Test::End();\n" +
+            "        }\n" +
+            "        Test::Finish();\n" +
+            "    }\n" +
+            "}\n", source.0);
+
+        var (str, Err*) quoted = Runner::Source(ArrList::[TestFiles.File*]New(1U, RunnerTest::file("/p/\"/A.test.zam", "ATest", 1U, "Only")));
+        Assert::[str]Equal(Path::Display("/p/\"/A.test.zam") + " cannot be imported by the test runner", quoted.1.Err());
+    }
+
+    public fun void(uint, str...) Sources = (argC, argV) {
+        var Runner.Sources* s = Runner.Sources::New(MapSourcesTest.Sources::New(MapSourcesTest::Files(2U, "/p/A.test.zam", "a")), "/p/ZamTestMain.test.zam", "runner");
+        Assert::[str]Equal("runner", s.Read("/p/ZamTestMain.test.zam").0);
+        Assert::[str]Equal("a", s.Read("/p/A.test.zam").0);
+        Assert::True(s.Read("/p/Missing.zam").1 != null, "a missing file reads");
+    }
+}

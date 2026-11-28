@@ -1,5 +1,6 @@
 import {
     "../../lang/Arr.zam";
+    "../../lang/Enums.zam";
     "../../lang/Err.zam";
     "../../lang/StrErr.zam";
     "../../lang/Strs.zam";
@@ -37,6 +38,8 @@ public namespace Process {
         var File* out;
         var bool done;
         var int code;
+        // ended is the OS number of the signal that ended the program, or 0
+        var int ended;
 
         // ID answers the program's process id.
         public fun uint() ID = () {
@@ -66,6 +69,20 @@ public namespace Process {
             return this.reap(false);
         }
 
+        // EndedBy answers the signal that ended the program, once it has been
+        // waited on to its end, and whether one did.
+        public fun (System.Signal, bool)() EndedBy = () {
+            var Arr[System.Signal]* all = Enums::[System.Signal]All();
+            if(this.ended != 0) {
+                for(var uint i = 0U; i < all.Len(); i++) {
+                    if(all.Get(i){int} == this.ended) {
+                        return (all.Get(i), true);
+                    }
+                }
+            }
+            return (System.Signal::SIGHUP, false);
+        }
+
         // Signal sends s to the program. On Windows only SIGTERM can be sent, and it ends the program with code 1
         public fun Err*(System.Signal) Signal = (s) {
             if(this.done) {
@@ -83,7 +100,7 @@ public namespace Process {
         fun (bool, int, Err*)(bool) reap = (block) {
             if(!this.done) {
                 var str errStr;
-                native(STD_PROCESS_WAIT){void(uint, uint, bool, bool*, int*, str*)}(this.handle, this.forward, block, &(this.done), &(this.code), &errStr);
+                native(STD_PROCESS_WAIT){void(uint, uint, bool, bool*, int*, int*, str*)}(this.handle, this.forward, block, &(this.done), &(this.code), &(this.ended), &errStr);
                 if(errStr != null) {
                     return (false, 0, StrErr::New(errStr));
                 }
@@ -107,7 +124,9 @@ public namespace Process {
         var int* forwarded = new(int, signals.Len());
         for(var uint i = 0U; i < signals.Len(); i++) {
             var System.Signal s = signals.Get(i);
-            if(s == System.Signal::SIGKILL || s == System.Signal::SIGSTOP) {
+            if(!s.Available()) {
+                return (null, StrErr::New(s.Str() + " is not a signal on this OS"));
+            } else if(s == System.Signal::SIGKILL || s == System.Signal::SIGSTOP) {
                 return (null, StrErr::New("SIGKILL and SIGSTOP cannot be forwarded"));
             }
             forwarded[i] = s{int};

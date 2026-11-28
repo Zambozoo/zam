@@ -1,0 +1,22 @@
+import bits = std("lang/Flts.zam");
+import std("math/Flts.zam");
+import std("test/Assert.zam");
+
+public namespace FltsTest {
+    public fun void(uint, str...) Fixed = (argC, argV) {
+        Assert::[str]Equal("6.2", Flts::Fixed(6.25, 1U));
+        Assert::[str]Equal("0.1", Flts::Fixed(0.15, 1U));
+        Assert::[str]Equal("2", Flts::Fixed(2.5, 0U));
+        Assert::[str]Equal("4", Flts::Fixed(3.5, 0U));
+        Assert::[str]Equal("-0.0", Flts::Fixed(bits.Flts::FromBits(9223372036854775808U), 1U));
+        Assert::[str]Equal("-0.0", Flts::Fixed(-0.04, 1U));
+        Assert::[str]Equal("1000000000000000000000", Flts::Fixed(1e21, 0U));
+        Assert::[str]Equal("NaN", Flts::Fixed(bits.Flts::NaN, 2U));
+        Assert::[str]Equal("+Inf", Flts::Fixed(bits.Flts::Inf, 1U));
+        Assert::[str]Equal("-Inf", Flts::Fixed(bits.Flts::NegInf, 0U));
+        Assert::[str]Equal("0.10000000000000000555", Flts::Fixed(0.1, 20U));
+        Assert::[str]Equal("0.000", Flts::Fixed(5e-324, 3U));
+        Assert::[str]Equal("123.46", Flts::Fixed(123.456, 2U));
+        Assert::[str]Equal("0.1", Flts::Fixed(100.0 * 3.0 / 2000.0, 1U));
+    }
+}

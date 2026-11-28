@@ -1,0 +1,14 @@
+import std("test/Assert.zam");
+import "Tests.zam";
+
+public namespace TestsTest {
+    public fun void(uint, str...) WindowsStatus = (argC, argV) {
+        var (int, str) exited = Tests::WindowsStatus(1);
+        Assert::[int]Equal(1, exited.0);
+        Assert::[str]Equal("", exited.1);
+        Assert::[int]Equal(255, Tests::WindowsStatus(-1).0);
+        var (int, str) violated = Tests::WindowsStatus(-1073741819);
+        Assert::[int]Equal(-1, violated.0);
+        Assert::[str]Equal("exception 0xc0000005", violated.1);
+    }
+}

@@ -10,11 +10,13 @@ import (
 // shares Zig's caches and one compile of the runtime across tests, unless the
 // environment names others. Both compilers number types in one canonical order,
 // so that their images can be compared, and the compiler written in zam reads
-// the runtime's sources from the repository.
+// the runtime's and the standard library's sources from the repository.
 func TestMain(m *testing.M) {
 	_ = os.Setenv("ZAM_CANONICAL_ORDER", "1")
 	runtime, _ := filepath.Abs(filepath.Join("..", "compiler", "3_build", "runtime"))
 	_ = os.Setenv("ZAM_RUNTIME", runtime)
+	std, _ := filepath.Abs(filepath.Join("..", "..", "src", "std"))
+	_ = os.Setenv("ZAM_STD", std)
 	var cache string
 	if os.Getenv("ZAM_CACHE_DIR") == "" {
 		cache, _ = os.MkdirTemp("", "zam-test-cache-*")

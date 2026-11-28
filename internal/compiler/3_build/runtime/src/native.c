@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
@@ -917,16 +918,19 @@ static void stdProcessStart(ZamThread *thread) {
 
 // stdProcessWait answers whether the process of a handle has ended, waiting
 // for it to when block is set, and the code it exited with: 128 and the signal
-// for one a signal ended. A process answered as ended is released, and no
-// longer forwarded signals from its slot.
+// for one a signal ended, and that signal, or 0 for one that exited. A
+// process answered as ended is released, and no longer forwarded signals from
+// its slot.
 static void stdProcessWait(ZamThread *thread) {
     ZamWord handle = zam_native_argument(thread, 0);
     int slot = (int)zam_native_argument(thread, 1);
     bool block = zam_native_argument(thread, 2) != 0;
     bool *doneOut = (bool *)zam_native_argument_pointer(thread, 3);
     ZamInt *codeOut = (ZamInt *)zam_native_argument_pointer(thread, 4);
+    ZamInt *signalOut = (ZamInt *)zam_native_argument_pointer(thread, 5);
     bool done = false;
     int code = 0;
+    int ending = 0;
     int err = 0;
 
     zam_native_block_begin(thread);
@@ -971,8 +975,10 @@ static void stdProcessWait(ZamThread *thread) {
             done = true;
             if (WIFEXITED(status))
                 code = WEXITSTATUS(status);
-            else if (WIFSIGNALED(status))
-                code = 128 + WTERMSIG(status);
+            else if (WIFSIGNALED(status)) {
+                ending = WTERMSIG(status);
+                code = 128 + ending;
+            }
         }
     }
 #endif
@@ -980,7 +986,8 @@ static void stdProcessWait(ZamThread *thread) {
 
     *doneOut = done;
     *codeOut = code;
-    finishErr(thread, 5, err == 0 ? 0 : -1, err);
+    *signalOut = ending;
+    finishErr(thread, 6, err == 0 ? 0 : -1, err);
 }
 
 // stdProcessSignal sends a signal to the process of a handle. Windows has none
@@ -1149,7 +1156,8 @@ static void stdStrsByteLen(ZamThread *thread) {
 
 // stdStrsParseFlt reads the whole of a str as a decimal or special float,
 // leaving ok false, and the float zero, when any of it is not one or the value
-// does not fit.
+// overflows. A value too small for a normal float is rounded to a subnormal or
+// zero, which strtod reports as a range error too.
 static void stdStrsParseFlt(ZamThread *thread) {
     const ZamString *s = stringArgument(thread, 0);
     double *out = (double *)zam_native_argument_pointer(thread, 1);
@@ -1164,7 +1172,7 @@ static void stdStrsParseFlt(ZamThread *thread) {
     char *end = NULL;
     errno = 0;
     double value = strtod(s->bytes, &end);
-    if (end == s->bytes + s->length && errno != ERANGE) {
+    if (end == s->bytes + s->length && (errno != ERANGE || (value != HUGE_VAL && value != -HUGE_VAL))) {
         *out = value;
         *ok = true;
     }
@@ -1527,7 +1535,7 @@ static void stdSignalInit(ZamThread *thread) {
     case 7:  sig = SIGSEGV; break;
     case 10: sig = SIGTERM; break;
     default:
-        if (idx < 0 || idx > 15)
+        if (idx < 0 || idx > 32)
             zam_native_panic(thread, "STD_SIGNAL_INIT: unknown signal index");
         sig = -1;
     }
@@ -1549,6 +1557,48 @@ static void stdSignalInit(ZamThread *thread) {
     case 13: sig = SIGCHLD; break;
     case 14: sig = SIGUSR1; break;
     case 15: sig = SIGUSR2; break;
+    case 16: sig = SIGBUS;  break;
+    case 17: sig = SIGTRAP; break;
+    case 18: sig = SIGSYS;  break;
+    case 19: sig = SIGXCPU; break;
+    case 20: sig = SIGXFSZ; break;
+    case 21: sig = SIGVTALRM; break;
+    case 22: sig = SIGPROF; break;
+    case 23: sig = SIGWINCH; break;
+    case 24: sig = SIGIO;   break;
+    case 25: sig = SIGURG;  break;
+    case 26: sig = SIGTSTP; break;
+    case 27: sig = SIGTTIN; break;
+    case 28: sig = SIGTTOU; break;
+    // An OS lacks some signals: each it lacks is -1.
+    case 29:
+#if defined(SIGEMT)
+        sig = SIGEMT;
+#else
+        sig = -1;
+#endif
+        break;
+    case 30:
+#if defined(SIGINFO)
+        sig = SIGINFO;
+#else
+        sig = -1;
+#endif
+        break;
+    case 31:
+#if defined(SIGSTKFLT)
+        sig = SIGSTKFLT;
+#else
+        sig = -1;
+#endif
+        break;
+    case 32:
+#if defined(SIGPWR)
+        sig = SIGPWR;
+#else
+        sig = -1;
+#endif
+        break;
     default:
         zam_native_panic(thread, "STD_SIGNAL_INIT: unknown signal index");
     }

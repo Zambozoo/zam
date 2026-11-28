@@ -1,0 +1,100 @@
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "../syntax/Path.zam";
+import "../syntax/SourceProvider.zam";
+import "TestFiles.zam";
+
+// Runner writes the program that runs the tests of test files
+public namespace Runner {
+    namespace Errs {
+        public fun Err*(str) Unimportable = (path) {
+            return StrErr::New(Path::Display(path) + " cannot be imported by the test runner");
+        }
+    }
+
+    // Decl names the runner's root declaration, and so its file
+    public var str$ Decl = "ZamTestMain";
+
+    // Sources serves the runner's source at its path and everything else from the sources it wraps
+    public class Sources {
+        var SourceProvider* inner;
+        var str path;
+        var str source;
+
+        public static fun Runner.Sources*(SourceProvider*, str, str) New = (inner, path, source) {
+            var Runner.Sources* s = new(Runner.Sources);
+            s.inner = inner;
+            s.path = path;
+            s.source = source;
+            return s;
+        }
+
+        public fun (str, Err*)(str) Read = (path) {
+            if(path == this.path) {
+                return (this.source, null);
+            }
+            return this.inner.Read(path);
+        }
+
+        public fun (Arr[str]*, Err*)(str) ListCodeFiles = (dir) {
+            return this.inner.ListCodeFiles(dir);
+        }
+
+        public fun (str, Err*)(str) ProjectFile = (path) {
+            return this.inner.ProjectFile(path);
+        }
+
+        public fun Err*(str, str) Write = (path, text) {
+            return this.inner.Write(path, text);
+        }
+    }
+
+    // PathFor answers where the runner of tests whose first file is first sits
+    public fun str(str) PathFor = (first) {
+        return Paths::Join(Paths::Dir(first), Runner::Decl + Path::TestExtension);
+    }
+
+    // Source answers the runner of files
+    public fun (str, Err*)(ArrList[TestFiles.File*]*) Source = (files) {
+        var ArrList[str]* lines = ArrList::[str]New(1U, "import std(\"test/Test.zam\");");
+        for(var uint i = 0U; i < files.Len(); i++) {
+            var str path = files.Get(i).path;
+            if(Strs::Contains(path, "\"") || Strs::Contains(path, "\\")) {
+                return ("", Errs::Unimportable(path));
+            }
+            lines.AddLast("import t" + i{str} + " = \"" + path + "\";");
+        }
+        lines.AddLast("");
+        lines.AddLast("namespace " + Runner::Decl + " {");
+        lines.AddLast("    fun void(uint, str...) main = (argC, argV) {");
+        lines.AddLast("        var uint n = argC - 1U;");
+        lines.AddLast("        var str* args = new(str, argC);");
+        lines.AddLast("        for (var uint i = 0U; i < n; i = i + 1U) {");
+        lines.AddLast("            args[i] = argV[i + 1U];");
+        lines.AddLast("        }");
+        for(var uint i = 0U; i < files.Len(); i++) {
+            var TestFiles.File* file = files.Get(i);
+            var str keyword = i == 0U ? "if" : "} else if";
+            lines.AddLast("        " + keyword + " (argV[0] == \"" + i{str} + "\") {");
+            for(var uint j = 0U; j < file.tests.Len(); j++) {
+                var str test = file.tests.Get(j);
+                lines.AddLast("            Test::Begin(\"" + file.decl + "." + test + "\");");
+                lines.AddLast("            t" + i{str} + "." + file.decl + "::" + test + "(n, args...);");
+                lines.AddLast("            Test::End();");
+            }
+        }
+        lines.AddLast("        }");
+        lines.AddLast("        Test::Finish();");
+        lines.AddLast("    }");
+        lines.AddLast("}");
+        var str out = "";
+        for(var uint i = 0U; i < lines.Len(); i++) {
+            out = out + lines.Get(i) + "\n";
+        }
+        return (out, null);
+    }
+}

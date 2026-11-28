@@ -1,5 +1,7 @@
 import {
     "../io/local/File.zam";
+    "Arr.zam";
+    "Enums.zam";
     "Err.zam";
     "StrErr.zam";
     "Strs.zam";
@@ -178,30 +180,81 @@ public namespace System {
         SIGCONT(sig(12)),
         SIGCHLD(sig(13)),
         SIGUSR1(sig(14)),
-        SIGUSR2(sig(15));
+        SIGUSR2(sig(15)),
+        SIGBUS(sig(16)),
+        SIGTRAP(sig(17)),
+        SIGSYS(sig(18)),
+        SIGXCPU(sig(19)),
+        SIGXFSZ(sig(20)),
+        SIGVTALRM(sig(21)),
+        SIGPROF(sig(22)),
+        SIGWINCH(sig(23)),
+        SIGIO(sig(24)),
+        SIGURG(sig(25)),
+        SIGTSTP(sig(26)),
+        SIGTTIN(sig(27)),
+        SIGTTOU(sig(28)),
+        SIGEMT(sig(29)),
+        SIGINFO(sig(30)),
+        SIGSTKFLT(sig(31)),
+        SIGPWR(sig(32));
+
+        // names is each signal's name, in the order they are declared.
+        private static var Arr[str]*$ names = Arr::[str]New(33U, "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGABRT", "SIGFPE", "SIGKILL", "SIGSEGV", "SIGPIPE", "SIGALRM", "SIGTERM", "SIGSTOP", "SIGCONT", "SIGCHLD", "SIGUSR1", "SIGUSR2",
+            "SIGBUS", "SIGTRAP", "SIGSYS", "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGIO", "SIGURG", "SIGTSTP", "SIGTTIN", "SIGTTOU",
+            "SIGEMT", "SIGINFO", "SIGSTKFLT", "SIGPWR");
+
+        // Str answers the signal's name, the same on every OS.
+        public fun str() Str = () {
+            return Signal::names.Get(Enums::[System.Signal]Ordinal(*this));
+        }
+
+        // Available reports whether this OS has the signal. One it lacks
+        // never arrives: raising, sending, handling or blocking it does
+        // nothing, and it is never blocked.
+        public fun bool() Available = () {
+            return (*this){byte} != Signal::absent();
+        }
+
+        // absent is the value of every signal this OS lacks.
+        private static fun byte() absent = () {
+            return 255{byte};
+        }
 
         // sig resolves the OS-level number of the signal at idx in the
         // native's index table.
         private static fun byte(int) sig = (idx) {
             var int os;
             native(STD_SIGNAL_INIT){void(int, int*)}(idx, &os);
+            if(os < 0) {
+                return Signal::absent();
+            }
             return os{byte};
         }
 
         // Raise this signal on the current process. The OS default fires
         // unless Handle was called first.
         public fun void() Raise = () {
+            if(!this.Available()) {
+                return;
+            }
             native(STD_SIGNAL_RAISE){void(int)}((*this){int});
         }
 
         // Send this signal to another process. Maps to kill(pid, sig).
         public fun void(uint) Send = (pid) {
+            if(!this.Available()) {
+                return;
+            }
             native(STD_SIGNAL_SEND){void(int, uint)}((*this){int}, pid);
         }
 
         // Send this signal to another thread of this process by its OS
         // thread id (the raw bits of pthread_t). Maps to pthread_kill.
         public fun void(uint) ThreadSend = (threadID) {
+            if(!this.Available()) {
+                return;
+            }
             native(STD_SIGNAL_THREAD_SEND){void(int, uint)}((*this){int}, threadID);
         }
 
@@ -209,33 +262,51 @@ public namespace System {
         // closure runs between instructions after the C handler flagged a
         // delivery; see pollSignalHandlers in run.c.
         public fun void(void()) Handle = (f) {
+            if(!this.Available()) {
+                return;
+            }
             native(STD_SIGNAL_HANDLE){void(int, void())}((*this){int}, f);
         }
 
         // Add this signal to the process-wide signal mask so it is held
         // pending for every thread until Unblock.
         public fun void() Block = () {
+            if(!this.Available()) {
+                return;
+            }
             native(STD_SIGNAL_BLOCK){void(int)}((*this){int});
         }
 
         // Remove this signal from the process-wide mask. Pending deliveries
         // fire now.
         public fun void() Unblock = () {
+            if(!this.Available()) {
+                return;
+            }
             native(STD_SIGNAL_UNBLOCK){void(int)}((*this){int});
         }
 
         // Add this signal to the calling thread's own mask.
         public fun void() ThreadBlock = () {
+            if(!this.Available()) {
+                return;
+            }
             native(STD_SIGNAL_THREAD_BLOCK){void(int)}((*this){int});
         }
 
         // Remove this signal from the calling thread's own mask.
         public fun void() ThreadUnblock = () {
+            if(!this.Available()) {
+                return;
+            }
             native(STD_SIGNAL_THREAD_UNBLOCK){void(int)}((*this){int});
         }
 
         // Report whether this signal is in the process-wide mask right now.
         public fun bool() IsBlocked = () {
+            if(!this.Available()) {
+                return false;
+            }
             var bool blocked;
             native(STD_SIGNAL_IS_BLOCKED){void(int, bool*)}((*this){int}, &blocked);
             return blocked;
@@ -243,6 +314,9 @@ public namespace System {
 
         // Report whether this signal is in the calling thread's own mask.
         public fun bool() IsThreadBlocked = () {
+            if(!this.Available()) {
+                return false;
+            }
             var bool blocked;
             native(STD_SIGNAL_IS_THREAD_BLOCKED){void(int, bool*)}((*this){int}, &blocked);
             return blocked;

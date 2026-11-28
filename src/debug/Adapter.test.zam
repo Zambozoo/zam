@@ -1,0 +1,34 @@
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/System.zam");
+import std("test/Assert.zam");
+import "Adapter.zam";
+
+public namespace AdapterTest {
+    public fun void(uint, str...) Among = (argC, argV) {
+        var str dir = FS::ToSlash(FS::MakeTempDir(FS::TempDir(), "adapter-").0);
+        defer FS::RemoveAll(dir);
+        var bool windows = System::OS() == "windows";
+        var str name = windows ? "lldb-dap.exe" : "lldb-dap";
+        var str plain = Paths::Join(dir, "plain");
+        var str runs = Paths::Join(dir, "runs");
+        FS::MakeDirs(plain);
+        FS::MakeDirs(runs);
+        FS::WriteFile(Paths::Join(plain, name), "");
+        FS::Chmod(Paths::Join(plain, name), 420);
+        FS::WriteFile(Paths::Join(runs, name), "");
+        FS::Chmod(Paths::Join(runs, name), 493);
+        var str separator = windows ? ";" : ":";
+        var Arr[str]* none = Arr::[str]New(0U);
+
+        Assert::[str]Equal("/named/lldb-dap", Adapter::Among("/named/lldb-dap", plain, none).0);
+        var str found = windows ? Paths::Join(plain, name) : Paths::Join(runs, name);
+        Assert::[str]Equal(FS::FromSlash(found), Adapter::Among("", plain + separator + runs, none).0);
+        var str installed = Paths::Join(runs, name);
+        Assert::[str]Equal(installed, Adapter::Among("", "", Arr::[str]New(2U, Paths::Join(dir, "missing"), installed)).0);
+        var (str, Err*) missing = Adapter::Among("", "", Arr::[str]New(1U, Paths::Join(dir, "missing")));
+        Assert::[str]Equal("lldb-dap not found: install the Xcode Command Line Tools or LLVM, or set $ZAM_LLDB_DAP", missing.1.Err());
+    }
+}

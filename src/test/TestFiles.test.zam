@@ -4,7 +4,10 @@ import std("io/local/FS.zam");
 import std("lang/Arr.zam");
 import std("lang/Err.zam");
 import std("lang/Strs.zam");
+import std("codec/text/Regex.zam");
 import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
 import "TestFiles.zam";
 
 public namespace TestFilesTest {
@@ -52,5 +55,45 @@ public namespace TestFilesTest {
         Assert::[str]Equal(main + " is not a directory or a .test.zam file", TestFiles::Resolve(Arr::[str]New(1U, main)).1.Err());
         var str file = io.Paths::Join(dir, "A.test.zam") + "/...";
         Assert::[str]Equal(file + " is not a directory or a .test.zam file", TestFiles::Resolve(Arr::[str]New(1U, file)).1.Err());
+    }
+
+    // discovered answers the tests discover finds in the test files of texts, alternating paths and sources, as path:Decl.test, or the error it answers
+    private fun str(str, uint, str...) discovered = (pattern, n, texts) {
+        var ArrList[str]* paths = ArrList::[str]New(0U);
+        for(var uint i = 0U; i + 1U < n; i = i + 2U) {
+            paths.AddLast(texts[i]);
+        }
+        var str entry = paths.RemoveFirst();
+        var (ProjectParser.Program*, ArrList[Err*]*) program = ProjectParser::New(MapSourcesTest.Sources::New(MapSourcesTest::Files(n, texts...)), MapSourcesTest.Packages::New(MapSourcesTest::Files(0U)), 1U, true, false).Parse(entry, paths.Arr());
+        if(program.1.Len() > 0U) {
+            return program.1.Get(0U).Err();
+        }
+        paths.Add(0U, entry);
+        var (ArrList[TestFiles.File*]*, Err*) files = TestFiles::Discover(program.0, paths, Regex::Compile(pattern).0);
+        if(files.1 != null) {
+            return files.1.Err();
+        }
+        var str out = "";
+        for(var uint i = 0U; i < files.0.Len(); i++) {
+            var TestFiles.File* f = files.0.Get(i);
+            for(var uint j = 0U; j < f.tests.Len(); j++) {
+                out = out + " " + f.path + ":" + f.decl + "." + f.tests.Get(j);
+            }
+        }
+        return Strs::TrimSpace(out);
+    }
+
+    public fun void(uint, str...) Discover = (argC, argV) {
+        var str a = "public namespace ATest {\n    public fun void(uint, str...) Second = (argC, argV) {}\n    public fun void(uint, str...) First = (argC, argV) {}\n    fun void(uint, str...) hidden = (argC, argV) {}\n    public fun int(uint, str...) Typed = (argC, argV) { return 0; }\n    public var int field = 0;\n}\n";
+        var str b = "public namespace BTest {\n    public fun void(uint, str...) Only = (argC, argV) {}\n}\n";
+        var str none = "public namespace NoneTest {\n}\n";
+        Assert::[str]Equal("/p/A.test.zam:ATest.Second /p/A.test.zam:ATest.First /p/B.test.zam:BTest.Only",
+            TestFilesTest::discovered("", 6U, "/p/A.test.zam", a, "/p/None.test.zam", none, "/p/B.test.zam", b));
+        Assert::[str]Equal("/p/A.test.zam:ATest.First", TestFilesTest::discovered("ATest\\.F", 4U, "/p/A.test.zam", a, "/p/B.test.zam", b));
+        Assert::[str]Equal("", TestFilesTest::discovered("Missing", 2U, "/p/A.test.zam", a));
+        Assert::[str]Equal("the root declaration of a test file C.test.zam must be named CTest, not ATest (/p/C.test.zam[1:8])",
+            TestFilesTest::discovered("", 2U, "/p/C.test.zam", a));
+        Assert::[str]Equal("the root declaration of a test file P.test.zam must be public (/p/P.test.zam[1:1])",
+            TestFilesTest::discovered("", 2U, "/p/P.test.zam", "namespace PTest {\n}\n"));
     }
 }

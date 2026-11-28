@@ -1,0 +1,43 @@
+import std("codec/format/JSON.zam");
+import std("io/local/Pipe.zam");
+import std("lang/Err.zam");
+import std("test/Assert.zam");
+import "Messages.zam";
+
+public namespace MessagesTest {
+    // reader answers a Reader over text, all of it written ahead
+    private fun Messages.Reader*(str) reader = (text) {
+        var Pipe* p = Pipe::New().0;
+        p.Writer().WriteStr(text);
+        p.Writer().Close();
+        return Messages.Reader::New(p.Reader());
+    }
+
+    public fun void(uint, str...) Reads = (argC, argV) {
+        var Messages.Reader* r = MessagesTest::reader("Content-Length: 2\r\n\r\n{}content-length:5\r\nContent-Type: x\r\n\r\nhéllContent-Length: 0\r\n\r\n");
+        Assert::[str]Equal("{}", r.Read().0);
+        Assert::[str]Equal("héll", r.Read().0);
+        Assert::[str]Equal("", r.Read().0);
+        Assert::True(r.Read().1 == Messages.Errs::Closed, "the end of the stream is no Closed");
+    }
+
+    public fun void(uint, str...) Errors = (argC, argV) {
+        Assert::[str]Equal("a message with no Content-Length", MessagesTest::reader("Content-Type: x\r\n\r\n").Read().1.Err());
+        Assert::[str]Equal("bad Content-Length \"x\"", MessagesTest::reader("Content-Length: x\r\n\r\n").Read().1.Err());
+        Assert::True(MessagesTest::reader("Content-Length: 9\r\n\r\nshort").Read().1 == Messages.Errs::Closed, "a cut body is no Closed");
+    }
+
+    public fun void(uint, str...) WritesJSON = (argC, argV) {
+        var Pipe* p = Pipe::New().0;
+        var JSON* message = JSON::NewObject();
+        message.Set("seq", JSON::NewInt(1));
+        Assert::True(Messages::WriteJSON(p.Writer(), message) == null, "the message is not written");
+        Assert::True(Messages::Write(p.Writer(), "x") == null, "the body is not written");
+        p.Writer().Close();
+        var str raw = p.Reader().ReadAll().0;
+        Assert::[str]Equal("Content-Length: 9\r\n\r\n{\"seq\":1}Content-Length: 1\r\n\r\nx", raw);
+
+        var (JSON*, Err*) read = MessagesTest::reader(raw).ReadJSON();
+        Assert::True(read.1 == null && read.0.Get("seq").0.AsInt() == 1, "the message reads back as other JSON");
+    }
+}

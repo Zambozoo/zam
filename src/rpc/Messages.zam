@@ -1,0 +1,122 @@
+import std("codec/format/JSON.zam");
+import std("io/local/Stream.zam");
+import std("io/local/Streams.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+
+// Messages reads and writes messages as the debug adapter and language server protocols frame them
+public namespace Messages {
+    public namespace Errs {
+        // Closed is what a Reader answers once its stream has no more to read
+        public var Err*$ Closed = StrErr::New("EOF");
+        public var Err*$ NoLength = StrErr::New("a message with no Content-Length");
+
+        public fun Err*(str) BadLength = (value) {
+            return StrErr::New("bad Content-Length " + Strs::Quote(value));
+        }
+    }
+
+    // chunk is how many bytes a Reader asks its stream for at once
+    var uint$ chunk = 4096U;
+
+    // Reader reads messages from a stream
+    public class Reader {
+        var Stream* in;
+        // pending is what has been read from in and not yet answered
+        var str pending;
+        var byte* buffer;
+
+        public static fun Messages.Reader*(Stream*) New = (in) {
+            var Messages.Reader* r = new(Messages.Reader);
+            r.in = in;
+            r.pending = "";
+            r.buffer = new(byte, Messages::chunk);
+            return r;
+        }
+
+        // Read answers the body of the next message, or Errs::Closed when the stream ends between messages
+        public fun (str, Err*)() Read = () {
+            var int length = -1;
+            for {
+                var (str, Err*) line = this.line();
+                if(line.1 != null) {
+                    return ("", line.1);
+                }
+                var str header = Strs::TrimSpace(line.0);
+                if(header == "") {
+                    break;
+                }
+                var (uint, bool) colon = Strs::Index(header, ":");
+                if(colon.1 && Strs::ToUpper(Strs::TrimSpace(Strs::Slice(header, 0U, colon.0))) == "CONTENT-LENGTH") {
+                    var str value = Strs::TrimSpace(Strs::Slice(header, colon.0 + 1U, Strs::ByteLen(header)));
+                    var (int, Err*) parsed = Strs::ParseInt(value);
+                    if(parsed.1 != null) {
+                        return ("", Errs::BadLength(value));
+                    }
+                    length = parsed.0;
+                }
+            }
+            if(length < 0) {
+                return ("", Errs::NoLength);
+            }
+            for(; Strs::ByteLen(this.pending) < length{uint};) {
+                var Err* err = this.fill();
+                if(err != null) {
+                    return ("", err);
+                }
+            }
+            var str body = Strs::Slice(this.pending, 0U, length{uint});
+            this.pending = Strs::Slice(this.pending, length{uint}, Strs::ByteLen(this.pending));
+            return (body, null);
+        }
+
+        // ReadJSON answers the next message parsed as JSON
+        public fun (JSON*, Err*)() ReadJSON = () {
+            var (str, Err*) body = this.Read();
+            if(body.1 != null) {
+                return (null, body.1);
+            }
+            return JSON::Parse(body.0);
+        }
+
+        // line answers the next line of the headers, through its newline
+        fun (str, Err*)() line = () {
+            for {
+                var (uint, bool) newline = Strs::Index(this.pending, "\n");
+                if(newline.1) {
+                    var str line = Strs::Slice(this.pending, 0U, newline.0 + 1U);
+                    this.pending = Strs::Slice(this.pending, newline.0 + 1U, Strs::ByteLen(this.pending));
+                    return (line, null);
+                }
+                var Err* err = this.fill();
+                if(err != null) {
+                    return ("", err);
+                }
+            }
+            return ("", null);
+        }
+
+        // fill reads more of the stream into pending
+        fun Err*() fill = () {
+            var (uint, Err*) n = this.in.Read(this.buffer, Messages::chunk);
+            if(n.0 > 0U) {
+                this.pending = this.pending + Strs::FromBytes(this.buffer, n.0);
+                return null;
+            } else if(n.1 != null) {
+                return n.1;
+            }
+            return Errs::Closed;
+        }
+    }
+
+    // Write writes body framed as one message
+    public fun Err*(Stream*, str) Write = (out, body) {
+        return Streams::WriteStr(out, "Content-Length: " + Strs::ByteLen(body){str} + "\r\n\r\n" + body);
+    }
+
+    // WriteJSON writes message framed as one message
+    public fun Err*(Stream*, JSON*) WriteJSON = (out, message) {
+        return Messages::Write(out, message.Str());
+    }
+}

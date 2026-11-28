@@ -1,0 +1,450 @@
+import std("codec/format/JSON.zam");
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("io/local/Process.zam");
+import std("io/local/Stream.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+import std("sync/Mutex.zam");
+import "../build/Build.zam";
+import "../cli/Command.zam";
+import "../cli/LocalFiles.zam";
+import "../cli/Optimization.zam";
+import "../codegen/Codegen.zam";
+import "../rpc/Messages.zam";
+import "../semantic/Model.zam";
+import "../semantic/Semantic.zam";
+import "../syntax/Path.zam";
+import "../syntax/Project.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/SourceProvider.zam";
+import "../test/TestFiles.zam";
+import "../test/Tests.zam";
+
+// Proxy is one debugging session passed between an editor and lldb-dap
+public class Proxy {
+    // ReferenceBase is where the references to sources not on disk the proxy answers for begin, above any lldb-dap hands out
+    public static var int$ ReferenceBase = 1073741824;
+    // terminal is the console that runs the program in the editor's terminal
+    static var str$ terminal = "integratedTerminal";
+
+    // Compiled is a launched program compiled, its project, the arguments it runs with and the name of its main
+    class Compiled {
+        var Command* cmd;
+        var ArrList[byte]* object;
+        var Project* project;
+        var Arr[str]* args;
+        var str main;
+    }
+
+    var SourceProvider* sources;
+    var ProjectParser.PackageProvider* packages;
+    var str cache;
+    var str runtime;
+    var Process.Child* adapter;
+    var Messages.Reader* fromAdapter;
+    var Stream* editor;
+    // editorLock orders what is written to the editor, and adapterLock what is written to lldb-dap
+    var Mutex* editorLock;
+    var Mutex* adapterLock;
+    // dir holds what the proxy builds for the session
+    var str dir;
+    // known is the files not on disk the editor has been shown, by the reference past ReferenceBase it asks for them by
+    var Mutex* knownLock;
+    var ArrList[str]* known;
+
+    // New starts the lldb-dap at adapter for a session reading sources and packages, compiling against the runtime under
+    public static fun (Proxy*, Err*)(SourceProvider*, ProjectParser.PackageProvider*, str, str, str) New = (sources, packages, cache, runtime, adapter) {
+        var (str, Err*) dir = FS::MakeTempDir(FS::TempDir(), "zam-debug-");
+        if(dir.1 != null) {
+            return (null, StrErr::New("cannot create debug directory: " + dir.1.Err()));
+        }
+        var (Process.Child*, Err*) child = Process::Start("", Arr::[str]New(1U, adapter), Arr::[str]New(0U), Process.Stdio::Pipe, Arr::[System.Signal]New(0U));
+        if(child.1 != null) {
+            FS::RemoveAll(dir.0);
+            return (null, StrErr::New("cannot start " + adapter + ": " + child.1.Err()));
+        }
+        var Proxy* p = new(Proxy);
+        p.sources = sources;
+        p.packages = packages;
+        p.cache = cache;
+        p.runtime = runtime;
+        p.adapter = child.0;
+        p.fromAdapter = Messages.Reader::New(child.0.Out());
+        p.editorLock = Mutex::New();
+        p.adapterLock = Mutex::New();
+        p.dir = dir.0;
+        p.knownLock = Mutex::New();
+        p.known = ArrList::[str]New(0U);
+        return (p, null);
+    }
+
+    // Serve passes messages between the editor and lldb-dap until either ends
+    public fun Err*(Stream*, Stream*) Serve = (in, out) {
+        defer FS::RemoveAll(this.dir);
+        this.editor = out;
+        var thread[Err*] lldb = async(this.fromLLDB());
+        var Err* err = this.fromEditor(Messages.Reader::New(in));
+        this.adapter.In().Close();
+        var Err* lldbErr = wait(lldb);
+        if(err == null) {
+            err = lldbErr;
+        }
+        this.adapter.Wait();
+        this.adapter.Out().Close();
+        return err;
+    }
+
+    // fromEditor passes the editor's messages to lldb-dap
+    fun Err*(Messages.Reader*) fromEditor = (in) {
+        for {
+            var (str, Err*) body = in.Read();
+            if(body.1 == Messages.Errs::Closed) {
+                return null;
+            } else if(body.1 != null) {
+                return body.1;
+            }
+            var (JSON*, Err*) request = JSON::Parse(body.0);
+            if(request.1 != null || request.0.Kind() != JSON.Kind::Object) {
+                return StrErr::New("cannot read a message from the editor: " + (request.1 != null ? request.1.Err() : "not an object"));
+            }
+            var str message = body.0;
+            if(Proxy::text(request.0, "type") == "request") {
+                var int seq = Proxy::number(request.0, "seq");
+                var str command = Proxy::text(request.0, "command");
+                var JSON* arguments = Proxy::member(request.0, "arguments");
+                if(command == "launch") {
+                    var (str, Err*) launched = this.launch(request.0, arguments);
+                    if(launched.1 != null) {
+                        this.toEditor(Proxy::failure(seq, command, launched.1));
+                        continue;
+                    }
+                    message = launched.0;
+                } else if(command == "source") {
+                    var (str, bool, Err*) source = this.source(arguments);
+                    if(source.1) {
+                        if(source.2 != null) {
+                            this.toEditor(Proxy::failure(seq, command, source.2));
+                        } else {
+                            var JSON* content = JSON::NewObject();
+                            content.Set("content", JSON::NewStr(source.0));
+                            this.toEditor(Proxy::success(seq, command, content));
+                        }
+                        continue;
+                    }
+                }
+            }
+            this.adapterLock.Lock();
+            var Err* written = Messages::Write(this.adapter.In(), message);
+            this.adapterLock.Unlock();
+            if(written != null) {
+                return written;
+            }
+        }
+        return null;
+    }
+
+    // fromLLDB passes lldb-dap's messages to the editor
+    fun Err*() fromLLDB = () {
+        for {
+            var (str, Err*) body = this.fromAdapter.Read();
+            if(body.1 == Messages.Errs::Closed) {
+                return null;
+            } else if(body.1 != null) {
+                return body.1;
+            }
+            var str message = body.0;
+            var (JSON*, Err*) parsed = JSON::Parse(message);
+            if(parsed.1 == null && this.refer(parsed.0)) {
+                message = parsed.0.Str();
+            }
+            this.toEditor(message);
+        }
+        return null;
+    }
+
+    // toEditor writes one message to the editor
+    fun void(str) toEditor = (message) {
+        this.editorLock.Lock();
+        Messages::Write(this.editor, message);
+        this.editorLock.Unlock();
+    }
+
+    // launch compiles the program the editor's launch request asks for
+    fun (str, Err*)(JSON*, JSON*) launch = (request, arguments) {
+        var str program = Proxy::text(arguments, "program");
+        if(program == "") {
+            return ("", StrErr::New("launch needs a program"));
+        }
+        var (Proxy.Compiled*, Err*) compiled = this.compile(arguments, program);
+        if(compiled.1 != null) {
+            return ("", compiled.1);
+        }
+        var str name = Paths::Base(FS::ToSlash(program));
+        var (uint, bool) dot = Strs::Index(name, ".");
+        if(dot.1) {
+            name = Strs::Slice(name, 0U, dot.0);
+        }
+        var (str, Err*) binary = Build::Link(compiled.0.object, compiled.0.cmd, Paths::Join(this.dir, name), compiled.0.project, this.cache, this.runtime, true);
+        if(binary.1 != null) {
+            return ("", binary.1);
+        }
+
+        var JSON* launch = JSON::NewObject();
+        var JSON* args = JSON::NewArray();
+        for(var uint i = 0U; i < compiled.0.args.Len(); i++) {
+            args.Append(JSON::NewStr(compiled.0.args.Get(i)));
+        }
+        launch.Set("args", args);
+        var str cwd = Proxy::text(arguments, "cwd");
+        if(cwd != "") {
+            launch.Set("cwd", JSON::NewStr(cwd));
+        }
+        launch.Set("initCommands", Proxy::strings(1U, "command script import " + Strs::Quote(FS::FromSlash(Build::Formatters(this.runtime)))));
+        if(Proxy::flag(arguments, "noDebug")) {
+            launch.Set("noDebug", JSON::NewBool(true));
+        }
+        if(Proxy::flag(arguments, "stopOnEntry")) {
+            launch.Set("preRunCommands", Proxy::strings(1U, "breakpoint set --one-shot true --name " + compiled.0.main));
+        }
+        launch.Set("program", JSON::NewStr(FS::FromSlash(binary.0)));
+        if(Proxy::text(arguments, "console") == Proxy::terminal) {
+            launch.Set("runInTerminal", JSON::NewBool(true));
+        }
+        request.Set("arguments", launch);
+        return (request.Str(), null);
+    }
+
+    // compile compiles the program
+    fun (Proxy.Compiled*, Err*)(JSON*, str) compile = (arguments, program) {
+        var ArrList[str]* runArgs = ArrList::[str]New(0U);
+        var JSON* given = Proxy::member(arguments, "args");
+        if(given != null && given.Kind() == JSON.Kind::Array) {
+            for(var uint i = 0U; i < given.Len(); i++) {
+                runArgs.AddLast(given.At(i).AsStr());
+            }
+        }
+        var bool testing = Path::IsTestFile(program);
+        var ArrList[str]* argv = ArrList::[str]New(2U, "zam", testing ? "test" : "run");
+        var str test = Proxy::text(arguments, "test");
+        if(testing && test != "") {
+            argv.AddLast("--run");
+            argv.AddLast(test);
+        }
+        argv.AddLast(program);
+        if(testing && runArgs.Len() > 0U) {
+            argv.AddLast("--");
+        }
+        for(var uint i = 0U; i < runArgs.Len(); i++) {
+            argv.AddLast(runArgs.Get(i));
+        }
+        var (Command*, Err*) cmd = Command::New(argv.Arr(), LocalFiles::New());
+        if(cmd.1 != null) {
+            return (null, cmd.1);
+        }
+        cmd.0.optimization = Optimization::None;
+
+        var str entry = cmd.0.inputPath;
+        var Arr[str]* extra = Arr::[str]New(0U);
+        var ArrList[str]* tests = null;
+        if(testing) {
+            var (ArrList[str]*, Err*) resolved = TestFiles::Resolve(cmd.0.testTargets);
+            if(resolved.1 != null) {
+                return (null, resolved.1);
+            } else if(resolved.0.Len() == 0U) {
+                return (null, StrErr::New("no test files"));
+            }
+            tests = resolved.0;
+            entry = tests.Get(0U);
+        }
+        var ProjectParser* parser = ProjectParser::New(this.sources, this.packages, cmd.0.maxThreads{uint}, cmd.0.noProject, cmd.0.writeProject);
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = parser.Parse(entry, extra);
+        if(parsed.1.Len() > 0U) {
+            return (null, Proxy::joined(parsed.1));
+        }
+        var ProjectParser.Program* runner = parsed.0;
+        if(testing) {
+            var (Tests.Prepared*, ArrList[Err*]*) prepared = Tests::Prepare(cmd.0, parsed.0, tests, this.sources, this.packages);
+            if(prepared.1 != null) {
+                return (null, Proxy::joined(prepared.1));
+            }
+            runner = prepared.0.program;
+        }
+        var (Model*, ArrList[Err*]*) model = Semantic::Validate(runner);
+        if(model.1.Len() > 0U) {
+            return (null, Proxy::joined(model.1));
+        }
+        var Err* entered = Codegen::Main(model.0);
+        if(entered != null) {
+            return (null, entered);
+        }
+        var (Codegen.Compiled*, Err*) object = Codegen::Object(model.0, cmd.0, this.cache, this.runtime);
+        if(object.1 != null) {
+            return (null, object.1);
+        }
+        var Proxy.Compiled* c = new(Proxy.Compiled);
+        c.cmd = cmd.0;
+        c.object = object.0.object;
+        c.project = model.0.Source(model.0.Program().main).project;
+        c.main = Codegen::MainName(model.0);
+        c.args = cmd.0.runArgs;
+        if(testing) {
+            var ArrList[str]* indexed = ArrList::[str]New(1U, "0");
+            for(var uint i = 0U; i < cmd.0.runArgs.Len(); i++) {
+                indexed.AddLast(cmd.0.runArgs.Get(i));
+            }
+            c.args = indexed.Arr();
+        }
+        return (c, null);
+    }
+
+    // refer names each source whose path is a file only zam can read
+    fun bool(JSON*) refer = (message) {
+        var bool changed = false;
+        if(message.Kind() == JSON.Kind::Object) {
+            var JSON* path = Proxy::member(message, "path");
+            if(path != null && path.Kind() == JSON.Kind::String && Path::IsStd(path.AsStr())) {
+                var JSON* reference = Proxy::member(message, "sourceReference");
+                if(message.Get("name").1 || (reference != null && !reference.IsNull())) {
+                    message.Set("sourceReference", JSON::NewInt(this.reference(path.AsStr())));
+                    message.Set("presentationHint", JSON::NewStr("deemphasize"));
+                    changed = true;
+                }
+            }
+            var Arr[str]* keys = message.Keys();
+            for(var uint i = 0U; i < keys.Len(); i++) {
+                changed = this.refer(message.Get(keys.Get(i)).0) || changed;
+            }
+        } else if(message.Kind() == JSON.Kind::Array) {
+            for(var uint i = 0U; i < message.Len(); i++) {
+                changed = this.refer(message.At(i)) || changed;
+            }
+        }
+        return changed;
+    }
+
+    // reference answers the number the editor asks for the file at path by
+    fun int(str) reference = (path) {
+        this.knownLock.Lock();
+        defer this.knownLock.Unlock();
+        for(var uint i = 0U; i < this.known.Len(); i++) {
+            if(this.known.Get(i) == path) {
+                return Proxy::ReferenceBase + i{int};
+            }
+        }
+        this.known.AddLast(path);
+        return Proxy::ReferenceBase + this.known.Len(){int} - 1;
+    }
+
+    // source answers the text of a source the editor asks for by a reference the proxy handed out
+    fun (str, bool, Err*)(JSON*) source = (arguments) {
+        var int reference = Proxy::number(Proxy::member(arguments, "source"), "sourceReference");
+        if(reference == 0) {
+            reference = Proxy::number(arguments, "sourceReference");
+        }
+        var int index = reference - Proxy::ReferenceBase;
+        var str path = "";
+        this.knownLock.Lock();
+        var bool ok = index >= 0 && index < this.known.Len(){int};
+        if(ok) {
+            path = this.known.Get(index{uint});
+        }
+        this.knownLock.Unlock();
+        if(!ok) {
+            return ("", false, null);
+        }
+        var (str, Err*) text = this.sources.Read(path);
+        return (text.0, true, text.1);
+    }
+
+    // success answers the successful response to the request seq of command
+    static fun str(int, str, JSON*) success = (seq, command, body) {
+        var JSON* r = JSON::NewObject();
+        r.Set("body", body);
+        r.Set("command", JSON::NewStr(command));
+        r.Set("request_seq", JSON::NewInt(seq));
+        r.Set("seq", JSON::NewInt(0));
+        r.Set("success", JSON::NewBool(true));
+        r.Set("type", JSON::NewStr("response"));
+        return r.Str();
+    }
+
+    // failure answers the response saying the request seq of command failed
+    static fun str(int, str, Err*) failure = (seq, command, err) {
+        var JSON* error = JSON::NewObject();
+        error.Set("format", JSON::NewStr(err.Err()));
+        error.Set("id", JSON::NewInt(1));
+        var JSON* body = JSON::NewObject();
+        body.Set("error", error);
+        var JSON* r = JSON::NewObject();
+        r.Set("body", body);
+        r.Set("command", JSON::NewStr(command));
+        r.Set("message", JSON::NewStr(err.Err()));
+        r.Set("request_seq", JSON::NewInt(seq));
+        r.Set("seq", JSON::NewInt(0));
+        r.Set("success", JSON::NewBool(false));
+        r.Set("type", JSON::NewStr("response"));
+        return r.Str();
+    }
+
+    // joined answers errs as one error, a line each
+    static fun Err*(ArrList[Err*]*) joined = (errs) {
+        var str message = "";
+        for(var uint i = 0U; i < errs.Len(); i++) {
+            if(i > 0U) {
+                message = message + "\n";
+            }
+            message = message + errs.Get(i).Err();
+        }
+        return StrErr::New(message);
+    }
+
+    // member answers the member of o named name, or null when o is no object or has none
+    static fun JSON*(JSON*, str) member = (o, name) {
+        if(o == null || o.Kind() != JSON.Kind::Object) {
+            return null;
+        }
+        var (JSON*, bool) m = o.Get(name);
+        if(!m.1) {
+            return null;
+        }
+        return m.0;
+    }
+
+    // text answers the string member of o named name, or ""
+    static fun str(JSON*, str) text = (o, name) {
+        var JSON* m = Proxy::member(o, name);
+        if(m == null || m.Kind() != JSON.Kind::String) {
+            return "";
+        }
+        return m.AsStr();
+    }
+
+    // number answers the integer member of o named name, or 0
+    static fun int(JSON*, str) number = (o, name) {
+        var JSON* m = Proxy::member(o, name);
+        if(m == null || m.Kind() != JSON.Kind::Int) {
+            return 0;
+        }
+        return m.AsInt();
+    }
+
+    // flag answers the boolean member of o named name, or false
+    static fun bool(JSON*, str) flag = (o, name) {
+        var JSON* m = Proxy::member(o, name);
+        return m != null && m.Kind() == JSON.Kind::Bool && m.AsBool();
+    }
+
+    // strings answers the n strings given as a JSON array
+    static fun JSON*(uint, str...) strings = (n, values) {
+        var JSON* a = JSON::NewArray();
+        for(var uint i = 0U; i < n; i++) {
+            a.Append(JSON::NewStr(values[i]));
+        }
+        return a;
+    }
+}

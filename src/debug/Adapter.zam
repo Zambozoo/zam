@@ -1,0 +1,70 @@
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+
+// Adapter finds the lldb-dap zam debug passes a debugging session to
+public namespace Adapter {
+    // Variable names the lldb-dap to debug through, in place of the one found on the path or among the developer tools
+    public var str$ Variable = "ZAM_LLDB_DAP";
+    // Name is the program looked for on the path
+    public var str$ Name = "lldb-dap";
+    // Installed are where lldb-dap is looked for when it is not on the path
+    public var Arr[str]*$ Installed = Arr::[str]New(4U,
+        "/Library/Developer/CommandLineTools/usr/bin/lldb-dap",
+        "/Applications/Xcode.app/Contents/Developer/usr/bin/lldb-dap",
+        "/opt/homebrew/opt/llvm/bin/lldb-dap",
+        "/usr/local/opt/llvm/bin/lldb-dap");
+
+    // executable is the permission bits that let anyone run a file, 0111
+    var int$ executable = 73;
+
+    // Find answers the lldb-dap to debug through
+    public fun (str, Err*)() Find = () {
+        var (str, bool) named = System::Env(Adapter::Variable);
+        var (str, bool) path = System::Env("PATH");
+        return Adapter::Among(named.1 ? named.0 : "", path.1 ? path.0 : "", Adapter::Installed);
+    }
+
+    // Among answers named unless it is empty, else lldb-dap in a directory of the search path path, else the first of candidates there is
+    public fun (str, Err*)(str, str, Arr[str]*) Among = (named, path, candidates) {
+        if(named != "") {
+            return (named, null);
+        }
+        var bool windows = System::OS() == "windows";
+        var byte separator = windows ? ';'{byte} : ':'{byte};
+        var str name = Adapter::Name;
+        if(windows) {
+            name = name + ".exe";
+        }
+        var Arr[str]* dirs = Strs::Split(path, separator);
+        for(var uint i = 0U; i < dirs.Len(); i++) {
+            var str dir = dirs.Get(i);
+            if(dir == "") {
+                continue;
+            }
+            var str candidate = Paths::Join(FS::ToSlash(dir), name);
+            if(Adapter::runnable(candidate, windows)) {
+                return (FS::FromSlash(candidate), null);
+            }
+        }
+        for(var uint i = 0U; i < candidates.Len(); i++) {
+            if(FS::Exists(candidates.Get(i))) {
+                return (candidates.Get(i), null);
+            }
+        }
+        return ("", StrErr::New("lldb-dap not found: install the Xcode Command Line Tools or LLVM, or set $" + Adapter::Variable));
+    }
+
+    // runnable reports whether path is a file that can be run
+    fun bool(str, bool) runnable = (path, windows) {
+        var (FS.Info, Err*) info = FS::Stat(path);
+        if(info.1 != null || info.0.isDir) {
+            return false;
+        }
+        return windows || (info.0.mode & Adapter::executable) != 0;
+    }
+}
