@@ -53,19 +53,19 @@ public namespace Codegen {
         return null;
     }
 
-    // Object answers the object file the program m models compiles to, built as cmd configures it, zig caching beneath cache, against the runtime in runtime
-    public fun (ArrList[byte]*, Err*)(Model*, Command*, str, str) Object = (m, cmd, cache, runtime) {
+    // Object answers the object file the program m models compiles to, built as cmd configures it
+    public fun (ArrList[byte]*, ArrList[str]*, Err*)(Model*, Command*, str, str) Object = (m, cmd, cache, runtime) {
         var Target target = cmd.target;
         if(!cmd.hasTarget) {
             var (Target, Err*) host = Zig::Host(cache);
             if(host.1 != null) {
-                return (null, host.1);
+                return (null, null, host.1);
             }
             target = host.0;
         }
         var (HashMap[str, str]*, Err*) tables = Runtime::Tables(runtime);
         if(tables.1 != null) {
-            return (null, tables.1);
+            return (null, null, tables.1);
         }
         var TypeIds* ids = TypeIds::New(m, Codegen::canonical());
         var Layout* layout = Layout::New(m);
@@ -73,14 +73,15 @@ public namespace Codegen {
         var Arr[str]* natives = collected.Natives().Arr();
         var Err* invalid = Runtime::Validate(natives, tables.0);
         if(invalid != null) {
-            return (null, invalid);
+            return (null, null, invalid);
         }
         var ArrList[Collect.Statement*]* covered = null;
         if(cmd.coverProfile != "") {
             covered = collected.Statements();
         }
         var (Module*, ArrList[str]*) lowered = Program::Lower(m, target.triple, Codegen::Image(m, cmd), ids, layout, Statics::Lay(m, ids, layout, collected), natives, tables.0, covered);
-        return Zig::Compile(lowered.0, target, cache, cmd.optimization);
+        var (ArrList[byte]*, Err*) object = Zig::Compile(lowered.0, target, cache, cmd.optimization);
+        return (object.0, lowered.1, object.1);
     }
 
     // canonical reports whether the lists the passes filled are to be put in canonical order

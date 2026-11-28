@@ -484,7 +484,8 @@ static void freeStrings(char **strings) {
     free(strings);
 }
 
-// processOutput collects what a process writes.
+#if defined(_WIN32)
+// ProcessOutput collects the bytes of a command line or an environment block.
 typedef struct ProcessOutput {
     char *bytes;
     size_t length;
@@ -498,7 +499,7 @@ static void processOutputAppend(ZamThread *thread, ProcessOutput *out, const cha
             cap *= 2;
         char *grown = realloc(out->bytes, cap);
         if (grown == NULL)
-            zam_native_panic(thread, "out of memory for a process's output");
+            zam_native_panic(thread, "out of memory for a command");
         out->bytes = grown;
         out->cap = cap;
     }
@@ -506,7 +507,6 @@ static void processOutputAppend(ZamThread *thread, ProcessOutput *out, const cha
     out->length += n;
 }
 
-#if defined(_WIN32)
 // appendQuoted writes arg to out as the C runtime splits a command line back
 // into arguments: in quotes when it has spaces, tabs or quotes or is empty,
 // with backslashes doubled where they come before a quote.
@@ -586,21 +586,144 @@ static char *findProgram(const char *name) {
 }
 #endif
 
-// stdProcessRun runs the program argv[0] names with the arguments after it, in
-// the directory dir or this one for "", with the variables of env set over the
-// environment, and answers what it wrote to its stdout and stderr together and
-// the code it exited with: 128 and the signal for one a signal ended. argv and
-// env are NUL-separated, argc and envc strings long.
-static void stdProcessRun(ZamThread *thread) {
+// The process natives. A started process is held by a handle word: its pid,
+// or on Windows its process HANDLE, which waiting on it to its end releases.
+
+// processStdio is how a started process's standard streams are connected, in
+// the order of Process.Stdio.
+enum processStdio { stdioInherit, stdioPipe, stdioCombine };
+
+// forwarding is the lock over which started processes are sent the signals
+// this one receives, and the handlers that send them.
+static pthread_mutex_t forwarding = PTHREAD_MUTEX_INITIALIZER;
+
+#if defined(_WIN32)
+// ctrlIgnorers counts the started processes Ctrl-C is ignored for while they
+// run, since the console delivers it to them as well.
+static int ctrlIgnorers;
+
+// forwardBegin ignores Ctrl-C until forwardEnd, answering the slot forwardEnd
+// takes, or 0 when count is 0.
+static int forwardBegin(ZamWord handle, const ZamInt *signals, size_t count) {
+    (void)handle;
+    (void)signals;
+    if (count == 0)
+        return 0;
+    pthread_mutex_lock(&forwarding);
+    if (ctrlIgnorers++ == 0)
+        SetConsoleCtrlHandler(NULL, TRUE);
+    pthread_mutex_unlock(&forwarding);
+    return 1;
+}
+
+static void forwardEnd(int slot) {
+    if (slot == 0)
+        return;
+    pthread_mutex_lock(&forwarding);
+    if (--ctrlIgnorers == 0)
+        SetConsoleCtrlHandler(NULL, FALSE);
+    pthread_mutex_unlock(&forwarding);
+}
+#else
+// forwardSlots is how many started processes can be forwarded signals at once.
+#define forwardSlots 64
+
+// forwardTo holds each forwarded process's pid, or 0 for a free slot, and the
+// signals it is forwarded, a bit each.
+static _Atomic(pid_t) forwardPids[forwardSlots];
+static _Atomic(uint64_t) forwardMasks[forwardSlots];
+
+// forwardCounts counts the processes each signal is forwarded to, and
+// forwardSaved keeps the handler forwarding replaced for it.
+static int forwardCounts[64];
+static struct sigaction forwardSaved[64];
+
+// forwardSignal sends sig to every process it is forwarded to.
+static void forwardSignal(int sig) {
+    int saved = errno;
+    for (int i = 0; i < forwardSlots; i++) {
+        pid_t pid = atomic_load(&forwardPids[i]);
+        if (pid > 0 && (atomic_load(&forwardMasks[i]) & ((uint64_t)1 << sig)) != 0)
+            (void)kill(pid, sig);
+    }
+    errno = saved;
+}
+
+// forwardBegin forwards each of signals to the process of handle until
+// forwardEnd, answering the slot forwardEnd takes, 0 when count is 0, or -1
+// when every slot is taken.
+static int forwardBegin(ZamWord handle, const ZamInt *signals, size_t count) {
+    if (count == 0)
+        return 0;
+    pthread_mutex_lock(&forwarding);
+    int slot = -1;
+    for (int i = 0; i < forwardSlots && slot < 0; i++)
+        if (atomic_load(&forwardPids[i]) == 0)
+            slot = i;
+    if (slot < 0) {
+        pthread_mutex_unlock(&forwarding);
+        return -1;
+    }
+    uint64_t mask = 0;
+    for (size_t i = 0; i < count; i++) {
+        int sig = (int)signals[i];
+        if (sig <= 0 || sig >= 64 || (mask & ((uint64_t)1 << sig)) != 0)
+            continue;
+        mask |= (uint64_t)1 << sig;
+        if (forwardCounts[sig]++ == 0) {
+            struct sigaction sa;
+            memset(&sa, 0, sizeof sa);
+            sa.sa_handler = forwardSignal;
+            sigemptyset(&sa.sa_mask);
+            sa.sa_flags = SA_RESTART;
+            (void)sigaction(sig, &sa, &forwardSaved[sig]);
+        }
+    }
+    atomic_store(&forwardMasks[slot], mask);
+    atomic_store(&forwardPids[slot], (pid_t)handle);
+    pthread_mutex_unlock(&forwarding);
+    return slot + 1;
+}
+
+// forwardEnd stops forwarding signals to the process of slot, restoring the
+// handler of each signal no process is forwarded any longer.
+static void forwardEnd(int slot) {
+    if (slot <= 0)
+        return;
+    pthread_mutex_lock(&forwarding);
+    atomic_store(&forwardPids[slot - 1], 0);
+    uint64_t mask = atomic_exchange(&forwardMasks[slot - 1], 0);
+    for (int sig = 1; sig < 64; sig++)
+        if ((mask & ((uint64_t)1 << sig)) != 0 && --forwardCounts[sig] == 0)
+            (void)sigaction(sig, &forwardSaved[sig], NULL);
+    pthread_mutex_unlock(&forwarding);
+}
+#endif
+
+// stdProcessStart starts the program argv[0] names with the arguments after it,
+// in the directory dir or this one for "", with the variables of env set over
+// the environment and its streams connected as stdio says, and answers its
+// handle, its id, the forwarding slot stdProcessWait takes, and the
+// descriptors of the pipes to its stdin and from its stdout, or -1 for one it
+// has none of. Each of the count signals is forwarded to it until it is
+// waited on to its end. argv and env are NUL-separated, argc and envc strings
+// long.
+static void stdProcessStart(ZamThread *thread) {
     char *dir = cString(thread, 0);
     size_t argc = (size_t)zam_native_argument(thread, 2);
     size_t envc = (size_t)zam_native_argument(thread, 4);
     char **argv = splitStrings(thread, 1, argc);
     char **extra = splitStrings(thread, 3, envc);
-    ZamWord *outputOut = (ZamWord *)zam_native_argument_pointer(thread, 5);
-    ZamInt *codeOut = (ZamInt *)zam_native_argument_pointer(thread, 6);
-    ProcessOutput output = {0};
-    int code = 0;
+    int stdio = (int)zam_native_argument(thread, 5);
+    size_t signalCount = (size_t)zam_native_argument(thread, 7);
+    const ZamInt *signals = signalCount == 0 ? NULL : (const ZamInt *)zam_native_argument_pointer(thread, 6);
+    ZamWord *handleOut = (ZamWord *)zam_native_argument_pointer(thread, 8);
+    ZamWord *idOut = (ZamWord *)zam_native_argument_pointer(thread, 9);
+    ZamWord *slotOut = (ZamWord *)zam_native_argument_pointer(thread, 10);
+    ZamInt *inOut = (ZamInt *)zam_native_argument_pointer(thread, 11);
+    ZamInt *outOut = (ZamInt *)zam_native_argument_pointer(thread, 12);
+    int in = -1;
+    int out = -1;
     int err = 0;
 
     zam_native_block_begin(thread);
@@ -629,39 +752,48 @@ static void stdProcessRun(ZamThread *thread) {
     processOutputAppend(thread, &environment, "\0", 2);
 
     SECURITY_ATTRIBUTES inherit = {sizeof inherit, NULL, TRUE};
-    HANDLE readEnd, writeEnd;
-    if (!CreatePipe(&readEnd, &writeEnd, &inherit, 0)) {
+    HANDLE inRead = NULL, inWrite = NULL, outRead = NULL, outWrite = NULL;
+    if (stdio == stdioPipe && !CreatePipe(&inRead, &inWrite, &inherit, 0))
         err = windowsErrno(GetLastError());
-    } else {
-        SetHandleInformation(readEnd, HANDLE_FLAG_INHERIT, 0);
+    if (err == 0 && stdio != stdioInherit && !CreatePipe(&outRead, &outWrite, &inherit, 0))
+        err = windowsErrno(GetLastError());
+    if (err == 0) {
+        if (inWrite != NULL)
+            SetHandleInformation(inWrite, HANDLE_FLAG_INHERIT, 0);
+        if (outRead != NULL)
+            SetHandleInformation(outRead, HANDLE_FLAG_INHERIT, 0);
         STARTUPINFOA startup;
         memset(&startup, 0, sizeof startup);
         startup.cb = sizeof startup;
         startup.dwFlags = STARTF_USESTDHANDLES;
-        startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-        startup.hStdOutput = writeEnd;
-        startup.hStdError = writeEnd;
+        startup.hStdInput = inRead != NULL ? inRead : GetStdHandle(STD_INPUT_HANDLE);
+        startup.hStdOutput = outWrite != NULL ? outWrite : GetStdHandle(STD_OUTPUT_HANDLE);
+        startup.hStdError = stdio == stdioCombine ? outWrite : GetStdHandle(STD_ERROR_HANDLE);
         PROCESS_INFORMATION process;
         BOOL started = CreateProcessA(NULL, command.bytes, NULL, NULL, TRUE, 0, environment.bytes,
                                       dir[0] == '\0' ? NULL : dir, &startup, &process);
         DWORD startErr = GetLastError();
-        CloseHandle(writeEnd);
         if (!started) {
             err = windowsErrno(startErr);
         } else {
-            char chunk[16384];
-            DWORD got;
-            while (ReadFile(readEnd, chunk, sizeof chunk, &got, NULL) && got > 0)
-                processOutputAppend(thread, &output, chunk, got);
-            WaitForSingleObject(process.hProcess, INFINITE);
-            DWORD exitCode = 0;
-            GetExitCodeProcess(process.hProcess, &exitCode);
-            code = (int)exitCode;
-            CloseHandle(process.hProcess);
             CloseHandle(process.hThread);
+            *handleOut = (ZamWord)(uintptr_t)process.hProcess;
+            *idOut = (ZamWord)process.dwProcessId;
+            *slotOut = (ZamWord)forwardBegin(*handleOut, signals, signalCount);
+            if (inWrite != NULL) {
+                in = _open_osfhandle((intptr_t)inWrite, _O_WRONLY | _O_BINARY);
+                inWrite = NULL;
+            }
+            if (outRead != NULL) {
+                out = _open_osfhandle((intptr_t)outRead, _O_RDONLY | _O_BINARY);
+                outRead = NULL;
+            }
         }
-        CloseHandle(readEnd);
     }
+    HANDLE handles[] = {inRead, inWrite, outRead, outWrite};
+    for (size_t i = 0; i < sizeof handles / sizeof *handles; i++)
+        if (handles[i] != NULL)
+            CloseHandle(handles[i]);
     free(command.bytes);
     free(environment.bytes);
 #else
@@ -681,27 +813,41 @@ static void stdProcessRun(ZamThread *thread) {
         envp[envpCount++] = extra[i];
 
     char *program = findProgram(argv[0]);
-    int outPipe[2];
-    int execPipe[2];
-    if (program == NULL) {
+    int inPipe[2] = {-1, -1};
+    int outPipe[2] = {-1, -1};
+    int execPipe[2] = {-1, -1};
+    if (program == NULL)
         err = ENOENT;
-    } else if (pipe(outPipe) != 0) {
+    else if (stdio == stdioPipe && pipe(inPipe) != 0)
         err = errno;
-    } else if (pipe(execPipe) != 0) {
+    else if (stdio != stdioInherit && pipe(outPipe) != 0)
         err = errno;
-        close(outPipe[0]);
-        close(outPipe[1]);
-    } else {
-        fcntl(outPipe[0], F_SETFD, FD_CLOEXEC);
-        fcntl(execPipe[0], F_SETFD, FD_CLOEXEC);
-        fcntl(execPipe[1], F_SETFD, FD_CLOEXEC);
+    else if (pipe(execPipe) != 0)
+        err = errno;
+    if (err == 0) {
+        int fds[] = {inPipe[0], inPipe[1], outPipe[0], outPipe[1], execPipe[0], execPipe[1]};
+        for (size_t i = 0; i < sizeof fds / sizeof *fds; i++)
+            if (fds[i] >= 0)
+                fcntl(fds[i], F_SETFD, FD_CLOEXEC);
         pid_t pid = fork();
         if (pid == 0) {
             // Only async-signal-safe calls between fork and exec.
+            sigset_t none;
+            sigemptyset(&none);
+            pthread_sigmask(SIG_SETMASK, &none, NULL);
+            struct sigaction fallback;
+            memset(&fallback, 0, sizeof fallback);
+            fallback.sa_handler = SIG_DFL;
+            for (int sig = 1; sig < NSIG; sig++)
+                (void)sigaction(sig, &fallback, NULL);
             int childErr = 0;
             if (dir[0] != '\0' && chdir(dir) != 0)
                 childErr = errno;
-            if (childErr == 0 && (dup2(outPipe[1], 1) < 0 || dup2(outPipe[1], 2) < 0))
+            if (childErr == 0 && inPipe[0] >= 0 && dup2(inPipe[0], 0) < 0)
+                childErr = errno;
+            if (childErr == 0 && outPipe[1] >= 0 && dup2(outPipe[1], 1) < 0)
+                childErr = errno;
+            if (childErr == 0 && stdio == stdioCombine && dup2(outPipe[1], 2) < 0)
                 childErr = errno;
             if (childErr == 0) {
                 execve(program, argv, envp);
@@ -712,48 +858,148 @@ static void stdProcessRun(ZamThread *thread) {
             _exit(127);
         }
         int forkErr = errno;
-        close(outPipe[1]);
         close(execPipe[1]);
+        if (inPipe[0] >= 0)
+            close(inPipe[0]);
+        if (outPipe[1] >= 0)
+            close(outPipe[1]);
         if (pid < 0) {
             err = forkErr;
         } else {
             int childErr = 0;
-            if (read(execPipe[0], &childErr, sizeof childErr) == sizeof childErr)
-                err = childErr;
-            char chunk[16384];
             ssize_t got;
-            while ((got = read(outPipe[0], chunk, sizeof chunk)) != 0) {
-                if (got < 0) {
-                    if (errno == EINTR)
-                        continue;
-                    break;
+            while ((got = read(execPipe[0], &childErr, sizeof childErr)) < 0 && errno == EINTR) {
+            }
+            if (got == sizeof childErr) {
+                err = childErr;
+                while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
                 }
-                processOutputAppend(thread, &output, chunk, (size_t)got);
+            } else {
+                *handleOut = (ZamWord)pid;
+                *idOut = (ZamWord)pid;
+                int slot = forwardBegin(*handleOut, signals, signalCount);
+                if (slot < 0) {
+                    err = EAGAIN;
+                    (void)kill(pid, SIGKILL);
+                    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {
+                    }
+                } else {
+                    *slotOut = (ZamWord)slot;
+                    in = inPipe[1];
+                    out = outPipe[0];
+                    inPipe[1] = outPipe[0] = -1;
+                }
             }
-            int status = 0;
-            while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
-            }
-            if (WIFEXITED(status))
-                code = WEXITSTATUS(status);
-            else if (WIFSIGNALED(status))
-                code = 128 + WTERMSIG(status);
         }
-        close(outPipe[0]);
         close(execPipe[0]);
+        if (inPipe[1] >= 0)
+            close(inPipe[1]);
+        if (outPipe[0] >= 0)
+            close(outPipe[0]);
+    } else {
+        int fds[] = {inPipe[0], inPipe[1], outPipe[0], outPipe[1]};
+        for (size_t i = 0; i < sizeof fds / sizeof *fds; i++)
+            if (fds[i] >= 0)
+                close(fds[i]);
     }
     free(program);
     free(envp);
 #endif
     zam_native_block_end(thread);
 
-    if (err == 0)
-        *outputOut = (ZamWord)zam_native_new_string(thread, output.bytes == NULL ? "" : output.bytes, output.length);
-    *codeOut = code;
-    free(output.bytes);
+    *inOut = in;
+    *outOut = out;
     free(dir);
     freeStrings(argv);
     freeStrings(extra);
-    finishErr(thread, 7, err == 0 ? 0 : -1, err);
+    finishErr(thread, 13, err == 0 ? 0 : -1, err);
+}
+
+// stdProcessWait answers whether the process of a handle has ended, waiting
+// for it to when block is set, and the code it exited with: 128 and the signal
+// for one a signal ended. A process answered as ended is released, and no
+// longer forwarded signals from its slot.
+static void stdProcessWait(ZamThread *thread) {
+    ZamWord handle = zam_native_argument(thread, 0);
+    int slot = (int)zam_native_argument(thread, 1);
+    bool block = zam_native_argument(thread, 2) != 0;
+    bool *doneOut = (bool *)zam_native_argument_pointer(thread, 3);
+    ZamInt *codeOut = (ZamInt *)zam_native_argument_pointer(thread, 4);
+    bool done = false;
+    int code = 0;
+    int err = 0;
+
+    zam_native_block_begin(thread);
+#if defined(_WIN32)
+    HANDLE process = (HANDLE)(uintptr_t)handle;
+    DWORD waited = WaitForSingleObject(process, block ? INFINITE : 0);
+    if (waited == WAIT_OBJECT_0) {
+        DWORD exitCode = 0;
+        GetExitCodeProcess(process, &exitCode);
+        code = (int)exitCode;
+        done = true;
+        CloseHandle(process);
+        forwardEnd(slot);
+    } else if (waited == WAIT_FAILED) {
+        err = windowsErrno(GetLastError());
+    }
+#else
+    pid_t pid = (pid_t)handle;
+    bool ended = true;
+    if (slot > 0) {
+        // A reaped pid may be reused, so the process leaves its slot after it
+        // ends and before it is reaped.
+        siginfo_t info;
+        memset(&info, 0, sizeof info);
+        int result;
+        while ((result = waitid(P_PID, (id_t)pid, &info, WEXITED | WNOWAIT | (block ? 0 : WNOHANG))) < 0 && errno == EINTR) {
+        }
+        if (result < 0)
+            err = errno;
+        ended = result == 0 && info.si_pid == pid;
+        if (ended)
+            forwardEnd(slot);
+    }
+    if (err == 0 && ended) {
+        int status = 0;
+        pid_t got;
+        while ((got = waitpid(pid, &status, block || slot > 0 ? 0 : WNOHANG)) < 0 && errno == EINTR) {
+        }
+        if (got < 0) {
+            err = errno;
+        } else if (got > 0) {
+            done = true;
+            if (WIFEXITED(status))
+                code = WEXITSTATUS(status);
+            else if (WIFSIGNALED(status))
+                code = 128 + WTERMSIG(status);
+        }
+    }
+#endif
+    zam_native_block_end(thread);
+
+    *doneOut = done;
+    *codeOut = code;
+    finishErr(thread, 5, err == 0 ? 0 : -1, err);
+}
+
+// stdProcessSignal sends a signal to the process of a handle. Windows has none
+// to send, so there SIGTERM terminates the process with code 1 and any other
+// signal is refused.
+static void stdProcessSignal(ZamThread *thread) {
+    ZamWord handle = zam_native_argument(thread, 0);
+    int sig = (int)zam_native_argument(thread, 1);
+    int err = 0;
+#if defined(_WIN32)
+    if (sig != SIGTERM)
+        err = ENOTSUP;
+    else if (!TerminateProcess((HANDLE)(uintptr_t)handle, 1))
+        err = windowsErrno(GetLastError());
+#else
+    if (kill((pid_t)handle, sig) != 0)
+        err = errno;
+#endif
+    finishErr(thread, 2, err == 0 ? 0 : -1, err);
 }
 
 static void stdPipeInit(ZamThread *thread) {
@@ -1716,7 +1962,9 @@ const ZamNativeEntry zamNativeTable[] = {
     {"STD_FS_SEPARATOR", stdFsSeparator},
     {"STD_FS_TEMP_DIR", stdFsTempDir},
     {"STD_PIPE_INIT", stdPipeInit},
-    {"STD_PROCESS_RUN", stdProcessRun},
+    {"STD_PROCESS_START", stdProcessStart},
+    {"STD_PROCESS_WAIT", stdProcessWait},
+    {"STD_PROCESS_SIGNAL", stdProcessSignal},
     {"STD_FS_IS_LINK", stdFsIsLink},
     {"STD_STRS_FROM_BYTES", stdStrsFromBytes},
     {"STD_STRS_BYTE_LEN", stdStrsByteLen},

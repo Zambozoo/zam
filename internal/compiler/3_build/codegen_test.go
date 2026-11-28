@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zambozoo/zam/internal/base/target"
@@ -13,6 +14,10 @@ import (
 	syntax "github.com/zambozoo/zam/internal/compiler/0_syntax"
 	codegen "github.com/zambozoo/zam/internal/compiler/2_codegen"
 )
+
+// trapWarning begins each line the compiler written in zam warns of a function
+// compiled as a trap with.
+const trapWarning = "compiled as a trap: "
 
 // generate compiles the program ast holds, parsed by cmd, to an object as opts
 // says: with the Go compiler, or with the compiler written in zam when
@@ -55,5 +60,11 @@ func generate(t testing.TB, argv []string, cmd *cli.Command, ast *syntax.AST, op
 	if err != nil {
 		return nil, err
 	}
-	return &codegen.Object{Bytes: object, Triple: opts.Triple}, nil
+	var unsupported []string
+	for line := range strings.Lines(stderr.String()) {
+		if what, ok := strings.CutPrefix(strings.TrimSuffix(line, "\n"), trapWarning); ok {
+			unsupported = append(unsupported, what)
+		}
+	}
+	return &codegen.Object{Bytes: object, Triple: opts.Triple, Unsupported: unsupported}, nil
 }

@@ -7,6 +7,7 @@ import std("lang/Arr.zam");
 import std("lang/Err.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
+import std("lang/System.zam");
 import "../cli/Command.zam";
 import "../cli/Target.zam";
 import "../codegen/Zig.zam";
@@ -20,52 +21,52 @@ public namespace Build {
     // stackBytes is how much stack a Windows executable's main thread is given
     var uint$ stackBytes = 16777216U;
 
-    // Link links object, compiled as cmd configures for project, with the runtime under runtime and the project's natives, into an executable at cmd's output path, caching beneath cache
-    public fun Err*(ArrList[byte]*, Command*, Project*, str, str) Link = (object, cmd, project, cache, runtime) {
+    // Link links object, compiled as cmd configures for project, with the runtime under runtime and the project's natives, into an executable at output, caching beneath cache, and answers the executable's path
+    public fun (str, Err*)(ArrList[byte]*, Command*, str, Project*, str, str) Link = (object, cmd, output, project, cache, runtime) {
         var Target t = cmd.target;
         if(!cmd.hasTarget) {
             var (Target, Err*) host = Zig::Host(cache);
             if(host.1 != null) {
-                return host.1;
+                return ("", host.1);
             }
             t = host.0;
         }
         var (str, Err*) pack = Pack::Dir(t, cache);
         if(pack.1 != null) {
-            return pack.1;
+            return ("", pack.1);
         }
         var str runtimeCache = Paths::Join(cache, "runtime");
         var (str, Err*) archive = RuntimeArchive::Build(runtimeCache, t, pack.0, runtime);
         if(archive.1 != null) {
-            return archive.1;
+            return ("", archive.1);
         }
-        var (str, Err*) absolute = Build::abs(cmd.outputPath);
+        var (str, Err*) absolute = Build::abs(output);
         if(absolute.1 != null) {
-            return StrErr::New("cannot resolve output path " + Strs::Quote(cmd.outputPath) + ": " + absolute.1.Err());
+            return ("", StrErr::New("cannot resolve output path " + Strs::Quote(output) + ": " + absolute.1.Err()));
         }
-        var str output = Build::Executable(t, absolute.0);
+        var str executable = Build::Executable(t, absolute.0);
 
         var (str, Err*) dir = FS::MakeTempDir(FS::TempDir(), "zam-link-");
         if(dir.1 != null) {
-            return StrErr::New("cannot create link directory: " + dir.1.Err());
+            return ("", StrErr::New("cannot create link directory: " + dir.1.Err()));
         }
         defer FS::RemoveAll(dir.0);
         var str objectPath = Paths::Join(dir.0, "program.o");
         var (File*, Err*) file = File::Create(objectPath);
         if(file.1 != null) {
-            return file.1;
+            return ("", file.1);
         }
         var Arr[byte]* bytes = object.Arr();
         var (uint, Err*) written = file.0.Write(bytes.Arr(), bytes.Len());
         var Err* closed = file.0.Close();
         if(written.1 != null) {
-            return written.1;
+            return ("", written.1);
         } else if(closed != null) {
-            return closed;
+            return ("", closed);
         }
         var (ArrList[str]*, Err*) natives = Natives::Compile(project, dir.0, t, pack.0, runtime, runtimeCache);
         if(natives.1 != null) {
-            return natives.1;
+            return ("", natives.1);
         }
 
         var ArrList[str]* inputs = ArrList::[str]New(1U, objectPath);
@@ -73,17 +74,39 @@ public namespace Build {
             inputs.AddLast(natives.0.Get(i));
         }
         inputs.AddLast(archive.0);
-        var (ArrList[str]*, Err*) argv = Build::linkArgs(t, pack.0, output, inputs, Natives::Links(project));
+        var (ArrList[str]*, Err*) argv = Build::linkArgs(t, pack.0, executable, inputs, Natives::Links(project));
         if(argv.1 != null) {
-            return argv.1;
+            return ("", argv.1);
         }
         var (Process.Result, Err*) run = Process::Run("", argv.0.Arr(), Zig::Env(runtimeCache));
         if(run.1 != null) {
-            return run.1;
+            return ("", run.1);
         } else if(run.0.code != 0) {
-            return StrErr::New("zig cc failed to link " + output + ":\n" + run.0.output);
+            return ("", StrErr::New("zig cc failed to link " + executable + ":\n" + run.0.output));
         }
-        return null;
+        return (executable, null);
+    }
+
+    // Run links object as Link does into a directory of its own
+    public fun (int, Err*)(ArrList[byte]*, Command*, Project*, str, str) Run = (object, cmd, project, cache, runtime) {
+        var (str, Err*) dir = FS::MakeTempDir(FS::TempDir(), "zam-run-");
+        if(dir.1 != null) {
+            return (0, StrErr::New("cannot create run directory: " + dir.1.Err()));
+        }
+        defer FS::RemoveAll(dir.0);
+        var (str, Err*) linked = Build::Link(object, cmd, Paths::Join(dir.0, "main"), project, cache, runtime);
+        if(linked.1 != null) {
+            return (0, linked.1);
+        }
+        var ArrList[str]* argv = ArrList::[str]New(1U, FS::FromSlash(linked.0));
+        for(var uint i = 0U; i < cmd.runArgs.Len(); i++) {
+            argv.AddLast(cmd.runArgs.Get(i));
+        }
+        var (Process.Child*, Err*) child = Process::Start("", argv.Arr(), Arr::[str]New(0U), Process.Stdio::Inherit, Arr::[System.Signal]New(2U, System.Signal::SIGINT, System.Signal::SIGTERM));
+        if(child.1 != null) {
+            return (0, StrErr::New("cannot start program: " + child.1.Err()));
+        }
+        return child.0.Wait();
     }
 
     // Executable answers path as the name of an executable for t

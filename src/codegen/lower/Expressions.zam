@@ -1011,7 +1011,7 @@ class Expressions {
     fun Value*(ast.Expr.Call*) callKind = (x) {
         if(x.callee.kind == ast.Expr.Kind::Cast && x.callee{ast.Expr.Cast*}.inner.kind == ast.Expr.Kind::Native) {
             if(this.armed != null) {
-                return this.unsupported("async of a native");
+                return this.unsupported("async of call");
             }
             return this.nativeCall(x);
         }
