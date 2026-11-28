@@ -1,0 +1,16 @@
+import std("lang/Err.zam");
+import std("lang/System.zam");
+import std("test/Assert.zam");
+import "Uris.zam";
+
+public namespace UrisTest {
+    public fun void(uint, str...) Paths = (argC, argV) {
+        if(System::OS() != "windows") {
+            Assert::[str]Equal("/a/b c.zam", Uris::Path("file:///a/b%20c.zam").0);
+        }
+        Assert::[str]Equal("file:///a/b%20c%23.zam", Uris::URI("/a/b c#.zam"));
+        Assert::[str]Equal("file:///C:/a/b.zam", Uris::URI("C:/a/b.zam"));
+        var (str, Err*) web = Uris::Path("https://x/a.zam");
+        Assert::[str]Equal("unsupported document URI \"https://x/a.zam\": only file URIs are checked", web.1.Err());
+    }
+}

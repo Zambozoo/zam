@@ -1,0 +1,22 @@
+import std("test/Assert.zam");
+import "Text.zam";
+
+public namespace TextTest {
+    public fun void(uint, str...) Positions = (argC, argV) {
+        var Text* t = Text::New("aé😀b\nline2");
+        var (uint, uint) b = t.Position(3U);
+        Assert::True(b.0 == 0U && b.1 == 4U, "b is not at character 4 of line 0");
+        var (uint, uint) second = t.Position(5U);
+        Assert::True(second.0 == 1U && second.1 == 0U, "line2 does not begin line 1");
+        var (uint, uint) end = t.Position(99U);
+        Assert::True(end.0 == 1U && end.1 == 5U, "an offset past the end is not clamped");
+        Assert::[uint]Equal(3U, t.OffsetAt(0U, 4U));
+        Assert::[uint]Equal(4U, t.OffsetAt(0U, 99U));
+        Assert::[uint]Equal(5U, t.OffsetAt(5U, 0U));
+        Assert::[uint]Equal(6U, t.Offset(2U, 2U));
+        Assert::[uint]Equal(4U, t.Offset(1U, 99U));
+        Assert::[str]Equal("aé😀b", t.Line(0U));
+        Assert::[str]Equal("line2", t.Line(1U));
+        Assert::[str]Equal("aé😀b", t.LineAt(2U));
+    }
+}

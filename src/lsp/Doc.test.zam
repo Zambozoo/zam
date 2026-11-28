@@ -1,0 +1,19 @@
+import std("data/list/ArrList.zam");
+import std("test/Assert.zam");
+import "Doc.zam";
+import "Text.zam";
+
+public namespace DocTest {
+    public fun void(uint, str...) Of = (argC, argV) {
+        var Text* t = Text::New("// lost\n\n// first\n//second\n    fun void() f;\n");
+        var ArrList[str]* doc = Doc::Of(t, 29U);
+        Assert::[uint]Equal(2U, doc.Len());
+        Assert::[str]Equal("first", doc.Get(0U));
+        Assert::[str]Equal("second", doc.Get(1U));
+    }
+
+    public fun void(uint, str...) Markdown = (argC, argV) {
+        Assert::[str]Equal("g returns \\*one\\* \\[x\\]\\_y.\n\nUse it:\n```\nf(1)\n  g()\n```\n\nDone.",
+            Doc::Markdown(ArrList::[str]New(7U, "g returns *one* [x]_y.", "", "Use it:", "    f(1)", "      g()", "", "Done.")));
+    }
+}

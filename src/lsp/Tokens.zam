@@ -1,0 +1,130 @@
+import std("codec/format/JSON.zam");
+import std("data/list/ArrList.zam");
+import "../syntax/Lexer.zam";
+import "../syntax/TokenKind.zam";
+import "Text.zam";
+
+// Tokens colors a document by its tokens alone
+public namespace Tokens {
+    // Kind is a semantic token's type, its index in the legend initialize announces
+    public enum Kind : int {
+        Keyword(0),
+        Type(1),
+        Variable(2),
+        String(3),
+        Number(4),
+        Operator(5),
+        Comment(6);
+    }
+
+    // Span is a run of a document's characters that is one semantic token
+    class Span {
+        var uint start;
+        var uint end;
+        var Tokens.Kind kind;
+
+        static fun Tokens.Span*(uint, uint, Tokens.Kind) New = (start, end, kind) {
+            var Tokens.Span* s = new(Tokens.Span);
+            s.start = start;
+            s.end = end;
+            s.kind = kind;
+            return s;
+        }
+    }
+
+    // Semantic answers the semantic tokens of source in the protocol's relative form
+    public fun JSON*(str) Semantic = (source) {
+        var Text* t = Text::New(source);
+        var ArrList[Tokens.Span*]* spans = ArrList::[Tokens.Span*]New(0U);
+        var uint previous = 0U;
+        var Lexer.Iter* it = Lexer::New(source).Iter();
+        for(var Lexer.Lexed* tok = it.Next(); tok != null; tok = it.Next()) {
+            Tokens::comments(spans, t, previous, tok.token.offset);
+            var (Tokens.Kind, bool) kind = Tokens::classify(tok.token.kind);
+            if(kind.1) {
+                spans.AddLast(Tokens.Span::New(tok.token.offset, tok.end, kind.0));
+            }
+            previous = tok.end;
+        }
+        if(it.Err() == null) {
+            Tokens::comments(spans, t, previous, t.Len());
+        }
+        return Tokens::encode(t, spans);
+    }
+
+    // classify answers the semantic token type of a token kind, if it has one
+    fun (Tokens.Kind, bool)(TokenKind) classify = (kind) {
+        switch(kind) {
+            case (TokenKind::Identifier, TokenKind::Underscore)
+                return (Tokens.Kind::Variable, true);
+            case (TokenKind::StringLiteral, TokenKind::CharLiteral)
+                return (Tokens.Kind::String, true);
+            case (TokenKind::IntLiteral, TokenKind::UintLiteral, TokenKind::FloatLiteral, TokenKind::PositLiteral)
+                return (Tokens.Kind::Number, true);
+            case (TokenKind::Any, TokenKind::Bool, TokenKind::Byte, TokenKind::Char, TokenKind::Float, TokenKind::Int, TokenKind::String, TokenKind::Thread, TokenKind::Posit, TokenKind::Uint, TokenKind::Void)
+                return (Tokens.Kind::Type, true);
+            case (TokenKind::LeftParen, TokenKind::RightParen, TokenKind::LeftBrace, TokenKind::RightBrace, TokenKind::LeftBracket, TokenKind::RightBracket, TokenKind::Comma, TokenKind::SemiColon, TokenKind::Period, TokenKind::ColonColon)
+                return (Tokens.Kind::Keyword, false);
+        }
+        if(kind.group == TokenKind.Group::Keyword) {
+            return (Tokens.Kind::Keyword, true);
+        } else if(kind.group == TokenKind.Group::Symbol) {
+            return (Tokens.Kind::Operator, true);
+        }
+        return (Tokens.Kind::Keyword, false);
+    }
+
+    // comments adds a comment span for each line of t between from and to that is not only whitespace
+    fun void(ArrList[Tokens.Span*]*, Text*, uint, uint) comments = (spans, t, from, to) {
+        for(; from < to;) {
+            var uint lineEnd = from;
+            for(; lineEnd < to && t.At(lineEnd) != '\n'; lineEnd++) {}
+            var uint start = from;
+            var uint end = lineEnd;
+            for(; start < end && Tokens::space(t.At(start)); start++) {}
+            for(; end > start && Tokens::space(t.At(end - 1U)); end--) {}
+            if(start < end) {
+                spans.AddLast(Tokens.Span::New(start, end, Tokens.Kind::Comment));
+            }
+            from = lineEnd + 1U;
+        }
+    }
+
+    // space reports whether c is white space, as Go's unicode.IsSpace says
+    fun bool(char) space = (c) {
+        var int cp = c{int};
+        return cp == 32 || (cp >= 9 && cp <= 13) || cp == 133 || cp == 160 || cp == 5760 || (cp >= 8192 && cp <= 8202) || cp == 8232 || cp == 8233 || cp == 8239 || cp == 8287 || cp == 12288;
+    }
+
+    // encode writes spans in the protocol's relative form
+    fun JSON*(Text*, ArrList[Tokens.Span*]*) encode = (t, spans) {
+        var JSON* data = JSON::NewArray();
+        var uint line = 0U;
+        var uint character = 0U;
+        for(var uint i = 0U; i < spans.Len(); i++) {
+            var Tokens.Span* s = spans.Get(i);
+            for(var uint start = s.start; start < s.end;) {
+                var uint end = start;
+                var uint length = 0U;
+                for(; end < s.end && t.At(end) != '\n'; end++) {
+                    length = length + t.Units(end);
+                }
+                if(length > 0U) {
+                    var (uint, uint) p = t.Position(start);
+                    if(p.0 != line) {
+                        character = 0U;
+                    }
+                    data.Append(JSON::NewInt((p.0 - line){int}));
+                    data.Append(JSON::NewInt((p.1 - character){int}));
+                    data.Append(JSON::NewInt(length{int}));
+                    data.Append(JSON::NewInt(s.kind{int}));
+                    data.Append(JSON::NewInt(0));
+                    line = p.0;
+                    character = p.1;
+                }
+                start = end + 1U;
+            }
+        }
+        return data;
+    }
+}

@@ -1,0 +1,104 @@
+import std("data/list/ArrList.zam");
+import std("lang/Strs.zam");
+import "Text.zam";
+
+// Doc reads a declaration's doc comment and renders it as markdown
+public namespace Doc {
+    // escaped is the punctuation markdown would read as formatting
+    var str$ escaped = "\\`*_[]<>#|";
+
+    // Of answers the doc comment of the declaration beginning at a character offset of t
+    public fun ArrList[str]*(Text*, uint) Of = (t, offset) {
+        var ArrList[str]* doc = ArrList::[str]New(0U);
+        for(var uint line = t.Position(offset).0; line > 0U; line--) {
+            var str text = Strs::TrimSpace(t.Line(line - 1U));
+            if(!Strs::HasPrefix(text, "//")) {
+                break;
+            }
+            var str comment = Strs::Slice(text, 2U, Strs::ByteLen(text));
+            if(Strs::HasPrefix(comment, " ")) {
+                comment = Strs::Slice(comment, 1U, Strs::ByteLen(comment));
+            }
+            doc.Add(0U, comment);
+        }
+        return doc;
+    }
+
+    // Markdown renders a doc comment the way Go's are read
+    public fun str(ArrList[str]*) Markdown = (doc) {
+        var str out = "";
+        for(var uint i = 0U; i < doc.Len();) {
+            if(!Doc::indented(doc.Get(i))) {
+                out = out + Doc::escape(doc.Get(i)) + "\n";
+                i++;
+                continue;
+            }
+            var uint end = i;
+            for(var uint j = i; j < doc.Len() && (Doc::indented(doc.Get(j)) || Strs::TrimSpace(doc.Get(j)) == ""); j++) {
+                if(Doc::indented(doc.Get(j))) {
+                    end = j;
+                }
+            }
+            var ArrList[str]* block = ArrList::[str]New(0U);
+            for(var uint j = i; j <= end; j++) {
+                block.AddLast(doc.Get(j));
+            }
+            var str indent = Doc::commonIndent(block);
+            out = out + "```\n";
+            for(var uint j = 0U; j < block.Len(); j++) {
+                var str line = block.Get(j);
+                if(Strs::HasPrefix(line, indent)) {
+                    line = Strs::Slice(line, Strs::ByteLen(indent), Strs::ByteLen(line));
+                }
+                out = out + line + "\n";
+            }
+            out = out + "```\n";
+            i = end + 1U;
+        }
+        return Strs::TrimSpace(out);
+    }
+
+    // indented reports whether a doc comment line is a line of code
+    fun bool(str) indented = (line) {
+        return Strs::TrimSpace(line) != "" && (Strs::HasPrefix(line, " ") || Strs::HasPrefix(line, "\t"));
+    }
+
+    // commonIndent answers the leading whitespace every nonblank line shares
+    fun str(ArrList[str]*) commonIndent = (lines) {
+        var str indent = "";
+        var bool first = true;
+        for(var uint i = 0U; i < lines.Len(); i++) {
+            var str line = lines.Get(i);
+            if(Strs::TrimSpace(line) == "") {
+                continue;
+            }
+            var uint n = 0U;
+            var (byte*, uint) b = Strs::ToBytes(line);
+            for(; n < b.1 && (b.0[n] == ' '{byte} || b.0[n] == '\t'{byte}); n++) {}
+            var str lead = Strs::Slice(line, 0U, n);
+            if(first) {
+                indent = lead;
+                first = false;
+                continue;
+            }
+            for(; !Strs::HasPrefix(lead, indent);) {
+                indent = Strs::Slice(indent, 0U, Strs::ByteLen(indent) - 1U);
+            }
+        }
+        return indent;
+    }
+
+    // escape escapes the markdown punctuation in line
+    fun str(str) escape = (line) {
+        var (byte*, uint) b = Strs::ToBytes(line);
+        var str out = "";
+        var uint from = 0U;
+        for(var uint i = 0U; i < b.1; i++) {
+            if(Strs::Contains(Doc::escaped, Strs::Slice(line, i, i + 1U))) {
+                out = out + Strs::Slice(line, from, i) + "\\";
+                from = i;
+            }
+        }
+        return out + Strs::Slice(line, from, b.1);
+    }
+}

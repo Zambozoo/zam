@@ -1,0 +1,567 @@
+import std("codec/format/JSON.zam");
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("io/local/Stream.zam");
+import std("lang/System.zam");
+import std("lang/time/Duration.zam");
+import std("lang/time/Timer.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("sync/Mutex.zam");
+import "../rpc/Messages.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/SourceProvider.zam";
+import std("codec/text/Regex.zam");
+import "../semantic/References.zam";
+import "../syntax/Path.zam";
+import "../syntax/Source.zam";
+import ast = "../syntax/ast/*";
+import "../test/TestFiles.zam";
+import "Analysis.zam";
+import "Doc.zam";
+import "Navigation.zam";
+import "Overlay.zam";
+import "Tokens.zam";
+import "Uris.zam";
+
+// Server is a language server for zam, speaking the language server protocol's JSON-RPC over a pair of streams
+public class Server {
+    // Code is what a JSON-RPC error says went wrong
+    public enum Code : int {
+        InvalidRequest(-32600),
+        MethodNotFound(-32601),
+        InvalidParams(-32602);
+    }
+
+    // TestsMethod is the request an editor asks the tests of a test file with, which zam adds to the protocol
+    public static var str$ TestsMethod = "zam/tests";
+
+    // Legend is the kinds of token semantic tokens are colored as, by their index
+    public static var Arr[str]*$ Legend = Arr::[str]New(7U, "keyword", "type", "variable", "string", "number", "operator", "comment");
+
+    // Failure is why a request failed, as a JSON-RPC error says
+    public class Failure {
+        public var Server.Code code;
+        public var str message;
+
+        public static fun Server.Failure*(Server.Code, str) New = (code, message) {
+            var Server.Failure* f = new(Server.Failure);
+            f.code = code;
+            f.message = message;
+            return f;
+        }
+    }
+
+    // Document is an open document: the path the compiler reads it at, and the version the editor last sent
+    public class Document {
+        public var str path;
+        public var int version;
+    }
+
+    var Stream* out;
+    // outLock orders what is written to the client
+    var Mutex* outLock;
+    var bool initialized;
+    // exited says the client has asked the server to exit
+    var bool exited;
+    var Overlay* files;
+    var ProjectParser.PackageProvider* packages;
+    var uint threads;
+    // delay is how long the server waits after the last edit before checking the open documents again
+    var Duration delay;
+    // lock guards documents, analyses and generation
+    var Mutex* lock;
+    // documents is every open document, by its URI
+    var HashMap[str, Server.Document*]* documents;
+    // analyses holds what the last check of each open document found, which a question about a name in it is answered from
+    var HashMap[str, Analysis*]* analyses;
+    // generation counts the checks scheduled, so that only the last of a run of edits checks
+    var uint generation;
+    // analyzing keeps two checks from running at once
+    var Mutex* analyzing;
+
+    // New answers a server reading the documents the editor has not opened from sources and their dependencies
+    public static fun Server*(SourceProvider*, ProjectParser.PackageProvider*, Duration) New = (sources, packages, delay) {
+        var Server* s = new(Server);
+        s.outLock = Mutex::New();
+        s.files = Overlay::New(sources);
+        s.packages = packages;
+        s.threads = System::ProcessorCount();
+        s.delay = delay;
+        s.lock = Mutex::New();
+        s.documents = HashMap::[str, Server.Document*]New(0U);
+        s.analyses = HashMap::[str, Analysis*]New(0U);
+        s.analyzing = Mutex::New();
+        return s;
+    }
+
+    // AnalysisOf answers what the last check of the open document at uri found, or null
+    public fun Analysis*(str) AnalysisOf = (uri) {
+        this.lock.Lock();
+        defer this.lock.Unlock();
+        var (Analysis*, bool) a = this.analyses.Get(uri);
+        if(!a.1) {
+            return null;
+        }
+        return a.0;
+    }
+
+    // Files answers the sources the server reads, open documents served from their buffers
+    public fun Overlay*() Files = () {
+        return this.files;
+    }
+
+    // Serve answers the client's messages on in, writing to out, until the client exits or in ends
+    public fun Err*(Stream*, Stream*) Serve = (in, out) {
+        this.out = out;
+        var Messages.Reader* messages = Messages.Reader::New(in);
+        for(; !this.exited;) {
+            var (JSON*, Err*) message = messages.ReadJSON();
+            if(message.1 == Messages.Errs::Closed) {
+                return null;
+            } else if(message.1 != null) {
+                return message.1;
+            }
+            this.dispatch(message.0);
+        }
+        return null;
+    }
+
+    // Notify sends the client the notification method with params
+    public fun void(str, JSON*) Notify = (method, params) {
+        var JSON* n = JSON::NewObject();
+        n.Set("jsonrpc", JSON::NewStr("2.0"));
+        n.Set("method", JSON::NewStr(method));
+        n.Set("params", params);
+        this.write(n);
+    }
+
+    // dispatch answers one message: a request with a response, a notification with none
+    fun void(JSON*) dispatch = (message) {
+        if(message.Kind() != JSON.Kind::Object) {
+            return;
+        }
+        var (JSON*, bool) method = message.Get("method");
+        if(!method.1 || method.0.Kind() != JSON.Kind::String) {
+            return;
+        }
+        var (JSON*, bool) params = message.Get("params");
+        var (JSON*, bool) id = message.Get("id");
+        var (JSON*, Server.Failure*) answered = this.handle(method.0.AsStr(), params.1 ? params.0 : JSON::Null());
+        if(!id.1) {
+            return;
+        }
+        var JSON* r = JSON::NewObject();
+        r.Set("id", id.0);
+        if(answered.1 != null) {
+            var JSON* failure = JSON::NewObject();
+            failure.Set("code", JSON::NewInt(answered.1.code{int}));
+            failure.Set("message", JSON::NewStr(answered.1.message));
+            r.Set("error", failure);
+        } else {
+            r.Set("result", answered.0);
+        }
+        r.Set("jsonrpc", JSON::NewStr("2.0"));
+        this.write(r);
+    }
+
+    // handle answers the method asked for with params, or why it cannot
+    fun (JSON*, Server.Failure*)(str, JSON*) handle = (method, params) {
+        if(method == "exit") {
+            this.exited = true;
+            return (JSON::Null(), null);
+        } else if(method == Server::TestsMethod) {
+            return this.tests(params);
+        } else if(!this.initialized && method != "initialize") {
+            return (null, Server.Failure::New(Server.Code::InvalidRequest, "server not initialized"));
+        } else if(method == "initialize") {
+            this.initialized = true;
+            return (Server::capabilities(), null);
+        } else if(method == "initialized" || method == "shutdown" || method == "$/setTrace") {
+            return (JSON::Null(), null);
+        } else if(method == "textDocument/didOpen") {
+            return this.didOpen(Server::member(params, "textDocument"));
+        } else if(method == "textDocument/didChange") {
+            return this.didChange(params);
+        } else if(method == "textDocument/didSave") {
+            this.lock.Lock();
+            this.schedule();
+            this.lock.Unlock();
+            return (JSON::Null(), null);
+        } else if(method == "textDocument/didClose") {
+            return this.didClose(Server::member(params, "textDocument"));
+        } else if(method == "textDocument/semanticTokens/full") {
+            return this.semanticTokens(Server::member(params, "textDocument"));
+        } else if(method == "textDocument/hover") {
+            return (this.hover(params), null);
+        } else if(method == "textDocument/definition") {
+            return (this.definition(params), null);
+        } else if(method == "textDocument/references") {
+            return (this.references(params), null);
+        }
+        return (null, Server.Failure::New(Server.Code::MethodNotFound, "method not supported: " + method));
+    }
+
+    // didOpen records a document the editor opened
+    fun (JSON*, Server.Failure*)(JSON*) didOpen = (document) {
+        var str uri = Server::text(document, "uri");
+        var (str, Err*) path = Uris::Path(uri);
+        if(path.1 != null) {
+            return (null, Server.Failure::New(Server.Code::InvalidRequest, path.1.Err()));
+        }
+        var Server.Document* d = new(Server.Document);
+        d.version = Server::number(document, "version");
+        this.lock.Lock();
+        d.path = this.files.Open(path.0, Server::text(document, "text"));
+        this.documents.Put(uri, d);
+        this.schedule();
+        this.lock.Unlock();
+        return (JSON::Null(), null);
+    }
+
+    // didChange records the whole text an open document now has
+    fun (JSON*, Server.Failure*)(JSON*) didChange = (params) {
+        var JSON* document = Server::member(params, "textDocument");
+        this.lock.Lock();
+        defer this.lock.Unlock();
+        var (Server.Document*, bool) d = this.documents.Get(Server::text(document, "uri"));
+        if(!d.1) {
+            return (JSON::Null(), null);
+        }
+        var JSON* changes = Server::member(params, "contentChanges");
+        if(changes != null && changes.Kind() == JSON.Kind::Array) {
+            for(var uint i = 0U; i < changes.Len(); i++) {
+                var JSON* change = changes.At(i);
+                if(Server::member(change, "range") == null && Server::member(change, "text") != null) {
+                    this.files.Set(d.0.path, Server::text(change, "text"));
+                }
+            }
+        }
+        d.0.version = Server::number(document, "version");
+        this.schedule();
+        return (JSON::Null(), null);
+    }
+
+    // didClose forgets a document the editor closed, and clears what was reported of it
+    fun (JSON*, Server.Failure*)(JSON*) didClose = (document) {
+        var str uri = Server::text(document, "uri");
+        this.lock.Lock();
+        var (Server.Document*, bool) d = this.documents.Get(uri);
+        if(d.1) {
+            this.files.Remove(d.0.path);
+            this.documents.Remove(uri);
+            this.analyses.Remove(uri);
+        }
+        this.lock.Unlock();
+        if(d.1) {
+            var JSON* params = JSON::NewObject();
+            params.Set("uri", JSON::NewStr(uri));
+            params.Set("diagnostics", JSON::NewArray());
+            this.Notify("textDocument/publishDiagnostics", params);
+            this.lock.Lock();
+            this.schedule();
+            this.lock.Unlock();
+        }
+        return (JSON::Null(), null);
+    }
+
+    // schedule checks every open document once edits have stopped for the delay
+    fun void() schedule = () {
+        this.generation++;
+        async(this.debounced(this.generation));
+    }
+
+    // debounced checks every open document after the delay, unless another check was scheduled meanwhile
+    fun void(uint) debounced = (generation) {
+        Timer::Sleep(this.delay);
+        this.lock.Lock();
+        var bool latest = generation == this.generation;
+        this.lock.Unlock();
+        if(latest) {
+            this.check();
+        }
+    }
+
+    // check analyzes every open document and publishes what each analysis found
+    fun void() check = () {
+        this.analyzing.Lock();
+        defer this.analyzing.Unlock();
+        this.lock.Lock();
+        var Arr[(str, Server.Document*)]* pairs = this.documents.Arr();
+        var ArrList[str]* uris = ArrList::[str]New(0U);
+        var ArrList[Server.Document*]* open = ArrList::[Server.Document*]New(0U);
+        for(var uint i = 0U; i < pairs.Len(); i++) {
+            var Server.Document* d = pairs.Get(i).1;
+            uris.AddLast(pairs.Get(i).0);
+            var Server.Document* copy = new(Server.Document);
+            copy.path = d.path;
+            copy.version = d.version;
+            open.AddLast(copy);
+        }
+        this.lock.Unlock();
+
+        for(var uint i = 0U; i < uris.Len(); i++) {
+            var Analysis* a = Analysis::Run(this.files, this.packages, open.Get(i).path, this.threads);
+            this.lock.Lock();
+            if(this.documents.Contains(uris.Get(i))) {
+                this.analyses.Put(uris.Get(i), a);
+            }
+            this.lock.Unlock();
+            var JSON* params = JSON::NewObject();
+            params.Set("uri", JSON::NewStr(uris.Get(i)));
+            params.Set("version", JSON::NewInt(open.Get(i).version));
+            params.Set("diagnostics", a.Diagnostics);
+            this.Notify("textDocument/publishDiagnostics", params);
+        }
+    }
+
+    // semanticTokens answers the semantic tokens of an open document, or none for one that is not open
+    fun (JSON*, Server.Failure*)(JSON*) semanticTokens = (document) {
+        this.lock.Lock();
+        var (Server.Document*, bool) d = this.documents.Get(Server::text(document, "uri"));
+        this.lock.Unlock();
+        var JSON* result = JSON::NewObject();
+        if(!d.1) {
+            result.Set("data", JSON::NewArray());
+            return (result, null);
+        }
+        var (str, Err*) source = this.files.Read(d.0.path);
+        if(source.1 != null) {
+            return (null, Server.Failure::New(Server.Code::InvalidRequest, source.1.Err()));
+        }
+        result.Set("data", Tokens::Semantic(source.0));
+        return (result, null);
+    }
+
+    // referenceAt answers the reference written under the position params name in an open document, as the last check of it resolved it, or null
+    fun References.Reference*(JSON*) referenceAt = (params) {
+        var str uri = Server::text(Server::member(params, "textDocument"), "uri");
+        var JSON* position = Server::member(params, "position");
+        this.lock.Lock();
+        var (Server.Document*, bool) d = this.documents.Get(uri);
+        var (Analysis*, bool) a = this.analyses.Get(uri);
+        this.lock.Unlock();
+        if(!d.1 || !a.1) {
+            return null;
+        }
+        return Navigation::ReferenceAt(this.files, a.0, d.0.path, Server::number(position, "line"){uint}, Server::number(position, "character"){uint});
+    }
+
+    // hover answers how what is named under a position is declared, its doc comment and its type, or null
+    fun JSON*(JSON*) hover = (params) {
+        var References.Reference* r = this.referenceAt(params);
+        if(r == null) {
+            return JSON::Null();
+        }
+        var ArrList[str]* sections = ArrList::[str]New(0U);
+        var (str, ArrList[str]*, bool) declared = Navigation::Declaration(this.files, this.analysisOf(params).Model, r.target);
+        if(declared.2) {
+            sections.AddLast("```zam\n" + declared.0 + "\n```");
+            if(declared.1.Len() > 0U) {
+                sections.AddLast(Doc::Markdown(declared.1));
+            }
+        }
+        if(r.signature != null) {
+            sections.AddLast("Type: `" + r.signature.Text() + "`");
+        }
+        if(sections.Len() == 0U) {
+            return JSON::Null();
+        }
+        var str value = "";
+        for(var uint i = 0U; i < sections.Len(); i++) {
+            if(i > 0U) {
+                value = value + "\n\n";
+            }
+            value = value + sections.Get(i);
+        }
+        var JSON* contents = JSON::NewObject();
+        contents.Set("kind", JSON::NewStr("markdown"));
+        contents.Set("value", JSON::NewStr(value));
+        var JSON* result = JSON::NewObject();
+        result.Set("contents", contents);
+        result.Set("range", Navigation::Range(this.files, r.source.path, r.name).0);
+        return result;
+    }
+
+    // tests answers the tests of a test file
+    fun (JSON*, Server.Failure*)(JSON*) tests = (params) {
+        var (str, Err*) path = Uris::Path(Server::text(params, "uri"));
+        if(path.1 != null) {
+            return (null, Server.Failure::New(Server.Code::InvalidRequest, path.1.Err()));
+        }
+        var JSON* items = JSON::NewArray();
+        if(!Path::IsTestFile(path.0)) {
+            return (items, null);
+        }
+        var Analysis* a = Analysis::Run(this.files, this.packages, path.0, this.threads);
+        if(a.Program == null) {
+            return (items, null);
+        }
+        var (ArrList[TestFiles.File*]*, Err*) found = TestFiles::Discover(a.Program, ArrList::[str]New(1U, path.0), Regex::Compile("").0);
+        var (Source*, bool) source = a.Program.sources.Get(path.0);
+        if(found.1 != null || found.0.Len() == 0U || !source.1) {
+            return (items, null);
+        }
+        var ast.Decl* d = source.0.file.decl;
+        var (JSON*, bool) all = Navigation::Range(this.files, path.0, d.name);
+        if(all.1) {
+            items.Append(Server::testItem("", all.0));
+        }
+        var TestFiles.File* file = found.0.Get(0U);
+        for(var uint i = 0U; i < file.tests.Len(); i++) {
+            for(var uint j = 0U; j < d.fields.Len(); j++) {
+                var ast.Field* f = d.fields.Get(j);
+                if(f.name != null && f.name.value{str} == file.tests.Get(i)) {
+                    var (JSON*, bool) range = Navigation::Range(this.files, path.0, f.name);
+                    if(range.1) {
+                        items.Append(Server::testItem(file.decl + "." + file.tests.Get(i), range.0));
+                    }
+                    break;
+                }
+            }
+        }
+        return (items, null);
+    }
+
+    // testItem answers a test, or every test of a file for name "", and where it is declared
+    static fun JSON*(str, JSON*) testItem = (name, range) {
+        var JSON* item = JSON::NewObject();
+        item.Set("name", JSON::NewStr(name));
+        item.Set("range", range);
+        return item;
+    }
+
+    // definition answers where what is named under a position is declared, or null
+    fun JSON*(JSON*) definition = (params) {
+        var References.Reference* r = this.referenceAt(params);
+        if(r == null) {
+            return JSON::Null();
+        }
+        var JSON* location = Navigation::Location(this.files, r.target.source.path, r.target.name);
+        if(location == null) {
+            return JSON::Null();
+        }
+        return location;
+    }
+
+    // references answers where every use of what is named under a position is written
+    fun JSON*(JSON*) references = (params) {
+        var References.Reference* r = this.referenceAt(params);
+        if(r == null) {
+            return JSON::Null();
+        }
+        var bool declaration = false;
+        var JSON* context = Server::member(params, "context");
+        var JSON* include = Server::member(context, "includeDeclaration");
+        if(include != null && include.Kind() == JSON.Kind::Bool) {
+            declaration = include.AsBool();
+        }
+        var ArrList[References.Reference*]* uses = this.analysisOf(params).References().To(r.target);
+        var ArrList[JSON*]* locations = ArrList::[JSON*]New(0U);
+        for(var uint i = 0U; i < uses.Len(); i++) {
+            var References.Reference* use = uses.Get(i);
+            if(!declaration && use.source == r.target.source && use.name == r.target.name) {
+                continue;
+            }
+            var JSON* location = Navigation::Location(this.files, use.source.path, use.name);
+            if(location == null) {
+                continue;
+            }
+            var uint at = locations.Len();
+            for(; at > 0U && Server::after(locations.Get(at - 1U), location); at--) {}
+            locations.Add(at, location);
+        }
+        var JSON* result = JSON::NewArray();
+        for(var uint i = 0U; i < locations.Len(); i++) {
+            result.Append(locations.Get(i));
+        }
+        return result;
+    }
+
+    // after reports whether location a comes after b, by URI, line and character
+    static fun bool(JSON*, JSON*) after = (a, b) {
+        var str ua = a.Get("uri").0.AsStr();
+        var str ub = b.Get("uri").0.AsStr();
+        if(ua != ub) {
+            return ua > ub;
+        }
+        var JSON* sa = a.Get("range").0.Get("start").0;
+        var JSON* sb = b.Get("range").0.Get("start").0;
+        if(sa.Get("line").0.AsInt() != sb.Get("line").0.AsInt()) {
+            return sa.Get("line").0.AsInt() > sb.Get("line").0.AsInt();
+        }
+        return sa.Get("character").0.AsInt() > sb.Get("character").0.AsInt();
+    }
+
+    // analysisOf answers the last analysis of the document params name
+    fun Analysis*(JSON*) analysisOf = (params) {
+        return this.AnalysisOf(Server::text(Server::member(params, "textDocument"), "uri"));
+    }
+
+    // member answers the member of o named name, or null when o is no object or has none
+    static fun JSON*(JSON*, str) member = (o, name) {
+        if(o == null || o.Kind() != JSON.Kind::Object) {
+            return null;
+        }
+        var (JSON*, bool) m = o.Get(name);
+        if(!m.1) {
+            return null;
+        }
+        return m.0;
+    }
+
+    // text answers the string member of o named name, or ""
+    static fun str(JSON*, str) text = (o, name) {
+        var JSON* m = Server::member(o, name);
+        if(m == null || m.Kind() != JSON.Kind::String) {
+            return "";
+        }
+        return m.AsStr();
+    }
+
+    // number answers the integer member of o named name, or 0
+    static fun int(JSON*, str) number = (o, name) {
+        var JSON* m = Server::member(o, name);
+        if(m == null || m.Kind() != JSON.Kind::Int) {
+            return 0;
+        }
+        return m.AsInt();
+    }
+
+    // write writes message to the client
+    fun void(JSON*) write = (message) {
+        this.outLock.Lock();
+        Messages::WriteJSON(this.out, message);
+        this.outLock.Unlock();
+    }
+
+    // capabilities answers what initialize says the server can do
+    static fun JSON*() capabilities = () {
+        var JSON* sync = JSON::NewObject();
+        sync.Set("openClose", JSON::NewBool(true));
+        sync.Set("change", JSON::NewInt(1));
+        sync.Set("save", JSON::NewBool(true));
+        var JSON* types = JSON::NewArray();
+        for(var uint i = 0U; i < Server::Legend.Len(); i++) {
+            types.Append(JSON::NewStr(Server::Legend.Get(i)));
+        }
+        var JSON* legend = JSON::NewObject();
+        legend.Set("tokenTypes", types);
+        legend.Set("tokenModifiers", JSON::NewArray());
+        var JSON* tokens = JSON::NewObject();
+        tokens.Set("legend", legend);
+        tokens.Set("full", JSON::NewBool(true));
+        var JSON* can = JSON::NewObject();
+        can.Set("textDocumentSync", sync);
+        can.Set("hoverProvider", JSON::NewBool(true));
+        can.Set("definitionProvider", JSON::NewBool(true));
+        can.Set("referencesProvider", JSON::NewBool(true));
+        can.Set("semanticTokensProvider", tokens);
+        var JSON* info = JSON::NewObject();
+        info.Set("name", JSON::NewStr("zam"));
+        var JSON* result = JSON::NewObject();
+        result.Set("capabilities", can);
+        result.Set("serverInfo", info);
+        return result;
+    }
+}

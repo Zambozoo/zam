@@ -1,0 +1,260 @@
+import std("codec/format/JSON.zam");
+import std("data/list/ArrList.zam");
+import std("data/set/HashSet.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import "../semantic/Model.zam";
+import "../semantic/References.zam";
+import "../semantic/Type.zam";
+import "../syntax/Lexer.zam";
+import "../syntax/Source.zam";
+import "../syntax/Token.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "Analysis.zam";
+import "Doc.zam";
+import "Overlay.zam";
+import "Text.zam";
+import "Uris.zam";
+
+// Navigation answers what a name in an open document refers to and how it is declared
+public namespace Navigation {
+    // ReferenceAt answers the reference written under the editor's line and character
+    public fun References.Reference*(Overlay*, Analysis*, str, uint, uint) ReferenceAt = (files, analysis, path, line, character) {
+        if(analysis == null || analysis.References() == null) {
+            return null;
+        }
+        var (Source*, bool) source = analysis.Program.sources.Get(path);
+        var (str, Err*) text = files.Read(path);
+        if(!source.1 || text.1 != null) {
+            return null;
+        }
+        var uint offset = Text::New(text.0).OffsetAt(line, character);
+        var ArrList[Lexer.Lexed*]* tokens = Navigation::tokens(text.0);
+        var uint i = 0U;
+        // A cursor just past a name is still on it, which is where an editor leaves one after the name is typed
+        for(; i < tokens.Len() && tokens.Get(i).end < offset; i++) {}
+        for(; i < tokens.Len() && tokens.Get(i).token.offset <= offset; i++) {
+            var References.Reference* r = analysis.References().At(source.0, tokens.Get(i).token.offset);
+            if(r != null) {
+                return r;
+            }
+        }
+        return null;
+    }
+
+    // Declaration answers how a target is declared and the doc comment of its declaration
+    public fun (str, ArrList[str]*, bool)(Overlay*, Model*, References.Target*) Declaration = (files, model, target) {
+        var (str, Err*) source = files.Read(target.source.path);
+        if(source.1 != null) {
+            return ("", null, false);
+        }
+        var Text* t = Text::New(source.0);
+        var ArrList[str]* doc = ArrList::[str]New(0U);
+        if(target.start != null) {
+            doc = Doc::Of(t, target.start.offset);
+        }
+        var ast.Decl* d = Navigation::declAt(target.source.file.decl, target.name);
+        if(d != null) {
+            return (Navigation::outline(files, model, d), doc, true);
+        }
+        return (Navigation::declaredLine(t, target.name), doc, true);
+    }
+
+    // Range answers the range of a name written in the file the compiler reads at path
+    public fun (JSON*, bool)(Overlay*, str, Token*) Range = (files, path, name) {
+        var (str, Err*) source = files.Read(path);
+        if(source.1 != null) {
+            return (Analysis::range(0U, 0U, 0U, 0U), false);
+        }
+        var Text* t = Text::New(source.0);
+        var uint start = name.offset;
+        var uint end = start;
+        if(name.kind == TokenKind::StringLiteral) {
+            var ArrList[Lexer.Lexed*]* tokens = Navigation::tokens(source.0);
+            for(var uint i = 0U; i < tokens.Len(); i++) {
+                if(tokens.Get(i).token.offset == start) {
+                    end = tokens.Get(i).end;
+                }
+            }
+        } else if(name.kind == TokenKind::Identifier) {
+            end = end + Strs::CharLen(name.value{str});
+        }
+        var (uint, uint) from = t.Position(start);
+        var (uint, uint) to = t.Position(end);
+        return (Analysis::range(from.0, from.1, to.0, to.1), true);
+    }
+
+    // Location answers where a name is written, for a file an editor can open, or null
+    public fun JSON*(Overlay*, str, Token*) Location = (files, path, name) {
+        var (str, bool) disk = files.DiskPath(path);
+        if(!disk.1) {
+            return null;
+        }
+        var (JSON*, bool) range = Navigation::Range(files, path, name);
+        if(!range.1) {
+            return null;
+        }
+        var JSON* location = JSON::NewObject();
+        location.Set("uri", JSON::NewStr(Uris::URI(disk.0)));
+        location.Set("range", range.0);
+        return location;
+    }
+
+    // tokens answers the tokens of source, up to where it stops lexing
+    fun ArrList[Lexer.Lexed*]*(str) tokens = (source) {
+        var ArrList[Lexer.Lexed*]* tokens = ArrList::[Lexer.Lexed*]New(0U);
+        var Lexer.Iter* it = Lexer::New(source).Iter();
+        for(var Lexer.Lexed* tok = it.Next(); tok != null; tok = it.Next()) {
+            tokens.AddLast(tok);
+        }
+        return tokens;
+    }
+
+    // declAt answers the declaration within d whose name is written at a token, or null
+    fun ast.Decl*(ast.Decl*, Token*) declAt = (d, name) {
+        if(d == null) {
+            return null;
+        } else if(d.name == name) {
+            return d;
+        }
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Decl* found = Navigation::declAt(Navigation::asDecl(d.fields.Get(i)), name);
+            if(found != null) {
+                return found;
+            }
+        }
+        return null;
+    }
+
+    // asDecl answers f as a declaration, or null for a field that is none
+    fun ast.Decl*(ast.Field*) asDecl = (f) {
+        if(f.kind == ast.Field.Kind::Member || f.kind == ast.Field.Kind::Method || f.kind == ast.Field.Kind::Value) {
+            return null;
+        }
+        return f{ast.Decl*};
+    }
+
+    // outline answers a declaration as written in the order they are written
+    fun str(Overlay*, Model*, ast.Decl*) outline = (files, model, d) {
+        var (str, Err*) source = files.Read(model.Source(d).path);
+        if(source.1 != null) {
+            return "";
+        }
+        var Text* t = Text::New(source.0);
+        var str header = Navigation::header(t, d);
+        var str body = "";
+        var HashSet[str]* seen = HashSet::[str]New(0U);
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            var ast.Field* f = d.fields.Get(i);
+            if(f.name != null) {
+                seen.Add(f.name.value{str});
+                body = body + "    " + Navigation::signature(t, f) + "\n";
+            }
+        }
+        for(var ast.Decl* base = Navigation::baseOf(model, d); base != null; base = Navigation::baseOf(model, base)) {
+            var ArrList[ast.Field*]* inherited = ArrList::[ast.Field*]New(0U);
+            for(var uint i = 0U; i < base.fields.Len(); i++) {
+                var ast.Field* f = base.fields.Get(i);
+                if(f.name != null && Navigation::asDecl(f) == null && !ast.Modifier::Static.In(f.modifiers) && !seen.Contains(f.name.value{str})) {
+                    inherited.AddLast(f);
+                }
+            }
+            var (str, Err*) baseSource = files.Read(model.Source(base).path);
+            if(inherited.Len() == 0U || baseSource.1 != null) {
+                continue;
+            }
+            var Text* baseText = Text::New(baseSource.0);
+            if(body != "") {
+                body = body + "\n";
+            }
+            body = body + "    // from " + base.name.value{str} + "\n";
+            for(var uint i = 0U; i < inherited.Len(); i++) {
+                seen.Add(inherited.Get(i).name.value{str});
+                body = body + "    " + Navigation::signature(baseText, inherited.Get(i)) + "\n";
+            }
+        }
+        if(body == "") {
+            return header;
+        }
+        return header + " {\n" + body + "}";
+    }
+
+    // baseOf answers the declaration a class or an abstract is written to extend, or null
+    fun ast.Decl*(Model*, ast.Decl*) baseOf = (model, d) {
+        if(d.kind != ast.Field.Kind::Class && d.kind != ast.Field.Kind::Abstract) {
+            return null;
+        }
+        var ast.Decl.Object* object = d{ast.Decl.Object*};
+        if(object == null || object.base == null) {
+            return null;
+        }
+        var Type* t = model.TypeOf(object.base);
+        for(; t != null && (t.kind == Type.Kind::Wrapped || t.kind == Type.Kind::Generic);) {
+            if(t.kind == Type.Kind::Wrapped) {
+                t = t{Type.Wrapped*}.inner;
+            } else {
+                t = t{Type.Generic*}.inner;
+            }
+        }
+        if(t == null || t.kind != Type.Kind::Named) {
+            return null;
+        }
+        return t{Type.Named*}.decl;
+    }
+
+    // header answers the line a declaration's name is written on, up to the brace that opens its body
+    fun str(Text*, ast.Decl*) header = (t, d) {
+        var uint offset = d.name.offset;
+        var uint line = t.Position(offset).0;
+        var str text = t.Line(line);
+        var uint nameEnd = Strs::ByteLen(t.Slice(t.LineStart(line), offset)) + Strs::ByteLen(d.name.value{str});
+        var (uint, bool) brace = Strs::Index(Strs::Slice(text, nameEnd, Strs::ByteLen(text)), "{");
+        if(brace.1) {
+            text = Strs::Slice(text, 0U, nameEnd + brace.0);
+        }
+        return Strs::TrimSpace(text);
+    }
+
+    // signature answers what a field is declared as
+    fun str(Text*, ast.Field*) signature = (t, f) {
+        var ast.Decl* d = Navigation::asDecl(f);
+        if(d != null) {
+            return Navigation::header(t, d);
+        } else if(f.start == f.name) {
+            return f.name.value{str};
+        }
+        var uint end = f.name.offset + Strs::CharLen(f.name.value{str});
+        return Strs::TrimSpace(t.Slice(t.LineStart(t.Position(f.name.offset).0), end));
+    }
+
+    // declaredLine answers the line a name is written on, cut before the body of a lambda the name is bound to
+    fun str(Text*, Token*) declaredLine = (t, name) {
+        var str text = t.LineAt(name.offset);
+        var uint nameEnd = Strs::ByteLen(t.Slice(t.LineStart(t.Position(name.offset).0), name.offset));
+        if(name.kind == TokenKind::Identifier) {
+            nameEnd = nameEnd + Strs::ByteLen(name.value{str});
+        }
+        var (byte*, uint) b = Strs::ToBytes(text);
+        var uint i = Navigation::spaces(b.0, b.1, nameEnd);
+        if(i < b.1 && b.0[i] == '='{byte}) {
+            i = Navigation::spaces(b.0, b.1, i + 1U);
+            if(i < b.1 && b.0[i] == '('{byte}) {
+                for(i++; i < b.1 && b.0[i] != ')'{byte}; i++) {}
+                if(i < b.1) {
+                    i = Navigation::spaces(b.0, b.1, i + 1U);
+                    if(i < b.1 && b.0[i] == '{'{byte}) {
+                        text = Strs::Slice(text, 0U, i);
+                    }
+                }
+            }
+        }
+        return Strs::TrimSpace(text);
+    }
+
+    // spaces answers the first index from i of the n bytes at b that is not white space
+    fun uint(byte*, uint, uint) spaces = (b, n, i) {
+        for(; i < n && (b[i] == ' '{byte} || b[i] == '\t'{byte} || b[i] == '\r'{byte} || b[i] == '\n'{byte} || b[i] == 11{byte} || b[i] == 12{byte}); i++) {}
+        return i;
+    }
+}

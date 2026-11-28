@@ -8,6 +8,7 @@ import std("lang/Err.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import std("lang/System.zam");
+import std("lang/time/Duration.zam");
 import cli = "cli/Paths.zam";
 import "cli/Command.zam";
 import "cli/LocalFiles.zam";
@@ -16,6 +17,7 @@ import "codegen/Codegen.zam";
 import "codegen/Runtime.zam";
 import "debug/Adapter.zam";
 import "debug/Proxy.zam";
+import "lsp/Server.zam";
 import "build/Build.zam";
 import "build/Pack.zam";
 import "syntax/LocalPackages.zam";
@@ -49,6 +51,7 @@ namespace Main {
         Get("get"),
         Clean("clean"),
         Debug("debug"),
+        LSP("lsp"),
         Test("test");
     }
 
@@ -190,6 +193,16 @@ namespace Main {
             onError(Step::Clean, 1U, cached.1);
             removed(Step::Clean, Paths::Join(cached.0, "packs"));
             removed(Step::Clean, Paths::Join(cached.0, "runtime"));
+            System::Exit(0);
+        }
+
+        if(r.0.verb == Verb::LSP) {
+            var (str, Err*) root = stdRoot();
+            onError(Step::Std, 1U, root.1);
+            var (str, Err*) pkg = packages();
+            onError(Step::LSP, 1U, pkg.1);
+            var Server* server = Server::New(LocalSources::New(root.0), LocalPackages::New(pkg.0), Duration::Milliseconds(200));
+            onError(Step::LSP, 1U, server.Serve(File::StdIn, File::StdOut));
             System::Exit(0);
         }
 

@@ -1,0 +1,262 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("lang/Iter.zam");
+import "../syntax/Source.zam";
+import "../syntax/Token.zam";
+import "../syntax/TokenKind.zam";
+import ast = "../syntax/ast/*";
+import "Members.zam";
+import "Model.zam";
+import "Type.zam";
+
+// References records what each name written in a checked program refers to
+public class References <: ast.Walker* {
+    // Target is where something a name refers to is declared
+    public class Target {
+        public var Source* source;
+        public var Token* name;
+        public var Token* start;
+
+        public static fun References.Target*(Source*, Token*, Token*) New = (source, name, start) {
+            var References.Target* t = new(References.Target);
+            t.source = source;
+            t.name = name;
+            t.start = start;
+            return t;
+        }
+
+        // Is reports whether t is where this is declared too
+        public fun bool(References.Target*) Is = (t) {
+            return this.source == t.source && this.name == t.name;
+        }
+    }
+
+    // Reference is a name written in a file and what it refers to
+    public class Reference {
+        public var Source* source;
+        public var Token* name;
+        public var References.Target* target;
+        public var Type* signature;
+    }
+
+    var Model* model;
+    var Members* members;
+    // byFile holds each file's references by the offset their names begin at
+    var HashMap[Source*, HashMap[uint, References.Reference*]*]* byFile;
+    // aliases maps every type written as an alias onto the alias
+    var HashMap[ast.Type.Reference*, ast.Decl.Alias*]* aliases;
+    var Source* source;
+    // decl is the declaration being walked
+    var ast.Decl* decl;
+
+    // Of answers the references of the program m checked
+    public static fun References*(Model*) Of = (m) {
+        var References* r = new(References);
+        r.model = m;
+        r.members = Members::New(m);
+        r.byFile = HashMap::[Source*, HashMap[uint, References.Reference*]*]New(0U);
+        r.aliases = HashMap::[ast.Type.Reference*, ast.Decl.Alias*]New(0U);
+        var ArrList[Model.Use*]* uses = m.Uses();
+        for(var uint i = 0U; i < uses.Len(); i++) {
+            r.aliases.Put(uses.Get(i).at, uses.Get(i).named);
+        }
+        var Iter[(str, Source*)]* all = m.Program().sources.Iter();
+        for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
+            r.source = next.0.1;
+            r.VisitFile(r.source.file);
+        }
+        return r;
+    }
+
+    // At answers the reference whose name begins at a byte offset in a file, or null
+    public fun References.Reference*(Source*, uint) At = (source, offset) {
+        var (HashMap[uint, References.Reference*]*, bool) names = this.byFile.Get(source);
+        if(!names.1) {
+            return null;
+        }
+        var (References.Reference*, bool) found = names.0.Get(offset);
+        if(!found.1) {
+            return null;
+        }
+        return found.0;
+    }
+
+    // To answers every reference to a target, in no particular order
+    public fun ArrList[References.Reference*]*(References.Target*) To = (target) {
+        var ArrList[References.Reference*]* refs = ArrList::[References.Reference*]New(0U);
+        var Iter[(Source*, HashMap[uint, References.Reference*]*)]* files = this.byFile.Iter();
+        for(var ((Source*, HashMap[uint, References.Reference*]*), bool) file = files.Next(); file.1; file = files.Next()) {
+            var Iter[(uint, References.Reference*)]* names = file.0.1.Iter();
+            for(var ((uint, References.Reference*), bool) name = names.Next(); name.1; name = names.Next()) {
+                if(name.0.1.target.Is(target)) {
+                    refs.AddLast(name.0.1);
+                }
+            }
+        }
+        return refs;
+    }
+
+    // TargetOf answers where a field or declaration is declared
+    public fun References.Target*(ast.Field*) TargetOf = (f) {
+        var ast.Decl* d = f{ast.Decl*};
+        if(d != null && this.model.Source(d) != null) {
+            return References.Target::New(this.model.Source(d), d.name, d.start);
+        }
+        var ast.Decl* outer = this.model.Outer(f);
+        if(outer == null) {
+            return null;
+        }
+        return References.Target::New(this.model.Source(outer), f.name, f.start);
+    }
+
+    // add records that the name written at tok in the file being walked refers to target
+    fun void(Token*, References.Target*, Type*) add = (tok, target, t) {
+        if(tok == null || target == null || target.source == null || target.name == null) {
+            return;
+        }
+        var (HashMap[uint, References.Reference*]*, bool) names = this.byFile.Get(this.source);
+        if(!names.1) {
+            names.0 = HashMap::[uint, References.Reference*]New(0U);
+            this.byFile.Put(this.source, names.0);
+        }
+        if(names.0.Contains(tok.offset)) {
+            return;
+        }
+        var References.Reference* r = new(References.Reference);
+        r.source = this.source;
+        r.name = tok;
+        r.target = target;
+        r.signature = t;
+        names.0.Put(tok.offset, r);
+    }
+
+    // own records the name of f as referring to f itself, of type t
+    fun void(ast.Field*, Type*) own = (f, t) {
+        this.add(f.name, this.TargetOf(f), t);
+    }
+
+    // local records a name declared at tok in the file being walked as referring to itself, of type t
+    fun void(Token*, Type*) local = (tok, t) {
+        this.add(tok, References.Target::New(this.source, tok, null), t);
+    }
+
+    // parameters records each of names as declared with the type t gives it
+    fun void(ArrList[Token*]*, Type*) parameters = (names, t) {
+        if(names == null || t == null || t.kind != Type.Kind::Function) {
+            return;
+        }
+        var ArrList[Type*]* types = t{Type.Function*}.parameters;
+        for(var uint i = 0U; i < names.Len() && i < types.Len(); i++) {
+            var Token* name = names.Get(i);
+            if(name.kind == TokenKind::Underscore) {
+                continue;
+            }
+            var Type* bound = types.Get(i);
+            if(bound.kind == Type.Kind::Wrapped && bound{Type.Wrapped*}.wrap == ast.Type.Wrap::Variadic) {
+                bound = Type.Wrapped::New(bound.at, ast.Type.Wrap::Pointer, bound{Type.Wrapped*}.inner);
+            }
+            this.local(name, bound);
+        }
+    }
+
+    // bound records the name written at tok as standing for what b binds
+    fun void(Token*, Model.Binding*) bound = (tok, b) {
+        if(b == null) {
+            return;
+        }
+        if(b.field != null) {
+            this.add(tok, this.TargetOf(b.field), b.bound);
+        } else {
+            this.add(tok, References.Target::New(this.source, b.at, null), b.bound);
+        }
+    }
+
+    // selected records the name written at tok as standing for the field it selects
+    fun void(Token*) selected = (tok) {
+        var Model.Selection* s = this.model.Selected(tok);
+        if(s != null && s.field != null) {
+            this.add(tok, this.TargetOf(s.field), s.signature);
+        }
+    }
+
+    public fun void(ast.Import*) VisitImport = (i) {
+        var ArrList[Source*]* files = this.model.Imported(i);
+        if(files != null && files.Len() > 0U && files.Get(0U).file.decl != null) {
+            this.add(i.path, this.TargetOf(files.Get(0U).file.decl), null);
+        }
+    }
+
+    public fun void(ast.Decl*) VisitDecl = (d) {
+        var ast.Decl* outer = this.decl;
+        this.decl = d;
+        this.own(d, null);
+        super.VisitDecl(d);
+        this.decl = outer;
+    }
+
+    public fun void(ast.Field.Member*) VisitFieldMember = (f) {
+        this.own(f, this.model.TypeOf(f.declared));
+        super.VisitFieldMember(f);
+    }
+
+    public fun void(ast.Field.Method*) VisitFieldMethod = (f) {
+        var Type* t = this.model.TypeOf(f.signature);
+        this.own(f, t);
+        this.parameters(f.parameters, t);
+        super.VisitFieldMethod(f);
+    }
+
+    public fun void(ast.Field.Value*) VisitFieldValue = (f) {
+        this.own(f, this.members.SelfType(this.decl));
+        super.VisitFieldValue(f);
+    }
+
+    public fun void(ast.Stmt.Variable*) VisitStmtVariable = (s) {
+        this.local(s.name, this.model.TypeOf(s.declared));
+        super.VisitStmtVariable(s);
+    }
+
+    public fun void(ast.Expr.Lambda*) VisitExprLambda = (e) {
+        this.parameters(e.parameters, this.model.TypeOf(e.signature));
+        super.VisitExprLambda(e);
+    }
+
+    public fun void(ast.Expr.Symbol*) VisitExprSymbol = (e) {
+        if(e.start.kind == TokenKind::Identifier) {
+            this.bound(e.start, this.model.Binding(e));
+        }
+    }
+
+    public fun void(ast.Expr.Path*) VisitExprPath = (e) {
+        this.bound(e.ids.Get(0U), this.model.Binding(e));
+        for(var uint i = 1U; i < e.ids.Len(); i++) {
+            this.selected(e.ids.Get(i));
+        }
+    }
+
+    public fun void(ast.Expr.Field*) VisitExprField = (e) {
+        super.VisitExprField(e);
+        this.selected(e.name);
+    }
+
+    public fun void(ast.Expr.Static*) VisitExprStatic = (e) {
+        super.VisitExprStatic(e);
+        this.bound(e.name, this.model.Binding(e));
+    }
+
+    public fun void(ast.Type.Reference*) VisitTypeReference = (t) {
+        if(t.ids.Len() == 0U) {
+            return;
+        }
+        var Token* last = t.ids.Get(t.ids.Len() - 1U);
+        var (ast.Decl.Alias*, bool) named = this.aliases.Get(t);
+        if(named.1) {
+            this.add(last, this.TargetOf(named.0), null);
+            return;
+        }
+        var Type* resolved = this.model.TypeOf(t);
+        if(resolved != null && resolved.kind == Type.Kind::Named) {
+            this.add(last, this.TargetOf(resolved{Type.Named*}.decl), null);
+        }
+    }
+}

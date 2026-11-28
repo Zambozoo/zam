@@ -1,0 +1,52 @@
+import std("data/list/ArrList.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "../syntax/MapSources.test.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/Source.zam";
+import "Model.zam";
+import "References.zam";
+import "Semantic.zam";
+
+public namespace ReferencesTest {
+    // source is the program the tests ask about
+    private var str$ source = "namespace Main {\n    class Point {\n        var int x;\n    }\n\n    fun void(uint, str...) main = (argC, argV) {\n        var Point* p = new(Point);\n        p.x = argC{int};\n        var int y = p.x;\n    }\n}\n";
+
+    // offset answers the byte offset of the nth occurrence, from 0, of word in source
+    private fun uint(str, uint) offset = (word, n) {
+        var uint from = 0U;
+        for(;;) {
+            var (uint, bool) at = Strs::Index(Strs::Slice(ReferencesTest::source, from, Strs::ByteLen(ReferencesTest::source)), word);
+            if(n == 0U) {
+                return from + at.0;
+            }
+            n--;
+            from = from + at.0 + 1U;
+        }
+        return 0U;
+    }
+
+    public fun void(uint, str...) Resolves = (argC, argV) {
+        var (ProjectParser.Program*, ArrList[Err*]*) program = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", ReferencesTest::source));
+        if(!Assert::True(program.1.Len() == 0U, "the program does not parse")) {
+            return;
+        }
+        var (Model*, ArrList[Err*]*) model = Semantic::Validate(program.0);
+        if(!Assert::True(model.1.Len() == 0U, model.1.Len() == 0U ? "" : model.1.Get(0U).Err())) {
+            return;
+        }
+        var References* refs = References::Of(model.0);
+        var Source* main = program.0.sources.Get("/p/Main.zam").0;
+
+        var References.Reference* typed = refs.At(main, ReferencesTest::offset("Point", 1U));
+        Assert::True(typed != null && typed.target.name.offset == ReferencesTest::offset("Point", 0U) && typed.signature == null, "a type name does not refer to its class");
+        var References.Reference* member = refs.At(main, ReferencesTest::offset("x", 1U));
+        Assert::True(member != null && member.target.name.offset == ReferencesTest::offset("x", 0U) && member.signature.Text() == "int", "a selected field does not refer to its member");
+        var References.Reference* parameter = refs.At(main, ReferencesTest::offset("argC", 1U));
+        Assert::True(parameter != null && parameter.target.name.offset == ReferencesTest::offset("argC", 0U) && parameter.target.start == null, "a parameter's use does not refer to it");
+        var References.Reference* local = refs.At(main, ReferencesTest::offset("p.x", 0U));
+        Assert::True(local != null && local.target.name.offset == ReferencesTest::offset("* p", 0U) + 2U && local.signature.Text() == "Point*", "a local's use does not refer to it");
+        Assert::[uint]Equal(3U, refs.To(member.target).Len());
+    }
+}

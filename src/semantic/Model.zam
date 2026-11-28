@@ -63,6 +63,12 @@ public class Model {
         }
     }
 
+    // Selection is the field a name selected out of a value stands for, and the type it comes to
+    public class Selection {
+        public var ast.Field* field;
+        public var Type* signature;
+    }
+
     // Binding is what a name written in a body stands for
     public class Binding {
         // Kind is where what a name stands for lies
@@ -122,6 +128,8 @@ public class Model {
     var HashMap[ast.Expr.Lambda*, ArrList[str]*]* captures;
     // bindings maps every name written in a body onto what it stands for
     var HashMap[ast.Expr*, Binding*]* bindings;
+    // selections maps every name selected out of a value as a field onto what it stands for
+    var HashMap[Token*, Selection*]* selections;
     // paths maps every path typed onto the type after each of its names, its first name first
     var HashMap[ast.Expr.Path*, ArrList[Type*]*]* paths;
     // instances is every ground instantiation of a generic declaration the program can reach
@@ -147,6 +155,7 @@ public class Model {
         m.types = HashMap::[ast.Type*, Type*]New(0U);
         m.written = HashMap::[ast.Type*, Type*]New(0U);
         m.imported = HashMap::[ast.Import*, ArrList[Source*]*]New(0U);
+        m.selections = HashMap::[Token*, Selection*]New(0U);
         m.bases = HashMap::[ast.Decl*, Type*]New(0U);
         m.uses = ArrList::[Use*]New(0U);
         m.exprTypes = HashMap::[ast.Expr*, Type*]New(0U);
@@ -354,6 +363,25 @@ public class Model {
         }
         names.AddLast(name);
         this.captures.Put(l, names);
+    }
+
+    // Selected answers what the name written at tok, selected out of a value, stands for, or null
+    public fun Selection*(Token*) Selected = (tok) {
+        var (Selection*, bool) found = this.selections.Get(tok);
+        if(!found.1) {
+            return null;
+        }
+        return found.0;
+    }
+
+    // selectField records the name written at tok, selected out of a value, as standing for field, of type t
+    fun void(Token*, ast.Field*, Type*) selectField = (tok, field, t) {
+        if(!this.selections.Contains(tok)) {
+            var Selection* s = new(Selection);
+            s.field = field;
+            s.signature = t;
+            this.selections.Put(tok, s);
+        }
     }
 
     // bindName records the name written as e as standing for b

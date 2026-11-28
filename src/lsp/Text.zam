@@ -1,0 +1,126 @@
+import std("data/list/ArrList.zam");
+import std("lang/Arr.zam");
+import std("lang/Strs.zam");
+
+// Text is a document's source indexed the way the compiler and the editor each count positions
+public class Text {
+    var Arr[char]* chars;
+    // lineStarts holds the character offset each line begins at
+    var ArrList[uint]* lineStarts;
+
+    public static fun Text*(str) New = (source) {
+        var Text* t = new(Text);
+        t.chars = Strs::Chars(source);
+        t.lineStarts = ArrList::[uint]New(1U, 0U);
+        for(var uint i = 0U; i < t.chars.Len(); i++) {
+            if(t.chars.Get(i) == '\n') {
+                t.lineStarts.AddLast(i + 1U);
+            }
+        }
+        return t;
+    }
+
+    // Len answers how many characters the text holds
+    public fun uint() Len = () {
+        return this.chars.Len();
+    }
+
+    // At answers the character at offset i
+    public fun char(uint) At = (i) {
+        return this.chars.Get(i);
+    }
+
+    // Units answers how many UTF-16 code units the character at offset i takes
+    public fun uint(uint) Units = (i) {
+        if(this.chars.Get(i){int} >= 65536) {
+            return 2U;
+        }
+        return 1U;
+    }
+
+    // Offset answers the character offset of the compiler's line and column, both from 1, clamped to the text
+    public fun uint(uint, uint) Offset = (line, column) {
+        if(line < 1U) {
+            line = 1U;
+        } else if(line > this.lineStarts.Len()) {
+            line = this.lineStarts.Len();
+        }
+        var uint start = this.lineStarts.Get(line - 1U);
+        var uint end = this.chars.Len();
+        if(line < this.lineStarts.Len()) {
+            end = this.lineStarts.Get(line) - 1U;
+        }
+        if(column < 1U) {
+            column = 1U;
+        }
+        if(start + column - 1U > end) {
+            return end;
+        }
+        return start + column - 1U;
+    }
+
+    // Position answers the editor's line and character of a character offset, clamped to the text
+    public fun (uint, uint)(uint) Position = (offset) {
+        if(offset > this.chars.Len()) {
+            offset = this.chars.Len();
+        }
+        var uint line = this.lineOf(offset);
+        var uint character = 0U;
+        for(var uint i = this.lineStarts.Get(line); i < offset; i++) {
+            character = character + this.Units(i);
+        }
+        return (line, character);
+    }
+
+    // OffsetAt answers the character offset of the editor's line and character, clamped to the text
+    public fun uint(uint, uint) OffsetAt = (line, character) {
+        if(line >= this.lineStarts.Len()) {
+            line = this.lineStarts.Len() - 1U;
+        }
+        var uint offset = this.lineStarts.Get(line);
+        for(var uint units = 0U; offset < this.chars.Len() && this.chars.Get(offset) != '\n' && units < character; offset++) {
+            units = units + this.Units(offset);
+        }
+        return offset;
+    }
+
+    // Line answers the text of a line, counted from 0, without its newline
+    public fun str(uint) Line = (line) {
+        var uint end = this.chars.Len();
+        if(line + 1U < this.lineStarts.Len()) {
+            end = this.lineStarts.Get(line + 1U) - 1U;
+        }
+        var uint start = this.lineStarts.Get(line);
+        return Strs::ToChars(this.chars.Arr() + start, end - start);
+    }
+
+    // Slice answers the text from character offset from up to to
+    public fun str(uint, uint) Slice = (from, to) {
+        return Strs::ToChars(this.chars.Arr() + from, to - from);
+    }
+
+    // LineStart answers the character offset a line, counted from 0, begins at
+    public fun uint(uint) LineStart = (line) {
+        return this.lineStarts.Get(line);
+    }
+
+    // LineAt answers the text of the line a character offset lies on
+    public fun str(uint) LineAt = (offset) {
+        return this.Line(this.Position(offset).0);
+    }
+
+    // lineOf answers the line, counted from 0, a character offset lies on
+    fun uint(uint) lineOf = (offset) {
+        var uint low = 0U;
+        var uint high = this.lineStarts.Len();
+        for(; low < high;) {
+            var uint mid = (low + high) / 2U;
+            if(this.lineStarts.Get(mid) > offset) {
+                high = mid;
+            } else {
+                low = mid + 1U;
+            }
+        }
+        return low - 1U;
+    }
+}

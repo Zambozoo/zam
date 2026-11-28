@@ -1,0 +1,116 @@
+import std("data/map/HashMap.zam");
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("sync/Mutex.zam");
+import "../syntax/Path.zam";
+import "../syntax/SourceProvider.zam";
+
+// Overlay serves the sources of open documents
+public class Overlay {
+    var SourceProvider* inner;
+    var Mutex* lock;
+    // buffers holds each open document's text by the path the compiler reads it at
+    var HashMap[str, str]* buffers;
+    // stdRoot is where a copy of the standard library was opened from, or ""
+    var str stdRoot;
+
+    public static fun Overlay*(SourceProvider*) New = (inner) {
+        var Overlay* o = new(Overlay);
+        o.inner = inner;
+        o.lock = Mutex::New();
+        o.buffers = HashMap::[str, str]New(0U);
+        o.stdRoot = "";
+        return o;
+    }
+
+    // Open records text as the document at path, answering the path the compiler reads it at
+    public fun str(str, str) Open = (path, text) {
+        var (str, str, bool) std = this.stdPath(path);
+        this.lock.Lock();
+        if(std.2) {
+            this.stdRoot = std.1;
+            path = std.0;
+        }
+        this.buffers.Put(path, text);
+        this.lock.Unlock();
+        return path;
+    }
+
+    // Set replaces the text of the open document the compiler reads at path
+    public fun void(str, str) Set = (path, text) {
+        this.lock.Lock();
+        this.buffers.Put(path, text);
+        this.lock.Unlock();
+    }
+
+    // Remove forgets the open document the compiler reads at path, which is read from disk again
+    public fun void(str) Remove = (path) {
+        this.lock.Lock();
+        this.buffers.Remove(path);
+        this.lock.Unlock();
+    }
+
+    // DiskPath answers where the file the compiler reads at path is on disk
+    public fun (str, bool)(str) DiskPath = (path) {
+        if(!Path::IsStd(path)) {
+            return (path, true);
+        }
+        this.lock.Lock();
+        var str root = this.stdRoot;
+        this.lock.Unlock();
+        if(root == "") {
+            return ("", false);
+        }
+        return (Paths::Join(root, Strs::Slice(path, Strs::ByteLen(Path::Std), Strs::ByteLen(path))), true);
+    }
+
+    public fun (str, Err*)(str) Read = (path) {
+        this.lock.Lock();
+        var (str, bool) buffer = this.buffers.Get(path);
+        var str root = this.stdRoot;
+        this.lock.Unlock();
+        if(buffer.1) {
+            return (buffer.0, null);
+        }
+        if(root != "" && Path::IsStd(path)) {
+            var str file = Paths::Join(root, Strs::Slice(path, Strs::ByteLen(Path::Std), Strs::ByteLen(path)));
+            if(FS::Exists(file)) {
+                return FS::ReadFile(file);
+            }
+        }
+        return this.inner.Read(path);
+    }
+
+    public fun (Arr[str]*, Err*)(str) ListCodeFiles = (dir) {
+        return this.inner.ListCodeFiles(dir);
+    }
+
+    public fun (str, Err*)(str) ProjectFile = (path) {
+        return this.inner.ProjectFile(path);
+    }
+
+    public fun Err*(str, str) Write = (path, text) {
+        return this.inner.Write(path, text);
+    }
+
+    // stdPath answers the std:// path of a file on disk
+    fun (str, str, bool)(str) stdPath = (path) {
+        if(Path::IsStd(path)) {
+            return ("", "", false);
+        }
+        var (str, Err*) projectFile = this.inner.ProjectFile(path);
+        if(projectFile.1 != null || Path::IsStd(projectFile.0)) {
+            return ("", "", false);
+        }
+        var (str, Err*) got = FS::ReadFile(projectFile.0);
+        var (str, Err*) want = this.inner.Read(Path::Std + Paths::Base(projectFile.0));
+        if(got.1 != null || want.1 != null || got.0 != want.0) {
+            return ("", "", false);
+        }
+        var str root = Paths::Dir(projectFile.0);
+        return (Path::Std + Strs::Slice(path, Strs::ByteLen(root) + 1U, Strs::ByteLen(path)), root, true);
+    }
+}

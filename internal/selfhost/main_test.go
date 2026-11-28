@@ -4,14 +4,27 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/zambozoo/zam/internal/lsp"
 )
 
-// TestMain points native links at the packs built into the repository, and
+// goLSPVariable, when set, has the test binary serve as Go's language server
+// over its standard streams instead of running tests.
+const goLSPVariable = "ZAM_SELFHOST_GO_LSP"
+
+// TestMain serves as Go's language server when goLSPVariable is set. Otherwise
+// it points native links at the packs built into the repository, and
 // shares Zig's caches and one compile of the runtime across tests, unless the
 // environment names others. Both compilers number types in one canonical order,
 // so that their images can be compared, and the compiler written in zam reads
 // the runtime's and the standard library's sources from the repository.
 func TestMain(m *testing.M) {
+	if os.Getenv(goLSPVariable) != "" {
+		if err := lsp.Run(); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	_ = os.Setenv("ZAM_CANONICAL_ORDER", "1")
 	runtime, _ := filepath.Abs(filepath.Join("..", "compiler", "3_build", "runtime"))
 	_ = os.Setenv("ZAM_RUNTIME", runtime)

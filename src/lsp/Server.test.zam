@@ -1,0 +1,265 @@
+import std("codec/format/JSON.zam");
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("io/local/Pipe.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+import std("lang/time/Duration.zam");
+import std("test/Assert.zam");
+import "../rpc/Messages.zam";
+import "../syntax/LocalPackages.zam";
+import "../syntax/LocalSources.zam";
+import "../syntax/Path.zam";
+import "Server.zam";
+import "Uris.zam";
+
+public namespace ServerTest {
+    // ask writes request to the server and answers what it writes back
+    private fun JSON*(Pipe*, Messages.Reader*, str) ask = (client, responses, request) {
+        Messages::Write(client.Writer(), request);
+        return ServerTest::next(responses);
+    }
+
+    // next answers the next message the server writes that is not what checking an open document published
+    private fun JSON*(Messages.Reader*) next = (responses) {
+        for {
+            var JSON* message = responses.ReadJSON().0;
+            if(!ServerTest::checked(message)) {
+                return message;
+            }
+        }
+        return null;
+    }
+
+    // checked reports whether message is what checking an open document published
+    private fun bool(JSON*) checked = (message) {
+        var (JSON*, bool) params = message.Get("params");
+        return params.1 && params.0.Kind() == JSON.Kind::Object && params.0.Get("version").1;
+    }
+
+    // published answers the next diagnostics checking the open document at uri publishes
+    private fun JSON*(Messages.Reader*, str) published = (responses, uri) {
+        for {
+            var JSON* message = responses.ReadJSON().0;
+            if(ServerTest::checked(message) && message.Get("params").0.Get("uri").0.AsStr() == uri) {
+                return message.Get("params").0;
+            }
+        }
+        return null;
+    }
+
+    public fun void(uint, str...) Lifecycle = (argC, argV) {
+        var Pipe* client = Pipe::New().0;
+        var Pipe* back = Pipe::New().0;
+        var Server* s = Server::New(LocalSources::New(System::Env("ZAM_STD").0), LocalPackages::New(FS::TempDir()), Duration::Milliseconds(0));
+        var thread[Err*] served = async(s.Serve(client.Reader(), back.Writer()));
+        var Messages.Reader* responses = Messages.Reader::New(back.Reader());
+
+        Assert::[str]Equal("{\"id\":1,\"error\":{\"code\":-32600,\"message\":\"server not initialized\"},\"jsonrpc\":\"2.0\"}",
+            ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"textDocument/hover\",\"params\":{}}").Str());
+        var JSON* initialized = ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"id\":2,\"method\":\"initialize\",\"params\":{\"capabilities\":{}}}");
+        Assert::[str]Equal("{\"capabilities\":{\"textDocumentSync\":{\"openClose\":true,\"change\":1,\"save\":true},\"hoverProvider\":true,\"definitionProvider\":true,\"referencesProvider\":true,\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":[\"keyword\",\"type\",\"variable\",\"string\",\"number\",\"operator\",\"comment\"],\"tokenModifiers\":[]},\"full\":true}},\"serverInfo\":{\"name\":\"zam\"}}",
+            initialized.Get("result").0.Str());
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
+        Assert::[str]Equal("{\"id\":\"a\",\"error\":{\"code\":-32601,\"message\":\"method not supported: zam/unknown\"},\"jsonrpc\":\"2.0\"}",
+            ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"id\":\"a\",\"method\":\"zam/unknown\"}").Str());
+        Assert::[str]Equal("{\"id\":4,\"result\":null,\"jsonrpc\":\"2.0\"}", ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"shutdown\"}").Str());
+
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+        var Err* err = wait(served);
+        Assert::True(err == null, err == null ? "" : err.Err());
+        client.Close();
+        back.Close();
+    }
+
+    public fun void(uint, str...) Documents = (argC, argV) {
+        var str dir = FS::ToSlash(FS::MakeTempDir(FS::TempDir(), "documents-").0);
+        defer FS::RemoveAll(dir);
+        var str path = Paths::Join(dir, "Main.zam");
+        FS::WriteFile(path, "disk");
+        var str uri = Uris::URI(path);
+        var str std = System::Env("ZAM_STD").0;
+        var Pipe* client = Pipe::New().0;
+        var Pipe* back = Pipe::New().0;
+        var Server* s = Server::New(LocalSources::New(std), LocalPackages::New(Paths::Join(dir, "pkg")), Duration::Milliseconds(0));
+        var thread[Err*] served = async(s.Serve(client.Reader(), back.Writer()));
+        var Messages.Reader* responses = Messages.Reader::New(back.Reader());
+        var str sync = "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"zam/unknown\"}";
+        ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":" + Strs::Quote(uri) + ",\"languageId\":\"zam\",\"version\":1,\"text\":\"buffer\"}}}");
+        ServerTest::ask(client, responses, sync);
+        Assert::[str]Equal("buffer", s.Files().Read(path).0);
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":" + Strs::Quote(uri) + ",\"version\":2},\"contentChanges\":[{\"text\":\"changed\"}]}}");
+        ServerTest::ask(client, responses, sync);
+        Assert::[str]Equal("changed", s.Files().Read(path).0);
+        var JSON* cleared = ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":{\"uri\":" + Strs::Quote(uri) + "}}}");
+        Assert::[str]Equal("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":" + Strs::Quote(uri) + ",\"diagnostics\":[]}}", cleared.Str());
+        Assert::[str]Equal("disk", s.Files().Read(path).0);
+
+        Assert::[str]Equal("std://lang/Obj.zam", s.Files().Open(Paths::Join(std, "lang/Obj.zam"), "opened"));
+        Assert::[str]Equal("opened", s.Files().Read("std://lang/Obj.zam").0);
+
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+        wait(served);
+        client.Close();
+        back.Close();
+    }
+
+    public fun void(uint, str...) Diagnostics = (argC, argV) {
+        var str dir = FS::ToSlash(FS::MakeTempDir(FS::TempDir(), "diagnostics-").0);
+        defer FS::RemoveAll(dir);
+        FS::WriteFile(Paths::Join(dir, "zam.yml"), "name: checked\n");
+        FS::WriteFile(Paths::Join(dir, "Other.zam"), "namespace Other {\n");
+        var str path = Paths::Join(dir, "Main.zam");
+        var str uri = Uris::URI(path);
+        var Pipe* client = Pipe::New().0;
+        var Pipe* back = Pipe::New().0;
+        var Server* s = Server::New(LocalSources::New(System::Env("ZAM_STD").0), LocalPackages::New(Paths::Join(dir, "pkg")), Duration::Milliseconds(0));
+        var thread[Err*] served = async(s.Serve(client.Reader(), back.Writer()));
+        var Messages.Reader* responses = Messages.Reader::New(back.Reader());
+        ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+
+        var str source = "namespace Main {\n    fun void(uint, str...) main = (argC, argV) {\n        var int x = nope;\n    }\n}\n";
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":" + Strs::Quote(uri) + ",\"languageId\":\"zam\",\"version\":1,\"text\":" + Strs::Quote(source) + "}}}");
+        var JSON* first = ServerTest::published(responses, uri);
+        Assert::[str]Equal("[{\"range\":{\"start\":{\"line\":2,\"character\":20},\"end\":{\"line\":2,\"character\":24}},\"severity\":1,\"source\":\"zam\",\"message\":\"variable nope not found\"}]", first.Get("diagnostics").0.Str());
+
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didChange\",\"params\":{\"textDocument\":{\"uri\":" + Strs::Quote(uri) + ",\"version\":2},\"contentChanges\":[{\"text\":\"import \\\"Other.zam\\\";\\nnamespace Main {\\n    fun void(uint, str...) main = (argC, argV) {\\n    }\\n}\\n\"}]}}");
+        var JSON* second = ServerTest::published(responses, uri);
+        for(; second.Get("version").0.AsInt() != 2;) {
+            second = ServerTest::published(responses, uri);
+        }
+        var JSON* summary = second.Get("diagnostics").0;
+        Assert::[uint]Equal(1U, summary.Len());
+        Assert::[str]Equal("{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}}", summary.At(0U).Get("range").0.Str());
+        Assert::True(Strs::HasSuffix(summary.At(0U).Get("message").0.AsStr(), "(" + Path::Display(Paths::Join(dir, "Other.zam")) + "[2:1])"), summary.Str());
+
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+        wait(served);
+        client.Close();
+        back.Close();
+    }
+
+    // hovered answers the markdown and range of a hover at line and character in the document at uri
+    private fun (str, str)(Pipe*, Messages.Reader*, str, uint, uint) hovered = (client, responses, uri, line, character) {
+        var JSON* r = ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"textDocument/hover\",\"params\":{\"textDocument\":{\"uri\":" + Strs::Quote(uri) + "},\"position\":{\"line\":" + line{str} + ",\"character\":" + character{str} + "}}}").Get("result").0;
+        if(r.IsNull()) {
+            return ("", "");
+        }
+        return (r.Get("contents").0.Get("value").0.AsStr(), r.Get("range").0.Str());
+    }
+
+    // range answers a range as the protocol writes one
+    private fun str(uint, uint, uint, uint) range = (startLine, startCharacter, endLine, endCharacter) {
+        return "{\"start\":{\"line\":" + startLine{str} + ",\"character\":" + startCharacter{str} + "},\"end\":{\"line\":" + endLine{str} + ",\"character\":" + endCharacter{str} + "}}";
+    }
+
+    // located answers what a request for method at line and character in the document at uri answers
+    private fun JSON*(Pipe*, Messages.Reader*, str, str, uint, uint, str) located = (client, responses, method, uri, line, character, extra) {
+        return ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"id\":8,\"method\":\"" + method + "\",\"params\":{\"textDocument\":{\"uri\":" + Strs::Quote(uri) + "},\"position\":{\"line\":" + line{str} + ",\"character\":" + character{str} + "}" + extra + "}}").Get("result").0;
+    }
+
+    public fun void(uint, str...) Names = (argC, argV) {
+        var str dir = FS::ToSlash(FS::MakeTempDir(FS::TempDir(), "hover-").0);
+        defer FS::RemoveAll(dir);
+        FS::WriteFile(Paths::Join(dir, "zam.yml"), "name: hovered\n");
+        FS::WriteFile(Paths::Join(dir, "Other.zam"), "namespace Other {\n    // g returns *one*.\n    static fun int() g = () { return 1; }\n}\n");
+        var str main = "import \"Other.zam\";\n\nnamespace Main {\n    static fun int() f = () {\n        var int x = Other::g();\n        return x + x;\n    }\n}\n";
+        var str uri = Uris::URI(Paths::Join(dir, "Main.zam"));
+        var Pipe* client = Pipe::New().0;
+        var Pipe* back = Pipe::New().0;
+        var Server* s = Server::New(LocalSources::New(System::Env("ZAM_STD").0), LocalPackages::New(Paths::Join(dir, "pkg")), Duration::Milliseconds(0));
+        var thread[Err*] served = async(s.Serve(client.Reader(), back.Writer()));
+        var Messages.Reader* responses = Messages.Reader::New(back.Reader());
+        ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":" + Strs::Quote(uri) + ",\"languageId\":\"zam\",\"version\":1,\"text\":" + Strs::Quote(main) + "}}}");
+        Assert::[str]Equal("[]", ServerTest::published(responses, uri).Get("diagnostics").0.Str());
+
+        var (str, str) local = ServerTest::hovered(client, responses, uri, 5U, 15U);
+        Assert::True(Strs::Contains(local.0, "var int x = Other::g();") && Strs::Contains(local.0, "Type: `int`"), local.0);
+        Assert::[str]Equal(ServerTest::range(5U, 15U, 5U, 16U), local.1);
+        Assert::[str]Equal("```zam\nstatic fun int() g = ()\n```\n\ng returns \\*one\\*.\n\nType: `int()`", ServerTest::hovered(client, responses, uri, 4U, 27U).0);
+        Assert::[str]Equal("```zam\nnamespace Other {\n    static fun int() g\n}\n```", ServerTest::hovered(client, responses, uri, 4U, 22U).0);
+        Assert::[str]Equal(ServerTest::range(5U, 15U, 5U, 16U), ServerTest::hovered(client, responses, uri, 5U, 16U).1);
+        var (str, str) imported = ServerTest::hovered(client, responses, uri, 0U, 10U);
+        Assert::[str]Equal("```zam\nnamespace Other {\n    static fun int() g\n}\n```", imported.0);
+        Assert::[str]Equal(ServerTest::range(0U, 7U, 0U, 18U), imported.1);
+        Assert::[str]Equal("", ServerTest::hovered(client, responses, uri, 1U, 0U).0);
+
+        var str otherURI = Uris::URI(Paths::Join(dir, "Other.zam"));
+        Assert::[str]Equal("{\"uri\":" + Strs::Quote(otherURI) + ",\"range\":" + ServerTest::range(2U, 21U, 2U, 22U) + "}", ServerTest::located(client, responses, "textDocument/definition", uri, 4U, 27U, "").Str());
+        var JSON* all = ServerTest::located(client, responses, "textDocument/references", uri, 4U, 16U, ",\"context\":{\"includeDeclaration\":true}");
+        Assert::[uint]Equal(3U, all.Len());
+        Assert::[str]Equal(ServerTest::range(4U, 16U, 4U, 17U), all.At(0U).Get("range").0.Str());
+        Assert::[str]Equal(ServerTest::range(5U, 15U, 5U, 16U), all.At(1U).Get("range").0.Str());
+        Assert::[str]Equal(ServerTest::range(5U, 19U, 5U, 20U), all.At(2U).Get("range").0.Str());
+        Assert::[uint]Equal(2U, ServerTest::located(client, responses, "textDocument/references", uri, 4U, 16U, ",\"context\":{\"includeDeclaration\":false}").Len());
+        Assert::[str]Equal("{\"uri\":" + Strs::Quote(otherURI) + ",\"range\":" + ServerTest::range(0U, 10U, 0U, 15U) + "}", ServerTest::located(client, responses, "textDocument/definition", uri, 0U, 10U, "").Str());
+        Assert::True(ServerTest::located(client, responses, "textDocument/definition", uri, 1U, 0U, "").IsNull(), "an empty line names something");
+
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+        wait(served);
+        client.Close();
+        back.Close();
+    }
+
+    public fun void(uint, str...) Dotted = (argC, argV) {
+        var str dir = FS::ToSlash(FS::MakeTempDir(FS::TempDir(), "dotted-").0);
+        defer FS::RemoveAll(dir);
+        FS::WriteFile(Paths::Join(dir, "zam.yml"), "name: dotted\n");
+        var str main = "namespace Main {\n    class Box {\n        var Box* next;\n        var int n;\n    }\n\n    static fun int(Box*) f = (b) {\n        return b.next.n;\n    }\n}\n";
+        var str uri = Uris::URI(Paths::Join(dir, "Main.zam"));
+        var Pipe* client = Pipe::New().0;
+        var Pipe* back = Pipe::New().0;
+        var Server* s = Server::New(LocalSources::New(System::Env("ZAM_STD").0), LocalPackages::New(Paths::Join(dir, "pkg")), Duration::Milliseconds(0));
+        var thread[Err*] served = async(s.Serve(client.Reader(), back.Writer()));
+        var Messages.Reader* responses = Messages.Reader::New(back.Reader());
+        ServerTest::ask(client, responses, "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}");
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":" + Strs::Quote(uri) + ",\"languageId\":\"zam\",\"version\":1,\"text\":" + Strs::Quote(main) + "}}}");
+        Assert::[str]Equal("[]", ServerTest::published(responses, uri).Get("diagnostics").0.Str());
+
+        var Arr[uint]* characters = Arr::[uint]New(3U, 15U, 17U, 22U);
+        var Arr[str]* ranges = Arr::[str]New(3U, ServerTest::range(6U, 30U, 6U, 31U), ServerTest::range(2U, 17U, 2U, 21U), ServerTest::range(3U, 16U, 3U, 17U));
+        var Arr[str]* types = Arr::[str]New(3U, "Box*", "Box*", "int");
+        for(var uint i = 0U; i < characters.Len(); i++) {
+            var JSON* location = ServerTest::located(client, responses, "textDocument/definition", uri, 7U, characters.Get(i), "");
+            Assert::[str]Equal(uri, location.Get("uri").0.AsStr());
+            Assert::[str]Equal(ranges.Get(i), location.Get("range").0.Str());
+            var (str, str) hover = ServerTest::hovered(client, responses, uri, 7U, characters.Get(i));
+            Assert::True(Strs::Contains(hover.0, "Type: `" + types.Get(i) + "`"), hover.0);
+        }
+
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+        wait(served);
+        client.Close();
+        back.Close();
+    }
+
+    public fun void(uint, str...) Tests = (argC, argV) {
+        var str dir = FS::ToSlash(FS::MakeTempDir(FS::TempDir(), "tests-").0);
+        defer FS::RemoveAll(dir);
+        FS::WriteFile(Paths::Join(dir, "zam.yml"), "name: tested\n");
+        FS::WriteFile(Paths::Join(dir, "X.test.zam"), "public namespace XTest {\n    public fun void(uint, str...) First = (argC, argV) {\n    }\n\n    public fun void(uint, str...) Second = (argC, argV) {\n    }\n}\n");
+        FS::WriteFile(Paths::Join(dir, "Main.zam"), "namespace Main {\n    fun void(uint, str...) main = (argC, argV) {\n    }\n}\n");
+        FS::WriteFile(Paths::Join(dir, "Y.test.zam"), "public namespace Wrong {\n    public fun void(uint, str...) First = (argC, argV) {\n    }\n}\n");
+        var Pipe* client = Pipe::New().0;
+        var Pipe* back = Pipe::New().0;
+        var Server* s = Server::New(LocalSources::New(System::Env("ZAM_STD").0), LocalPackages::New(Paths::Join(dir, "pkg")), Duration::Milliseconds(0));
+        var thread[Err*] served = async(s.Serve(client.Reader(), back.Writer()));
+        var Messages.Reader* responses = Messages.Reader::New(back.Reader());
+
+        var str ask = "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"zam/tests\",\"params\":{\"uri\":";
+        Assert::[str]Equal("[{\"name\":\"\",\"range\":" + ServerTest::range(0U, 17U, 0U, 22U) + "},{\"name\":\"XTest.First\",\"range\":" + ServerTest::range(1U, 34U, 1U, 39U) + "},{\"name\":\"XTest.Second\",\"range\":" + ServerTest::range(4U, 34U, 4U, 40U) + "}]",
+            ServerTest::ask(client, responses, ask + Strs::Quote(Uris::URI(Paths::Join(dir, "X.test.zam"))) + "}}").Get("result").0.Str());
+        Assert::[str]Equal("[]", ServerTest::ask(client, responses, ask + Strs::Quote(Uris::URI(Paths::Join(dir, "Main.zam"))) + "}}").Get("result").0.Str());
+        Assert::[str]Equal("[]", ServerTest::ask(client, responses, ask + Strs::Quote(Uris::URI(Paths::Join(dir, "Y.test.zam"))) + "}}").Get("result").0.Str());
+
+        Messages::Write(client.Writer(), "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}");
+        wait(served);
+        client.Close();
+        back.Close();
+    }
+}

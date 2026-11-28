@@ -1,0 +1,57 @@
+import std("io/local/FS.zam");
+import std("io/web/URL.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+
+// Uris converts between the file URIs an editor names documents by and the paths the compiler reads them at
+public namespace Uris {
+    // digits are the hexadecimal digits a percent escape is written with
+    var str$ digits = "0123456789ABCDEF";
+
+    // Path answers the path a file URI names
+    public fun (str, Err*)(str) Path = (uri) {
+        var (URL*, Err*) u = URL::Parse(uri);
+        if(u.1 != null) {
+            return ("", u.1);
+        } else if(u.0.scheme != "file") {
+            return ("", StrErr::New("unsupported document URI " + Strs::Quote(uri) + ": only file URIs are checked"));
+        }
+        var str p = URL::Unescape(u.0.path);
+        var (byte*, uint) b = Strs::ToBytes(p);
+        if(System::OS() == "windows" && b.1 >= 3U && b.0[0U] == '/'{byte} && b.0[2U] == ':'{byte}) {
+            p = Strs::Slice(p, 1U, b.1);
+        }
+        return (FS::ToSlash(p), null);
+    }
+
+    // URI answers the file URI of the file at path, escaped as Go's net/url escapes a path
+    public fun str(str) URI = (path) {
+        var str p = FS::ToSlash(path);
+        if(!Strs::HasPrefix(p, "/")) {
+            p = "/" + p;
+        }
+        var (byte*, uint) b = Strs::ToBytes(p);
+        var str out = "file://";
+        for(var uint i = 0U; i < b.1; i++) {
+            var byte c = b.0[i];
+            if(Uris::kept(c)) {
+                out = out + Strs::FromBytes(&c, 1U);
+            } else {
+                var uint high = (c >> 4){uint};
+                var uint low = (c & 15{byte}){uint};
+                out = out + "%" + Strs::Slice(Uris::digits, high, high + 1U) + Strs::Slice(Uris::digits, low, low + 1U);
+            }
+        }
+        return out;
+    }
+
+    // kept reports whether a path keeps c as it is rather than escaping it
+    fun bool(byte) kept = (c) {
+        if((c >= 'a'{byte} && c <= 'z'{byte}) || (c >= 'A'{byte} && c <= 'Z'{byte}) || (c >= '0'{byte} && c <= '9'{byte})) {
+            return true;
+        }
+        return Strs::Contains("-_.~$&+,/:;=@", Strs::FromBytes(&c, 1U));
+    }
+}

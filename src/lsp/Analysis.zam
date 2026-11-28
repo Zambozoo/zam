@@ -1,0 +1,183 @@
+import std("codec/format/JSON.zam");
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import std("data/set/HashSet.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Iter.zam");
+import std("lang/System.zam");
+import "../semantic/Model.zam";
+import "../semantic/References.zam";
+import "../semantic/Semantic.zam";
+import "../syntax/Lexer.zam";
+import "../syntax/Path.zam";
+import "../syntax/ProjectParser.zam";
+import "../syntax/Source.zam";
+import "../syntax/SourceErr.zam";
+import "Overlay.zam";
+import "Text.zam";
+
+// Analysis checks one document as the entry of a program and reports what is wrong with it
+public class Analysis {
+    // Diagnostics is what checking the document found, as the protocol publishes it
+    public var JSON* Diagnostics;
+    // Program is what parsing the document built, or null
+    public var ProjectParser.Program* Program;
+    // Model is what checking the document built, or null where it could not be checked
+    public var Model* Model;
+
+    var Overlay* files;
+    var str entry;
+    // references is what each name of the checked program refers to, found on first need
+    var References* references;
+    // text and tokens are the document as last read, lexed on first need
+    var Text* text;
+    var ArrList[Lexer.Lexed*]* tokens;
+
+    // Run checks the document the compiler reads at entry through files and packages, with threads parsing at once
+    public static fun Analysis*(Overlay*, ProjectParser.PackageProvider*, str, uint) Run = (files, packages, entry, threads) {
+        var Analysis* a = new(Analysis);
+        a.files = files;
+        a.entry = entry;
+        a.Diagnostics = JSON::NewArray();
+        {
+            defer a.rescue(System::Recover());
+            a.check(packages, threads);
+        }
+        return a;
+    }
+
+    // check parses and checks the document, reporting what it finds
+    fun void(ProjectParser.PackageProvider*, uint) check = (packages, threads) {
+        var (ProjectParser.Program*, ArrList[Err*]*) parsed = ProjectParser::New(this.files, packages, threads, false, false).Parse(this.entry, Arr::[str]New(0U));
+        var ArrList[Err*]* errs = ArrList::[Err*]New(0U);
+        for(var uint i = 0U; i < parsed.1.Len(); i++) {
+            errs.AddLast(parsed.1.Get(i));
+        }
+        this.Program = parsed.0;
+        if(parsed.0 != null) {
+            var HashSet[str]* broken = HashSet::[str]New(0U);
+            var Iter[(str, Source*)]* all = parsed.0.sources.Iter();
+            for(var ((str, Source*), bool) next = all.Next(); next.1; next = all.Next()) {
+                if(next.0.1.file.brokenImports) {
+                    broken.Add(next.0.0);
+                }
+            }
+            var (Model*, ArrList[Err*]*) checked = Semantic::Validate(parsed.0);
+            this.Model = checked.0;
+            for(var uint i = 0U; i < checked.1.Len(); i++) {
+                var SourceErr* located = checked.1.Get(i){SourceErr*};
+                if(located == null || !broken.Contains(located.path)) {
+                    errs.AddLast(checked.1.Get(i));
+                }
+            }
+        }
+
+        var HashMap[str, ArrList[Err*]*]* elsewhere = HashMap::[str, ArrList[Err*]*]New(0U);
+        var ArrList[str]* order = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < errs.Len(); i++) {
+            var SourceErr* located = errs.Get(i){SourceErr*};
+            if(located == null) {
+                this.Diagnostics.Append(Analysis::diagnostic(0U, 0U, 0U, 0U, errs.Get(i).Err()));
+            } else if(located.path == this.entry) {
+                this.Diagnostics.Append(this.at(located));
+            } else {
+                var (ArrList[Err*]*, bool) found = elsewhere.Get(located.path);
+                if(!found.1) {
+                    order.AddLast(located.path);
+                    elsewhere.Put(located.path, ArrList::[Err*]New(1U, errs.Get(i)));
+                } else {
+                    found.0.AddLast(errs.Get(i));
+                }
+            }
+        }
+        for(var uint i = 0U; i < order.Len(); i++) {
+            var ArrList[Err*]* found = elsewhere.Get(order.Get(i)).0;
+            var str message = found.Get(0U).Err();
+            if(found.Len() > 1U) {
+                message = message + " (and " + (found.Len() - 1U){str} + " more in " + Path::Display(order.Get(i)) + ")";
+            }
+            this.Diagnostics.Append(Analysis::diagnostic(0U, 0U, 0U, 0U, message));
+        }
+    }
+
+    // References answers what each name of the checked program refers to
+    public fun References*() References = () {
+        if(this.Model == null) {
+            return null;
+        } else if(this.references == null) {
+            this.references = References::Of(this.Model);
+        }
+        return this.references;
+    }
+
+    // rescue reports a panic checking the document as an internal compiler error
+    fun void(str) rescue = (panic) {
+        if(panic != null) {
+            this.Diagnostics.Append(Analysis::diagnostic(0U, 0U, 0U, 0U, "internal compiler error: " + panic));
+            this.Program = null;
+            this.Model = null;
+        }
+    }
+
+    // at reports an error located in the document over the token it was found at, found by lexing the document again
+    fun JSON*(SourceErr*) at = (err) {
+        if(err.line == 0U) {
+            return Analysis::diagnostic(0U, 0U, 0U, 0U, err.err.Err());
+        }
+        if(this.text == null) {
+            var (str, Err*) source = this.files.Read(this.entry);
+            if(source.1 != null) {
+                return Analysis::diagnostic(0U, 0U, 0U, 0U, err.err.Err());
+            }
+            this.text = Text::New(source.0);
+            this.tokens = ArrList::[Lexer.Lexed*]New(0U);
+            var Lexer.Iter* it = Lexer::New(source.0).Iter();
+            for(var Lexer.Lexed* t = it.Next(); t != null; t = it.Next()) {
+                this.tokens.AddLast(t);
+            }
+        }
+        var uint start = this.text.Offset(err.line, err.column);
+        var uint end = start;
+        var uint low = 0U;
+        var uint high = this.tokens.Len();
+        for(; low < high;) {
+            var uint mid = (low + high) / 2U;
+            if(this.tokens.Get(mid).token.offset >= start) {
+                high = mid;
+            } else {
+                low = mid + 1U;
+            }
+        }
+        if(low < this.tokens.Len() && this.tokens.Get(low).token.offset == start) {
+            end = this.tokens.Get(low).end;
+        }
+        var (uint, uint) from = this.text.Position(start);
+        var (uint, uint) to = this.text.Position(end);
+        return Analysis::diagnostic(from.0, from.1, to.0, to.1, err.err.Err());
+    }
+
+    // diagnostic answers an error over a range, as the protocol reports it
+    static fun JSON*(uint, uint, uint, uint, str) diagnostic = (startLine, startCharacter, endLine, endCharacter, message) {
+        var JSON* d = JSON::NewObject();
+        d.Set("range", Analysis::range(startLine, startCharacter, endLine, endCharacter));
+        d.Set("severity", JSON::NewInt(1));
+        d.Set("source", JSON::NewStr("zam"));
+        d.Set("message", JSON::NewStr(message));
+        return d;
+    }
+
+    // range answers a range as the protocol writes one
+    public static fun JSON*(uint, uint, uint, uint) range = (startLine, startCharacter, endLine, endCharacter) {
+        var JSON* start = JSON::NewObject();
+        start.Set("line", JSON::NewInt(startLine{int}));
+        start.Set("character", JSON::NewInt(startCharacter{int}));
+        var JSON* end = JSON::NewObject();
+        end.Set("line", JSON::NewInt(endLine{int}));
+        end.Set("character", JSON::NewInt(endCharacter{int}));
+        var JSON* r = JSON::NewObject();
+        r.Set("start", start);
+        r.Set("end", end);
+        return r;
+    }
+}

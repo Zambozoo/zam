@@ -782,6 +782,7 @@ public class Expressions {
             this.checker.fail(tok, "field " + f.owner.name.value{str} + "." + f.name + " is not accessible");
             return (null, false);
         }
+        this.model.selectField(tok, f.field, f.signature);
         return (f.signature, true);
     }
 
