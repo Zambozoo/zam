@@ -1,0 +1,62 @@
+namespace Main {
+    enum Color : int {
+        Red(1),
+        Green(2),
+        Blue(4);
+    }
+
+    enum Grade : char {
+        A('a'),
+        B('b');
+    }
+
+    enum Size {
+        Small,
+        Large;
+    }
+
+    class Inner {
+        static var int depth = 7;
+    }
+
+    var int counter = 3;
+    var byte small = 300{byte};
+    var int$ limit = 10;
+    var int derived = Main::limit * 2;
+    var Color favorite = Color::Green;
+    var Size size;
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var int c1 = one / ((counter == 3 && Main::counter == 3 && small == 44{byte}) ? 1 : 0);
+        counter = counter + 1;
+        Main::counter++;
+        Main::bump();
+        var int c2 = one / ((counter == 6 && Main::limit == 10 && derived == 20 && Inner::depth == 7) ? 1 : 0);
+        var int c3 = one / ((favorite == Color::Green && favorite != Color::Red && Main::size == Size::Small) ? 1 : 0);
+        var int c4 = one / ((Color::Blue{int} == 4 && favorite{int} == 2 && Grade::B{char} == 'b' && Color::Red{flt} == 1.0) ? 1 : 0);
+        var int c5 = one / ((Main::name(Color::Blue) == 3 && Main::name(favorite) == 2 && Main::name(Color::Red) == 1) ? 1 : 0);
+        size = Size::Large;
+        var int c6 = one / ((size == Size::Large && Main::backing(Color::Blue) == 4) ? 1 : 0);
+        var str greeting = "hi";
+        var str other = "there";
+    }
+
+    fun void() bump = () {
+        counter = counter + 1;
+    }
+
+    fun int(Color) name = (c) {
+        switch(c) {
+            case (Color::Red)
+                return 1;
+            case (Color::Green)
+                return 2;
+        }
+        return 3;
+    }
+
+    fun int(Color) backing = (c) {
+        return c{int};
+    }
+}

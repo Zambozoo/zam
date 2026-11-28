@@ -1,6 +1,9 @@
 import std("data/list/ArrList.zam");
 import std("data/set/HashSet.zam");
+import "../syntax/Path.zam";
 import "../syntax/Source.zam";
+import "../syntax/SourceErr.zam";
+import "../syntax/Token.zam";
 import "../syntax/TokenKind.zam";
 import ast = "../syntax/ast/*";
 import "../semantic/Model.zam";
@@ -9,7 +12,19 @@ import "TypeIds.zam";
 
 // Collect gathers the natives and string literals a program names, in the order Go's collector meets them, which is what numbers their slots
 public class Collect {
+    // Statement is a statement a program compiled for coverage records running, by the token it starts at and where that lies
+    public class Statement {
+        public var Token* at;
+        public var str path;
+        public var uint line;
+        public var uint column;
+    }
+
     var ArrList[str]* natives;
+    // statements is every statement of the program's own files, in no order yet
+    var ArrList[Statement*]* statements;
+    // source is the file being walked, or null for one whose statements are not covered
+    var Source* source;
     var HashSet[str]* nativeSet;
     var ArrList[str]* literals;
     var HashSet[str]* literalSet;
@@ -21,11 +36,57 @@ public class Collect {
         c.nativeSet = HashSet::[str]New(0U);
         c.literals = ArrList::[str]New(0U);
         c.literalSet = HashSet::[str]New(0U);
+        c.statements = ArrList::[Statement*]New(0U);
         var ArrList[Source*]* files = ids.Files();
         for(var uint i = 0U; i < files.Len(); i++) {
-            c.decl(files.Get(i).file.decl);
+            var Source* source = files.Get(i);
+            c.source = null;
+            if(!Path::IsStd(source.path) && !Path::IsTestFile(source.path)) {
+                c.source = source;
+            }
+            c.decl(source.file.decl);
         }
         return c;
+    }
+
+    // Statements answers every statement of the program's own files, those of neither the standard library nor tests, by file, line and column
+    public fun ArrList[Statement*]*() Statements = () {
+        var ArrList[Statement*]* sorted = ArrList::[Statement*]New(0U);
+        var HashSet[Token*]* seen = HashSet::[Token*]New(0U);
+        for(var uint i = 0U; i < this.statements.Len(); i++) {
+            var Statement* s = this.statements.Get(i);
+            if(!seen.Add(s.at)) {
+                continue;
+            }
+            var uint at = sorted.Len();
+            for(; at > 0U && Collect::after(sorted.Get(at - 1U), s); at--) {}
+            sorted.Add(at, s);
+        }
+        return sorted;
+    }
+
+    // after reports whether a lies after b, by file, line and column
+    static fun bool(Statement*, Statement*) after = (a, b) {
+        if(a.path != b.path) {
+            return a.path > b.path;
+        } else if(a.line != b.line) {
+            return a.line > b.line;
+        }
+        return a.column > b.column;
+    }
+
+    // record records the statement starting at tok, when its file is covered
+    fun void(Token*) record = (tok) {
+        if(this.source == null || tok == null) {
+            return;
+        }
+        var (uint, uint) position = SourceErr::Position(this.source.lineStarts, tok.offset);
+        var Statement* s = new(Statement);
+        s.at = tok;
+        s.path = this.source.path;
+        s.line = position.0;
+        s.column = position.1;
+        this.statements.AddLast(s);
     }
 
     // Natives answers the natives called through the native table, in slot order
@@ -88,6 +149,8 @@ public class Collect {
     fun void(ast.Stmt*) stmt = (s) {
         if(s == null) {
             return;
+        } else if(s.kind != ast.Stmt.Kind::Block) {
+            this.record(s.start);
         }
         switch(s.kind) {
             case (ast.Stmt.Kind::Block) {
@@ -103,6 +166,9 @@ public class Collect {
                 this.stmt(f.init);
                 this.expr(f.condition);
                 this.stmt(f.body);
+                if(f.step != null) {
+                    this.record(f.step.start);
+                }
                 this.expr(f.step);
                 this.stmt(f.otherwise);
             }

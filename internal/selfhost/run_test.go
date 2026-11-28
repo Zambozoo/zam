@@ -23,7 +23,7 @@ import (
 
 // runPorted is the programs of the codegen corpus the compiler written in zam
 // is expected to build into ones that run as Go's builds do.
-var runPorted = map[string]bool{"empty": true, "arithmetic": true}
+var runPorted = map[string]bool{"empty": true, "arithmetic": true, "functions": true, "control": true, "staticvalues": true, "objects": true, "values": true, "strings": true, "dispatch": true, "generics": true, "runtime": true, "hello": true, "natives": true, "intrinsics": true, "panics": true, "closures": true, "shapes": true, "statics": true, "traps": true, "overrides": true}
 
 // runResult is what running a program left behind.
 type runResult struct {
@@ -124,12 +124,17 @@ func linkAndRun(t *testing.T, object []byte, ast *syntax.AST) runResult {
 	require.NoError(t, err)
 	out := host.Executable(filepath.Join(t.TempDir(), "main"))
 	require.NoError(t, link(object, ast, out))
+	return runExecutable(t, out)
+}
 
+// runExecutable runs the executable at out with no arguments and no input.
+func runExecutable(t *testing.T, out string) runResult {
+	t.Helper()
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command(out)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	err = cmd.Run()
+	err := cmd.Run()
 	code := 0
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {

@@ -1,0 +1,20 @@
+import std("data/list/ArrList.zam");
+
+namespace Main {
+    fun int(int) square = (n) {
+        return n * n;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var ArrList[thread[int]]* running = ArrList::[thread[int]]New(0U);
+        for(var int i = 0; i < 4; i++) {
+            running.AddLast(async(Main::square(i)));
+        }
+        var int total = 0;
+        for(var uint i = 0U; i < running.Len(); i++) {
+            total = total + wait(running.Get(i));
+        }
+        var int one = 1;
+        var int check = one / ((total == 14) ? 1 : 0);
+    }
+}

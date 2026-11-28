@@ -1,0 +1,36 @@
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "../cli/Target.zam";
+import "../codegen/Runtime.zam";
+import "../codegen/Zig.zam";
+import "Pack.zam";
+import "RuntimeArchive.zam";
+
+public namespace RuntimeArchiveTest {
+    public fun void(uint, str...) Builds = (argC, argV) {
+        var str cache = FS::MakeTempDir(FS::TempDir(), "runtime-").0;
+        var (Target, Err*) host = Zig::Host(cache);
+        if(!Assert::True(host.1 == null, "zig reports no host")) {
+            return;
+        }
+        var (str, Err*) pack = Pack::Dir(host.0, cache);
+        if(!Assert::True(pack.1 == null, pack.1 == null ? "" : pack.1.Err())) {
+            return;
+        }
+        var str runtime = Runtime::Dir("");
+        var (str, Err*) archive = RuntimeArchive::Build(cache, host.0, pack.0, runtime);
+        if(!Assert::True(archive.1 == null, archive.1 == null ? "" : archive.1.Err())) {
+            return;
+        }
+        Assert::True(Strs::HasPrefix(archive.0, cache) && Strs::HasSuffix(archive.0, "/" + RuntimeArchive::Name), archive.0);
+        var (str, Err*) bytes = FS::ReadFile(archive.0);
+        Assert::True(bytes.1 == null && Strs::HasPrefix(bytes.0, "!<arch>\n"), "the archive opens with no ar magic");
+
+        var (str, Err*) again = RuntimeArchive::Build(cache, host.0, pack.0, runtime);
+        Assert::True(again.1 == null && again.0 == archive.0, again.0);
+        FS::RemoveAll(cache);
+    }
+}

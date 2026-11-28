@@ -60,8 +60,29 @@ var compiler = sync.OnceValues(func() (string, error) {
 	if err := link(object.Bytes, ast, out); err != nil {
 		return "", err
 	}
-	return out, nil
+	if os.Getenv("ZAM_SELFHOST_STAGE") != "2" {
+		return out, nil
+	}
+	return rebuilt(out, dir)
 })
+
+// rebuilt has the compiler at zam, written in zam, build and link itself from
+// its sources into dir with no Go involved, and answers the executable it built.
+func rebuilt(zam string, dir string) (string, error) {
+	host, err := target.Host()
+	if err != nil {
+		return "", err
+	}
+	out := host.Executable(filepath.Join(dir, "zam2"))
+	var stderr bytes.Buffer
+	cmd := exec.Command(zam, "build", "-o", out, filepath.Join(root, "src", "Main.zam"))
+	cmd.Env = append(os.Environ(), "ZAM_STD="+filepath.Join(root, "src", "std"))
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("%w: %s", err, stderr.String())
+	}
+	return out, nil
+}
 
 // link links object, generated for the program ast holds, into an executable
 // for the host at out.

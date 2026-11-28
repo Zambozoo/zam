@@ -46,7 +46,27 @@ func instanceFieldCount[T syntax.Field](d syntax.Decl) int {
 // field the position its layout puts it in, so an index taken from a base type
 // reaches the same field on a subclass, and an override lands on the index its
 // base method was called through.
+//
+// An instantiation of a generic declaration holds copies of its template's
+// fields, made whenever it was first asked for, which may be before the
+// template was renumbered. Each is renumbered with the template, or the copies
+// a subclass overrides would keep the syntax pass's indices.
 func renumberInstanceFields(d syntax.Decl) {
+	renumberFields(d)
+	if g, ok := d.(syntax.DeclGeneric); ok && g.Generics() != nil {
+		for _, entry := range g.Concretes().All() {
+			renumberFields(entry.Value)
+		}
+	}
+
+	for child := range d.Decls() {
+		renumberInstanceFields(child)
+	}
+}
+
+// renumberFields gives d's instance fields their layout positions, members and
+// methods counted separately.
+func renumberFields(d syntax.Decl) {
 	var members, methods int
 	for _, entry := range d.AllInstanceFields().All() {
 		field, ok := entry.Value.(syntax.FieldIndexable)
@@ -60,10 +80,6 @@ func renumberInstanceFields(d syntax.Decl) {
 			*field.Index() = members
 			members++
 		}
-	}
-
-	for child := range d.Decls() {
-		renumberInstanceFields(child)
 	}
 }
 

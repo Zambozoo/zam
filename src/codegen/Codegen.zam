@@ -17,6 +17,7 @@ import "Zig.zam";
 import "Collect.zam";
 import "Layout.zam";
 import "Runtime.zam";
+import "Statics.zam";
 import "ir/Module.zam";
 import "lower/Program.zam";
 import "TypeIds.zam";
@@ -28,7 +29,7 @@ public namespace Codegen {
         return ImageWriter::Write(m, cmd, TypeIds::New(m, Codegen::canonical()));
     }
 
-    // Main answers why the program m models has no method to be entered through, or null when its main code declaration has a static main of type void(uint, str...)
+    // Main answers why the program m models has no method to be entered through
     public fun Err*(Model*) Main = (m) {
         var ast.Decl* d = m.Program().main;
         var str name = d.name.value{str};
@@ -67,13 +68,19 @@ public namespace Codegen {
             return (null, tables.1);
         }
         var TypeIds* ids = TypeIds::New(m, Codegen::canonical());
-        var Arr[str]* natives = Collect::Run(m, ids).Natives().Arr();
+        var Layout* layout = Layout::New(m);
+        var Collect* collected = Collect::Run(m, ids);
+        var Arr[str]* natives = collected.Natives().Arr();
         var Err* invalid = Runtime::Validate(natives, tables.0);
         if(invalid != null) {
             return (null, invalid);
         }
-        var Module* module = Program::Lower(m, target.triple, Codegen::Image(m, cmd), ids, Layout::New(m), natives, tables.0);
-        return Zig::Compile(module, target, cache);
+        var ArrList[Collect.Statement*]* covered = null;
+        if(cmd.coverProfile != "") {
+            covered = collected.Statements();
+        }
+        var (Module*, ArrList[str]*) lowered = Program::Lower(m, target.triple, Codegen::Image(m, cmd), ids, layout, Statics::Lay(m, ids, layout, collected), natives, tables.0, covered);
+        return Zig::Compile(lowered.0, target, cache, cmd.optimization);
     }
 
     // canonical reports whether the lists the passes filled are to be put in canonical order

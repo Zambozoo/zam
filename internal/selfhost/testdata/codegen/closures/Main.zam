@@ -1,0 +1,110 @@
+namespace Main {
+    class Counter {
+        var int count;
+
+        fun void(int) Add = (n) {
+            count = count + n;
+        }
+
+        fun int() Get = () {
+            return count;
+        }
+
+        fun int(int)() Adder = () {
+            return lambda int(int): (n) {
+                count = count + n;
+                return count;
+            };
+        }
+    }
+
+    abstract Shape {
+        virtual fun int() Sides;
+    }
+
+    class Square <: Shape* {
+        fun int() Sides = () {
+            return 4;
+        }
+    }
+
+    class Cell {
+        var int value;
+    }
+
+    var int(int) stored = Main::twice;
+
+    fun int(int) twice = (n) {
+        return n * 2;
+    }
+
+    fun[T] T(T) Id = (x) {
+        return x;
+    }
+
+    fun int(int(int), int) apply = (f, n) {
+        return f(n);
+    }
+
+    fun int(int) work = (n) {
+        var int sum = 0;
+        for(var int i = 0; i < n; i++) {
+            var Cell* c = new(Cell);
+            c.value = i;
+            sum = sum + c.value;
+        }
+        return sum;
+    }
+
+    fun void(Counter*, int) bump = (c, n) {
+        c.Add(n);
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var int(int) dbl = lambda int(int): (n) {
+            return n * 2;
+        };
+        var int c1 = one / ((dbl(4) == 8 && Main::apply(dbl, 5) == 10) ? 1 : 0);
+
+        var int base = 10;
+        var int(int) add = lambda int(int): (n) {
+            return n + base;
+        };
+        base = 20;
+        var int(int) outer = lambda int(int): (n) {
+            var int(int) inner = lambda int(int): (m) {
+                return m + base + n;
+            };
+            return inner(1);
+        };
+        var int c2 = one / ((add(1) == 11 && outer(2) == 23) ? 1 : 0);
+
+        var int(int) t = Main::twice;
+        var int(int) id = Main::[int]Id;
+        var int c3 = one / ((t(3) == 6 && Main::apply(Main::twice, 4) == 8 && Main::stored(5) == 10 && id(7) == 7) ? 1 : 0);
+
+        var Counter* c = new(Counter);
+        var void(int) addTo = c.Add;
+        addTo(3);
+        addTo(4);
+        var Shape* shape = new(Square);
+        var int() sides = shape.Sides;
+        var int c4 = one / ((c.Get() == 7 && sides() == 4) ? 1 : 0);
+
+        var int(int) adder = c.Adder();
+        adder(3);
+        var int c5 = one / ((c.count == 10 && adder(0) == 10) ? 1 : 0);
+
+        var thread[int] first = async(Main::work(20000));
+        var thread[int] second = async(Main::work(30000));
+        var thread[void] bumped = async(Main::bump(c, 5));
+        var int a = wait(first);
+        var int b = wait(second);
+        wait(bumped);
+        var int c6 = one / ((a == 199990000 && b == 449985000 && c.count == 15) ? 1 : 0);
+
+        var thread[int] closed = async(adder(1));
+        var int c7 = one / ((wait(closed) == 16) ? 1 : 0);
+    }
+}

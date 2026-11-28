@@ -10,7 +10,8 @@ public class IrType {
         Ptr(3),
         Array(4),
         Struct(5),
-        Function(6);
+        Function(6),
+        Metadata(7);
     }
 
     public var Kind kind;
@@ -48,6 +49,10 @@ public class IrType {
 
     public static fun IrType*() Double = () {
         return IrType::of(Kind::Double);
+    }
+
+    public static fun IrType*() Metadata = () {
+        return IrType::of(Kind::Metadata);
     }
 
     public static fun IrType*() Ptr = () {
@@ -94,6 +99,8 @@ public class IrType {
                 return "double";
             case (Kind::Ptr)
                 return "ptr";
+            case (Kind::Metadata)
+                return "metadata";
             case (Kind::Array)
                 return "[" + this.count{str} + " x " + this.element.Text() + "]";
             case (Kind::Struct) {

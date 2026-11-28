@@ -1,0 +1,93 @@
+import std("codec/text/Hex.zam");
+import std("crypto/hash/SHA256.zam");
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("io/web/HTTP.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/Strs.zam");
+import std("test/Assert.zam");
+import "../cli/Target.zam";
+import "../syntax/PackageArchive.zam";
+import "Pack.zam";
+
+public namespace PackTest {
+    private fun Target(str) target = (name) {
+        return Target::Parse(name).0;
+    }
+
+    private fun void(str) makePack = (dir) {
+        Assert::True(FS::MakeDirs(dir) == null, dir);
+        Assert::True(FS::WriteFile(Paths::Join(dir, "sources.txt"), "musl 1.2.5\n") == null, dir);
+    }
+
+    public fun void(uint, str...) FromPacks = (argC, argV) {
+        var str packs = FS::MakeTempDir(FS::TempDir(), "packs-").0;
+        PackTest::makePack(Paths::Join(packs, "aarch64-macos"));
+        var (str, Err*) found = Pack::Find(packs, "", "", "1.0.0", PackTest::target("aarch64-macos"));
+        Assert::True(found.1 == null && found.0 == Paths::Join(packs, "aarch64-macos"), found.0);
+        var (str, Err*) missing = Pack::Find(packs, "", "", "1.0.0", PackTest::target("x86_64-linux-musl"));
+        if(Assert::True(missing.1 != null, "a pack $ZAM_PACKS lacks is found")) {
+            Assert::[str]Equal("no target pack for x86_64-linux-musl in $ZAM_PACKS (" + packs + ")", missing.1.Err());
+        }
+        FS::RemoveAll(packs);
+    }
+
+    public fun void(uint, str...) Development = (argC, argV) {
+        var (str, Err*) found = Pack::Find("", FS::TempDir(), "http://127.0.0.1:1", Pack::DevelopmentVersion, PackTest::target("aarch64-macos"));
+        if(Assert::True(found.1 != null, "a development build finds a released pack")) {
+            Assert::True(Strs::Contains(found.1.Err(), "a development build of zam has no released target packs"), found.1.Err());
+        }
+    }
+
+    public fun void(uint, str...) Cached = (argC, argV) {
+        var str root = FS::MakeTempDir(FS::TempDir(), "cache-").0;
+        PackTest::makePack(Paths::Join(Paths::Join(root, "1.0.0"), "aarch64-macos"));
+        var (str, Err*) found = Pack::Find("", root, "http://127.0.0.1:1", "1.0.0", PackTest::target("aarch64-macos"));
+        Assert::True(found.1 == null, found.1 == null ? "" : found.1.Err());
+        FS::RemoveAll(root);
+    }
+
+    public fun void(uint, str...) Downloads = (argC, argV) {
+        var str work = FS::MakeTempDir(FS::TempDir(), "release-").0;
+        var str tree = Paths::Join(work, "tree");
+        PackTest::makePack(tree);
+        var str archivePath = Paths::Join(work, "pack.tar.zst");
+        Assert::True(PackageArchive::Pack(tree, archivePath) == null, "the pack does not archive");
+        var str archive = FS::ReadFile(archivePath).0;
+        var (byte*, uint) bytes = Strs::ToBytes(archive);
+        var Arr[byte]* sum = SHA256::Sum(bytes.0, bytes.1);
+        var str sums = Hex::Encode(sum.Arr(), sum.Len()) + "  zam-pack-1.2.3-aarch64-macos.tar.zst\n"
+            + "0000  zam-pack-1.2.3-x86_64-linux-musl.tar.zst\n";
+
+        var (HTTP.Server*, Err*) server = HTTP.Server::Listen("127.0.0.1", 0U, lambda HTTP.Response*(HTTP.Request*): (r) {
+            if(Strs::HasSuffix(r.url, "/1.2.3/checksums.txt")) {
+                return HTTP.Response::New(200U, sums);
+            } else if(Strs::HasSuffix(r.url, ".tar.zst")) {
+                return HTTP.Response::New(200U, archive);
+            }
+            return HTTP.Response::New(404U, "");
+        });
+        if(!Assert::True(server.1 == null, "the release server does not listen")) {
+            return;
+        }
+        var thread[void] serving = async(server.0.Serve());
+        var str releases = "http://127.0.0.1:" + server.0.Addr().0.1{str} + "/";
+        var str root = Paths::Join(work, "cache");
+
+        var (str, Err*) found = Pack::Find("", root, releases, "1.2.3", PackTest::target("aarch64-macos"));
+        if(Assert::True(found.1 == null, found.1 == null ? "" : found.1.Err())) {
+            Assert::[str]Equal(Paths::Join(Paths::Join(root, "1.2.3"), "aarch64-macos"), found.0);
+            Assert::True(FS::Exists(Paths::Join(found.0, "sources.txt")), found.0);
+        }
+        var (str, Err*) corrupt = Pack::Find("", root, releases, "1.2.3", PackTest::target("x86_64-linux-musl"));
+        if(Assert::True(corrupt.1 != null, "a pack failing its checksum is extracted")) {
+            Assert::True(Strs::Contains(corrupt.1.Err(), "but the release's checksums say 0000"), corrupt.1.Err());
+        }
+
+        server.0.Close();
+        wait(serving);
+        PackageArchive::RemoveReadOnly(root);
+        FS::RemoveAll(work);
+    }
+}

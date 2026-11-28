@@ -5,12 +5,15 @@ import std("lang/Arr.zam");
 import std("lang/Err.zam");
 import std("lang/Strs.zam");
 import std("test/Assert.zam");
+import "../../cli/Optimization.zam";
 import "../../cli/Target.zam";
 import "../../syntax/MapSources.test.zam";
 import "../../syntax/ProjectParser.zam";
 import "../../semantic/Model.zam";
 import "../../semantic/Semantic.zam";
+import "../Collect.zam";
 import "../Layout.zam";
+import "../Statics.zam";
 import "../TypeIds.zam";
 import "../Zig.zam";
 import "../ir/Module.zam";
@@ -18,6 +21,14 @@ import "Program.zam";
 
 public namespace ProgramTest {
     private fun Module*(str) lowered = (body) {
+        return ProgramTest::lowering(body).0;
+    }
+
+    private fun (Module*, ArrList[str]*)(str) lowering = (body) {
+        return ProgramTest::loweringCovered(body, false);
+    }
+
+    private fun (Module*, ArrList[str]*)(str, bool) loweringCovered = (body, cover) {
         var (ProjectParser.Program*, ArrList[Err*]*) parsed = MapSourcesTest::Parse(MapSourcesTest::Files(2U, "/p/Main.zam", "public namespace Main {\n" + body + "}\n"));
         if(!Assert::True(parsed.0 != null, "the parse recovers nothing")) {
             Assert::Fatal(parsed.1.Get(0U).Err());
@@ -27,7 +38,15 @@ public namespace ProgramTest {
             Assert::True(false, validated.1.Get(i).Err());
         }
         var Model* m = validated.0;
-        return Program::Lower(m, "", ArrList::[byte]New(3U, 1{byte}, 2{byte}, 3{byte}), TypeIds::New(m, true), Layout::New(m), Arr::[str]New(0U), HashMap::[str, str]New(0U));
+        var TypeIds* ids = TypeIds::New(m, true);
+        var Layout* layout = Layout::New(m);
+        var Collect* collected = Collect::Run(m, ids);
+        var Statics* statics = Statics::Lay(m, ids, layout, collected);
+        var ArrList[Collect.Statement*]* covered = null;
+        if(cover) {
+            covered = collected.Statements();
+        }
+        return Program::Lower(m, "", ArrList::[byte]New(3U, 1{byte}, 2{byte}, 3{byte}), ids, layout, statics, collected.Natives().Arr(), HashMap::[str, str]New(0U), covered);
     }
 
     public fun void(uint, str...) Empty = (argC, argV) {
@@ -36,7 +55,7 @@ public namespace ProgramTest {
         Assert::True(Strs::Contains(text, "@zam_image = private constant [3 x i8] c\"\\01\\02\\03\", align 8\n"), text);
         Assert::True(Strs::Contains(text, "@zamProjectNativeTableCount = constant i64 0\n"), text);
         Assert::True(Strs::Contains(text, "@zamStdNativeTableCount = constant i64 0\n"), text);
-        Assert::True(Strs::Contains(text, "define internal void @Main.main(ptr %p0, ptr %p1, ptr %p2, ptr %p3) {\n"), text);
+        Assert::True(Strs::Contains(text, "define internal void @Main.main(ptr %p0, ptr %p1, ptr %p2, ptr %p3) !dbg !"), text);
         Assert::True(Strs::Contains(text, "@zamrt_frame_pop(ptr %p0, ptr %v"), text);
         Assert::True(Strs::Contains(text, "define internal void @zam_entry("), text);
         Assert::True(Strs::Contains(text, "@zamrt_start(i32 %p0, ptr %p1, ptr @zam_image, i64 3, ptr @zam_entry,"), text);
@@ -44,15 +63,38 @@ public namespace ProgramTest {
         var (Target, Err*) host = Zig::Host(FS::TempDir());
         if(Assert::True(host.1 == null, "zig reports no host")) {
             m.triple = host.0.triple;
-            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir());
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir(), Optimization::None);
             Assert::True(object.1 == null, "the module does not compile");
         }
     }
 
     public fun void(uint, str...) Traps = (argC, argV) {
-        var str text = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) { var str s = \"a\"; }\n").Text();
+        var str text = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        var (int, int) pair = argC > 0U ? (1, 2) : (3, 4);\n" +
+            "    }\n").Text();
         Assert::True(Strs::Contains(text, "@zamrt_unsupported(ptr %p0, ptr @zam.text."), text);
-        Assert::True(Strs::Contains(text, "Main.main: a string literal"), text);
+        Assert::True(Strs::Contains(text, "Main.main: a ternary of aggregates"), text);
+    }
+
+    public fun void(uint, str...) Statics = (argC, argV) {
+        var Module* m = ProgramTest::lowered("    enum Color : int {\n        Red(1),\n        Green(2);\n    }\n" +
+            "    static var int counter = 3;\n" +
+            "    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        counter = counter + Color::Green{int};\n" +
+            "        var str s = \"hi\";\n" +
+            "    }\n");
+        var str text = m.Text();
+        Assert::True(!Strs::Contains(text, "Main.main: "), text);
+        Assert::True(!Strs::Contains(text, "zam_static.Main.counter: "), text);
+        Assert::True(!Strs::Contains(text, "zam_static.Main.Color.Green: "), text);
+        Assert::True(Strs::Contains(text, "call ptr (ptr, i64) @zamrt_static(ptr %p0, i64 "), text);
+
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            m.triple = host.0.triple;
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir(), Optimization::None);
+            Assert::True(object.1 == null, "the module does not compile");
+        }
     }
 
     public fun void(uint, str...) Arithmetic = (argC, argV) {
@@ -73,7 +115,213 @@ public namespace ProgramTest {
         var (Target, Err*) host = Zig::Host(FS::TempDir());
         if(Assert::True(host.1 == null, "zig reports no host")) {
             m.triple = host.0.triple;
-            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir());
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir(), Optimization::None);
+            Assert::True(object.1 == null, "the module does not compile");
+        }
+    }
+
+    public fun void(uint, str...) Calls = (argC, argV) {
+        var Module* m = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        var int x = Main::add(argC{int}, 2);\n" +
+            "        twice(x);\n" +
+            "    }\n" +
+            "    static fun int(int, int) add = (a, b) {\n" +
+            "        return a + b;\n" +
+            "    }\n" +
+            "    static fun void(int) twice = (n) {\n" +
+            "        var int doubled = n * 2;\n" +
+            "    }\n");
+        var str text = m.Text();
+        Assert::True(!Strs::Contains(text, "Main.main: "), text);
+        Assert::True(!Strs::Contains(text, "Main.add: "), text);
+        Assert::True(!Strs::Contains(text, "Main.twice: "), text);
+        Assert::True(Strs::Contains(text, "define internal void @Main.add(ptr %p0, ptr %p1, ptr %p2, ptr %p3) !dbg !"), text);
+        Assert::True(Strs::Contains(text, "call void (ptr, ptr, ptr, ptr) @Main.add(ptr %p0, ptr null, ptr %v"), text);
+        Assert::True(Strs::Contains(text, "call void (ptr, ptr, ptr, ptr) @Main.twice(ptr %p0, ptr null, ptr %v"), text);
+
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            m.triple = host.0.triple;
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir(), Optimization::None);
+            Assert::True(object.1 == null, "the module does not compile");
+        }
+    }
+
+    public fun void(uint, str...) Defers = (argC, argV) {
+        var Module* m = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        var int x = argC{int};\n" +
+            "        defer x = x + 1;\n" +
+            "        for(var int i = 0; i < 3; i++) {\n" +
+            "            defer x = x * 2;\n" +
+            "            if(i == 1) {\n" +
+            "                break;\n" +
+            "            }\n" +
+            "        }\n" +
+            "    }\n");
+        var str text = m.Text();
+        Assert::True(!Strs::Contains(text, "Main.main: "), text);
+        Assert::True(Strs::Contains(text, "declare i32 @_setjmp(ptr) returns_twice\n"), text);
+        Assert::True(Strs::Contains(text, "@zamrt_handler_push(ptr %p0, ptr %v"), text);
+        Assert::True(Strs::Contains(text, "@zamrt_panicking(ptr %p0, ptr %v"), text);
+        Assert::True(Strs::Contains(text, "@zamrt_unwind(ptr %p0, ptr %v"), text);
+        Assert::True(Strs::Contains(text, "store volatile i64 "), text);
+        Assert::True(Strs::Contains(text, "call void (ptr) @zamrt_safepoint(ptr %p0), !dbg !"), text);
+
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            m.triple = host.0.triple;
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir(), Optimization::None);
+            Assert::True(object.1 == null, "the module does not compile");
+        }
+    }
+
+    public fun void(uint, str...) Objects = (argC, argV) {
+        var Module* m = ProgramTest::lowered("    class Cell {\n        var int value = 2;\n        var Cell* next;\n    }\n" +
+            "    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        var Cell* c = new(Cell);\n" +
+            "        c.next = new(Cell);\n" +
+            "        c.next.value = c.value;\n" +
+            "        var int* run = new(int, 2U);\n" +
+            "        run[1] = *run;\n" +
+            "        free run;\n" +
+            "        mark c;\n" +
+            "        delete c;\n" +
+            "    }\n");
+        var str text = m.Text();
+        Assert::True(!Strs::Contains(text, "Main.main: "), text);
+        Assert::True(!Strs::Contains(text, "Main.Cell.init: "), text);
+        Assert::True(Strs::Contains(text, "define internal void @Main.Cell.init("), text);
+        Assert::True(Strs::Contains(text, "@zamrt_new_of(ptr %p0, ptr @zam.type."), text);
+        Assert::True(Strs::Contains(text, "@zamrt_record_write(ptr %p0, ptr %v"), text);
+        Assert::True(Strs::Contains(text, "@zamrt_new_run(ptr %p0, ptr @zam.type."), text);
+        Assert::True(Strs::Contains(text, "@zamrt_free(ptr %p0, ptr @zam.type."), text);
+        Assert::True(Strs::Contains(text, "@zamrt_mark(ptr %p0, ptr @zam.type."), text);
+        Assert::True(Strs::Contains(text, "@zamrt_delete(ptr %p0, ptr @zam.type."), text);
+        Assert::True(Strs::Contains(text, "@zamrt_panic(ptr %p0, i32 1)"), text);
+        Assert::True(Strs::Contains(text, "@zamrt_panic(ptr %p0, i32 2)"), text);
+
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            m.triple = host.0.triple;
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir(), Optimization::None);
+            Assert::True(object.1 == null, "the module does not compile");
+        }
+    }
+
+    public fun void(uint, str...) Values = (argC, argV) {
+        var Module* m = ProgramTest::lowered("    struct Pair {\n        var int a = 1;\n        var int b;\n    }\n" +
+            "    class Cell {\n        var int value;\n    }\n" +
+            "    static fun (int, Pair)(Pair) swap = (p) {\n        return (p.b, p);\n    }\n" +
+            "    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        var Pair p;\n" +
+            "        var int n, Pair q = Main::swap(p);\n" +
+            "        var Cell c;\n" +
+            "    }\n");
+        var str text = m.Text();
+        Assert::True(!Strs::Contains(text, "Main.main: "), text);
+        Assert::True(!Strs::Contains(text, "Main.swap: "), text);
+        Assert::True(Strs::Contains(text, "@llvm.memcpy.p0.p0.i64(ptr %v"), text);
+        Assert::True(Strs::Contains(text, "@zamrt_stamp(ptr %p0, ptr @zam.type."), text);
+        Assert::True(Strs::Contains(text, "define internal void @Main.Pair.init("), text);
+
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            m.triple = host.0.triple;
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir(), Optimization::None);
+            Assert::True(object.1 == null, "the module does not compile");
+        }
+    }
+
+    public fun void(uint, str...) Strings = (argC, argV) {
+        var Module* m = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        var str s = \"a\" + argC{str} + \"b\";\n" +
+            "        var byte* b = s{byte*};\n" +
+            "    }\n");
+        var str text = m.Text();
+        Assert::True(!Strs::Contains(text, "Main.main: "), text);
+        Assert::True(Strs::Contains(text, "@zamrt_str(ptr %p0, ptr @zam.type."), text);
+        Assert::True(Strs::Contains(text, "@zamrt_concat(ptr %p0, ptr %v"), text);
+        Assert::True(Strs::Contains(text, ", 16, !dbg !"), text);
+
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            m.triple = host.0.triple;
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir(), Optimization::None);
+            Assert::True(object.1 == null, "the module does not compile");
+        }
+    }
+
+    public fun void(uint, str...) Reachable = (argC, argV) {
+        var (Module*, ArrList[str]*) lowered = ProgramTest::lowering("    static fun int() unused = () {\n" +
+            "        var thread[void] t = async(native(STD_SYSTEM_EXIT){void(int)}(1));\n" +
+            "        return 1;\n" +
+            "    }\n" +
+            "    static fun int() used = () {\n" +
+            "        var thread[void] t = async(native(STD_SYSTEM_EXIT){void(int)}(1));\n" +
+            "        return 2;\n" +
+            "    }\n" +
+            "    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        if(argC > 0U) {\n" +
+            "            native(STD_SYSTEM_EXIT){void(int)}(Main::used());\n" +
+            "        }\n" +
+            "    }\n");
+        var str text = lowered.0.Text();
+        if(Assert::True(lowered.1.Len() == 1U, lowered.1.Len(){str} + " functions trap")) {
+            Assert::True(Strs::Contains(lowered.1.Get(0U), "Main.used"), lowered.1.Get(0U));
+        }
+        Assert::True(!Strs::Contains(text, "@Main.unused"), text);
+        Assert::True(Strs::Contains(text, "@zamrt_call_native(ptr %p0, i64 "), text);
+    }
+
+    public fun void(uint, str...) Debug = (argC, argV) {
+        var Module* m = ProgramTest::lowered("    enum Color {\n        Red,\n        Blue;\n    }\n" +
+            "    struct Pair {\n        var int a;\n        var Pair* next;\n    }\n" +
+            "    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        var Color color = Color::Blue;\n" +
+            "        var Pair pair;\n" +
+            "        var (int, str) tuple = (1, \"a\");\n" +
+            "        var any boxed = pair;\n" +
+            "    }\n");
+        var str text = m.Text();
+        Assert::True(!Strs::Contains(text, "Main.main: "), text);
+        Assert::True(Strs::Contains(text, "!llvm.dbg.cu = !{!"), text);
+        Assert::True(Strs::Contains(text, "distinct !DISubprogram(name: \"Main.main\", linkageName: \"Main.main\""), text);
+        Assert::True(Strs::Contains(text, "call void @llvm.dbg.declare(metadata ptr "), text);
+        Assert::True(Strs::Contains(text, "!DILocalVariable(name: \"color\""), text);
+        Assert::True(Strs::Contains(text, "!DICompositeType(tag: DW_TAG_enumeration_type, name: \"Color\""), text);
+        Assert::True(Strs::Contains(text, "!DIEnumerator(name: \"Blue\", value: 1)"), text);
+        Assert::True(Strs::Contains(text, "!DICompositeType(tag: DW_TAG_structure_type, name: \"Pair\""), text);
+        Assert::True(Strs::Contains(text, "@zam_debug_type_names = internal constant"), text);
+        Assert::True(Strs::Contains(text, "!\"Debug Info Version\", i32 3}"), text);
+
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            m.triple = host.0.triple;
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir(), Optimization::None);
+            Assert::True(object.1 == null, object.1 == null ? "" : object.1.Err());
+        }
+    }
+
+    public fun void(uint, str...) Coverage = (argC, argV) {
+        var Module* m = ProgramTest::loweringCovered("    static fun void(uint, str...) main = (argC, argV) {\n" +
+            "        var int x = 1;\n" +
+            "        for(var int i = 0; i < 2; i++) {\n" +
+            "            x = x * 2;\n" +
+            "        }\n" +
+            "    }\n", true).0;
+        var str text = m.Text();
+        Assert::True(!Strs::Contains(text, "Main.main: "), text);
+        Assert::True(Strs::Contains(text, "@zam_coverage = private global [5 x i8] zeroinitializer"), text);
+        Assert::True(Strs::Contains(text, "store i8 1, ptr %v"), text);
+        Assert::True(Strs::Contains(text, "ptr @zam_coverage, i64 5)"), text);
+
+        var Module* plain = ProgramTest::lowered("    static fun void(uint, str...) main = (argC, argV) {}\n");
+        Assert::True(!Strs::Contains(plain.Text(), "zam_coverage"), plain.Text());
+
+        var (Target, Err*) host = Zig::Host(FS::TempDir());
+        if(Assert::True(host.1 == null, "zig reports no host")) {
+            m.triple = host.0.triple;
+            var (ArrList[byte]*, Err*) object = Zig::Compile(m, host.0, FS::TempDir(), Optimization::None);
             Assert::True(object.1 == null, "the module does not compile");
         }
     }

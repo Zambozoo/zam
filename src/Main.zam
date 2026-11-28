@@ -14,6 +14,7 @@ import "cli/LocalFiles.zam";
 import "cli/Verb.zam";
 import "codegen/Codegen.zam";
 import "codegen/Runtime.zam";
+import "build/Build.zam";
 import "syntax/LocalPackages.zam";
 import "syntax/LocalSources.zam";
 import "syntax/PackageArchive.zam";
@@ -38,6 +39,7 @@ namespace Main {
         Syntax("syntax"),
         Semantic("semantic"),
         Codegen("codegen"),
+        Build("build"),
         Get("get"),
         Clean("clean"),
         Test("test");
@@ -226,6 +228,17 @@ namespace Main {
             }
             if(env("ZAM_DUMP") == "image") {
                 File::StdOut.WriteStr(Codegen::Hex(Codegen::Image(model.0, r.0)) + "\n");
+                System::Exit(0);
+            }
+            if(r.0.verb == Verb::Build && env("ZAM_DUMP") == "") {
+                onError(Step::Codegen, 1U, Codegen::Main(model.0));
+                var (str, Err*) cached = cache();
+                onError(Step::Codegen, 1U, cached.1);
+                var (str, Err*) std = stdRoot();
+                onError(Step::Codegen, 1U, std.1);
+                var (ArrList[byte]*, Err*) object = Codegen::Object(model.0, r.0, cached.0, Runtime::Dir(std.0));
+                onError(Step::Codegen, 1U, object.1);
+                onError(Step::Build, 1U, Build::Link(object.0, r.0, model.0.Source(model.0.Program().main).project, cached.0, Runtime::Dir(std.0)));
                 System::Exit(0);
             }
             if(env("ZAM_DUMP") == "semantic") {

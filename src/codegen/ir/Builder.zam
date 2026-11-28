@@ -7,10 +7,13 @@ import "Value.zam";
 public class Builder {
     var Module.Function* function;
     var Module.Block* block;
+    // Location is the location each instruction appended is at, as a metadata reference, or ""
+    public var str Location;
 
     public static fun Builder*(Module.Function*) New = (f) {
         var Builder* b = new(Builder);
         b.function = f;
+        b.Location = "";
         return b;
     }
 
@@ -26,15 +29,14 @@ public class Builder {
 
     // emit appends text as an instruction
     fun void(str) emit = (text) {
-        var Module.Instr* i = new(Module.Instr);
-        i.text = text;
-        this.block.instrs.AddLast(i);
+        this.Instr(text);
     }
 
     // Instr appends text as an instruction, answering it so it can be rewritten once more is known
     public fun Module.Instr*(str) Instr = (text) {
         var Module.Instr* i = new(Module.Instr);
         i.text = text;
+        i.dbg = this.Location;
         this.block.instrs.AddLast(i);
         return i;
     }
@@ -145,6 +147,7 @@ public class Builder {
         i.ty = t;
         i.values = ArrList::[Value*]New(0U);
         i.blocks = ArrList::[Module.Block*]New(0U);
+        i.dbg = this.Location;
         this.block.instrs.AddLast(i);
         return i;
     }

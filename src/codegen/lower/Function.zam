@@ -22,10 +22,42 @@ public class Function {
     // lineWord is the word of a frame its line is
     static var uint$ lineWord = 2U;
 
+    // typeIDWords is how many words a type id is
+    static var uint$ typeIDWords = 3U;
+
+    // handlerWords is how many words a ZamHandler is given, ZAMHANDLER_WORDS
+    static var uint$ handlerWords = 80U;
+
     // Local is a local's slot and type
     class Local {
         var uint slot;
         var Type* ty;
+        // at is the token declaring the local, or null for one with no name
+        var Token* at;
+    }
+
+    // Scope is the statements a block defers
+    class Scope {
+        var ArrList[Defer*]* defers;
+        var uint active;
+        var Module.Block* resume;
+    }
+
+    // Defer is a deferred statement and the scopes open when it was deferred
+    class Defer {
+        var ast.Stmt* stmt;
+        var ArrList[Scope*]* scopes;
+        var Scope* scope;
+        var uint id;
+        var uint outer;
+    }
+
+    // Loop is a loop or switch a break or continue may leave, and how many scopes were open around it
+    class Loop {
+        var str name;
+        var Module.Block* continueTo;
+        var Module.Block* breakTo;
+        var uint depth;
     }
 
     var Program* p;
@@ -49,11 +81,35 @@ public class Function {
     var str reason;
     // locals maps the token declaring each local onto it
     var HashMap[Token*, Local*]* locals;
+    // named maps each name onto the local last declared with it, which is the one a lambda capturing the name closes over
+    var HashMap[str, Local*]* named;
+    // name is what a trace calls the function
+    var str name;
+    // debugged says the function is described in DWARF, by the subprogram scope in the file file, beginning on startLine; line and column are where it is compiling
+    var bool debugged;
+    var uint scope;
+    var uint file;
+    var uint startLine;
+    var uint line;
+    var uint column;
     // self is the receiver, or null for a function with none
     var Local* self;
     // bindings substitutes the type arguments of the instantiation being compiled, or is null for code that is not generic
     var HashMap[ast.Generic*, Type*]* bindings;
     var Expressions* x;
+    // volatile is whether the function defers, so that its stores to its frame are volatile
+    var bool volatile;
+    // temps are the rooted slots the statement being compiled holds temporaries in, cleared as it ends
+    var ArrList[Local*]* temps;
+    var ArrList[Scope*]* scopes;
+    var ArrList[Loop*]* loops;
+    // labelled is the label of the loop or switch about to be compiled, or ""
+    var str labelled;
+    // defers is every statement the function defers, by id less one, and active the id of the innermost one deferred where it is compiling
+    var ArrList[Defer*]* defers;
+    var uint active;
+    // deferred holds the id of the innermost defer where the function is running, or is null until the function defers
+    var Value* deferred;
 
     // New starts the body of fn, compiled in decl
     public static fun Function*(Program*, Module.Function*, ast.Decl*) New = (p, fn, decl) {
@@ -64,6 +120,13 @@ public class Function {
         e.roots = ArrList::[Value*]New(0U);
         e.reason = "";
         e.locals = HashMap::[Token*, Local*]New(0U);
+        e.named = HashMap::[str, Local*]New(0U);
+        e.name = "";
+        e.temps = ArrList::[Local*]New(0U);
+        e.scopes = ArrList::[Scope*]New(0U);
+        e.loops = ArrList::[Loop*]New(0U);
+        e.labelled = "";
+        e.defers = ArrList::[Defer*]New(0U);
         e.b = Builder::New(fn);
         e.x = Expressions::New(e);
         e.entry = fn.AddBlock();
@@ -77,20 +140,79 @@ public class Function {
         p.Call(e.b, "zamrt_frame_push", ArrList::[Value*]New(3U, e.threadValue(), e.frameValue(), e.info.Ref()));
         e.slots = e.b.Gep(IrType::Int(64U), e.frameValue(), ArrList::[Value*]New(1U, Program::Word(Function::headerWords)), true);
         e.b.At(e.body);
+        e.pushScope();
         return e;
     }
 
-    // Named gives the function the name a trace calls it by, in the file of the declaration it is compiled in
-    public fun void(str) Named = (name) {
+    // Named gives the function the name a trace calls it by
+    public fun void(str, Token*) Named = (name, start) {
+        this.name = name;
         this.functionID = this.p.Name(name, this.decl);
+        if(this.decl == null) {
+            return;
+        }
+        var str path = this.p.model.Source(this.decl).path;
+        if(path == "") {
+            return;
+        }
+        this.file = this.p.debug.File(path);
+        this.startLine = this.lineOf(start);
+        this.scope = this.p.debug.Function(this.fn, name, path, this.startLine);
+        this.debugged = true;
+        this.line = this.startLine;
+        this.locate(this.line, 0U);
     }
 
-    // Body compiles a body over the parameters of t named names, the receiver of type receiver ahead of them when there is one
+    // Body compiles a body over the parameters of t named names
     public fun void(Type.Function*, Type*, ArrList[Token*]*, ast.Stmt*) Body = (t, receiver, names, body) {
+        this.volatile = Function::defersIn(body);
+        this.parameters(t, receiver, names);
+        this.begin(t, body);
+    }
+
+    // Lambda compiles the body of a lambda of type t over parameters named names, then the locals of the function enclosing it that it captures and its receiver unless self is null, each copied out of the closure into a slot of its own before the first poll
+    public fun void(Type.Function*, ArrList[Token*]*, ArrList[Local*]*, Local*, ast.Stmt*) Lambda = (t, names, captures, self, body) {
+        this.volatile = Function::defersIn(body);
+        this.parameters(t, null, names);
+        var ArrList[Local*]* all = ArrList::[Local*]New(0U);
+        for(var uint i = 0U; i < captures.Len(); i++) {
+            all.AddLast(captures.Get(i));
+        }
+        if(self != null) {
+            all.AddLast(self);
+        }
+        if(all.Len() > 0U && this.reason == "") {
+            var Value* entries = this.p.Call(this.b, "zamrt_closure_captures", ArrList::[Value*]New(1U, this.fn.params.Get(1U)));
+            var uint base = 0U;
+            for(var uint i = 0U; i < all.Len(); i++) {
+                var Local* captured = all.Get(i);
+                var Value* at = this.b.Gep(IrType::Int(64U), entries, ArrList::[Value*]New(1U, Program::Word(base + Function::typeIDWords)), true);
+                var Local* local = new(Local);
+                local.slot = this.local(captured.ty);
+                local.ty = captured.ty;
+                local.at = captured.at;
+                this.x.Copy(this.slot(local.slot), at, this.x.Words(captured.ty) * Layout::Word, false);
+                if(captured == self) {
+                    this.self = local;
+                    this.describe("this", local.slot, local.ty);
+                } else {
+                    this.locals.Put(captured.at, local);
+                    this.named.Put(captured.at.value{str}, local);
+                    this.describe(captured.at.value{str}, local.slot, local.ty);
+                }
+                base = base + Function::typeIDWords + this.x.Words(captured.ty);
+            }
+        }
+        this.begin(t, body);
+    }
+
+    // parameters copies the receiver of type receiver, when there is one, and the parameters of t named names out of the arguments into slots of their own
+    fun void(Type.Function*, Type*, ArrList[Token*]*) parameters = (t, receiver, names) {
         var Value* args = this.fn.params.Get(2U);
         var uint word = 0U;
         if(receiver != null) {
             this.self = this.copyArgument(args, word, null, receiver);
+            this.describe("this", this.self.slot, receiver);
             word++;
         }
         for(var uint i = 0U; i < t.parameters.Len() && this.reason == ""; i++) {
@@ -104,10 +226,17 @@ public class Function {
                 name = names.Get(i);
             }
             this.copyArgument(args, word, name, bound);
-            word++;
+            word = word + this.x.Words(bound);
+        }
+    }
+
+    // begin polls once the function's values are rooted, then compiles body
+    fun void(Type.Function*, ast.Stmt*) begin = (t, body) {
+        if(this.reason != "") {
+            return;
         }
         this.p.Call(this.b, "zamrt_safepoint", ArrList::[Value*]New(1U, this.threadValue()));
-        if(t.returns.kind != Type.Kind::Primitive || t.returns{Type.Primitive*}.keyword != TokenKind::Void) {
+        if(!Function::isVoid(t.returns)) {
             if(!this.x.Held(t.returns)) {
                 this.Unsupported("a return of type " + t.returns.Text());
                 return;
@@ -136,7 +265,83 @@ public class Function {
         }
     }
 
-    // Finish ends the function: returning from the end of its body and sizing its frame, or else replacing it with a trap
+    // StaticField stores the initial value of the static member or enum value f
+    public fun void(ast.Field*) StaticField = (f) {
+        if(f.kind == ast.Field.Kind::Value) {
+            this.enumValue(f{ast.Field.Value*});
+            return;
+        }
+        var ast.Expr* init = f{ast.Field.Member*}.init;
+        var Expressions.Place* pl = this.x.StaticPlace(f);
+        if(pl != null && init != null) {
+            this.x.store(pl, this.x.As(init, pl.ty));
+        } else if(pl != null && Members::DeclOf(Program::stripConst(pl.ty)) != null && Members::DeclOf(Program::stripConst(pl.ty)).kind == ast.Field.Kind::Struct) {
+            this.x.InitializeValue(pl.address, pl.ty);
+        }
+    }
+
+    // Initializer compiles setting each of members of a fresh instance of t to what it is initialized to
+    public fun void(Type*, ArrList[Members.Field*]*) Initializer = (t, members) {
+        var Type* receiver = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, t);
+        this.self = this.copyArgument(this.fn.params.Get(2U), 0U, null, receiver);
+        this.describe("this", this.self.slot, receiver);
+        this.Safepoint();
+        for(var uint i = 0U; i < members.Len() && this.reason == ""; i++) {
+            var Members.Field* f = members.Get(i);
+            this.decl = f.owner;
+            this.bindings = null;
+            var Type* instance = this.p.instantiating(t, f.owner);
+            if(instance != null) {
+                this.bindings = Members::BindingsOf(instance);
+            }
+            var Value* self = this.b.Load(IrType::Int(64U), this.slot(this.self.slot), false, 0U);
+            var Expressions.Place* pl = this.x.memberPlace(self, receiver, f.name);
+            if(pl != null) {
+                this.x.store(pl, this.x.As(f.field{ast.Field.Member*}.init, pl.ty));
+            }
+        }
+    }
+
+    // StaticClosure stores the closure the static method is named as a value by in its static
+    public fun void(ast.Field.Method*) StaticClosure = (method) {
+        var Value* closure = this.p.Call(this.b, "zamrt_new_function_closure", ArrList::[Value*]New(5U, this.threadValue(),
+            this.p.TypeID(this.p.model.TypeOf(method.signature)), this.p.functionFor(method).Ref(), Program::Word(0U), Program::Word(0U)));
+        this.b.Store(this.b.Cast("ptrtoint", closure, IrType::Int(64U)), this.staticAt(this.p.statics.FieldSlot(method)), false, 0U);
+    }
+
+    // ImplicitStr compiles the Str a struct or enum of type t is given when it writes none, (*this){any}{str}: its value boxed and written out as a value is, by its type and where it lies
+    public fun void(Type*) ImplicitStr = (t) {
+        var Type* text = Type.Primitive::New(null, TokenKind::String);
+        var Type* boxed = Type.Primitive::New(null, TokenKind::Any);
+        this.parameters(Type.Function::New(null, text, ArrList::[Type*]New(0U)), Type.Wrapped::New(null, ast.Type.Wrap::Pointer, t), null);
+        this.Safepoint();
+        this.returns = text;
+        this.returnSlot = this.local(text);
+        var Value* self = this.b.Load(IrType::Int(64U), this.slot(this.self.slot), false, 0U);
+        this.x.nullCheck(self, Expressions::nullDereference);
+        var Expressions.Place* pl = new(Expressions.Place);
+        pl.address = this.b.Cast("inttoptr", self, IrType::Ptr());
+        pl.ty = t;
+        pl.width = this.p.layout.FieldInfo(t).0;
+        pl.heap = true;
+        var Value* v = this.x.convert(this.x.convert(this.x.load(pl), t, boxed), boxed, text);
+        this.x.store(this.x.SlotPlace(this.returnSlot, text), v);
+        this.fallthrough();
+    }
+
+    // Temp gives a temporary of type t a slot, cleared as the statement holding it ends
+    public fun uint(Type*) Temp = (t) {
+        var uint slot = this.local(t);
+        if(this.p.Rooted(t)) {
+            var Local* temp = new(Local);
+            temp.slot = slot;
+            temp.ty = t;
+            this.temps.AddLast(temp);
+        }
+        return slot;
+    }
+
+    // Finish ends the function
     public fun void() Finish = () {
         if(this.reason != "") {
             this.trap();
@@ -145,8 +350,17 @@ public class Function {
         if(!this.b.Terminated()) {
             this.fallthrough();
         }
-        this.b.At(this.entry);
-        this.b.Br(this.body);
+        if(this.defers.Len() > 0U) {
+            this.landing();
+            if(this.reason != "") {
+                this.trap();
+                return;
+            }
+        } else {
+            this.b.At(this.entry);
+            this.locate(this.startLine, 0U);
+            this.b.Br(this.body);
+        }
         this.alloca.text = this.frame + " = alloca i64, i64 " + (Function::headerWords + this.slotCount){str};
         var Value* rootTable = Value::Null();
         if(this.roots.Len() > 0U) {
@@ -171,39 +385,567 @@ public class Function {
         this.p.Trapped(what);
     }
 
+    // stmt compiles s, then clears the temporaries it held
     fun void(ast.Stmt*) stmt = (s) {
         if(s == null || this.reason != "") {
             return;
         }
         if(s.kind != ast.Stmt.Kind::Block) {
             this.at(s.start);
+            this.cover(s.start);
         }
-        switch(s.kind) {
-            case (ast.Stmt.Kind::Block) {
-                var ArrList[ast.Stmt*]* statements = s{ast.Stmt.Block*}.statements;
-                for(var uint i = 0U; i < statements.Len() && this.reason == ""; i++) {
-                    if(this.b.Terminated()) {
-                        this.b.At(this.fn.AddBlock());
-                    }
-                    this.stmt(statements.Get(i));
+        var uint held = this.temps.Len();
+        this.stmtKind(s);
+        this.clearTemps(held);
+    }
+
+    // clearTemps zeroes the temporaries taken since held, unless the block has ended
+    fun void(uint) clearTemps = (held) {
+        if(this.reason == "" && !this.b.Terminated()) {
+            for(var uint i = held; i < this.temps.Len(); i++) {
+                var Local* temp = this.temps.Get(i);
+                for(var uint w = 0U; w < this.x.Words(temp.ty); w++) {
+                    this.b.Store(Program::Word(0U), this.slot(temp.slot + w), false, 0U);
                 }
             }
+        }
+        for(; this.temps.Len() > held;) {
+            this.temps.RemoveLast();
+        }
+    }
+
+    fun void(ast.Stmt*) stmtKind = (s) {
+        switch(s.kind) {
+            case (ast.Stmt.Kind::Block)
+                this.block(s{ast.Stmt.Block*});
+            case (ast.Stmt.Kind::Defer)
+                this.deferStmt(s{ast.Stmt.Defer*});
             case (ast.Stmt.Kind::Variable)
                 this.variable(s{ast.Stmt.Variable*});
+            case (ast.Stmt.Kind::Unpack)
+                this.unpack(s{ast.Stmt.Unpack*});
             case (ast.Stmt.Kind::Return) {
                 var ast.Expr* value = s{ast.Stmt.Value*}.value;
                 if(value != null && this.returns == null) {
                     this.x.Of(value);
                 } else if(value != null) {
-                    this.b.Store(this.x.As(value, this.returns), this.slot(this.returnSlot), false, 0U);
+                    this.x.store(this.x.SlotPlace(this.returnSlot, this.returns), this.x.As(value, this.returns));
                 }
+                this.defersFrom(0U);
                 this.fallthrough();
             }
             case (ast.Stmt.Kind::Expr)
                 this.x.Of(s{ast.Stmt.Value*}.value);
+            case (ast.Stmt.Kind::If)
+                this.ifStmt(s{ast.Stmt.If*});
+            case (ast.Stmt.Kind::For)
+                this.forStmt(s{ast.Stmt.For*});
+            case (ast.Stmt.Kind::Switch)
+                this.switchStmt(s{ast.Stmt.Switch*});
+            case (ast.Stmt.Kind::Label) {
+                var ast.Stmt.Label* l = s{ast.Stmt.Label*};
+                this.labelled = l.name.value{str};
+                this.stmt(l.target);
+            }
+            case (ast.Stmt.Kind::Break, ast.Stmt.Kind::Continue)
+                this.jump(s{ast.Stmt.Jump*});
+            case (ast.Stmt.Kind::Free) {
+                var ast.Expr* value = s{ast.Stmt.Value*}.value;
+                var Type* t = this.x.typeOf(value);
+                if(this.x.kindOf(t) != Expressions.Kind::Pointer) {
+                    this.Unsupported("freeing " + t.Text());
+                    return;
+                }
+                var Value* v = this.x.Of(value);
+                this.p.Call(this.b, "zamrt_free", ArrList::[Value*]New(3U, this.threadValue(), this.p.TypeID(t), v));
+            }
+            case (ast.Stmt.Kind::Mark, ast.Stmt.Kind::Delete) {
+                var ast.Expr* value = s{ast.Stmt.Value*}.value;
+                var Type* t = this.x.typeOf(value);
+                if(!this.x.Held(t)) {
+                    this.Unsupported("a value of type " + t.Text());
+                    return;
+                }
+                var Value* v = this.x.Of(value);
+                var str helper = "zamrt_mark";
+                if(s.kind == ast.Stmt.Kind::Delete) {
+                    helper = "zamrt_delete";
+                }
+                this.p.Call(this.b, helper, ArrList::[Value*]New(3U, this.threadValue(), this.p.TypeID(t), this.x.WordsOf(v, t)));
+            }
         } else {
             this.Unsupported("a statement of this kind");
         }
+    }
+
+    // block compiles b in a scope of its own, running what it defers as it ends
+    fun void(ast.Stmt.Block*) block = (b) {
+        this.pushScope();
+        for(var uint i = 0U; i < b.statements.Len() && this.reason == ""; i++) {
+            if(this.b.Terminated()) {
+                this.b.At(this.fn.AddBlock());
+            }
+            this.stmt(b.statements.Get(i));
+        }
+        var Scope* scope = this.scopes.GetLast();
+        if(!this.b.Terminated()) {
+            this.runDefers(scope);
+        }
+        if(scope.defers.Len() > 0U) {
+            scope.resume = this.fn.AddBlock();
+            if(!this.b.Terminated()) {
+                this.b.Br(scope.resume);
+            }
+            this.b.At(scope.resume);
+        }
+        this.popScope();
+    }
+
+    // deferStmt defers s to the end of the scope it is in
+    fun void(ast.Stmt.Defer*) deferStmt = (s) {
+        var Scope* scope = this.scopes.GetLast();
+        var ArrList[Scope*]* snapshot = ArrList::[Scope*]New(0U);
+        for(var uint i = 0U; i + 1U < this.scopes.Len(); i++) {
+            snapshot.AddLast(this.scopes.Get(i));
+        }
+        snapshot.AddLast(Function::newScope(0U));
+        var Defer* d = new(Defer);
+        d.stmt = s.deferred;
+        d.scopes = snapshot;
+        d.scope = scope;
+        d.id = this.defers.Len() + 1U;
+        d.outer = this.active;
+        scope.defers.AddLast(d);
+        this.defers.AddLast(d);
+        this.active = d.id;
+        this.setDeferred(d.id);
+    }
+
+    // ifStmt compiles s, each branch in a scope of its own
+    fun void(ast.Stmt.If*) ifStmt = (s) {
+        var Value* condition = this.x.Condition(s.condition);
+        var Module.Block* then = this.fn.AddBlock();
+        var Module.Block* end = this.fn.AddBlock();
+        var Module.Block* otherwise = end;
+        if(s.otherwise != null) {
+            otherwise = this.fn.AddBlock();
+        }
+        this.b.CondBr(condition, then, otherwise);
+        this.branch(then, s.then, end);
+        if(s.otherwise != null) {
+            this.branch(otherwise, s.otherwise, end);
+        }
+        this.b.At(end);
+    }
+
+    // forStmt compiles s
+    fun void(ast.Stmt.For*) forStmt = (s) {
+        if(s.init != null) {
+            this.stmt(s.init);
+        }
+        var Module.Block* condition = this.fn.AddBlock();
+        var Module.Block* body = this.fn.AddBlock();
+        var Module.Block* step = this.fn.AddBlock();
+        var Module.Block* otherwise = this.fn.AddBlock();
+        var Module.Block* end = this.fn.AddBlock();
+        var Loop* loop = this.pushLoop(step, end);
+        this.b.Br(condition);
+
+        this.b.At(condition);
+        if(s.condition == null) {
+            this.b.Br(body);
+        } else {
+            this.b.CondBr(this.x.Condition(s.condition), body, otherwise);
+        }
+        this.branch(body, s.body, step);
+        this.loops.RemoveLast();
+
+        this.b.At(step);
+        if(s.step != null && this.reason == "") {
+            this.at(s.step.start);
+            this.cover(s.step.start);
+            var uint held = this.temps.Len();
+            this.x.Of(s.step);
+            this.clearTemps(held);
+        }
+        if(!this.b.Terminated()) {
+            this.Safepoint();
+            this.b.Br(condition);
+        }
+
+        if(s.otherwise == null) {
+            this.b.At(otherwise);
+            this.b.Br(end);
+        } else {
+            this.branch(otherwise, s.otherwise, end);
+        }
+        this.b.At(end);
+    }
+
+    // switchStmt runs the first case of s whose values one matches its subject, or its else
+    fun void(ast.Stmt.Switch*) switchStmt = (s) {
+        this.pushScope();
+        var Type* t = this.x.typeOf(s.subject);
+        var Expressions.Kind k = this.x.kindOf(t);
+        var bool members = this.x.MemberEnum(t);
+        var bool byRuntime = false;
+        if(members) {
+            k = Expressions.Kind::Enum;
+        } else if(this.x.byRuntime(t, k)) {
+            byRuntime = true;
+        } else if(k != Expressions.Kind::Enum && k != Expressions.Kind::Pointer && !Expressions::primitive(k)) {
+            this.Unsupported("a switch on " + t.Text());
+            return;
+        }
+        var Value* subject = this.x.As(s.subject, t);
+        if(members) {
+            subject = this.x.Discriminant(subject);
+        }
+        var uint held = 0U;
+        if(byRuntime) {
+            held = this.Temp(t);
+            this.x.store(this.x.SlotPlace(held, t), subject);
+        }
+        var ArrList[Module.Block*]* bodies = ArrList::[Module.Block*]New(0U);
+        for(var uint i = 0U; i < s.cases.Len(); i++) {
+            bodies.AddLast(this.fn.AddBlock());
+        }
+        var Module.Block* otherwise = this.fn.AddBlock();
+        var Module.Block* end = this.fn.AddBlock();
+        for(var uint i = 0U; i < s.cases.Len(); i++) {
+            var ArrList[ast.Expr*]* values = s.cases.Get(i).values;
+            for(var uint j = 0U; j < values.Len(); j++) {
+                var Value* v = this.x.As(values.Get(j), t);
+                if(members) {
+                    v = this.x.Discriminant(v);
+                }
+                var Value* matches = null;
+                if(byRuntime) {
+                    var Value* id = this.p.TypeID(t);
+                    var Value* left = this.x.WordsOf(this.x.load(this.x.SlotPlace(held, t)), t);
+                    var Value* equal = this.p.Call(this.b, "zamrt_eq", ArrList::[Value*]New(5U, this.threadValue(), id, left, id, this.x.WordsOf(v, t)));
+                    matches = this.b.ICmp("ne", equal, Value::Uint(IrType::Int(8U), 0U));
+                } else if(k == Expressions.Kind::Float) {
+                    matches = this.b.FCmp("oeq", this.x.toFloat(subject), this.x.toFloat(v));
+                } else {
+                    matches = this.b.ICmp("eq", subject, v);
+                }
+                var Module.Block* next = this.fn.AddBlock();
+                this.b.CondBr(matches, bodies.Get(i), next);
+                this.b.At(next);
+            }
+        }
+        this.b.Br(otherwise);
+
+        var Loop* loop = this.pushLoop(null, end);
+        for(var uint i = 0U; i < s.cases.Len(); i++) {
+            loop.continueTo = otherwise;
+            if(i + 1U < bodies.Len()) {
+                loop.continueTo = bodies.Get(i + 1U);
+            }
+            this.branch(bodies.Get(i), s.cases.Get(i).body, end);
+        }
+        loop.continueTo = end;
+        if(s.otherwise == null) {
+            this.b.At(otherwise);
+            this.b.Br(end);
+        } else {
+            this.branch(otherwise, s.otherwise, end);
+        }
+        this.loops.RemoveLast();
+        this.b.At(end);
+        this.popScope();
+    }
+
+    // jump leaves the loop or switch s names, running the defers of the scopes it leaves
+    fun void(ast.Stmt.Jump*) jump = (s) {
+        var str name = "";
+        if(s.target != null) {
+            name = s.target.value{str};
+        }
+        var Loop* loop = null;
+        for(var uint i = this.loops.Len(); i > 0U && loop == null; i--) {
+            if(name == "" || this.loops.Get(i - 1U).name == name) {
+                loop = this.loops.Get(i - 1U);
+            }
+        }
+        if(loop == null) {
+            this.Unsupported("a jump to label " + name);
+            return;
+        }
+        this.defersFrom(loop.depth);
+        if(s.kind == ast.Stmt.Kind::Break) {
+            this.b.Br(loop.breakTo);
+        } else {
+            this.b.Br(loop.continueTo);
+        }
+        this.b.At(this.fn.AddBlock());
+    }
+
+    // branch compiles s into block in a scope of its own, then falls to end
+    fun void(Module.Block*, ast.Stmt*, Module.Block*) branch = (block, s, end) {
+        this.b.At(block);
+        this.pushScope();
+        this.stmt(s);
+        var Scope* scope = this.scopes.GetLast();
+        if(!this.b.Terminated()) {
+            this.runDefers(scope);
+        }
+        if(scope.defers.Len() > 0U) {
+            scope.resume = end;
+        }
+        this.popScope();
+        if(!this.b.Terminated()) {
+            this.b.Br(end);
+        }
+    }
+
+    // pushLoop opens a loop or switch named by the label about to be compiled
+    fun Loop*(Module.Block*, Module.Block*) pushLoop = (continueTo, breakTo) {
+        var Loop* loop = new(Loop);
+        loop.name = this.labelled;
+        loop.continueTo = continueTo;
+        loop.breakTo = breakTo;
+        loop.depth = this.scopes.Len();
+        this.labelled = "";
+        this.loops.AddLast(loop);
+        return loop;
+    }
+
+    fun void() pushScope = () {
+        this.scopes.AddLast(Function::newScope(this.active));
+    }
+
+    fun void() popScope = () {
+        this.active = this.scopes.RemoveLast().active;
+    }
+
+    // runDefers runs the statements scope deferred, last first
+    fun void(Scope*) runDefers = (scope) {
+        var ArrList[Scope*]* scopes = this.scopes;
+        for(var uint i = scope.defers.Len(); i > 0U && this.reason == ""; i--) {
+            this.runDeferred(scope.defers.Get(i - 1U));
+        }
+        this.scopes = scopes;
+    }
+
+    // runDeferred runs d in the scopes it was deferred in, once it is no longer one a panic would run
+    fun void(Defer*) runDeferred = (d) {
+        this.setDeferred(d.outer);
+        var uint active = this.active;
+        this.active = d.outer;
+        var ArrList[Scope*]* scopes = ArrList::[Scope*]New(0U);
+        for(var uint i = 0U; i < d.scopes.Len(); i++) {
+            scopes.AddLast(d.scopes.Get(i));
+        }
+        scopes.AddLast(Function::newScope(0U));
+        this.scopes = scopes;
+        this.stmt(d.stmt);
+        this.active = active;
+    }
+
+    // defersFrom runs the defers of every scope from depth inward
+    fun void(uint) defersFrom = (depth) {
+        var ArrList[Scope*]* open = ArrList::[Scope*]New(0U);
+        for(var uint i = 0U; i < this.scopes.Len(); i++) {
+            open.AddLast(this.scopes.Get(i));
+        }
+        for(var uint i = open.Len(); i > depth && this.reason == ""; i--) {
+            this.runDefers(open.Get(i - 1U));
+        }
+    }
+
+    // setDeferred records id as the innermost defer where the function is running
+    fun void(uint) setDeferred = (id) {
+        if(this.deferred == null) {
+            this.deferred = this.entryAlloca(1U, 0U);
+        }
+        this.b.Store(Program::Word(id), this.deferred, true, 0U);
+    }
+
+    // landing gives the function its landing pad, which its entry sets up
+    fun void() landing = () {
+        var Module.Block* landing = this.fn.AddBlock();
+        var Module.Block* unwind = this.fn.AddBlock();
+        var Value* handler = this.entryAlloca(Function::handlerWords, 16U);
+        var HashMap[uint, Module.Block*]* blocks = HashMap::[uint, Module.Block*]New(0U);
+        var ArrList[Value*]* ids = ArrList::[Value*]New(0U);
+        var ArrList[Module.Block*]* targets = ArrList::[Module.Block*]New(0U);
+        var Module.Block* recovered = null;
+        var ArrList[Scope*]* scopes = this.scopes;
+        for(var uint i = 0U; i < this.defers.Len() && this.reason == ""; i++) {
+            var Defer* d = this.defers.Get(i);
+            this.b.At(Function::blockOf(this.fn, d.id, blocks, ids, targets));
+            this.runDeferred(d);
+            if(this.b.Terminated()) {
+                continue;
+            }
+            var Module.Block* next = unwind;
+            if(d.outer != 0U) {
+                next = Function::blockOf(this.fn, d.outer, blocks, ids, targets);
+                if(this.defers.Get(d.outer - 1U).scope == d.scope) {
+                    this.b.Br(next);
+                    continue;
+                }
+            }
+            var Module.Block* resume = d.scope.resume;
+            if(resume == null) {
+                if(recovered == null) {
+                    var Module.Block* at = this.b.Block();
+                    recovered = this.fn.AddBlock();
+                    this.b.At(recovered);
+                    this.fallthrough();
+                    this.b.At(at);
+                }
+                resume = recovered;
+            }
+            var Value* panicking = this.p.Call(this.b, "zamrt_panicking", ArrList::[Value*]New(2U, this.threadValue(), handler));
+            this.b.CondBr(this.b.ICmp("ne", panicking, Value::Uint(IrType::Int(8U), 0U)), next, resume);
+        }
+        this.scopes = scopes;
+
+        this.b.At(landing);
+        var Value* innermost = this.b.Load(IrType::Int(64U), this.deferred, true, 0U);
+        this.b.Switch(innermost, unwind, ids, targets);
+
+        this.b.At(unwind);
+        this.p.Call(this.b, "zamrt_unwind", ArrList::[Value*]New(2U, this.threadValue(), handler));
+        this.b.Unreachable();
+
+        this.b.At(this.entry);
+        this.locate(this.startLine, 0U);
+        this.b.Store(Program::Word(0U), this.deferred, true, 0U);
+        this.p.Call(this.b, "zamrt_handler_push", ArrList::[Value*]New(3U, this.threadValue(), handler, this.frameValue()));
+        var ArrList[Value*]* args = ArrList::[Value*]New(1U, handler);
+        if(this.p.setjmpFrame) {
+            args.AddLast(Value::Null());
+        }
+        var Value* jumped = this.b.Call(this.p.setjmp.ty, this.p.setjmp.Ref(), args);
+        this.b.CondBr(this.b.ICmp("eq", jumped, Value::Uint(IrType::Int(32U), 0U)), this.body, landing);
+    }
+
+    // blockOf answers the landing block that runs the defer id
+    static fun Module.Block*(Module.Function*, uint, HashMap[uint, Module.Block*]*, ArrList[Value*]*, ArrList[Module.Block*]*) blockOf = (fn, id, blocks, ids, targets) {
+        var (Module.Block*, bool) found = blocks.Get(id);
+        if(found.1) {
+            return found.0;
+        }
+        var Module.Block* block = fn.AddBlock();
+        blocks.Put(id, block);
+        ids.AddLast(Program::Word(id));
+        targets.AddLast(block);
+        return block;
+    }
+
+    // spill answers a word of the function's own holding v
+    fun Value*(Value*) spill = (v) {
+        var Value* at = this.entryAlloca(1U, 0U);
+        this.b.Store(v, at, false, 0U);
+        return at;
+    }
+
+    // entryAlloca allocates words words for the whole of the function, in its entry
+    fun Value*(uint, uint) entryAlloca = (words, align) {
+        var Module.Block* at = this.b.Block();
+        var str location = this.b.Location;
+        this.b.At(this.entry);
+        this.locate(this.startLine, 0U);
+        var Value* v = this.b.Alloca(IrType::Int(64U), Program::Word(words), align);
+        this.b.At(at);
+        this.b.Location = location;
+        return v;
+    }
+
+    static fun Scope*(uint) newScope = (active) {
+        var Scope* s = new(Scope);
+        s.defers = ArrList::[Defer*]New(0U);
+        s.active = active;
+        return s;
+    }
+
+    // defersIn reports whether s defers a statement, outside the lambdas it holds
+    static fun bool(ast.Stmt*) defersIn = (s) {
+        if(s == null) {
+            return false;
+        }
+        switch(s.kind) {
+            case (ast.Stmt.Kind::Defer)
+                return true;
+            case (ast.Stmt.Kind::Block) {
+                var ArrList[ast.Stmt*]* statements = s{ast.Stmt.Block*}.statements;
+                for(var uint i = 0U; i < statements.Len(); i++) {
+                    if(Function::defersIn(statements.Get(i))) {
+                        return true;
+                    }
+                }
+            }
+            case (ast.Stmt.Kind::For) {
+                var ast.Stmt.For* f = s{ast.Stmt.For*};
+                return Function::defersIn(f.body) || Function::defersIn(f.otherwise);
+            }
+            case (ast.Stmt.Kind::If) {
+                var ast.Stmt.If* i = s{ast.Stmt.If*};
+                return Function::defersIn(i.then) || Function::defersIn(i.otherwise);
+            }
+            case (ast.Stmt.Kind::Label)
+                return Function::defersIn(s{ast.Stmt.Label*}.target);
+            case (ast.Stmt.Kind::Switch) {
+                var ast.Stmt.Switch* w = s{ast.Stmt.Switch*};
+                for(var uint i = 0U; i < w.cases.Len(); i++) {
+                    if(Function::defersIn(w.cases.Get(i).body)) {
+                        return true;
+                    }
+                }
+                return Function::defersIn(w.otherwise);
+            }
+        }
+        return false;
+    }
+
+    // enumValue stores the discriminant of f, then what backs it
+    fun void(ast.Field.Value*) enumValue = (f) {
+        var ast.Decl* d = this.p.model.Outer(f);
+        var ArrList[ast.Field.Value*]* values = Function::EnumValues(d);
+        var Type* backing = null;
+        var uint stride = 1U;
+        if(d{ast.Decl.Enum*}.primitive != null) {
+            backing = this.p.model.TypeOf(d{ast.Decl.Enum*}.primitive);
+            stride = this.p.layout.FieldInfo(backing).0;
+        }
+        var uint index = 0U;
+        for(; values.Get(index) != f; index++) {}
+        this.b.Store(Program::Word(index * stride), this.staticAt(this.p.statics.FieldSlot(f)), false, 0U);
+        if(f.value != null) {
+            var Expressions.Place* pl = new(Expressions.Place);
+            pl.address = this.staticAt(this.p.statics.ValueSlot(d) + index);
+            pl.ty = backing;
+            pl.width = stride;
+            this.x.store(pl, this.x.As(f.value, backing));
+        } else if(f.init != null) {
+            var Value* receiver = this.b.Cast("ptrtoint", this.staticAt(this.p.statics.FieldSlot(f)), IrType::Int(64U));
+            var Type* self = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, this.p.members.SelfType(d));
+            var ArrList[ast.Expr*]* arguments = f.arguments;
+            if(arguments == null) {
+                arguments = ArrList::[ast.Expr*]New(0U);
+            }
+            this.x.MethodCallOn(receiver, self, f.init.value{str}, arguments, false);
+        }
+    }
+
+    // EnumValues answers the values of the enum d, in the order they are written
+    static fun ArrList[ast.Field.Value*]*(ast.Decl*) EnumValues = (d) {
+        var ArrList[ast.Field.Value*]* values = ArrList::[ast.Field.Value*]New(0U);
+        for(var uint i = 0U; i < d.fields.Len(); i++) {
+            if(d.fields.Get(i).kind == ast.Field.Kind::Value) {
+                values.AddLast(d.fields.Get(i){ast.Field.Value*});
+            }
+        }
+        return values;
+    }
+
+    // staticAt answers the address of the static slot slot
+    fun Value*(uint) staticAt = (slot) {
+        return this.p.Call(this.b, "zamrt_static", ArrList::[Value*]New(2U, this.threadValue(), Program::Word(slot)));
     }
 
     // variable declares the local v, holding what it is initialized to
@@ -219,7 +961,37 @@ public class Function {
         }
         var uint slot = this.declare(v.name, t);
         if(value != null) {
-            this.b.Store(value, this.slot(slot), false, 0U);
+            this.x.store(this.x.SlotPlace(slot, t), value);
+        } else if(this.reason == "") {
+            this.x.InitializeValue(this.slot(slot), t);
+        }
+    }
+
+    // unpack declares a local for each element of the tuple s unpacks, holding the element
+    fun void(ast.Stmt.Unpack*) unpack = (s) {
+        var Type* t = Program::stripConst(this.x.typeOf(s.init));
+        if(t.kind != Type.Kind::Tuple || t{Type.Tuple*}.types.Len() != s.variables.Len()) {
+            this.Unsupported("unpacking " + t.Text());
+            return;
+        }
+        var Type.Tuple* tuple = t{Type.Tuple*};
+        var Value* v = this.x.Of(s.init);
+        var ArrList[uint]* offsets = this.p.layout.Tuple(tuple).2;
+        var ArrList[Value*]* values = ArrList::[Value*]New(0U);
+        for(var uint i = 0U; i < tuple.types.Len() && this.reason == ""; i++) {
+            var Expressions.Place* pl = new(Expressions.Place);
+            pl.address = this.b.Gep(IrType::Int(8U), v, ArrList::[Value*]New(1U, Program::Word(offsets.Get(i))), false);
+            pl.ty = tuple.types.Get(i);
+            pl.width = this.p.layout.FieldInfo(pl.ty).0;
+            values.AddLast(this.x.convert(this.x.load(pl), pl.ty, this.ground(this.p.model.TypeOf(s.variables.Get(i).declared))));
+        }
+        for(var uint i = 0U; i < s.variables.Len() && this.reason == ""; i++) {
+            var ast.Stmt.Variable* variable = s.variables.Get(i);
+            if(variable.name.kind == TokenKind::Underscore) {
+                continue;
+            }
+            var Type* declared = this.ground(this.p.model.TypeOf(variable.declared));
+            this.x.store(this.x.SlotPlace(this.declare(variable.name, declared), declared), values.Get(i));
         }
     }
 
@@ -237,15 +1009,59 @@ public class Function {
             return;
         }
         var (uint, uint) position = SourceErr::Position(this.p.model.Source(this.decl).lineStarts, tok.offset);
+        if(this.debugged) {
+            this.line = position.0;
+            this.column = position.1;
+            this.locate(this.line, this.column);
+        }
         var Value* line = this.b.Gep(IrType::Int(64U), this.frameValue(), ArrList::[Value*]New(1U, Program::Word(Function::lineWord)), true);
         this.b.Store(Program::Word(position.0), line, true, 0U);
+    }
+
+    // cover sets the byte of the statement tok starts, when the program is compiled for coverage and the statement is covered
+    fun void(Token*) cover = (tok) {
+        if(this.p.coverage == null || tok == null) {
+            return;
+        }
+        var (uint, bool) slot = this.p.coverage.Get(tok);
+        if(!slot.1) {
+            return;
+        }
+        var Value* at = this.b.Gep(IrType::Int(8U), this.p.counters.Ref(), ArrList::[Value*]New(1U, Program::Word(slot.0)), true);
+        this.b.Store(Value::Uint(IrType::Int(8U), 1U), at, false, 0U);
+    }
+
+    // lineOf answers the line tok lies on in the file of the declaration being compiled, or 0 where that is unknown
+    fun uint(Token*) lineOf = (tok) {
+        if(tok == null || this.decl == null) {
+            return 0U;
+        }
+        return SourceErr::Position(this.p.model.Source(this.decl).lineStarts, tok.offset).0;
+    }
+
+    // locate says the instructions appended next are at line and column of the function's source, when it is described
+    fun void(uint, uint) locate = (line, column) {
+        if(this.debugged) {
+            this.b.Location = "!" + this.p.debug.Location(line, column, this.scope){str};
+        }
+    }
+
+    // describe describes the local named name of type t lying in the frame slot slot, from the line being compiled
+    fun void(str, uint, Type*) describe = (name, slot, t) {
+        if(!this.debugged) {
+            return;
+        }
+        var uint variable = this.p.debug.Variable(name, this.scope, this.file, this.line, t);
+        var str location = this.b.Location;
+        this.locate(this.line, 0U);
+        this.b.Instr("call void @llvm.dbg.declare(metadata ptr " + this.frame + ", metadata !" + variable{str} + ", metadata !DIExpression(DW_OP_plus_uconst, " + ((Function::headerWords + slot) * Layout::Word){str} + "))");
+        this.b.Location = location;
     }
 
     // fallthrough returns from the function, answering what its return slot holds
     fun void() fallthrough = () {
         if(this.returns != null) {
-            var Value* word = this.b.Load(IrType::Int(64U), this.slot(this.returnSlot), false, 0U);
-            this.b.Store(word, this.fn.params.Get(3U), false, 0U);
+            this.x.Copy(this.fn.params.Get(3U), this.slot(this.returnSlot), this.x.Words(this.returns) * Layout::Word, false);
         }
         this.p.Call(this.b, "zamrt_frame_pop", ArrList::[Value*]New(2U, this.threadValue(), this.frameValue()));
         this.b.RetVoid();
@@ -254,11 +1070,10 @@ public class Function {
     // copyArgument copies the argument word at word of args into a slot of a local of type t declared at name, answering the local
     fun Local*(Value*, uint, Token*, Type*) copyArgument = (args, word, name, t) {
         var Value* from = this.b.Gep(IrType::Int(64U), args, ArrList::[Value*]New(1U, Program::Word(word)), true);
-        var Value* value = this.b.Load(IrType::Int(64U), from, false, 0U);
         var Local* local = new(Local);
         local.slot = this.declare(name, t);
         local.ty = t;
-        this.b.Store(value, this.slot(local.slot), false, 0U);
+        this.x.Copy(this.slot(local.slot), from, this.x.Words(t) * Layout::Word, false);
         return local;
     }
 
@@ -268,15 +1083,28 @@ public class Function {
         local.slot = this.local(t);
         local.ty = t;
         if(name != null && name.kind != TokenKind::Underscore) {
+            local.at = name;
             this.locals.Put(name, local);
+            this.named.Put(name.value{str}, local);
+            this.describe(name.value{str}, local.slot, t);
         }
         return local.slot;
+    }
+
+    // Reserve gives words words of the frame that hold nothing the collector visits
+    public fun uint(uint) Reserve = (words) {
+        var uint slot = this.nextSlot;
+        this.nextSlot = this.nextSlot + words;
+        if(this.nextSlot > this.slotCount) {
+            this.slotCount = this.nextSlot;
+        }
+        return slot;
     }
 
     // local gives a local of type t a slot of its own, rooted when t is one the collector visits
     fun uint(Type*) local = (t) {
         var uint slot = this.nextSlot;
-        this.nextSlot++;
+        this.nextSlot = this.nextSlot + this.x.Words(t);
         if(this.nextSlot > this.slotCount) {
             this.slotCount = this.nextSlot;
         }
@@ -296,6 +1124,10 @@ public class Function {
 
     fun Value*() frameValue = () {
         return Value::New(IrType::Ptr(), this.frame);
+    }
+
+    static fun bool(Type*) isVoid = (t) {
+        return t.kind == Type.Kind::Primitive && t{Type.Primitive*}.keyword == TokenKind::Void;
     }
 
     // bound answers the type a parameter of t is held as, a variadic arriving as a pointer

@@ -1,0 +1,67 @@
+import std("lang/System.zam");
+
+namespace Main {
+    class Cell {
+        var int value;
+    }
+
+    fun int(int) divided = (n) {
+        var int out = 1;
+        {
+            defer {
+                if(System::Recover() != null) {
+                    out = 7;
+                }
+            }
+            var int zero = n - n;
+            out = n / zero;
+        }
+        return out;
+    }
+
+    fun int() explicit = () {
+        var int out = 0;
+        {
+            defer {
+                if(System::Recover() == "boom") {
+                    out = out + 5;
+                }
+            }
+            defer out = out + 10;
+            System::Panic("boom");
+            out = 100;
+        }
+        return out;
+    }
+
+    fun void(int) thrower = (n) {
+        var Cell* c = null;
+        c.value = n;
+    }
+
+    fun int() throughCallee = () {
+        var int out = 0;
+        {
+            defer {
+                if(System::Recover() != null) {
+                    out = 3;
+                }
+            }
+            Main::thrower(4);
+            out = 100;
+        }
+        return out;
+    }
+
+    fun int() unrecovered = () {
+        var int out = 0;
+        defer out = 9;
+        return out + 1;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var int c1 = one / ((Main::divided(5) == 7 && Main::explicit() == 15 && Main::throughCallee() == 3) ? 1 : 0);
+        var int c2 = one / ((Main::unrecovered() == 1 && System::Recover() == null) ? 1 : 0);
+    }
+}

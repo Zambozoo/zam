@@ -1,0 +1,29 @@
+import std("data/map/HashMap.zam");
+
+namespace Main {
+    class Suffixed <: HashMap[str, int]* {
+        fun bool(str, int) Put = (k, v) {
+            return super.Put(k + "!", v);
+        }
+
+        fun (int, bool)(str) Get = (k) {
+            return super.Get(k + "!");
+        }
+
+        fun bool(str) Contains = (k) {
+            return super.Contains(k + "!");
+        }
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var Suffixed* s = new(Suffixed);
+        s.Init(0U);
+        s.Put("a", 1);
+        s.Put("b", 2);
+        var HashMap[str, int]* plain = HashMap::[str, int]New(0U);
+        plain.Put("a", 3);
+        var int one = 1;
+        var int c1 = one / ((s.Get("a").0 == 1 && s.Get("b").1 && s.Contains("a") && !s.Contains("c") && s.Len() == 2U) ? 1 : 0);
+        var int c2 = one / ((plain.Get("a").0 == 3 && !plain.Contains("a!")) ? 1 : 0);
+    }
+}

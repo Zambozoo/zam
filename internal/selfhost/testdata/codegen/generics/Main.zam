@@ -1,0 +1,72 @@
+namespace Main {
+    class Cell {
+        var int value;
+    }
+
+    class Box[T] {
+        var T held;
+    }
+
+    fun[T] T(T) Id = (x) {
+        return x;
+    }
+
+    fun[A, B] (B, A)(A, B) Swap = (a, b) {
+        return (b, a);
+    }
+
+    fun[T] T(Box[T]*) Unbox = (b) {
+        return b.held;
+    }
+
+    fun[T] T(int, T...) Pick = (i, xs) {
+        return xs[i];
+    }
+
+    fun int(int, int...) sum = (n, xs) {
+        var int total = 0;
+        for(var int i = 0; i < n; i++) {
+            total = total + xs[i];
+        }
+        return total;
+    }
+
+    fun int(int, Cell*...) cells = (n, cs) {
+        var int total = 0;
+        for(var int i = 0; i < n; i++) {
+            total = total + cs[i].value;
+        }
+        return total;
+    }
+
+    fun Cell*(int) cell = (v) {
+        var Cell* c = new(Cell);
+        c.value = v;
+        return c;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var int c1 = one / ((Main::[int]Id(5) == 5 && Main::[char]Id('c') == 'c' && Main::[flt]Id(1.5) == 1.5) ? 1 : 0);
+
+        var (int, bool) swapped = Main::[bool, int]Swap(true, 3);
+        var int c2 = one / ((swapped.0 == 3 && swapped.1) ? 1 : 0);
+
+        var Box[int]* box = new(Box[int]);
+        box.held = 8;
+        var int c3 = one / ((Main::[int]Unbox(box) == 8) ? 1 : 0);
+
+        var int c4 = one / ((Main::sum(3, 1, 2, 3) == 6 && Main::sum(0) == 0 && Main::[int]Pick(2, 10, 20, 30) == 30) ? 1 : 0);
+
+        var int* run = new(int, 2U);
+        run[0] = 4;
+        run[1] = 5;
+        var int c5 = one / ((Main::sum(2, run...) == 9 && Main::[byte]Pick(1, 7{byte}, 9{byte}) == 9{byte}) ? 1 : 0);
+
+        var int total = 0;
+        for(var int i = 0; i < 50000; i++) {
+            total = total + Main::cells(2, Main::cell(i), Main::cell(1));
+        }
+        var int c6 = one / ((total == 1250025000 && Main::cells(0) == 0) ? 1 : 0);
+    }
+}

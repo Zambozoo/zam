@@ -1,3 +1,4 @@
+import std("data/list/ArrList.zam");
 import std("lang/Strs.zam");
 
 // Quote spells names and byte strings the way LLVM's textual IR reads them
@@ -16,6 +17,12 @@ public namespace Quote {
         return "\"" + Quote::escaped(bytes.0, bytes.1) + "\"";
     }
 
+    // Text answers s as a metadata string
+    public fun str(str) Text = (s) {
+        var (byte*, uint) bytes = Strs::ToBytes(s);
+        return "\"" + Quote::escaped(bytes.0, bytes.1) + "\"";
+    }
+
     // Bytes answers n bytes at b as a c"..." string
     public fun str(byte*, uint) Bytes = (b, n) {
         return "c\"" + Quote::escaped(b, n) + "\"";
@@ -23,16 +30,50 @@ public namespace Quote {
 
     // escaped answers n bytes at b with a quote, a backslash and every byte that is not printable written as \XX
     fun str(byte*, uint) escaped = (b, n) {
-        var str out = "";
+        if(n == 0U) {
+            return "";
+        }
+        var (byte*, uint) alphabet = Strs::ToBytes("0123456789ABCDEF");
+        var byte* out = new(byte, n * 3U);
+        var uint at = 0U;
         for(var uint i = 0U; i < n; i++) {
             var byte c = b[i];
             if(c < ' '{byte} || c > '~'{byte} || c == '"'{byte} || c == '\\'{byte}) {
-                out = out + "\\" + Quote::Hex(c{uint}, 2U);
+                out[at] = '\\'{byte};
+                out[at + 1U] = alphabet.0[(c >> 4{byte}){uint}];
+                out[at + 2U] = alphabet.0[(c & 15{byte}){uint}];
+                at = at + 3U;
             } else {
-                out = out + Strs::FromBytes(&(b[i]), 1U);
+                out[at] = c;
+                at++;
             }
         }
-        return out;
+        var str s = Strs::FromBytes(out, at);
+        free out;
+        return s;
+    }
+
+    // Join answers parts written one after another
+    public fun str(ArrList[str]*) Join = (parts) {
+        var uint total = 0U;
+        for(var uint i = 0U; i < parts.Len(); i++) {
+            total = total + Strs::ToBytes(parts.Get(i)).1;
+        }
+        if(total == 0U) {
+            return "";
+        }
+        var byte* out = new(byte, total);
+        var uint at = 0U;
+        for(var uint i = 0U; i < parts.Len(); i++) {
+            var (byte*, uint) part = Strs::ToBytes(parts.Get(i));
+            for(var uint j = 0U; j < part.1; j++) {
+                out[at] = part.0[j];
+                at++;
+            }
+        }
+        var str s = Strs::FromBytes(out, total);
+        free out;
+        return s;
     }
 
     // Hex answers v as uppercase hexadecimal, at least digits wide

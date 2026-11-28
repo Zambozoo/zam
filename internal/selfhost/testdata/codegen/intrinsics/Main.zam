@@ -1,0 +1,27 @@
+import std("lang/Enums.zam");
+import std("lang/Flts.zam");
+import std("lang/Uints.zam");
+import math = std("math/Flts.zam");
+
+namespace Main {
+    enum Color : int {
+        Red(1),
+        Green(2),
+        Blue(4);
+    }
+
+    enum Size {
+        Small,
+        Medium,
+        Large;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var int c1 = one / ((Uints::Ones(255U) == 8U && Uints::LeadingZeros(1U) == 63U && Uints::LeadingZeros(0U) == 64U && Uints::TrailingZeros(8U) == 3U) ? 1 : 0);
+        var int c2 = one / ((Uints::ReverseBytes(1U) == 72057594037927936U && Flts::ToBits(1.5) == 4609434218613702656U && Flts::FromBits(4609434218613702656U) == 1.5) ? 1 : 0);
+        var int c3 = one / ((math.Flts::Sqrt(16.0) == 4.0 && math.Flts::Floor(2.7) == 2.0 && math.Flts::Pow(2.0, 10.0) == 1024.0 && math.Flts::Log2(8.0) == 3.0) ? 1 : 0);
+        var int c4 = one / ((Enums::[Color]Len() == 3U && Enums::[Color]Ordinal(Color::Blue) == 2U && Enums::[Size]Ordinal(Size::Large) == 2U) ? 1 : 0);
+        var int c5 = one / ((Enums::[Color]All().Get(1U) == Color::Green && Enums::[Size]All().Len() == 3U && *Enums::[Color]Address(Color::Blue) == Color::Blue) ? 1 : 0);
+    }
+}

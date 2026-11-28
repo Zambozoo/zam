@@ -1,0 +1,168 @@
+import std("codec/text/Hex.zam");
+import std("data/list/ArrList.zam");
+import std("crypto/hash/SHA256.zam");
+import std("io/Paths.zam");
+import std("io/local/File.zam");
+import std("io/local/FS.zam");
+import std("io/web/HTTP.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import std("lang/System.zam");
+import "../cli/Target.zam";
+import "../syntax/PackageArchive.zam";
+
+// Pack finds a target's pack
+public namespace Pack {
+    // DevelopmentVersion is the Version of a build that is not a release
+    public var str$ DevelopmentVersion = "dev";
+    // Version is the version of zam, which names the release its packs are downloaded from
+    public var str$ Version = "dev";
+
+    // Libraries are the libraries of a pack the runtime's natives wrap, each before those it calls
+    public var Arr[str]* Libraries = Arr::[str]New(17U, "-lcurl", "-lssl", "-lcrypto", "-larchive", "-lxml2", "-ljson-c", "-lyaml", "-lbson2", "-lcbor",
+        "-lllhttp", "-lsodium", "-lbrotlienc", "-lbrotlidec", "-lbrotlicommon", "-lzstd", "-llz4", "-lz");
+
+    // releasesURL is where zam's releases are downloaded from
+    var str$ releasesURL = "https://github.com/zambozoo/zam/releases/download";
+
+    namespace Errs {
+        public fun Err*(str, str) NoPack = (name, root) {
+            return StrErr::New("no target pack for " + name + " in $ZAM_PACKS (" + root + ")");
+        }
+
+        public fun Err*() Development = () {
+            return StrErr::New("a development build of zam has no released target packs: build them with `task packs` and set $ZAM_PACKS to bin/packs");
+        }
+
+        public fun Err*(str, str) NoChecksum = (release, name) {
+            return StrErr::New("the release at " + release + " lists no checksum for " + name);
+        }
+
+        public fun Err*(str, str, str) Checksum = (name, got, want) {
+            return StrErr::New(name + " has SHA-256 " + got + ", but the release's checksums say " + want);
+        }
+
+        public fun Err*(str, uint) Download = (url, status) {
+            return StrErr::New("cannot download " + url + ": " + status{str});
+        }
+    }
+
+    // Dir answers the directory of t's pack
+    public fun (str, Err*)(Target, str) Dir = (t, cache) {
+        var (str, bool) releases = System::Env("ZAM_RELEASES_URL");
+        if(!releases.1 || releases.0 == "") {
+            releases.0 = Pack::releasesURL;
+        }
+        var (str, bool) packs = System::Env("ZAM_PACKS");
+        if(!packs.1) {
+            packs.0 = "";
+        }
+        return Pack::Find(packs.0, Paths::Join(cache, "packs"), releases.0, Pack::Version, t);
+    }
+
+    // Find answers the directory of t's pack
+    public fun (str, Err*)(str, str, str, str, Target) Find = (packs, root, releases, version, t) {
+        if(packs != "") {
+            var str pack = Paths::Join(packs, t.name);
+            if(!Pack::isPack(pack)) {
+                return ("", Errs::NoPack(t.name, packs));
+            }
+            return (pack, null);
+        } else if(version == Pack::DevelopmentVersion) {
+            return ("", Errs::Development());
+        }
+        var str pack = Paths::Join(Paths::Join(root, version), t.name);
+        if(Pack::isPack(pack)) {
+            return (pack, null);
+        }
+        if(Strs::HasSuffix(releases, "/")) {
+            releases = Strs::Slice(releases, 0U, Strs::ByteLen(releases) - 1U);
+        }
+        var str release = releases + "/" + version;
+        var str name = "zam-pack-" + version + "-" + t.name + ".tar.zst";
+        var (str, Err*) want = Pack::checksum(release, name);
+        if(want.1 != null) {
+            return ("", want.1);
+        }
+        var (str, Err*) archive = Pack::download(release + "/" + name);
+        if(archive.1 != null) {
+            return ("", archive.1);
+        }
+        var (byte*, uint) bytes = Strs::ToBytes(archive.0);
+        var Arr[byte]* sum = SHA256::Sum(bytes.0, bytes.1);
+        var str got = Hex::Encode(sum.Arr(), sum.Len());
+        if(got != want.0) {
+            return ("", Errs::Checksum(name, got, want.0));
+        }
+        var Err* made = FS::MakeDirs(Paths::Dir(pack));
+        if(made != null) {
+            return ("", made);
+        }
+        var (str, Err*) dir = FS::MakeTempDir(Paths::Dir(pack), ".pack-");
+        if(dir.1 != null) {
+            return ("", dir.1);
+        }
+        defer FS::RemoveAll(dir.0);
+        var str path = Paths::Join(dir.0, name);
+        var Err* written = FS::WriteFile(path, archive.0);
+        if(written != null) {
+            return ("", written);
+        }
+        var Err* extracted = PackageArchive::Extract(path, pack);
+        if(extracted != null) {
+            return ("", StrErr::New("cannot extract " + name + ": " + extracted.Err()));
+        }
+        return (pack, null);
+    }
+
+    // CFlags answers the flags C is compiled with against the headers of pack
+    public fun ArrList[str]*(str) CFlags = (pack) {
+        var str include = Paths::Join(pack, "include");
+        var ArrList[str]* flags = ArrList::[str]New(5U, "-DCURL_STATICLIB", "-DBSON_STATIC", "-DLIBXML_STATIC", "-I" + include, "-I" + Paths::Join(include, "libxml2"));
+        var (Arr[str]*, Err*) names = FS::ReadDir(include);
+        if(names.1 == null) {
+            for(var uint i = 0U; i < names.0.Len(); i++) {
+                if(Strs::HasPrefix(names.0.Get(i), "bson-")) {
+                    flags.AddLast("-I" + Paths::Join(include, names.0.Get(i)));
+                }
+            }
+        }
+        return flags;
+    }
+
+    // isPack reports whether dir holds a pack
+    fun bool(str) isPack = (dir) {
+        return FS::Exists(Paths::Join(dir, "sources.txt"));
+    }
+
+    // checksum answers the SHA-256 the checksums of release list for name
+    fun (str, Err*)(str, str) checksum = (release, name) {
+        var (str, Err*) sums = Pack::download(release + "/checksums.txt");
+        if(sums.1 != null) {
+            return ("", sums.1);
+        }
+        var Arr[str]* lines = Strs::Split(sums.0, '\n'{byte});
+        for(var uint i = 0U; i < lines.Len(); i++) {
+            var str line = lines.Get(i);
+            var (uint, bool) at = Strs::Index(line, "  ");
+            if(at.1 && Strs::Slice(line, at.0 + 2U, Strs::ByteLen(line)) == name) {
+                return (Strs::Slice(line, 0U, at.0), null);
+            }
+        }
+        return ("", Errs::NoChecksum(release, name));
+    }
+
+    // download answers what url answers
+    fun (str, Err*)(str) download = (url) {
+        var (HTTP.Response*, Err*) response = HTTP::Get(url);
+        if(response.1 != null) {
+            return ("", StrErr::New("cannot download " + url + ": " + response.1.Err()));
+        } else if(response.0.status != 200U) {
+            response.0.ReadBody();
+            return ("", Errs::Download(url, response.0.status));
+        }
+        return response.0.ReadBody();
+    }
+}

@@ -1,0 +1,301 @@
+import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
+import ast = "../../syntax/ast/*";
+import "../../semantic/Members.zam";
+import "../../semantic/Type.zam";
+import "../ir/IrType.zam";
+import "../ir/Module.zam";
+import "../ir/Quote.zam";
+import "../ir/Value.zam";
+import "../Layout.zam";
+import "Expressions.zam";
+import "Function.zam";
+import "Program.zam";
+
+// Debug is the DWARF a module describes its program with
+public class Debug {
+    // TypeName is the name of a DWARF type, and how much of the front of a value of it an any's box leaves out
+    class TypeName {
+        var uint short;
+        var str name;
+        var uint header;
+    }
+
+    // typeNamesSymbol is the symbol the table of type names lies under, which zam's lldb formatters read
+    static var str$ typeNamesSymbol = "zam_debug_type_names";
+
+    var Program* p;
+    var Module* m;
+    var uint unit;
+    var uint word;
+    var uint subroutine;
+    // reference is the struct a reference is described as, once referenced says one was asked for
+    var uint reference;
+    var bool referenced;
+    var Expressions* x;
+    var HashMap[str, uint]* files;
+    var HashMap[str, uint]* types;
+    var HashMap[str, uint]* locations;
+    var ArrList[TypeName*]* names;
+
+    // New starts the DWARF of p's module, whose program begins in the file at path
+    public static fun Debug*(Program*, str) New = (p, path) {
+        var Debug* d = new(Debug);
+        d.p = p;
+        d.m = p.module;
+        d.files = HashMap::[str, uint]New(0U);
+        d.types = HashMap::[str, uint]New(0U);
+        d.locations = HashMap::[str, uint]New(0U);
+        d.names = ArrList::[TypeName*]New(0U);
+        d.x = Expressions::Kinds(p);
+        d.unit = d.m.Node("distinct !DICompileUnit(language: DW_LANG_C99, file: !" + d.File(path){str} + ", producer: \"zam\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)");
+        d.m.AddNamed("llvm.dbg.cu", ArrList::[uint]New(1U, d.unit));
+        d.word = d.m.Node("!DIBasicType(name: \"word\", size: 64, encoding: DW_ATE_unsigned)");
+        d.subroutine = d.m.Node("!DISubroutineType(types: !{})");
+        return d;
+    }
+
+    // File answers the DWARF file of the source at path
+    public fun uint(str) File = (path) {
+        var (uint, bool) found = this.files.Get(path);
+        if(found.1) {
+            return found.0;
+        }
+        var uint f = this.m.Node("!DIFile(filename: " + Quote::Text(path) + ", directory: \"\")");
+        this.files.Put(path, f);
+        return f;
+    }
+
+    // Function describes fn as the function called name, beginning at line of the source at path, answering its subprogram
+    public fun uint(Module.Function*, str, str, uint) Function = (fn, name, path, line) {
+        var str file = "!" + this.File(path){str};
+        var uint sp = this.m.Node("distinct !DISubprogram(name: " + Quote::Text(name) + ", linkageName: " + Quote::Text(fn.name) + ", scope: " + file + ", file: " + file
+            + ", line: " + line{str} + ", type: !" + this.subroutine{str} + ", scopeLine: " + line{str} + ", spFlags: DISPFlagDefinition, unit: !" + this.unit{str} + ")");
+        fn.dbg = "!" + sp{str};
+        return sp;
+    }
+
+    // Location answers the location at line and column of the subprogram scope
+    public fun uint(uint, uint, uint) Location = (line, column, scope) {
+        var str key = line{str} + ":" + column{str} + ":" + scope{str};
+        var (uint, bool) found = this.locations.Get(key);
+        if(found.1) {
+            return found.0;
+        }
+        var uint l = this.m.Node("!DILocation(line: " + line{str} + ", column: " + column{str} + ", scope: !" + scope{str} + ")");
+        this.locations.Put(key, l);
+        return l;
+    }
+
+    // Variable describes the local named name of type t, declared at line of the file of the subprogram scope
+    public fun uint(str, uint, uint, uint, Type*) Variable = (name, scope, file, line, t) {
+        return this.m.Node("!DILocalVariable(name: " + Quote::Text(name) + ", scope: !" + scope{str} + ", file: !" + file{str} + ", line: " + line{str} + ", type: !" + this.TypeOf(t){str} + ")");
+    }
+
+    // TypeOf answers the DWARF type of a value of t
+    public fun uint(Type*) TypeOf = (t) {
+        var str key = t.Text();
+        var (uint, bool) found = this.types.Get(key);
+        if(found.1) {
+            return found.0;
+        }
+        if(this.p.ids.Names(t)) {
+            var TypeName* named = new(TypeName);
+            named.short = this.p.Short(t);
+            named.name = key;
+            var ast.Decl* d = Members::DeclOf(Program::stripConst(t));
+            if(d != null && d.kind == ast.Field.Kind::Class && Program::stripConst(t).kind != Type.Kind::Wrapped) {
+                named.header = Layout::Header(d);
+            }
+            var bool seen = false;
+            for(var uint i = 0U; i < this.names.Len() && !seen; i++) {
+                seen = this.names.Get(i).short == named.short;
+            }
+            if(!seen) {
+                this.names.AddLast(named);
+            }
+        }
+        var Expressions.Kind k = this.kind(t);
+        var uint md = 0U;
+        if(k == Expressions.Kind::Int) {
+            md = this.base(key, "DW_ATE_signed", 64U);
+        } else if(k == Expressions.Kind::Uint) {
+            md = this.base(key, "DW_ATE_unsigned", 64U);
+        } else if(k == Expressions.Kind::Bool) {
+            md = this.base(key, "DW_ATE_boolean", 8U);
+        } else if(k == Expressions.Kind::Float) {
+            md = this.base(key, "DW_ATE_float", 64U);
+        } else if(k == Expressions.Kind::Char) {
+            md = this.base(key, "DW_ATE_UTF", 32U);
+        } else if(k == Expressions.Kind::Byte) {
+            md = this.base(key, "DW_ATE_unsigned_char", 8U);
+        } else if(this.laidOut(t)) {
+            return this.structOf(t, key);
+        } else if(k == Expressions.Kind::Enum) {
+            md = this.enumeration(Members::DeclOf(Program::stripConst(t)), key);
+        } else if(this.pointsAtLayout(t)) {
+            var uint pointee = this.TypeOf(Program::stripConst(t){Type.Wrapped*}.inner);
+            md = this.m.Node("!DIDerivedType(tag: DW_TAG_pointer_type, baseType: !" + pointee{str} + ", size: 64, align: 64)");
+        } else if(k == Expressions.Kind::String || k == Expressions.Kind::Any || k == Expressions.Kind::Closure || k == Expressions.Kind::Thread) {
+            md = this.m.Node("!DIDerivedType(tag: DW_TAG_typedef, name: " + Quote::Text(key) + ", baseType: !" + this.referenceType(){str} + ")");
+        } else {
+            var uint words = this.words(t);
+            var uint inner = this.word;
+            if(words > 1U) {
+                inner = this.m.Node("!DICompositeType(tag: DW_TAG_array_type, baseType: !" + this.word{str} + ", size: " + (64U * words){str} + ", align: 64, elements: !{!DISubrange(count: " + words{str} + ")})");
+            }
+            md = this.m.Node("!DIDerivedType(tag: DW_TAG_typedef, name: " + Quote::Text(key) + ", baseType: !" + inner{str} + ")");
+        }
+        this.types.Put(key, md);
+        return md;
+    }
+
+    // Finish lays out the table of type names and marks the module as carrying DWARF
+    public fun void() Finish = () {
+        var IrType* i64 = IrType::Int(64U);
+        var IrType* entryType = IrType::Struct(ArrList::[IrType*]New(3U, i64, IrType::Ptr(), i64));
+        var ArrList[TypeName*]* sorted = ArrList::[TypeName*]New(0U);
+        for(var uint i = 0U; i < this.names.Len(); i++) {
+            var TypeName* n = this.names.Get(i);
+            var uint at = sorted.Len();
+            for(; at > 0U && sorted.Get(at - 1U).short > n.short; at--) {}
+            sorted.Add(at, n);
+        }
+        var ArrList[Value*]* entries = ArrList::[Value*]New(0U);
+        for(var uint i = 0U; i < sorted.Len(); i++) {
+            var TypeName* n = sorted.Get(i);
+            entries.AddLast(Value::Struct(entryType, ArrList::[Value*]New(3U, Program::Word(n.short), this.p.Text(n.name).Ref(), Program::Word(n.header))));
+        }
+        var IrType* tableType = IrType::Array(entries.Len(), entryType);
+        var Value* init = Value::Zero(tableType);
+        if(entries.Len() > 0U) {
+            init = Value::Array(entryType, entries);
+        }
+        var Module.Global* table = this.m.AddGlobal(Debug::typeNamesSymbol, tableType, init);
+        table.constant = true;
+        table.linkage = "internal";
+        var Module.Global* count = this.m.AddGlobal(Debug::typeNamesSymbol + "_count", i64, Program::Word(entries.Len()));
+        count.constant = true;
+        count.linkage = "internal";
+        this.m.AddFlag(2U, "Debug Info Version", 3U);
+        this.m.AddFlag(2U, "Dwarf Version", 4U);
+    }
+
+    fun uint(str, str, uint) base = (name, encoding, bits) {
+        return this.m.Node("!DIBasicType(name: " + Quote::Text(name) + ", size: " + bits{str} + ", encoding: " + encoding + ")");
+    }
+
+    fun Expressions.Kind(Type*) kind = (t) {
+        return this.x.kindOf(t);
+    }
+
+    fun uint(Type*) words = (t) {
+        return Layout::AlignUp(this.p.layout.FieldInfo(t).0, Layout::Word) / Layout::Word;
+    }
+
+    // layoutDecl answers the class, abstract, struct or enum with members a value of t is laid out by, or null
+    fun ast.Decl*(Type*) layoutDecl = (t) {
+        t = Program::stripConst(t);
+        var ast.Decl* d = Members::DeclOf(t);
+        if(d == null || t.kind == Type.Kind::Wrapped) {
+            return null;
+        } else if(d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Struct || d.kind == ast.Field.Kind::Abstract) {
+            return d;
+        } else if(d.kind == ast.Field.Kind::Enum && this.kind(t) == Expressions.Kind::Aggregate) {
+            return d;
+        }
+        return null;
+    }
+
+    // laidOut reports whether a value of t has members DWARF can describe where they lie: a class or struct instance, or a tuple
+    fun bool(Type*) laidOut = (t) {
+        return Program::stripConst(t).kind == Type.Kind::Tuple || this.layoutDecl(t) != null;
+    }
+
+    // pointsAtLayout reports whether t is a pointer to a primitive or to what laidOut answers for
+    fun bool(Type*) pointsAtLayout = (t) {
+        t = Program::stripConst(t);
+        if(t.kind != Type.Kind::Wrapped || t{Type.Wrapped*}.wrap != ast.Type.Wrap::Pointer) {
+            return false;
+        }
+        var Type* inner = t{Type.Wrapped*}.inner;
+        return Expressions::primitive(this.kind(inner)) || this.laidOut(inner);
+    }
+
+    // structOf answers the DWARF struct of the inline value of t named key
+    fun uint(Type*, str) structOf = (t, key) {
+        var uint size = this.p.layout.FieldInfo(t).0;
+        var ast.Decl* d = this.layoutDecl(t);
+        var uint header = 0U;
+        if(d != null) {
+            header = Layout::Header(d);
+            size = this.p.layout.Of(Program::stripConst(t)).size;
+        }
+        var uint s = this.m.Reserve();
+        this.types.Put(key, s);
+        var ArrList[uint]* members = ArrList::[uint]New(0U);
+        var Type* bare = Program::stripConst(t);
+        if(bare.kind == Type.Kind::Tuple) {
+            var ArrList[uint]* offsets = this.p.layout.Tuple(bare{Type.Tuple*}).2;
+            for(var uint i = 0U; i < bare{Type.Tuple*}.types.Len(); i++) {
+                members.AddLast(this.member(s, i{str}, offsets.Get(i), bare{Type.Tuple*}.types.Get(i)));
+            }
+        } else {
+            if(d.kind == ast.Field.Kind::Enum) {
+                members.AddLast(this.m.Node("!DIDerivedType(tag: DW_TAG_member, name: \"value\", scope: !" + s{str} + ", baseType: !" + this.enumeration(d, key + ".value"){str} + ", size: 64)"));
+            }
+            var Layout.Shape* shape = this.p.layout.Of(bare);
+            for(var uint i = 0U; i < shape.fields.Len(); i++) {
+                var Members.Field* f = shape.fields.Get(i);
+                if(f.IsMethod() || (Program::stripConst(f.signature).kind == Type.Kind::Array && !Program::stripConst(f.signature){Type.Array*}.sized)) {
+                    continue;
+                }
+                members.AddLast(this.member(s, f.name, header + shape.offsets.Get(f.name).0, f.signature));
+            }
+        }
+        var str elements = "";
+        for(var uint i = 0U; i < members.Len(); i++) {
+            if(i > 0U) {
+                elements = elements + ", ";
+            }
+            elements = elements + "!" + members.Get(i){str};
+        }
+        this.m.Fill(s, "!DICompositeType(tag: DW_TAG_structure_type, name: " + Quote::Text(key) + ", scope: !" + this.unit{str} + ", size: " + (size * 8U){str} + ", align: 64, elements: !{" + elements + "})");
+        return s;
+    }
+
+    fun uint(uint, str, uint, Type*) member = (scope, name, offset, t) {
+        var uint width = this.p.layout.FieldInfo(t).0;
+        return this.m.Node("!DIDerivedType(tag: DW_TAG_member, name: " + Quote::Text(name) + ", scope: !" + scope{str} + ", baseType: !" + this.TypeOf(t){str}
+            + ", size: " + (width * 8U){str} + ", offset: " + (offset * 8U){str} + ")");
+    }
+
+    // enumeration answers the DWARF enumeration named key of d's values by their discriminants
+    fun uint(ast.Decl*, str) enumeration = (d, key) {
+        var ArrList[ast.Field.Value*]* values = Function::EnumValues(d);
+        var uint stride = 1U;
+        if(d{ast.Decl.Enum*}.primitive != null) {
+            stride = this.p.layout.FieldInfo(this.p.model.TypeOf(d{ast.Decl.Enum*}.primitive)).0;
+        }
+        var str elements = "";
+        for(var uint i = 0U; i < values.Len(); i++) {
+            if(i > 0U) {
+                elements = elements + ", ";
+            }
+            elements = elements + "!DIEnumerator(name: " + Quote::Text(values.Get(i).name.value{str}) + ", value: " + (i * stride){str} + ")";
+        }
+        return this.m.Node("!DICompositeType(tag: DW_TAG_enumeration_type, name: " + Quote::Text(key) + ", scope: !" + this.unit{str} + ", size: 64, align: 64, elements: !{" + elements + "}, baseType: !" + this.word{str} + ")");
+    }
+
+    // referenceType answers the struct of one word a reference is described as
+    fun uint() referenceType = () {
+        if(!this.referenced) {
+            this.referenced = true;
+            var uint s = this.m.Reserve();
+            var uint address = this.m.Node("!DIDerivedType(tag: DW_TAG_member, name: \"address\", scope: !" + s{str} + ", baseType: !" + this.word{str} + ", size: 64)");
+            this.m.Fill(s, "!DICompositeType(tag: DW_TAG_structure_type, name: \"zam_reference\", scope: !" + this.unit{str} + ", size: 64, align: 64, elements: !{!" + address{str} + "})");
+            this.reference = s;
+        }
+        return this.reference;
+    }
+}

@@ -49,7 +49,7 @@ func compileWithNativesAndFlags(t *testing.T, flags []string, source string, nat
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
-	object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
+	object, err := generate(t, argv[2:], cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
 	require.NoError(t, err)
 	cache, err := nativeRuntimeCache()
 	require.NoError(t, err)

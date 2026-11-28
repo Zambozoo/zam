@@ -1,6 +1,8 @@
 import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
 import std("lang/Flts.zam");
 import std("lang/Psts.zam");
+import std("lang/Strs.zam");
 import "../../syntax/Token.zam";
 import "../../syntax/TokenKind.zam";
 import ast = "../../syntax/ast/*";
@@ -11,6 +13,7 @@ import "../ir/Builder.zam";
 import "../ir/IrType.zam";
 import "../ir/Module.zam";
 import "../ir/Value.zam";
+import "../Intrinsics.zam";
 import "../Layout.zam";
 import "Function.zam";
 import "Program.zam";
@@ -36,12 +39,40 @@ class Expressions {
         Aggregate(14);
     }
 
+    // Dispatch is how a call finds what it calls
+    class Dispatch {
+        var Value* entry;
+        // closure is the closure called through, or null
+        var Value* closure;
+        var Type.Function* signature;
+        var uint index;
+        var bool byClass;
+        var bool byInterface;
+        // ifaceID is the short id of the interface
+        var uint ifaceID;
+    }
+
+    // Spawn is a call async runs on a thread of its own: the thread's type and, once started, the thread
+    class Spawn {
+        var Type* threadType;
+        var Value* started;
+    }
+
     // Place is somewhere a value lies: its address, its type, and how many bytes of it there are
     class Place {
         var Value* address;
         var Type* ty;
         var uint width;
+        // heap is whether the place is in the heap, where storing a reference is recorded for the collector
+        var bool heap;
     }
+
+    // nullMember and nullDereference are ZAMPANIC_NULL_MEMBER and ZAMPANIC_NULL_DEREFERENCE
+    static var uint$ nullMember = 1U;
+    static var uint$ nullDereference = 2U;
+
+    // stringBytesOffset is how far past a string pointer its bytes begin
+    static var uint$ stringBytesOffset = 16U;
 
     // positOne is the posit 1
     static var uint$ positOne = 4611686018427387904U;
@@ -49,6 +80,16 @@ class Expressions {
     var Function* e;
     var Program* p;
     var Builder* b;
+    // spawn is the async the next call starts a thread for, armed that call's until its arguments are laid out
+    var Spawn* spawn;
+    var Spawn* armed;
+
+    // Kinds answers expressions that only tell how values of a type are held, compiling nothing
+    static fun Expressions*(Program*) Kinds = (p) {
+        var Expressions* x = new(Expressions);
+        x.p = p;
+        return x;
+    }
 
     static fun Expressions*(Function*) New = (e) {
         var Expressions* x = new(Expressions);
@@ -60,8 +101,50 @@ class Expressions {
 
     // Held reports whether a local, a parameter or a result of t is a word this can lower
     fun bool(Type*) Held = (t) {
-        var Kind k = this.kindOf(t);
-        return k != Kind::Other && k != Kind::Aggregate;
+        return this.kindOf(t) != Kind::Other;
+    }
+
+    // Words answers how many words of a frame a value of t takes
+    fun uint(Type*) Words = (t) {
+        return Layout::AlignUp(this.p.layout.FieldInfo(t).0, Layout::Word) / Layout::Word;
+    }
+
+    // SlotPlace answers the place the frame slot slot holding a value of t is
+    fun Place*(uint, Type*) SlotPlace = (slot, t) {
+        var Place* pl = new(Place);
+        pl.address = this.e.slot(slot);
+        pl.ty = t;
+        pl.width = Layout::Word;
+        if(this.kindOf(t) == Kind::Aggregate) {
+            pl.width = this.p.layout.FieldInfo(t).0;
+        }
+        return pl;
+    }
+
+    // WordsOf answers the address of the words a value of t at v lies in: an aggregate's own address, or a word holding v
+    fun Value*(Value*, Type*) WordsOf = (v, t) {
+        if(this.kindOf(t) == Kind::Aggregate) {
+            return v;
+        }
+        return this.e.spill(v);
+    }
+
+    // InitializeValue initializes the zeroed value of t at address: running a struct's initializer, or stamping an instance laid out inline and running its own
+    fun void(Value*, Type*) InitializeValue = (address, t) {
+        var ast.Decl* d = Members::DeclOf(Program::stripConst(t));
+        if(d == null || this.kindOf(t) != Kind::Aggregate) {
+            return;
+        } else if(d.kind == ast.Field.Kind::Class) {
+            this.p.Call(this.b, "zamrt_stamp", ArrList::[Value*]New(3U, this.e.threadValue(), this.p.TypeID(t), address));
+        } else if(d.kind != ast.Field.Kind::Struct) {
+            return;
+        }
+        this.initialize(this.b.Cast("ptrtoint", address, IrType::Int(64U)), Program::stripConst(t));
+    }
+
+    // Copy copies n bytes from src to dst
+    fun void(Value*, Value*, uint, bool) Copy = (dst, src, n, volatile) {
+        this.p.Call(this.b, "llvm.memcpy.p0.p0.i64", ArrList::[Value*]New(4U, dst, src, Program::Word(n), Value::Uint(IrType::Int(1U), volatile ? 1U : 0U)));
     }
 
     // Of lowers x
@@ -82,12 +165,46 @@ class Expressions {
                 var ast.Expr.Cast* c = x{ast.Expr.Cast*};
                 return this.As(c.inner, this.e.ground(this.p.model.TypeOf(c.to)));
             }
+            case (ast.Expr.Kind::Call)
+                return this.call(x{ast.Expr.Call*});
+            case (ast.Expr.Kind::New)
+                return this.allocation(x{ast.Expr.New*});
+            case (ast.Expr.Kind::Tuple)
+                return this.tuple(x{ast.Expr.Tuple*});
+            case (ast.Expr.Kind::TypeValue) {
+                var Type* named = this.e.ground(this.p.model.TypeOf(x{ast.Expr.TypeValue*}.named));
+                if(Members::DeclOf(Program::stripConst(named)) != null) {
+                    this.p.Live(Program::stripConst(named));
+                }
+                return this.p.TypeID(named);
+            }
+            case (ast.Expr.Kind::Lambda)
+                return this.lambdaOf(x{ast.Expr.Lambda*});
+            case (ast.Expr.Kind::Async)
+                return this.asyncOf(x{ast.Expr.Async*});
+            case (ast.Expr.Kind::Wait)
+                return this.waitOn(x{ast.Expr.Wait*});
+            case (ast.Expr.Kind::Static, ast.Expr.Kind::Field, ast.Expr.Kind::Index, ast.Expr.Kind::Path) {
+                var Value* method = this.methodValueOf(x);
+                if(method != null) {
+                    return method;
+                }
+                var Place* pl = this.place(x);
+                if(pl == null) {
+                    return Program::Word(0U);
+                }
+                return this.load(pl);
+            }
         }
         return this.unsupported("an expression of this kind");
     }
 
     // As lowers x converted to target
     fun Value*(ast.Expr*, Type*) As = (x, target) {
+        var Type* t = Program::stripConst(target);
+        if(x.kind == ast.Expr.Kind::Tuple && t.kind == Type.Kind::Tuple && t{Type.Tuple*}.types.Len() == x{ast.Expr.Tuple*}.elements.Len()) {
+            return this.tupleOf(x{ast.Expr.Tuple*}, t{Type.Tuple*});
+        }
         var Value* v = this.Of(x);
         if(this.e.reason != "") {
             return v;
@@ -122,8 +239,12 @@ class Expressions {
                 return this.b.Load(IrType::Int(64U), this.e.slot(this.e.self.slot), false, 0U);
             }
             case (TokenKind::StringLiteral)
-                return this.unsupported("a string literal");
+                return this.b.Cast("ptrtoint", this.e.staticAt(this.p.statics.LiteralSlot(tok.value{str})), IrType::Int(64U));
             case (TokenKind::Identifier) {
+                var Value* method = this.methodValueOf(x);
+                if(method != null) {
+                    return method;
+                }
                 var Place* pl = this.place(x);
                 if(pl == null) {
                     return Program::Word(0U);
@@ -137,44 +258,320 @@ class Expressions {
     // place answers where x names, or null where it names what this cannot lower yet
     fun Place*(ast.Expr*) place = (x) {
         if(x.kind == ast.Expr.Kind::Unary && x{ast.Expr.Unary*}.operator == TokenKind::Star) {
-            this.e.Unsupported("a dereference");
-            return null;
-        } else if(x.kind != ast.Expr.Kind::Symbol || x.start.kind != TokenKind::Identifier) {
+            var ast.Expr* operand = x{ast.Expr.Unary*}.operand;
+            if(operand.kind == ast.Expr.Kind::NAry && (operand{ast.Expr.NAry*}.operator == TokenKind::Plus || operand{ast.Expr.NAry*}.operator == TokenKind::Minus)) {
+                return this.pointeePlace(x, this.pointerArithmetic(operand{ast.Expr.NAry*}, this.typeOf(operand), true));
+            }
+            return this.pointeePlace(x, this.Of(operand));
+        } else if(x.kind == ast.Expr.Kind::Index) {
+            return this.indexPlace(x{ast.Expr.Index*});
+        } else if(x.kind == ast.Expr.Kind::Field) {
+            var ast.Expr.Field* f = x{ast.Expr.Field*};
+            return this.memberPlace(this.Of(f.target), this.typeOf(f.target), f.name.value{str});
+        } else if(x.kind == ast.Expr.Kind::Path) {
+            return this.pathPlace(x{ast.Expr.Path*});
+        } else if(x.kind != ast.Expr.Kind::Static && (x.kind != ast.Expr.Kind::Symbol || x.start.kind != TokenKind::Identifier)) {
             this.e.Unsupported("assigning to an expression of this kind");
             return null;
         }
+        return this.namePlace(x, x.start);
+    }
+
+    // pathPlace answers the member the last name of p selects, out of what each name before it comes to
+    fun Place*(ast.Expr.Path*) pathPlace = (p) {
+        var ArrList[Type*]* types = this.p.model.PathTypes(p);
+        var Place* pl = this.namePlace(p, p.ids.Get(0U));
+        for(var uint i = 1U; i < p.ids.Len() && pl != null; i++) {
+            pl = this.memberPlace(this.load(pl), this.e.ground(types.Get(i - 1U)), p.ids.Get(i).value{str});
+        }
+        return pl;
+    }
+
+    // namePlace answers where the name written at tok as x lies
+    fun Place*(ast.Expr*, Token*) namePlace = (x, tok) {
         var Model.Binding* binding = this.p.model.Binding(x);
-        if(binding == null || binding.kind != Model.Binding.Kind::Local) {
-            this.e.Unsupported("name " + x.start.value{str});
+        if(binding != null && binding.kind == Model.Binding.Kind::Static) {
+            return this.StaticPlace(binding.field);
+        } else if(binding != null && binding.kind == Model.Binding.Kind::Instance && this.e.self != null) {
+            var Value* self = this.b.Load(IrType::Int(64U), this.e.slot(this.e.self.slot), false, 0U);
+            return this.memberPlace(self, this.e.self.ty, tok.value{str});
+        } else if(binding == null || binding.kind != Model.Binding.Kind::Local) {
+            this.e.Unsupported("name " + tok.value{str});
             return null;
         }
         var (Function.Local*, bool) local = this.e.locals.Get(binding.at);
         if(!local.1) {
-            this.e.Unsupported("captured name " + x.start.value{str});
+            this.e.Unsupported("captured name " + tok.value{str});
+            return null;
+        }
+        return this.SlotPlace(local.0.slot, local.0.ty);
+    }
+
+    // StaticPlace answers where the static member or enum value f lies, or null where this cannot lower it yet
+    fun Place*(ast.Field*) StaticPlace = (f) {
+        var Place* pl = new(Place);
+        pl.width = Layout::Word;
+        if(f.kind == ast.Field.Kind::Member) {
+            pl.ty = this.p.model.TypeOf(f{ast.Field.Member*}.declared);
+            if(!this.Held(pl.ty)) {
+                this.e.Unsupported("a static of type " + pl.ty.Text());
+                return null;
+            }
+            pl.width = this.p.layout.FieldInfo(pl.ty).0;
+        } else if(f.kind == ast.Field.Kind::Value) {
+            pl.ty = this.p.members.SelfType(this.p.model.Outer(f));
+            pl.width = this.p.layout.FieldInfo(pl.ty).0;
+        } else if(f{ast.Field.Method*}.generics == null) {
+            this.p.StaticValue(f{ast.Field.Method*});
+            pl.ty = this.p.model.TypeOf(f{ast.Field.Method*}.signature);
+        } else {
+            this.e.Unsupported("generic method " + f.name.value{str} + " as a value without type arguments");
+            return null;
+        }
+        pl.address = this.e.staticAt(this.p.statics.FieldSlot(f));
+        return pl;
+    }
+
+    // allocation allocates what x news: a class instance or struct, a run of values, or values of a tailed type
+    fun Value*(ast.Expr.New*) allocation = (x) {
+        var Type* element = this.e.ground(this.p.model.TypeOf(x.allocated));
+        var Type* pointer = Type.Wrapped::New(null, ast.Type.Wrap::Pointer, element);
+        if(Type::ContainsParam(element)) {
+            return this.unsupported("new " + element.Text());
+        }
+        var Type* bare = Program::stripConst(element);
+        var ast.Decl* d = Members::DeclOf(bare);
+        var bool object = d != null && (d.kind == ast.Field.Kind::Class || d.kind == ast.Field.Kind::Struct);
+        if(x.tail != null || x.count != null) {
+            if(object && this.p.InitializerFor(bare) != null) {
+                return this.unsupported("new " + element.Text() + ", which initializes members");
+            } else if(!object && !this.Held(element)) {
+                return this.unsupported("new " + element.Text());
+            }
+        }
+        if(x.tail != null) {
+            var Value* count = Program::Word(1U);
+            if(x.count != null) {
+                count = this.Of(x.count);
+            }
+            var Value* tail = this.As(x.tail, Type.Primitive::New(null, TokenKind::Uint));
+            var Value* tailed = this.p.Call(this.b, "zamrt_new_tailed", ArrList::[Value*]New(4U, this.e.threadValue(), this.p.TypeID(element), count, tail));
+            return this.keep(this.b.Cast("ptrtoint", tailed, IrType::Int(64U)), pointer);
+        } else if(x.count != null) {
+            var Value* run = this.p.Call(this.b, "zamrt_new_run", ArrList::[Value*]New(3U, this.e.threadValue(), this.p.TypeID(element), this.Of(x.count)));
+            return this.keep(this.b.Cast("ptrtoint", run, IrType::Int(64U)), pointer);
+        } else if(!object) {
+            return this.unsupported("new " + element.Text());
+        }
+        var Value* allocated = this.p.Call(this.b, "zamrt_new_of", ArrList::[Value*]New(3U, this.e.threadValue(), this.p.TypeID(element), Program::Word(1U)));
+        var Value* v = this.keep(this.b.Cast("ptrtoint", allocated, IrType::Int(64U)), pointer);
+        this.initialize(v, bare);
+        return v;
+    }
+
+    // initialize runs the initializer of t over the fresh, zeroed instance v points at
+    fun void(Value*, Type*) initialize = (v, t) {
+        var Module.Function* init = this.p.InitializerFor(t);
+        if(init == null) {
+            return;
+        }
+        var Value* args = this.e.slot(this.e.Temp(Type.Wrapped::New(null, ast.Type.Wrap::Pointer, t)));
+        this.b.Store(v, args, this.e.volatile, 0U);
+        this.b.Call(this.p.entryType, init.Ref(), ArrList::[Value*]New(4U, this.e.threadValue(), Value::Null(), args, Value::Null()));
+    }
+
+    // keep roots v, of type t, in a temporary when it is a reference the collector visits
+    fun Value*(Value*, Type*) keep = (v, t) {
+        if(this.p.Rooted(t)) {
+            this.b.Store(v, this.e.slot(this.e.Temp(t)), this.e.volatile, 0U);
+        }
+        return v;
+    }
+
+    // pointeePlace answers what the pointer v, of the dereference x, points at, panicking when it is null
+    fun Place*(ast.Expr*, Value*) pointeePlace = (x, v) {
+        var Place* pl = this.heapPlace(this.typeOf(x));
+        if(pl == null) {
+            return null;
+        }
+        this.nullCheck(v, Expressions::nullDereference);
+        pl.address = this.b.Cast("inttoptr", v, IrType::Ptr());
+        return pl;
+    }
+
+    // indexPlace answers the element x indexes, as *(target + index), of a pointer or of an array or tail where it lies
+    fun Place*(ast.Expr.Index*) indexPlace = (x) {
+        var Type* t = Program::stripConst(this.typeOf(x.target));
+        var Value* base = null;
+        var Type* element = null;
+        if(t.kind == Type.Kind::Array) {
+            var Place* array = this.place(x.target);
+            if(array == null) {
+                return null;
+            }
+            base = this.b.Cast("ptrtoint", array.address, IrType::Int(64U));
+            element = t{Type.Array*}.inner;
+        } else if(t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Pointer) {
+            base = this.Of(x.target);
+            this.nullCheck(base, Expressions::nullDereference);
+            element = t{Type.Wrapped*}.inner;
+        } else {
+            this.e.Unsupported("indexing a value of type " + t.Text());
+            return null;
+        }
+        var Kind k = this.kindOf(this.typeOf(x.index));
+        if(k != Kind::Int && k != Kind::Uint) {
+            this.e.Unsupported("indexing by " + this.typeOf(x.index).Text());
+            return null;
+        } else if(Type::ContainsParam(element)) {
+            this.e.Unsupported("indexing a run of " + element.Text());
+            return null;
+        }
+        var Value* offset = this.b.Binary("mul", this.Of(x.index), Program::Word(this.p.layout.FieldInfo(element).0));
+        return this.pointeePlace(x, this.b.Binary("add", base, offset));
+    }
+
+    // memberPlace answers the member name of what obj points at
+    fun Place*(Value*, Type*, str) memberPlace = (obj, t, name) {
+        t = Program::stripConst(t);
+        var Type* pointee = t;
+        var Value* base = null;
+        if(t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Pointer) {
+            pointee = Program::stripConst(t{Type.Wrapped*}.inner);
+        } else if(this.kindOf(t) == Kind::Aggregate) {
+            base = obj;
+        } else {
+            this.e.Unsupported("selecting " + name + " from a value of type " + t.Text());
+            return null;
+        }
+        if(pointee.kind == Type.Kind::Tuple) {
+            return this.elementPlace(obj, base, pointee{Type.Tuple*}, name);
+        }
+        var ast.Decl* d = Members::DeclOf(pointee);
+        if(d == null || d.kind == ast.Field.Kind::Interface || (d.kind == ast.Field.Kind::Enum && this.kindOf(pointee) == Kind::Enum)) {
+            this.e.Unsupported("selecting " + name + " from " + pointee.Text());
+            return null;
+        } else if(Type::ContainsParam(pointee)) {
+            this.e.Unsupported("open instantiation " + pointee.Text());
+            return null;
+        }
+        var Layout.Shape* shape = this.p.layout.Of(pointee);
+        var (uint, bool) offset = shape.offsets.Get(name);
+        var Type* member = null;
+        for(var uint i = 0U; i < shape.fields.Len() && member == null; i++) {
+            var Members.Field* f = shape.fields.Get(i);
+            if(!f.IsMethod() && f.name == name) {
+                member = f.signature;
+            }
+        }
+        if(!offset.1 || member == null) {
+            this.e.Unsupported("selecting " + name + " from " + pointee.Text() + " as a value");
+            return null;
+        }
+        var Place* pl = null;
+        if(Program::stripConst(member).kind == Type.Kind::Array) {
+            pl = new(Place);
+            pl.ty = member;
+            pl.heap = true;
+        } else {
+            pl = this.heapPlace(member);
+        }
+        if(pl == null) {
+            return null;
+        } else if(base == null) {
+            this.nullCheck(obj, Expressions::nullMember);
+            base = this.b.Cast("inttoptr", obj, IrType::Ptr());
+        }
+        pl.address = this.b.Gep(IrType::Int(8U), base, ArrList::[Value*]New(1U, Program::Word(Layout::Header(d) + offset.0)), false);
+        return pl;
+    }
+
+    // elementPlace answers the element name, a number, of the tuple obj points at, or of the one at base unless it is null
+    fun Place*(Value*, Value*, Type.Tuple*, str) elementPlace = (obj, base, tuple, name) {
+        var uint index = 0U;
+        var (byte*, uint) digits = Strs::ToBytes(name);
+        for(var uint i = 0U; i < digits.1; i++) {
+            index = index * 10U + (digits.0[i] - '0'{byte}){uint};
+        }
+        var Place* pl = this.heapPlace(tuple.types.Get(index));
+        if(pl == null) {
+            return null;
+        } else if(base == null) {
+            this.nullCheck(obj, Expressions::nullMember);
+            base = this.b.Cast("inttoptr", obj, IrType::Ptr());
+        }
+        pl.address = this.b.Gep(IrType::Int(8U), base, ArrList::[Value*]New(1U, Program::Word(this.p.layout.Tuple(tuple).2.Get(index))), false);
+        return pl;
+    }
+
+    // heapPlace answers a place in the heap holding a value of t
+    fun Place*(Type*) heapPlace = (t) {
+        var uint width = this.p.layout.FieldInfo(t).0;
+        if(!this.Held(t)) {
+            this.e.Unsupported("a value of type " + t.Text() + " where it lies");
+            return null;
+        } else if(width != 1U && width != 4U && width != Layout::Word && this.kindOf(t) != Kind::Aggregate) {
+            this.e.Unsupported("a value " + width{str} + " bytes wide where it lies");
             return null;
         }
         var Place* pl = new(Place);
-        pl.address = this.e.slot(local.0.slot);
-        pl.ty = local.0.ty;
-        pl.width = Layout::Word;
+        pl.ty = t;
+        pl.width = width;
+        pl.heap = true;
         return pl;
+    }
+
+    // nullCheck panics with panic when v is null
+    fun void(Value*, uint) nullCheck = (v, code) {
+        var Module.Block* none = this.e.fn.AddBlock();
+        var Module.Block* ok = this.e.fn.AddBlock();
+        this.b.CondBr(this.b.ICmp("eq", v, Program::Word(0U)), none, ok);
+        this.b.At(none);
+        this.p.Call(this.b, "zamrt_panic", ArrList::[Value*]New(2U, this.e.threadValue(), Value::Uint(IrType::Int(32U), code)));
+        this.b.Unreachable();
+        this.b.At(ok);
     }
 
     // load reads the word at pl, zero-extending a narrow one
     fun Value*(Place*) load = (pl) {
-        if(pl.width == Layout::Word) {
+        if(!this.Held(pl.ty)) {
+            return this.unsupported("a value of type " + pl.ty.Text());
+        } else if(this.kindOf(pl.ty) == Kind::Aggregate) {
+            return pl.address;
+        } else if(pl.width == Layout::Word) {
             return this.b.Load(IrType::Int(64U), pl.address, false, 0U);
         }
         return this.zext(this.b.Load(IrType::Int(pl.width * 8U), pl.address, false, 0U));
     }
 
-    // store writes the word v to pl, truncating it to a narrow one
+    // store writes the word v to pl, truncating it to a narrow one, and records a reference written to the heap for the collector
     fun void(Place*, Value*) store = (pl, v) {
-        if(pl.width == Layout::Word) {
-            this.b.Store(v, pl.address, false, 0U);
+        if(!this.Held(pl.ty)) {
+            this.e.Unsupported("storing a value of type " + pl.ty.Text());
             return;
         }
-        this.b.Store(this.b.Cast("trunc", v, IrType::Int(pl.width * 8U)), pl.address, false, 0U);
+        var bool volatile = this.e.volatile && !pl.heap;
+        var ast.Decl* d = Members::DeclOf(Program::stripConst(pl.ty));
+        if(this.kindOf(pl.ty) == Kind::Aggregate && d != null && d.kind == ast.Field.Kind::Class) {
+            if(pl.heap) {
+                var uint header = Layout::Header(d);
+                var ArrList[Value*]* past = ArrList::[Value*]New(1U, Program::Word(header));
+                this.Copy(this.b.Gep(IrType::Int(8U), pl.address, past, false), this.b.Gep(IrType::Int(8U), v, past, false), pl.width - header, false);
+            } else {
+                this.Copy(pl.address, v, pl.width, volatile);
+                this.p.Live(Program::stripConst(pl.ty));
+                this.p.Call(this.b, "zamrt_stamp", ArrList::[Value*]New(3U, this.e.threadValue(), this.p.TypeID(pl.ty), pl.address));
+            }
+        } else if(this.kindOf(pl.ty) == Kind::Aggregate) {
+            this.Copy(pl.address, v, pl.width, volatile);
+        } else if(pl.width == Layout::Word) {
+            this.b.Store(v, pl.address, volatile, 0U);
+        } else {
+            this.b.Store(this.b.Cast("trunc", v, IrType::Int(pl.width * 8U)), pl.address, volatile, 0U);
+        }
+        if(pl.heap && this.p.Rooted(pl.ty)) {
+            this.p.Call(this.b, "zamrt_record_write", ArrList::[Value*]New(3U, this.e.threadValue(), pl.address, Program::Word(pl.width)));
+        }
     }
 
     fun Value*(ast.Expr.NAry*) nary = (x) {
@@ -194,6 +591,12 @@ class Expressions {
                 return this.comparison(x);
             case (TokenKind::Spaceship)
                 return this.spaceship(x);
+            case (TokenKind::Subtype) {
+                var Value* child = this.Of(x.operands.Get(0U));
+                var Value* parent = this.Of(x.operands.Get(1U));
+                var Value* answer = this.p.Call(this.b, "zamrt_subtype_of", ArrList::[Value*]New(3U, this.e.threadValue(), child, parent));
+                return this.zext(this.b.ICmp("ne", answer, Value::Uint(IrType::Int(8U), 0U)));
+            }
             case (TokenKind::Plus, TokenKind::Minus, TokenKind::Star, TokenKind::Slash, TokenKind::Percent, TokenKind::And, TokenKind::Or, TokenKind::Caret, TokenKind::LessLess, TokenKind::GreaterGreater, TokenKind::GreaterGreaterGreater)
                 return this.binary(x);
         }
@@ -213,10 +616,85 @@ class Expressions {
                 }
                 return this.b.Cast("ptrtoint", pl.address, IrType::Int(64U));
             }
-            case (TokenKind::Star)
-                return this.unsupported("a dereference");
+            case (TokenKind::Star) {
+                var Place* pl = this.place(x);
+                if(pl == null) {
+                    return Program::Word(0U);
+                }
+                return this.load(pl);
+            }
+            case (TokenKind::Hash) {
+                var Type* t = this.typeOf(x.operand);
+                if(!this.Held(t)) {
+                    return this.unsupported("hashing " + t.Text());
+                }
+                var Value* v = this.Of(x.operand);
+                return this.p.Call(this.b, "zamrt_hash", ArrList::[Value*]New(3U, this.e.threadValue(), this.p.TypeID(t), this.WordsOf(v, t)));
+            }
+            case (TokenKind::At)
+                return this.typeOfValue(x.operand);
         }
         return this.unsupported("the " + x.operator.text + " operator");
+    }
+
+    // typeOfValue answers the type of what x comes to: what an any holds, the class of the instance a pointer to a class, abstract or interface points at, and otherwise the type it was written with
+    fun Value*(ast.Expr*) typeOfValue = (x) {
+        var Type* t = this.typeOf(x);
+        var Value* v = this.Of(x);
+        var Type* typeType = Type.Primitive::New(null, TokenKind::Type);
+        if(this.kindOf(t) == Kind::Any) {
+            var Value* words = this.e.slot(this.e.Temp(typeType));
+            this.p.Call(this.b, "zamrt_any_type_words", ArrList::[Value*]New(3U, this.e.threadValue(), this.b.Cast("inttoptr", v, IrType::Ptr()), words));
+            return words;
+        } else if(!Expressions::virtuallyTyped(t)) {
+            return this.p.TypeID(t);
+        }
+        var Value* out = this.e.slot(this.e.Temp(typeType));
+        this.Copy(out, this.p.TypeID(t), this.p.layout.FieldInfo(typeType).0, false);
+        var Module.Block* known = this.e.fn.AddBlock();
+        var Module.Block* done = this.e.fn.AddBlock();
+        this.b.CondBr(this.b.ICmp("ne", v, Program::Word(0U)), known, done);
+        this.b.At(known);
+        this.p.Call(this.b, "zamrt_type_of_words", ArrList::[Value*]New(3U, this.e.threadValue(), this.b.Cast("inttoptr", v, IrType::Ptr()), out));
+        this.b.Br(done);
+        this.b.At(done);
+        return out;
+    }
+
+    // virtuallyTyped reports whether a value of t may be of some declaration below the one t names: an abstract or an interface always, and a class when pointed at
+    static fun bool(Type*) virtuallyTyped = (t) {
+        var bool pointer = false;
+        for(; t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Pointer; t = t{Type.Wrapped*}.inner) {
+            pointer = true;
+        }
+        var ast.Decl* d = Members::DeclOf(t);
+        if(d == null) {
+            return false;
+        }
+        return d.kind == ast.Field.Kind::Abstract || d.kind == ast.Field.Kind::Interface || (d.kind == ast.Field.Kind::Class && pointer);
+    }
+
+    // runtimeComparison compares two values through the runtime, by their contents or by the Eq and Cmp of the instances they point at
+    fun Value*(ast.Expr.NAry*) runtimeComparison = (x) {
+        var ast.Expr* l = x.operands.Get(0U);
+        var ast.Expr* r = x.operands.Get(1U);
+        var Type* lt = this.typeOf(l);
+        var Type* rt = this.typeOf(r);
+        var Value* left = this.Of(l);
+        var Value* right = this.Of(r);
+        var ArrList[Value*]* args = ArrList::[Value*]New(5U, this.e.threadValue(), this.p.TypeID(lt), this.WordsOf(left, lt), this.p.TypeID(rt), this.WordsOf(right, rt));
+        if(x.operator == TokenKind::EqualEqual || x.operator == TokenKind::BangEqual) {
+            var Value* equal = this.b.ICmp("ne", this.p.Call(this.b, "zamrt_eq", args), Value::Uint(IrType::Int(8U), 0U));
+            if(x.operator == TokenKind::BangEqual) {
+                equal = this.b.Not(equal);
+            }
+            return this.zext(equal);
+        }
+        var Value* order = this.p.Call(this.b, "zamrt_cmp", args);
+        if(x.operator == TokenKind::Spaceship) {
+            return order;
+        }
+        return this.zext(this.b.ICmp(Expressions::predicate(x.operator, true), order, Program::Word(0U)));
     }
 
     fun Value*(ast.Expr.Unary*) step = (x) {
@@ -327,8 +805,12 @@ class Expressions {
     fun Value*(ast.Expr.NAry*) comparison = (x) {
         var Type* t = this.typeOf(x.operands.Get(0U));
         var Kind k = this.kindOf(t);
-        if(this.byRuntime(t, k)) {
-            return this.unsupported("comparing values of type " + t.Text());
+        if(this.MemberEnum(t)) {
+            var Value* l = this.Discriminant(this.As(x.operands.Get(0U), t));
+            var Value* r = this.Discriminant(this.As(x.operands.Get(1U), t));
+            return this.zext(this.b.ICmp(Expressions::predicate(x.operator, false), l, r));
+        } else if(this.byRuntime(t, k)) {
+            return this.runtimeComparison(x);
         } else if(k != Kind::Pointer && k != Kind::Enum && !Expressions::primitive(k)) {
             return this.unsupported("a value of type " + t.Text());
         }
@@ -338,6 +820,17 @@ class Expressions {
             return this.zext(this.floatComparison(x.operator, left, right));
         }
         return this.zext(this.b.ICmp(Expressions::predicate(x.operator, k == Kind::Int || k == Kind::Posit), left, right));
+    }
+
+    // MemberEnum reports whether t is an enum with members, whose values lie inline
+    fun bool(Type*) MemberEnum = (t) {
+        var ast.Decl* d = Members::DeclOf(Program::stripConst(t));
+        return d != null && d.kind == ast.Field.Kind::Enum && this.kindOf(t) == Kind::Aggregate;
+    }
+
+    // Discriminant answers the discriminant of the value of an enum with members at v, its first word
+    fun Value*(Value*) Discriminant = (v) {
+        return this.b.Load(IrType::Int(64U), v, false, 0U);
     }
 
     // floatComparison compares two floats
@@ -364,13 +857,20 @@ class Expressions {
     fun Value*(ast.Expr.NAry*) spaceship = (x) {
         var Type* t = this.typeOf(x.operands.Get(0U));
         var Kind k = this.kindOf(t);
-        if(k == Kind::Enum || (k == Kind::Pointer && !this.byRuntime(t, k))) {
+        var bool members = this.MemberEnum(t);
+        if(k == Kind::Enum || members || (k == Kind::Pointer && !this.byRuntime(t, k))) {
             k = Kind::Uint;
+        } else if(this.Held(t) && !Expressions::primitive(k)) {
+            return this.runtimeComparison(x);
         } else if(!Expressions::primitive(k)) {
             return this.unsupported("comparing values of type " + t.Text());
         }
         var Value* left = this.As(x.operands.Get(0U), t);
         var Value* right = this.As(x.operands.Get(1U), t);
+        if(members) {
+            left = this.Discriminant(left);
+            right = this.Discriminant(right);
+        }
         var Value* greater = null;
         var Value* less = null;
         if(k == Kind::Float) {
@@ -390,9 +890,9 @@ class Expressions {
         var Type* t = this.typeOf(x);
         var Kind k = this.kindOf(t);
         if(k == Kind::Pointer) {
-            return this.pointerArithmetic(x, t);
+            return this.pointerArithmetic(x, t, false);
         } else if(k == Kind::String && x.operator == TokenKind::Plus) {
-            return this.unsupported("concatenating strings");
+            return this.concat(x, t);
         } else if(!Expressions::primitive(k)) {
             return this.unsupported("a value of type " + t.Text());
         }
@@ -497,8 +997,871 @@ class Expressions {
         return this.b.Binary(quotient ? "sdiv" : "srem", left, divisor);
     }
 
+    // call calls a static method, or an instance method on its receiver
+    fun Value*(ast.Expr.Call*) call = (x) {
+        var Spawn* armed = this.armed;
+        this.armed = this.spawn;
+        this.spawn = null;
+        var Value* v = this.callKind(x);
+        this.armed = armed;
+        return v;
+    }
+
+    // callKind calls a native, a static method, an instance method or a closure
+    fun Value*(ast.Expr.Call*) callKind = (x) {
+        if(x.callee.kind == ast.Expr.Kind::Cast && x.callee{ast.Expr.Cast*}.inner.kind == ast.Expr.Kind::Native) {
+            if(this.armed != null) {
+                return this.unsupported("async of a native");
+            }
+            return this.nativeCall(x);
+        }
+        var ast.Field.Method* method = this.staticCallee(x.callee);
+        if(method == null) {
+            return this.methodCall(x);
+        }
+        var Type* signature = this.p.model.TypeOf(method.signature);
+        if(signature == null || signature.kind != Type.Kind::Function) {
+            return this.unsupported("a call of an unknown type");
+        }
+        var Dispatch* d = new(Dispatch);
+        if(method.generics == null) {
+            d.entry = this.p.functionFor(method).Ref();
+        } else {
+            var ArrList[ast.Type*]* written = x.callee{ast.Expr.Static*}.arguments;
+            var ArrList[Type*]* arguments = ArrList::[Type*]New(0U);
+            var HashMap[ast.Generic*, Type*]* bindings = HashMap::[ast.Generic*, Type*]New(0U);
+            for(var uint i = 0U; i < written.Len(); i++) {
+                var Type* argument = this.e.ground(this.p.model.TypeOf(written.Get(i)));
+                if(argument == null || Type::ContainsParam(argument)) {
+                    return this.unsupported("an open instantiation of " + method.name.value{str});
+                }
+                arguments.AddLast(argument);
+                bindings.Put(method.generics.Get(i), argument);
+            }
+            signature = signature.Instantiate(bindings, null);
+            d.entry = this.p.ConcreteFunction(method, arguments).Ref();
+        }
+        return this.callWith(d, null, null, signature{Type.Function*}, x.arguments);
+    }
+
+    // nativeCall calls the native x's callee names through the native table, or computes it in place when it is an intrinsic
+    fun Value*(ast.Expr.Call*) nativeCall = (x) {
+        var ast.Expr.Cast* cast = x.callee{ast.Expr.Cast*};
+        var str id = cast.inner{ast.Expr.Native*}.id.value{str};
+        var Type* t = this.e.ground(this.p.model.TypeOf(cast.to));
+        if(t == null || t.kind != Type.Kind::Function) {
+            return this.unsupported("native " + id + " called as " + t.Text());
+        }
+        var Type.Function* ft = t{Type.Function*};
+        if(Strs::HasPrefix(id, "STD_ENUM_") && Intrinsics::Is(id)) {
+            return this.enumIntrinsic(x, ft, id);
+        } else if(Intrinsics::Is(id)) {
+            return this.nativeIntrinsic(x, ft, id);
+        }
+        var (uint, bool) index = this.p.natives.Get(id);
+        if(!index.1) {
+            return this.unsupported("native " + id + ", which is not in the native table");
+        } else if(ft.parameters.Len() != x.arguments.Len()) {
+            return this.unsupported("a native call with variadic arguments");
+        }
+        var ArrList[uint]* slots = ArrList::[uint]New(0U);
+        var uint argWords = 0U;
+        for(var uint i = 0U; i < ft.parameters.Len(); i++) {
+            var Type* param = ft.parameters.Get(i);
+            if(!this.Held(param)) {
+                return this.unsupported("an argument of type " + param.Text());
+            }
+            slots.AddLast(this.e.Temp(param));
+            argWords = argWords + this.Words(param);
+        }
+        var Value* result = Value::Null();
+        var uint resultWords = 0U;
+        if(!Function::isVoid(ft.returns)) {
+            if(!this.Held(ft.returns)) {
+                return this.unsupported("a result of type " + ft.returns.Text());
+            }
+            resultWords = this.Words(ft.returns);
+            result = this.e.slot(this.e.Temp(ft.returns));
+        }
+        for(var uint i = 0U; i < ft.parameters.Len() && this.e.reason == ""; i++) {
+            this.store(this.SlotPlace(slots.Get(i), ft.parameters.Get(i)), this.As(x.arguments.Get(i), ft.parameters.Get(i)));
+        }
+        var Value* args = Value::Null();
+        if(slots.Len() > 0U) {
+            args = this.e.slot(slots.Get(0U));
+        }
+        this.p.Call(this.b, "zamrt_call_native", ArrList::[Value*]New(6U, this.e.threadValue(), Program::Word(index.0), args, Program::Word(argWords), result, Program::Word(resultWords)));
+        if(resultWords == 0U) {
+            return Program::Word(0U);
+        } else if(this.kindOf(ft.returns) == Kind::Aggregate) {
+            return result;
+        }
+        return this.b.Load(IrType::Int(64U), result, false, 0U);
+    }
+
+    // nativeIntrinsic computes the native intrinsic id over x's arguments and writes what it answers through the pointer passed last
+    fun Value*(ast.Expr.Call*, Type.Function*, str) nativeIntrinsic = (x, ft, id) {
+        var (uint, str, str) shape = Expressions::intrinsicOf(id);
+        var uint arity = shape.0;
+        if(!Function::isVoid(ft.returns) || ft.parameters.Len() != arity + 1U || x.arguments.Len() != ft.parameters.Len()) {
+            return this.unsupported("native " + id + " as " + ft.Text());
+        }
+        var ArrList[Value*]* args = ArrList::[Value*]New(0U);
+        for(var uint i = 0U; i < ft.parameters.Len(); i++) {
+            var Type* param = ft.parameters.Get(i);
+            if(!this.Held(param)) {
+                return this.unsupported("an argument of type " + param.Text());
+            }
+            args.AddLast(this.As(x.arguments.Get(i), param));
+        }
+        var Value* out = this.b.Cast("inttoptr", args.Get(arity), IrType::Ptr());
+        var IrType* i64 = IrType::Int(64U);
+        var Value* v = null;
+        if(shape.1 == "same") {
+            v = args.Get(0U);
+        } else if(shape.1 == "int") {
+            this.p.Intrinsic(shape.2, i64, ArrList::[IrType*]New(1U, i64));
+            v = this.p.Call(this.b, shape.2, ArrList::[Value*]New(1U, args.Get(0U)));
+        } else if(shape.1 == "count") {
+            this.p.Intrinsic(shape.2, i64, ArrList::[IrType*]New(2U, i64, IrType::Int(1U)));
+            v = this.p.Call(this.b, shape.2, ArrList::[Value*]New(2U, args.Get(0U), Value::Uint(IrType::Int(1U), 0U)));
+        } else {
+            var ArrList[IrType*]* params = ArrList::[IrType*]New(0U);
+            var ArrList[Value*]* floats = ArrList::[Value*]New(0U);
+            for(var uint i = 0U; i < arity; i++) {
+                params.AddLast(IrType::Double());
+                floats.AddLast(this.toFloat(args.Get(i)));
+            }
+            this.p.Intrinsic(shape.2, IrType::Double(), params);
+            v = this.fromFloat(this.p.Call(this.b, shape.2, floats));
+        }
+        this.b.Store(v, out, false, 0U);
+        return Program::Word(0U);
+    }
+
+    // enumIntrinsic computes the enum intrinsic id from the enum x's first argument names, writing what it answers through the pointer passed last
+    fun Value*(ast.Expr.Call*, Type.Function*, str) enumIntrinsic = (x, ft, id) {
+        var uint arity = 0U;
+        if(id == "STD_ENUM_ORDINAL" || id == "STD_ENUM_ADDRESS") {
+            arity = 1U;
+        }
+        if(!Function::isVoid(ft.returns) || ft.parameters.Len() != arity + 2U || x.arguments.Len() != ft.parameters.Len()) {
+            return this.unsupported("native " + id + " as " + ft.Text());
+        } else if(x.arguments.Get(0U).kind != ast.Expr.Kind::TypeValue) {
+            return this.unsupported("native " + id + " passed no enum's type value first");
+        }
+        var Type* t = this.e.ground(this.p.model.TypeOf(x.arguments.Get(0U){ast.Expr.TypeValue*}.named));
+        var ast.Decl* d = Members::DeclOf(Program::stripConst(t));
+        if(d == null || d.kind != ast.Field.Kind::Enum) {
+            return this.unsupported("native " + id + " passed " + t.Text() + ", which is not an enum");
+        }
+        var ArrList[Value*]* args = ArrList::[Value*]New(0U);
+        for(var uint i = 1U; i < ft.parameters.Len(); i++) {
+            var Type* param = this.e.ground(ft.parameters.Get(i));
+            if(!this.Held(param)) {
+                return this.unsupported("an argument of type " + param.Text());
+            }
+            args.AddLast(this.As(x.arguments.Get(i), param));
+        }
+        var Value* out = this.b.Cast("inttoptr", args.Get(arity), IrType::Ptr());
+        var ArrList[ast.Field.Value*]* values = Function::EnumValues(d);
+        var bool members = this.MemberEnum(t);
+        var uint stride = 1U;
+        if(d{ast.Decl.Enum*}.primitive != null) {
+            stride = this.p.layout.FieldInfo(this.p.model.TypeOf(d{ast.Decl.Enum*}.primitive)).0;
+        }
+        if(id == "STD_ENUM_LEN") {
+            this.b.Store(Program::Word(values.Len()), out, false, 0U);
+        } else if(id == "STD_ENUM_ORDINAL") {
+            this.b.Store(this.enumOrdinal(args.Get(0U), members, stride), out, false, 0U);
+        } else if(id == "STD_ENUM_ADDRESS") {
+            if(values.Len() == 0U) {
+                return this.unsupported("native " + id + " of " + t.Text() + ", which has no values");
+            }
+            var IrType* i64 = IrType::Int(64U);
+            var ArrList[Value*]* slots = ArrList::[Value*]New(0U);
+            for(var uint i = 0U; i < values.Len(); i++) {
+                slots.AddLast(Program::Word(this.p.statics.FieldSlot(values.Get(i))));
+            }
+            var Module.Global* table = this.p.module.AddGlobal(d.name.value{str} + ".slots." + this.p.Unnamed(){str}, IrType::Array(slots.Len(), i64), Value::Array(i64, slots));
+            table.constant = true;
+            table.linkage = "private";
+            var Value* at = this.b.Gep(i64, table.Ref(), ArrList::[Value*]New(1U, this.enumOrdinal(args.Get(0U), members, stride)), true);
+            var Value* address = this.p.Call(this.b, "zamrt_static", ArrList::[Value*]New(2U, this.e.threadValue(), this.b.Load(i64, at, false, 0U)));
+            this.b.Store(this.b.Cast("ptrtoint", address, i64), out, false, 0U);
+        } else {
+            var uint size = this.p.layout.FieldInfo(t).0;
+            for(var uint i = 0U; i < values.Len(); i++) {
+                var Place* pl = new(Place);
+                pl.address = this.b.Gep(IrType::Int(8U), out, ArrList::[Value*]New(1U, Program::Word(i * size)), false);
+                pl.ty = t;
+                pl.width = size;
+                pl.heap = true;
+                if(members) {
+                    this.store(pl, this.e.staticAt(this.p.statics.FieldSlot(values.Get(i))));
+                } else {
+                    this.store(pl, Program::Word(i * stride));
+                }
+            }
+        }
+        return Program::Word(0U);
+    }
+
+    // enumOrdinal answers where the enum value v stands among its enum's values: its discriminant, the first word v points at when it has members, over the stride its backing values lie at
+    fun Value*(Value*, bool, uint) enumOrdinal = (v, members, stride) {
+        if(members) {
+            v = this.Discriminant(v);
+        }
+        return this.b.Binary("udiv", v, Program::Word(stride));
+    }
+
+    // intrinsicOf answers how many words the native intrinsic id is computed over, how, and the LLVM intrinsic or C math function computing it
+    static fun (uint, str, str)(str) intrinsicOf = (id) {
+        switch(id) {
+            case ("STD_BITS_ONES")
+                return (1U, "int", "llvm.ctpop.i64");
+            case ("STD_BITS_LEADING_ZEROS")
+                return (1U, "count", "llvm.ctlz.i64");
+            case ("STD_BITS_TRAILING_ZEROS")
+                return (1U, "count", "llvm.cttz.i64");
+            case ("STD_BITS_REVERSE_BYTES")
+                return (1U, "int", "llvm.bswap.i64");
+            case ("STD_BITS_FROM_FLT", "STD_BITS_TO_FLT", "STD_BITS_FROM_PST", "STD_BITS_TO_PST")
+                return (1U, "same", "");
+            case ("STD_MATH_FLOOR")
+                return (1U, "float", "llvm.floor.f64");
+            case ("STD_MATH_CEIL")
+                return (1U, "float", "llvm.ceil.f64");
+            case ("STD_MATH_TRUNC")
+                return (1U, "float", "llvm.trunc.f64");
+            case ("STD_MATH_ROUND")
+                return (1U, "float", "llvm.round.f64");
+            case ("STD_MATH_SQRT")
+                return (1U, "float", "llvm.sqrt.f64");
+            case ("STD_MATH_FMA")
+                return (3U, "float", "llvm.fma.f64");
+            case ("STD_MATH_POW")
+                return (2U, "float", "pow");
+            case ("STD_MATH_MOD")
+                return (2U, "float", "fmod");
+            case ("STD_MATH_REMAINDER")
+                return (2U, "float", "remainder");
+            case ("STD_MATH_HYPOT")
+                return (2U, "float", "hypot");
+            case ("STD_MATH_ATAN2")
+                return (2U, "float", "atan2");
+            case ("STD_MATH_CBRT")
+                return (1U, "float", "cbrt");
+            case ("STD_MATH_EXP")
+                return (1U, "float", "exp");
+            case ("STD_MATH_EXP2")
+                return (1U, "float", "exp2");
+            case ("STD_MATH_EXPM1")
+                return (1U, "float", "expm1");
+            case ("STD_MATH_LOG")
+                return (1U, "float", "log");
+            case ("STD_MATH_LOG2")
+                return (1U, "float", "log2");
+            case ("STD_MATH_LOG10")
+                return (1U, "float", "log10");
+            case ("STD_MATH_LOG1P")
+                return (1U, "float", "log1p");
+            case ("STD_MATH_SIN")
+                return (1U, "float", "sin");
+            case ("STD_MATH_COS")
+                return (1U, "float", "cos");
+            case ("STD_MATH_TAN")
+                return (1U, "float", "tan");
+            case ("STD_MATH_ASIN")
+                return (1U, "float", "asin");
+            case ("STD_MATH_ACOS")
+                return (1U, "float", "acos");
+            case ("STD_MATH_ATAN")
+                return (1U, "float", "atan");
+            case ("STD_MATH_SINH")
+                return (1U, "float", "sinh");
+            case ("STD_MATH_COSH")
+                return (1U, "float", "cosh");
+            case ("STD_MATH_TANH")
+                return (1U, "float", "tanh");
+            case ("STD_MATH_ASINH")
+                return (1U, "float", "asinh");
+            case ("STD_MATH_ACOSH")
+                return (1U, "float", "acosh");
+            case ("STD_MATH_ATANH")
+                return (1U, "float", "atanh");
+        }
+        return (0U, "", "");
+    }
+
+    // methodCall calls the instance method x's callee selects, on the receiver it is selected out of or on this
+    fun Value*(ast.Expr.Call*) methodCall = (x) {
+        var ast.Expr* callee = x.callee;
+        if(callee.kind == ast.Expr.Kind::Symbol && callee.start.kind == TokenKind::Identifier) {
+            var Model.Binding* binding = this.p.model.Binding(callee);
+            if(binding == null || binding.kind != Model.Binding.Kind::Instance || this.e.self == null || binding.field == null || binding.field.kind != ast.Field.Kind::Method) {
+                return this.closureCall(x);
+            }
+            var Value* self = this.b.Load(IrType::Int(64U), this.e.slot(this.e.self.slot), false, 0U);
+            return this.MethodCallOn(self, this.e.self.ty, callee.start.value{str}, x.arguments, false);
+        } else if(callee.kind == ast.Expr.Kind::Field) {
+            var ast.Expr.Field* f = callee{ast.Expr.Field*};
+            var bool viaSuper = f.target.kind == ast.Expr.Kind::Symbol && f.target.start.kind == TokenKind::Super;
+            var Type* t = this.typeOf(f.target);
+            if(!this.selectsMethod(t, f.name.value{str})) {
+                return this.closureCall(x);
+            }
+            return this.receiverCall(this.Of(f.target), t, f.name.value{str}, x.arguments, viaSuper);
+        } else if(callee.kind == ast.Expr.Kind::Path) {
+            var ast.Expr.Path* path = callee{ast.Expr.Path*};
+            var ArrList[Type*]* types = this.p.model.PathTypes(path);
+            var uint last = path.ids.Len() - 1U;
+            if(!this.selectsMethod(this.e.ground(types.Get(last - 1U)), path.ids.Get(last).value{str})) {
+                return this.closureCall(x);
+            }
+            var Place* pl = this.namePlace(path, path.ids.Get(0U));
+            for(var uint i = 1U; i < last && pl != null; i++) {
+                pl = this.memberPlace(this.load(pl), this.e.ground(types.Get(i - 1U)), path.ids.Get(i).value{str});
+            }
+            if(pl == null) {
+                return Program::Word(0U);
+            }
+            return this.receiverCall(this.load(pl), this.e.ground(types.Get(last - 1U)), path.ids.Get(last).value{str}, x.arguments, false);
+        }
+        return this.closureCall(x);
+    }
+
+    // receiverCall calls the method name on v, of type t, a value given its address for the call or a pointer
+    fun Value*(Value*, Type*, str, ArrList[ast.Expr*]*, bool) receiverCall = (v, t, name, arguments, viaSuper) {
+        var (Value*, Type*) receiver = this.receiverOf(v, t);
+        if(receiver.1 == null) {
+            return Program::Word(0U);
+        }
+        return this.MethodCallOn(receiver.0, receiver.1, name, arguments, viaSuper);
+    }
+
+    // MethodCallOn calls the method name of what the pointer receiver, of type t, points at
+    fun Value*(Value*, Type*, str, ArrList[ast.Expr*]*, bool) MethodCallOn = (receiver, t, name, arguments, viaSuper) {
+        var Dispatch* dispatch = this.methodDispatch(t, name, viaSuper);
+        if(dispatch == null) {
+            return Program::Word(0U);
+        }
+        return this.callWith(dispatch, receiver, t, dispatch.signature, arguments);
+    }
+
+    // methodDispatch answers how to find the method name of what a pointer of type t points at: directly for a class, struct or enum or through super, and through the receiver's class for an abstract or an interface; or null where this cannot
+    fun Dispatch*(Type*, str, bool) methodDispatch = (t, name, viaSuper) {
+        var Type* pointee = Program::stripConst(Program::stripConst(t){Type.Wrapped*}.inner);
+        var ast.Decl* d = Members::DeclOf(pointee);
+        if(d == null || Type::ContainsParam(pointee)) {
+            this.e.Unsupported("methods of " + pointee.Text());
+            return null;
+        }
+        var ArrList[Members.Field*]* fields = this.p.layout.Of(pointee).fields;
+        var Members.Field* method = null;
+        var uint index = 0U;
+        for(var uint i = 0U; i < fields.Len() && method == null; i++) {
+            var Members.Field* f = fields.Get(i);
+            if(!f.IsMethod()) {
+                continue;
+            } else if(f.name == name) {
+                method = f;
+            } else {
+                index++;
+            }
+        }
+        if(method == null || method.signature == null || method.signature.kind != Type.Kind::Function) {
+            this.e.Unsupported("method " + name + " of " + pointee.Text());
+            return null;
+        } else if(method.field != null && method.field{ast.Field.Method*}.generics != null) {
+            this.e.Unsupported("generic method " + name);
+            return null;
+        }
+        var Dispatch* dispatch = new(Dispatch);
+        dispatch.index = index;
+        dispatch.signature = method.signature{Type.Function*};
+        var bool body = method.field != null && method.field{ast.Field.Method*}.body != null;
+        if(d.kind == ast.Field.Kind::Interface && !(viaSuper && body)) {
+            dispatch.byInterface = true;
+            dispatch.ifaceID = this.p.Short(pointee);
+        } else if(d.kind == ast.Field.Kind::Abstract && !(viaSuper && body)) {
+            dispatch.byClass = true;
+        } else if(method.field == null && name == "Str" && (d.kind == ast.Field.Kind::Struct || d.kind == ast.Field.Kind::Enum)) {
+            dispatch.entry = this.p.ImplicitStr(pointee).Ref();
+        } else if(!body) {
+            this.e.Unsupported("method " + name + " of " + pointee.Text() + " with no body");
+            return null;
+        } else {
+            dispatch.entry = this.p.methodFunction(method.field{ast.Field.Method*}, pointee).Ref();
+        }
+        return dispatch;
+    }
+
+    // entryOf answers the entry dispatch finds for the pointer receiver
+    fun Value*(Dispatch*, Value*) entryOf = (dispatch, receiver) {
+        if(dispatch.closure != null) {
+            return this.p.Call(this.b, "zamrt_closure_entry", ArrList::[Value*]New(2U, this.e.threadValue(), dispatch.closure));
+        } else if(dispatch.byInterface) {
+            var IrType* i32 = IrType::Int(32U);
+            return this.p.Call(this.b, "zamrt_interface_entry", ArrList::[Value*]New(4U, this.e.threadValue(), this.b.Cast("inttoptr", receiver, IrType::Ptr()),
+                Value::Uint(i32, dispatch.ifaceID), Value::Uint(i32, dispatch.index)));
+        } else if(dispatch.byClass) {
+            return this.p.Call(this.b, "zamrt_virtual_entry", ArrList::[Value*]New(3U, this.e.threadValue(), this.b.Cast("inttoptr", receiver, IrType::Ptr()), Program::Word(dispatch.index)));
+        }
+        return dispatch.entry;
+    }
+
+    // selectsMethod reports whether name, selected out of a value of t, is a method rather than a member
+    fun bool(Type*, str) selectsMethod = (t, name) {
+        t = Program::stripConst(t);
+        if(t.kind == Type.Kind::Wrapped && t{Type.Wrapped*}.wrap == ast.Type.Wrap::Pointer) {
+            t = Program::stripConst(t{Type.Wrapped*}.inner);
+        }
+        if(Members::DeclOf(t) == null || Type::ContainsParam(t)) {
+            return false;
+        }
+        var ArrList[Members.Field*]* fields = this.p.layout.Of(t).fields;
+        for(var uint i = 0U; i < fields.Len(); i++) {
+            if(fields.Get(i).name == name) {
+                return fields.Get(i).IsMethod();
+            }
+        }
+        return false;
+    }
+
+    // receiverOf answers the pointer a method of v, of type t, is called on, giving a value its address for the call, with its type, or a null type where this cannot
+    fun (Value*, Type*)(Value*, Type*) receiverOf = (v, t) {
+        var Kind k = this.kindOf(t);
+        if(k == Kind::Aggregate) {
+            return (this.b.Cast("ptrtoint", v, IrType::Int(64U)), Type.Wrapped::New(null, ast.Type.Wrap::Pointer, t));
+        } else if(k == Kind::Enum) {
+            return (this.b.Cast("ptrtoint", this.e.spill(v), IrType::Int(64U)), Type.Wrapped::New(null, ast.Type.Wrap::Pointer, t));
+        } else if(k != Kind::Pointer) {
+            this.e.Unsupported("methods of " + t.Text());
+            return (v, null);
+        }
+        return (v, t);
+    }
+
+    // methodValue answers the method name of v, of type t, as a closure bound to v
+    fun Value*(Value*, Type*, str, bool) methodValue = (v, t, name, viaSuper) {
+        if(!this.objectPointer(t)) {
+            return this.unsupported("a method of " + t.Text() + " as a value");
+        }
+        var Dispatch* dispatch = this.methodDispatch(t, name, viaSuper);
+        if(dispatch == null) {
+            return Program::Word(0U);
+        }
+        this.nullCheck(v, Expressions::nullMember);
+        var Value* closure = this.p.Call(this.b, "zamrt_new_bound_closure", ArrList::[Value*]New(5U, this.e.threadValue(),
+            this.p.TypeID(dispatch.signature), this.p.TypeID(t), v, this.entryOf(dispatch, v)));
+        return this.keep(this.b.Cast("ptrtoint", closure, IrType::Int(64U)), dispatch.signature);
+    }
+
+    // spawnInfo describes the frame a spawned call's thread starts with: the closure it is called through, then its receiver of type self, unless it is null, and arguments as a call lays them out, then the packed values of its variadic, which keep what the pack's run holds rooted for as long as the thread runs
+    fun Value*(Type.Function*, Type*, ArrList[Type*]*, Type*, uint) spawnInfo = (ft, self, params, element, packed) {
+        var ArrList[Value*]* roots = ArrList::[Value*]New(1U, this.p.RootOf(0U, ft));
+        var uint slot = 1U;
+        if(self != null) {
+            if(this.p.Rooted(self)) {
+                roots.AddLast(this.p.RootOf(slot, self));
+            }
+            slot = slot + this.Words(self);
+        }
+        for(var uint i = 0U; i < params.Len(); i++) {
+            if(this.p.Rooted(params.Get(i))) {
+                roots.AddLast(this.p.RootOf(slot, params.Get(i)));
+            }
+            slot = slot + this.Words(params.Get(i));
+        }
+        for(var uint i = 0U; i < packed; i++) {
+            roots.AddLast(this.p.RootOf(slot, element));
+            slot = slot + this.Words(element);
+        }
+        var uint n = this.p.Unnamed();
+        var Module.Global* table = this.p.module.AddGlobal("zam.spawn.roots." + n{str}, IrType::Array(roots.Len(), this.p.rootType), Value::Array(this.p.rootType, roots));
+        table.constant = true;
+        table.linkage = "private";
+        var Module.Global* info = this.p.module.AddGlobal("zam.spawn.frame." + n{str}, this.p.frameInfoType, Value::Struct(this.p.frameInfoType, ArrList::[Value*]New(4U,
+            Program::Word(0U), Program::Word(slot), Program::Word(roots.Len()), table.Ref())));
+        info.constant = true;
+        info.linkage = "private";
+        return info.Ref();
+    }
+
+    // methodValueOf answers the method x selects as a closure, or null when x selects no method
+    fun Value*(ast.Expr*) methodValueOf = (x) {
+        if(x.kind == ast.Expr.Kind::Symbol) {
+            var Model.Binding* binding = this.p.model.Binding(x);
+            if(binding == null || binding.kind != Model.Binding.Kind::Instance || binding.field == null || binding.field.kind != ast.Field.Kind::Method || this.e.self == null) {
+                return null;
+            }
+            var Value* self = this.b.Load(IrType::Int(64U), this.e.slot(this.e.self.slot), false, 0U);
+            return this.methodValue(self, this.e.self.ty, x.start.value{str}, false);
+        } else if(x.kind == ast.Expr.Kind::Static) {
+            var ast.Expr.Static* st = x{ast.Expr.Static*};
+            var Model.Binding* binding = this.p.model.Binding(x);
+            if(st.arguments == null || st.arguments.Len() == 0U || binding == null || binding.field == null || binding.field.kind != ast.Field.Kind::Method) {
+                return null;
+            }
+            return this.genericMethodValue(binding.field{ast.Field.Method*}, st.arguments);
+        } else if(x.kind == ast.Expr.Kind::Field) {
+            var ast.Expr.Field* f = x{ast.Expr.Field*};
+            var Type* t = this.typeOf(f.target);
+            if(!this.selectsMethod(t, f.name.value{str})) {
+                return null;
+            }
+            var bool viaSuper = f.target.kind == ast.Expr.Kind::Symbol && f.target.start.kind == TokenKind::Super;
+            return this.methodValue(this.Of(f.target), t, f.name.value{str}, viaSuper);
+        } else if(x.kind == ast.Expr.Kind::Path) {
+            var ast.Expr.Path* path = x{ast.Expr.Path*};
+            var ArrList[Type*]* types = this.p.model.PathTypes(path);
+            var uint last = path.ids.Len() - 1U;
+            var Type* t = this.e.ground(types.Get(last - 1U));
+            if(!this.selectsMethod(t, path.ids.Get(last).value{str})) {
+                return null;
+            }
+            var Place* pl = this.namePlace(path, path.ids.Get(0U));
+            for(var uint i = 1U; i < last && pl != null; i++) {
+                pl = this.memberPlace(this.load(pl), this.e.ground(types.Get(i - 1U)), path.ids.Get(i).value{str});
+            }
+            if(pl == null) {
+                return Program::Word(0U);
+            }
+            return this.methodValue(this.load(pl), t, path.ids.Get(last).value{str}, false);
+        }
+        return null;
+    }
+
+    // genericMethodValue answers a closure over the instantiation of the generic static method for the type arguments written
+    fun Value*(ast.Field.Method*, ArrList[ast.Type*]*) genericMethodValue = (method, written) {
+        if(method.generics == null || method.generics.Len() != written.Len()) {
+            return this.unsupported("type arguments to " + method.name.value{str});
+        }
+        var ArrList[Type*]* arguments = ArrList::[Type*]New(0U);
+        var HashMap[ast.Generic*, Type*]* bindings = HashMap::[ast.Generic*, Type*]New(0U);
+        for(var uint i = 0U; i < written.Len(); i++) {
+            var Type* argument = this.e.ground(this.p.model.TypeOf(written.Get(i)));
+            if(argument == null || Type::ContainsParam(argument)) {
+                return this.unsupported("an open instantiation of " + method.name.value{str});
+            }
+            arguments.AddLast(argument);
+            bindings.Put(method.generics.Get(i), argument);
+        }
+        var Type* signature = this.p.model.TypeOf(method.signature).Instantiate(bindings, null);
+        var Value* closure = this.p.Call(this.b, "zamrt_new_function_closure", ArrList::[Value*]New(5U, this.e.threadValue(), this.p.TypeID(signature),
+            this.p.ConcreteFunction(method, arguments).Ref(), Program::Word(0U), Program::Word(0U)));
+        return this.keep(this.b.Cast("ptrtoint", closure, IrType::Int(64U)), signature);
+    }
+
+    // lambdaOf compiles x into a function of its own and answers a closure over it, holding a copy of each local it captures and of the receiver where there is one
+    fun Value*(ast.Expr.Lambda*) lambdaOf = (x) {
+        var Type* t = this.e.ground(this.p.model.TypeOf(x.signature));
+        if(t == null || t.kind != Type.Kind::Function) {
+            return this.unsupported("a lambda of this type");
+        }
+        var ArrList[str]* names = this.p.model.Captures(x);
+        var ArrList[Function.Local*]* captures = ArrList::[Function.Local*]New(0U);
+        var uint words = 0U;
+        for(var uint i = 0U; i < names.Len(); i++) {
+            if(names.Get(i) == "this") {
+                continue;
+            }
+            var (Function.Local*, bool) local = this.e.named.Get(names.Get(i));
+            if(!local.1) {
+                return this.unsupported("capturing " + names.Get(i));
+            }
+            captures.AddLast(local.0);
+            words = words + Function::typeIDWords + this.Words(local.0.ty);
+        }
+        var Function.Local* self = this.e.self;
+        var uint count = captures.Len();
+        if(self != null) {
+            words = words + Function::typeIDWords + this.Words(self.ty);
+            count++;
+        }
+        var Module.Function* fn = this.p.LambdaFunction(this.e.fn.name);
+        var Function* inner = Function::New(this.p, fn, this.e.decl);
+        inner.Named(this.e.name + ".lambda", x.start);
+        inner.bindings = this.e.bindings;
+        inner.Lambda(t{Type.Function*}, x.parameters, captures, self, x.body);
+        inner.Finish();
+
+        var Value* closure = this.p.Call(this.b, "zamrt_new_function_closure", ArrList::[Value*]New(5U, this.e.threadValue(), this.p.TypeID(t), fn.Ref(), Program::Word(count), Program::Word(words)));
+        var Value* entries = this.p.Call(this.b, "zamrt_closure_captures", ArrList::[Value*]New(1U, closure));
+        var ArrList[Function.Local*]* all = ArrList::[Function.Local*]New(0U);
+        for(var uint i = 0U; i < captures.Len(); i++) {
+            all.AddLast(captures.Get(i));
+        }
+        if(self != null) {
+            all.AddLast(self);
+        }
+        var uint base = 0U;
+        for(var uint i = 0U; i < all.Len(); i++) {
+            var Function.Local* c = all.Get(i);
+            var Value* at = this.b.Gep(IrType::Int(64U), entries, ArrList::[Value*]New(1U, Program::Word(base)), true);
+            this.Copy(at, this.p.TypeID(c.ty), Function::typeIDWords * Layout::Word, false);
+            var Value* value = this.b.Gep(IrType::Int(64U), entries, ArrList::[Value*]New(1U, Program::Word(base + Function::typeIDWords)), true);
+            this.Copy(value, this.e.slot(c.slot), this.Words(c.ty) * Layout::Word, false);
+            base = base + Function::typeIDWords + this.Words(c.ty);
+        }
+        return this.keep(this.b.Cast("ptrtoint", closure, IrType::Int(64U)), t);
+    }
+
+    // asyncOf starts a thread running the call x wraps, its arguments evaluated here
+    fun Value*(ast.Expr.Async*) asyncOf = (x) {
+        if(x.call.kind != ast.Expr.Kind::Call) {
+            return this.unsupported("async of an expression of this kind");
+        }
+        var Spawn* spawn = new(Spawn);
+        spawn.threadType = this.typeOf(x);
+        this.spawn = spawn;
+        this.Of(x.call);
+        this.spawn = null;
+        if(spawn.started == null) {
+            return this.unsupported("async of this call");
+        }
+        return spawn.started;
+    }
+
+    // waitOn joins the thread x waits on and answers what its call returned
+    fun Value*(ast.Expr.Wait*) waitOn = (x) {
+        var Value* target = this.b.Cast("inttoptr", this.Of(x.waited), IrType::Ptr());
+        var Type* result = this.typeOf(x);
+        if(Function::isVoid(result)) {
+            this.p.Call(this.b, "zamrt_wait", ArrList::[Value*]New(4U, this.e.threadValue(), target, Value::Null(), Value::Null()));
+            return Program::Word(0U);
+        } else if(!this.Held(result)) {
+            return this.unsupported("waiting on a result of type " + result.Text());
+        }
+        var Place* out = this.SlotPlace(this.e.Temp(result), result);
+        this.p.Call(this.b, "zamrt_wait", ArrList::[Value*]New(4U, this.e.threadValue(), target, this.p.TypeID(result), out.address));
+        if(this.kindOf(result) == Kind::Aggregate) {
+            return out.address;
+        }
+        return this.b.Load(IrType::Int(64U), out.address, false, 0U);
+    }
+
+    // closureCall calls the closure x's callee comes to
+    fun Value*(ast.Expr.Call*) closureCall = (x) {
+        var Type* t = Program::stripConst(this.typeOf(x.callee));
+        if(t == null || t.kind != Type.Kind::Function) {
+            return this.unsupported("a call of this kind");
+        }
+        var Dispatch* dispatch = new(Dispatch);
+        dispatch.closure = this.b.Cast("inttoptr", this.Of(x.callee), IrType::Ptr());
+        return this.callWith(dispatch, null, null, t{Type.Function*}, x.arguments);
+    }
+
+    // callWith calls what dispatch finds, of type ft, over arguments and a result in slots of the caller's frame, the receiver of type self ahead of the arguments unless self is null, all rooted so nothing they hold is collected while it runs
+    fun Value*(Dispatch*, Value*, Type*, Type.Function*, ArrList[ast.Expr*]*) callWith = (dispatch, receiver, self, ft, arguments) {
+        var Spawn* spawn = this.armed;
+        this.armed = null;
+        var uint receiverSlot = 0U;
+        if(self != null) {
+            receiverSlot = this.e.Temp(self);
+        }
+        var uint fixed = ft.parameters.Len();
+        var Type* element = null;
+        if(fixed > 0U) {
+            var Type* last = ft.parameters.Get(fixed - 1U);
+            if(last.kind == Type.Kind::Wrapped && last{Type.Wrapped*}.wrap == ast.Type.Wrap::Variadic) {
+                element = last{Type.Wrapped*}.inner;
+                fixed--;
+            }
+        }
+        if((element == null && arguments.Len() != fixed) || arguments.Len() < fixed) {
+            return this.unsupported(arguments.Len(){str} + " arguments to a function of " + ft.parameters.Len(){str} + " parameters");
+        }
+        var ArrList[uint]* slots = ArrList::[uint]New(0U);
+        var ArrList[Type*]* params = ArrList::[Type*]New(0U);
+        for(var uint i = 0U; i < ft.parameters.Len(); i++) {
+            var Type* param = Function::bound(ft.parameters.Get(i));
+            if(!this.Held(param)) {
+                return this.unsupported("an argument of type " + param.Text());
+            }
+            params.AddLast(param);
+            slots.AddLast(this.e.Temp(param));
+        }
+        var (uint, bool) reserved = (0U, false);
+        var uint packed = 0U;
+        var bool lone = arguments.Len() == fixed + 1U && arguments.Get(fixed).kind == ast.Expr.Kind::Spread;
+        if(spawn != null && element != null && arguments.Len() > fixed && !lone && this.p.Rooted(element)) {
+            if(this.Words(element) * Layout::Word != this.p.layout.FieldInfo(element).0) {
+                return this.unsupported("a pack of " + element.Text());
+            }
+            reserved = (this.e.Temp(element), true);
+            for(var uint i = fixed + 1U; i < arguments.Len(); i++) {
+                this.e.Temp(element);
+            }
+            packed = arguments.Len() - fixed;
+        }
+        var Value* result = Value::Null();
+        if(!Function::isVoid(ft.returns)) {
+            if(!this.Held(ft.returns)) {
+                return this.unsupported("a result of type " + ft.returns.Text());
+            }
+            result = this.e.slot(this.e.Temp(ft.returns));
+        }
+        for(var uint i = 0U; i < fixed && this.e.reason == ""; i++) {
+            var ast.Expr* argument = arguments.Get(i);
+            if(argument.kind == ast.Expr.Kind::Spread) {
+                return this.unsupported("a spread argument");
+            }
+            this.store(this.SlotPlace(slots.Get(i), ft.parameters.Get(i)), this.As(argument, ft.parameters.Get(i)));
+        }
+        if(element != null && this.e.reason == "") {
+            this.b.Store(this.pack(arguments, fixed, element, reserved), this.e.slot(slots.Get(fixed)), this.e.volatile, 0U);
+        }
+        var Value* args = Value::Null();
+        if(self != null) {
+            this.b.Store(receiver, this.e.slot(receiverSlot), this.e.volatile, 0U);
+            args = this.e.slot(receiverSlot);
+        } else if(slots.Len() > 0U) {
+            args = this.e.slot(slots.Get(0U));
+        }
+        if(this.e.reason != "") {
+            return Program::Word(0U);
+        }
+        var Value* entry = this.entryOf(dispatch, receiver);
+        var Value* closure = Value::Null();
+        if(dispatch.closure != null) {
+            closure = dispatch.closure;
+        }
+        if(spawn != null) {
+            var Value* resultType = Value::Null();
+            if(!Function::isVoid(ft.returns)) {
+                resultType = this.p.TypeID(ft.returns);
+            }
+            var Value* info = this.spawnInfo(ft, self, params, element, packed);
+            var Value* handle = this.p.Call(this.b, "zamrt_spawn", ArrList::[Value*]New(7U, this.e.threadValue(), this.p.TypeID(spawn.threadType), entry, closure, info, args, resultType));
+            spawn.started = this.keep(this.b.Cast("ptrtoint", handle, IrType::Int(64U)), spawn.threadType);
+            return Program::Word(0U);
+        }
+        this.b.Call(this.p.entryType, entry, ArrList::[Value*]New(4U, this.e.threadValue(), closure, args, result));
+        if(Function::isVoid(ft.returns)) {
+            return Program::Word(0U);
+        } else if(this.kindOf(ft.returns) == Kind::Aggregate) {
+            return result;
+        }
+        return this.b.Load(IrType::Int(64U), result, false, 0U);
+    }
+
+    // pack lays the arguments from from on, which a variadic parameter of element takes, back to back in the caller's frame, rooted where they are references, and answers a fresh run holding them, or null for none; a lone spread passes on the run it spreads
+    fun Value*(ArrList[ast.Expr*]*, uint, Type*, (uint, bool)) pack = (arguments, from, element, reserved) {
+        var uint n = arguments.Len() - from;
+        if(n == 1U && arguments.Get(from).kind == ast.Expr.Kind::Spread) {
+            var ast.Expr* inner = arguments.Get(from){ast.Expr.Spread*}.inner;
+            if(this.kindOf(this.typeOf(inner)) != Kind::Pointer) {
+                return this.unsupported("spreading " + this.typeOf(inner).Text());
+            }
+            return this.Of(inner);
+        } else if(n == 0U) {
+            return Program::Word(0U);
+        } else if(!this.Held(element)) {
+            return this.unsupported("a pack of " + element.Text());
+        }
+        var uint stride = this.p.layout.FieldInfo(element).0;
+        var uint first = 0U;
+        if(this.p.Rooted(element)) {
+            if(this.Words(element) * Layout::Word != stride) {
+                return this.unsupported("a pack of " + element.Text());
+            }
+            if(reserved.1) {
+                first = reserved.0;
+            } else {
+                first = this.e.Temp(element);
+                for(var uint i = 1U; i < n; i++) {
+                    this.e.Temp(element);
+                }
+            }
+        } else {
+            first = this.e.Reserve((n * stride + Layout::Word - 1U) / Layout::Word);
+        }
+        var Value* base = this.e.slot(first);
+        for(var uint i = 0U; i < n; i++) {
+            var ast.Expr* argument = arguments.Get(from + i);
+            if(argument.kind == ast.Expr.Kind::Spread) {
+                return this.unsupported("a spread among other arguments");
+            }
+            var Value* v = this.As(argument, element);
+            var Place* pl = new(Place);
+            pl.address = this.b.Gep(IrType::Int(8U), base, ArrList::[Value*]New(1U, Program::Word(i * stride)), true);
+            pl.ty = element;
+            pl.width = stride;
+            this.store(pl, v);
+        }
+        var Value* run = this.p.Call(this.b, "zamrt_new_run", ArrList::[Value*]New(3U, this.e.threadValue(), this.p.TypeID(element), Program::Word(n)));
+        this.Copy(run, base, n * stride, false);
+        if(this.p.Rooted(element)) {
+            this.p.Call(this.b, "zamrt_record_write", ArrList::[Value*]New(3U, this.e.threadValue(), run, Program::Word(n * stride)));
+        }
+        return this.b.Cast("ptrtoint", run, IrType::Int(64U));
+    }
+
+    // concat joins the strings x adds up, each kept rooted until the statement ends
+    fun Value*(ast.Expr.NAry*, Type*) concat = (x, t) {
+        var Value* v = this.As(x.operands.Get(0U), t);
+        for(var uint i = 1U; i < x.operands.Len() && this.e.reason == ""; i++) {
+            var Value* right = this.As(x.operands.Get(i), t);
+            var Value* joined = this.p.Call(this.b, "zamrt_concat", ArrList::[Value*]New(3U, this.e.threadValue(),
+                this.b.Cast("inttoptr", v, IrType::Ptr()), this.b.Cast("inttoptr", right, IrType::Ptr())));
+            v = this.keep(this.b.Cast("ptrtoint", joined, IrType::Int(64U)), t);
+        }
+        return v;
+    }
+
+    // tuple builds the tuple x in a rooted slot of its own, converting each element to the tuple's, and answers its address
+    fun Value*(ast.Expr.Tuple*) tuple = (x) {
+        var Type* t = Program::stripConst(this.typeOf(x));
+        if(t.kind != Type.Kind::Tuple || t{Type.Tuple*}.types.Len() != x.elements.Len()) {
+            return this.unsupported("a tuple of type " + t.Text());
+        }
+        return this.tupleOf(x, t{Type.Tuple*});
+    }
+
+    // tupleOf builds the tuple x as one of type tuple, converting each element to tuple's
+    fun Value*(ast.Expr.Tuple*, Type.Tuple*) tupleOf = (x, tuple) {
+        var ArrList[Value*]* values = ArrList::[Value*]New(0U);
+        for(var uint i = 0U; i < x.elements.Len(); i++) {
+            values.AddLast(this.As(x.elements.Get(i), tuple.types.Get(i)));
+        }
+        var Value* base = this.e.slot(this.e.Temp(tuple));
+        var ArrList[uint]* offsets = this.p.layout.Tuple(tuple).2;
+        for(var uint i = 0U; i < values.Len(); i++) {
+            var Place* pl = new(Place);
+            pl.address = this.b.Gep(IrType::Int(8U), base, ArrList::[Value*]New(1U, Program::Word(offsets.Get(i))), true);
+            pl.ty = tuple.types.Get(i);
+            pl.width = this.p.layout.FieldInfo(pl.ty).0;
+            this.store(pl, values.Get(i));
+        }
+        return base;
+    }
+
+    // staticCallee answers the static method callee names when it is not generic, or else null
+    fun ast.Field.Method*(ast.Expr*) staticCallee = (callee) {
+        var uint given = 0U;
+        if(callee.kind == ast.Expr.Kind::Static) {
+            var ArrList[ast.Type*]* arguments = callee{ast.Expr.Static*}.arguments;
+            if(arguments != null) {
+                given = arguments.Len();
+            }
+        } else if(callee.kind != ast.Expr.Kind::Symbol || callee.start.kind != TokenKind::Identifier) {
+            return null;
+        }
+        var Model.Binding* binding = this.p.model.Binding(callee);
+        if(binding == null || binding.kind != Model.Binding.Kind::Static || binding.field == null || binding.field.kind != ast.Field.Kind::Method) {
+            return null;
+        }
+        var ast.Field.Method* method = binding.field{ast.Field.Method*};
+        if((method.generics == null && given != 0U) || (method.generics != null && method.generics.Len() != given)) {
+            return null;
+        }
+        return method;
+    }
+
     // pointerArithmetic offsets a pointer by integers, each counting elements of what the pointer points at
-    fun Value*(ast.Expr.NAry*, Type*) pointerArithmetic = (x, t) {
+    fun Value*(ast.Expr.NAry*, Type*, bool) pointerArithmetic = (x, t, checked) {
         if(x.operator != TokenKind::Plus && x.operator != TokenKind::Minus) {
             return this.unsupported("pointer " + x.operator.text);
         }
@@ -516,6 +1879,8 @@ class Expressions {
                 word = this.b.Binary("mul", word, Program::Word(stride));
             } else if(k != Kind::Pointer) {
                 return this.unsupported("offsetting a pointer by " + this.typeOf(operand).Text());
+            } else if(checked) {
+                this.nullCheck(word, Expressions::nullDereference);
             }
             if(i == 0U) {
                 v = word;
@@ -533,9 +1898,45 @@ class Expressions {
         var Kind fk = this.kindOf(from);
         var Kind tk = this.kindOf(target);
         var str converting = "converting " + from.Text() + " to " + target.Text();
+        if(fk == Kind::String && Expressions::stringBytes(target)) {
+            var Value* none = this.b.ICmp("eq", v, Program::Word(0U));
+            return this.b.Select(none, v, this.b.Binary("add", v, Program::Word(Expressions::stringBytesOffset)));
+        } else if(tk == Kind::Any && (fk == Kind::Any || Expressions::isNull(from))) {
+            return v;
+        } else if(tk == Kind::Any) {
+            if(fk == Kind::Other) {
+                return this.unsupported(converting);
+            }
+            this.p.debug.TypeOf(from);
+            var Value* boxed = this.p.Call(this.b, "zamrt_any_box", ArrList::[Value*]New(3U, this.e.threadValue(), this.p.TypeID(from), this.WordsOf(v, from)));
+            return this.keep(this.b.Cast("ptrtoint", boxed, IrType::Int(64U)), target);
+        } else if(fk == Kind::Any && tk != Kind::String) {
+            if(tk == Kind::Other) {
+                return this.unsupported(converting);
+            }
+            var Place* out = this.SlotPlace(this.e.Temp(target), target);
+            this.p.Call(this.b, "zamrt_any_unbox", ArrList::[Value*]New(4U, this.e.threadValue(), this.b.Cast("inttoptr", v, IrType::Ptr()), this.p.TypeID(target), out.address));
+            if(tk == Kind::Aggregate) {
+                return out.address;
+            }
+            return this.b.Load(IrType::Int(64U), out.address, false, 0U);
+        }
+        if(fk == Kind::Enum && tk != Kind::Enum) {
+            var ast.Decl* d = Members::DeclOf(Program::stripConst(from));
+            var ast.Type* primitive = d{ast.Decl.Enum*}.primitive;
+            if(primitive != null) {
+                var Type* backing = this.p.model.TypeOf(primitive);
+                if(Expressions::primitive(tk) || (tk == Kind::String && this.kindOf(backing) == Kind::String)) {
+                    return this.enumBacking(v, d, backing, target);
+                }
+            }
+        }
         if(tk == Kind::String && (fk == Kind::String || Expressions::isNull(from))) {
             return v;
-        } else if(tk == Kind::Any && (fk == Kind::Any || Expressions::isNull(from))) {
+        } else if(tk == Kind::String && fk != Kind::Other) {
+            var Value* text = this.p.Call(this.b, "zamrt_str", ArrList::[Value*]New(3U, this.e.threadValue(), this.p.TypeID(from), this.WordsOf(v, from)));
+            return this.keep(this.b.Cast("ptrtoint", text, IrType::Int(64U)), target);
+        } else if((fk == Kind::Aggregate || tk == Kind::Aggregate) && this.p.subtyping.Equal(Program::stripConst(from), Program::stripConst(target))) {
             return v;
         } else if(tk == Kind::String || tk == Kind::Any || fk == Kind::String || fk == Kind::Any || fk == Kind::Aggregate || tk == Kind::Aggregate) {
             return this.unsupported(converting);
@@ -558,7 +1959,8 @@ class Expressions {
             if(!Expressions::addressLike(fk) || !Expressions::addressLike(tk)) {
                 return this.unsupported(converting);
             } else if(this.objectPointer(from) && this.objectPointer(target) && this.downcast(from, target)) {
-                return this.unsupported("a downcast");
+                var Type* pointee = Program::stripConst(Program::stripConst(target){Type.Wrapped*}.inner);
+                return this.p.Call(this.b, "zamrt_downcast", ArrList::[Value*]New(3U, this.e.threadValue(), v, this.p.TypeID(pointee)));
             }
             return v;
         } else if(!Expressions::primitive(fk)) {
@@ -595,6 +1997,19 @@ class Expressions {
             return this.narrow(this.p.Call(this.b, "llvm.fptosi.sat.i64.f64", ArrList::[Value*]New(1U, this.toFloat(v))), tk);
         }
         return this.narrow(v, tk);
+    }
+
+    // enumBacking answers what backs the value of the enum d whose discriminant is v, converted to target
+    fun Value*(Value*, ast.Decl*, Type*, Type*) enumBacking = (v, d, backing, target) {
+        var ArrList[ast.Field.Value*]* values = Function::EnumValues(d);
+        if(values.Len() == 0U || values.Get(0U).value == null) {
+            return this.unsupported("enum " + d.name.value{str} + " without backing values");
+        }
+        var Place* pl = new(Place);
+        pl.address = this.b.Gep(IrType::Int(8U), this.e.staticAt(this.p.statics.ValueSlot(d)), ArrList::[Value*]New(1U, v), false);
+        pl.ty = backing;
+        pl.width = this.p.layout.FieldInfo(backing).0;
+        return this.convert(this.load(pl), backing, target);
     }
 
     // kindOf answers how a value of t is held
@@ -641,6 +2056,12 @@ class Expressions {
                 return Kind::Closure;
             case (Type.Kind::Tuple)
                 return Kind::Aggregate;
+            case (Type.Kind::Tailed) {
+                if(t{Type.Tailed*}.sized) {
+                    return Kind::Aggregate;
+                }
+                return Kind::Other;
+            }
             case (Type.Kind::Array) {
                 if(t{Type.Array*}.sized) {
                     return Kind::Aggregate;
@@ -749,6 +2170,16 @@ class Expressions {
     // addressLike reports whether k converts to and from a pointer as the same word
     static fun bool(Kind) addressLike = (k) {
         return k == Kind::Pointer || k == Kind::Int || k == Kind::Uint;
+    }
+
+    // stringBytes reports whether t points at bytes or chars, which a string converts to by where its bytes begin
+    static fun bool(Type*) stringBytes = (t) {
+        t = Program::stripConst(t);
+        if(t.kind != Type.Kind::Wrapped || t{Type.Wrapped*}.wrap != ast.Type.Wrap::Pointer) {
+            return false;
+        }
+        var Type* inner = Program::stripConst(t{Type.Wrapped*}.inner);
+        return inner.kind == Type.Kind::Primitive && (inner{Type.Primitive*}.keyword == TokenKind::Byte || inner{Type.Primitive*}.keyword == TokenKind::Char);
     }
 
     static fun bool(Type*) isNull = (t) {

@@ -1,0 +1,92 @@
+namespace Main {
+    struct Pair {
+        var byte a;
+        var int b;
+    }
+
+    struct Point {
+        var int x = 1;
+        var int y = 2;
+    }
+
+    class Cell {
+        var int value = 9;
+    }
+
+    struct Holder {
+        var Pair pair;
+        var Cell* cell;
+    }
+
+    var Pair origin;
+    var Point corner;
+
+    fun (int, int)(int) divmod = (n) {
+        return (n / 3, n % 3);
+    }
+
+    fun Pair(byte, int) make = (a, b) {
+        var Pair p;
+        p.a = a;
+        p.b = b;
+        return p;
+    }
+
+    fun int(Pair) total = (p) {
+        return p.a{int} + p.b;
+    }
+
+    fun int(Point, int, Point) span = (a, k, b) {
+        return (b.x - a.x) * k + b.y - a.y;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var Pair p;
+        p.a = 3{byte};
+        p.b = 4;
+        var Pair q = p;
+        q.b = 10;
+        var int c1 = one / ((p.b == 4 && q.b == 10 && q.a == 3{byte}) ? 1 : 0);
+
+        var Point pt;
+        var int c2 = one / ((pt.x == 1 && pt.y == 2 && Main::corner.y == 2) ? 1 : 0);
+
+        var (int, int) dm = Main::divmod(17);
+        var int quotient, int _ = Main::divmod(10);
+        var int c3 = one / ((dm.0 == 5 && dm.1 == 2 && quotient == 3) ? 1 : 0);
+
+        var Point far;
+        far.x = 4;
+        far.y = 7;
+        var int c4 = one / ((Main::total(Main::make(2{byte}, 5)) == 7 && Main::span(pt, 3, far) == 14) ? 1 : 0);
+
+        var int[3] arr;
+        arr[0] = 1;
+        arr[2] = 5;
+        var int c5 = one / ((arr[0] + arr[2] == 6) ? 1 : 0);
+
+        var Pair* heap = new(Pair);
+        *heap = q;
+        var Holder* h = new(Holder);
+        h.pair = *heap;
+        h.cell = new(Cell);
+        var int c6 = one / ((heap.b == 10 && h.pair.b == 10 && h.pair.a == 3{byte} && h.cell.value == 9) ? 1 : 0);
+
+        var Cell c;
+        c.value++;
+        var int c7 = one / ((c.value == 10) ? 1 : 0);
+
+        Main::origin = p;
+        Main::origin.b++;
+        var int c8 = one / ((Main::origin.b == 5 && p.b == 4) ? 1 : 0);
+
+        var (int, Cell*) kept = (1, new(Cell));
+        var int sum = 0;
+        for(var int i = 0; i < 100000; i++) {
+            var (int, Cell*) fresh = (i, new(Cell));
+            sum = sum + fresh.1.value - 9;
+        }
+        var int c9 = one / ((kept.1.value == 9 && kept.0 == 1 && sum == 0) ? 1 : 0);
+    }
+}

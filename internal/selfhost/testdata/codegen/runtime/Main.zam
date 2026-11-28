@@ -1,0 +1,64 @@
+namespace Main {
+    abstract Shape {
+        virtual fun int() Sides;
+    }
+
+    class Square <: Shape* {
+        fun int() Sides = () {
+            return 4;
+        }
+    }
+
+    class Circle <: Shape* {
+        fun int() Sides = () {
+            return 0;
+        }
+    }
+
+    struct Point {
+        var int x;
+        var int y;
+    }
+
+    fun int(str) code = (s) {
+        switch(s) {
+            case ("one")
+                return 1;
+            case ("two", "deux")
+                return 2;
+        }
+        return 0;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var str ab = "a" + "b";
+        var int c1 = one / ((ab == "ab" && ab != "ac" && "a" < "b" && ("b" <=> "a") == 1 && ("a" <=> "a") == 0) ? 1 : 0);
+
+        var Square* s = new(Square);
+        var Square* t = s;
+        var Square* u = null;
+        var int c2 = one / ((s == t && s != new(Square) && s != null && u == null) ? 1 : 0);
+
+        var (int, str) a = (1, ab);
+        var (int, str) b = (1, "ab");
+        var Point p;
+        p.x = 3;
+        p.y = 4;
+        var Point q = p;
+        var int c3 = one / ((a == b && (a <=> b) == 0 && p == q) ? 1 : 0);
+        q.y = 5;
+        var int c4 = one / ((p != q && #5 == #5 && #ab == #"ab" && #a == #b) ? 1 : 0);
+
+        var any boxed = 42;
+        var any text = ab;
+        var any point = p;
+        var int c5 = one / ((boxed{int} == 42 && text{str} == "ab" && point{Point}.y == 4) ? 1 : 0);
+
+        var Shape* shape = new(Circle);
+        var Circle* circle = shape{Circle*};
+        var int c6 = one / ((circle.Sides() == 0 && @shape == @circle && @shape <: @shape && @s != @shape) ? 1 : 0);
+
+        var int c7 = one / ((Main::code("one") == 1 && Main::code("deux") == 2 && Main::code("x") == 0) ? 1 : 0);
+    }
+}

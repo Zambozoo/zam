@@ -45,7 +45,7 @@ namespace Main {
 	if !testTarget().IsHost() {
 		t.Skip("zam run runs programs for the host")
 	}
-	object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
+	object, err := generate(t, []string{entry}, cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple})
 	require.NoError(t, err)
 	opts.RuntimeCacheDir, err = nativeRuntimeCache()
 	require.NoError(t, err)

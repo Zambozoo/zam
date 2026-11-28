@@ -29,7 +29,7 @@ public class TypeIds {
         GenericInterface(12U);
     }
 
-    // Entry is one definition of a declaration bucket: the declaration, and the ground instance it describes for a generic struct
+    // Entry is one definition of a declaration bucket
     public class Entry {
         public var ast.Decl* decl;
         public var Type* instance;
@@ -148,6 +148,24 @@ public class TypeIds {
         return i;
     }
 
+    // Names reports whether the image names t whole by a short id, with no array or tail length to it
+    public fun bool(Type*) Names = (t) {
+        for(; t.kind == Type.Kind::Wrapped && (t{Type.Wrapped*}.wrap == ast.Type.Wrap::Variadic || t{Type.Wrapped*}.wrap == ast.Type.Wrap::Const);) {
+            t = t{Type.Wrapped*}.inner;
+        }
+        switch(t.kind) {
+            case (Type.Kind::Primitive)
+                return true;
+            case (Type.Kind::Function, Type.Kind::Wrapped, Type.Kind::Tuple)
+                return this.interned.Get(Canonical::Text(this.model, t)).1;
+            case (Type.Kind::Named)
+                return this.indices.Get(t{Type.Named*}.decl).1;
+            case (Type.Kind::Generic)
+                return this.concretes.Get(Canonical::Text(this.model, t)).1;
+        }
+        return false;
+    }
+
     // internedID answers the type id of a thread, function, pointer or tuple type
     fun uint(Type*) internedID = (t) {
         return TypeIds::Reserved + this.interned.Get(Canonical::Text(this.model, t)).0;
@@ -206,7 +224,7 @@ public class TypeIds {
         }
     }
 
-    // Files answers the files of the program that declare something, by path, which is the order everything after the type ids walks them in
+    // Files answers the files of the program that declare something, by path
     public fun ArrList[Source*]*() Files = () {
         return this.files;
     }
@@ -228,7 +246,7 @@ public class TypeIds {
         this.entries.Get(b{uint}).AddLast(e);
     }
 
-    // MethodInstancesOf answers the ground instances of the generic static method method, in canonical order when this numbering asks for it
+    // MethodInstancesOf answers the ground instances of the generic static method method
     public fun ArrList[Model.MethodInstance*]*(ast.Field.Method*) MethodInstancesOf = (method) {
         var ArrList[Model.MethodInstance*]* instances = ArrList::[Model.MethodInstance*]New(0U);
         var ArrList[str]* keys = ArrList::[str]New(0U);

@@ -1,0 +1,158 @@
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
+import std("io/local/File.zam");
+import std("io/local/FS.zam");
+import std("io/local/Process.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "../cli/Command.zam";
+import "../cli/Target.zam";
+import "../codegen/Zig.zam";
+import "../syntax/Project.zam";
+import "Natives.zam";
+import "Pack.zam";
+import "RuntimeArchive.zam";
+
+// Build links a program's object into an executable
+public namespace Build {
+    // stackBytes is how much stack a Windows executable's main thread is given
+    var uint$ stackBytes = 16777216U;
+
+    // Link links object, compiled as cmd configures for project, with the runtime under runtime and the project's natives, into an executable at cmd's output path, caching beneath cache
+    public fun Err*(ArrList[byte]*, Command*, Project*, str, str) Link = (object, cmd, project, cache, runtime) {
+        var Target t = cmd.target;
+        if(!cmd.hasTarget) {
+            var (Target, Err*) host = Zig::Host(cache);
+            if(host.1 != null) {
+                return host.1;
+            }
+            t = host.0;
+        }
+        var (str, Err*) pack = Pack::Dir(t, cache);
+        if(pack.1 != null) {
+            return pack.1;
+        }
+        var str runtimeCache = Paths::Join(cache, "runtime");
+        var (str, Err*) archive = RuntimeArchive::Build(runtimeCache, t, pack.0, runtime);
+        if(archive.1 != null) {
+            return archive.1;
+        }
+        var (str, Err*) absolute = Build::abs(cmd.outputPath);
+        if(absolute.1 != null) {
+            return StrErr::New("cannot resolve output path " + Strs::Quote(cmd.outputPath) + ": " + absolute.1.Err());
+        }
+        var str output = Build::Executable(t, absolute.0);
+
+        var (str, Err*) dir = FS::MakeTempDir(FS::TempDir(), "zam-link-");
+        if(dir.1 != null) {
+            return StrErr::New("cannot create link directory: " + dir.1.Err());
+        }
+        defer FS::RemoveAll(dir.0);
+        var str objectPath = Paths::Join(dir.0, "program.o");
+        var (File*, Err*) file = File::Create(objectPath);
+        if(file.1 != null) {
+            return file.1;
+        }
+        var Arr[byte]* bytes = object.Arr();
+        var (uint, Err*) written = file.0.Write(bytes.Arr(), bytes.Len());
+        var Err* closed = file.0.Close();
+        if(written.1 != null) {
+            return written.1;
+        } else if(closed != null) {
+            return closed;
+        }
+        var (ArrList[str]*, Err*) natives = Natives::Compile(project, dir.0, t, pack.0, runtime, runtimeCache);
+        if(natives.1 != null) {
+            return natives.1;
+        }
+
+        var ArrList[str]* inputs = ArrList::[str]New(1U, objectPath);
+        for(var uint i = 0U; i < natives.0.Len(); i++) {
+            inputs.AddLast(natives.0.Get(i));
+        }
+        inputs.AddLast(archive.0);
+        var (ArrList[str]*, Err*) argv = Build::linkArgs(t, pack.0, output, inputs, Natives::Links(project));
+        if(argv.1 != null) {
+            return argv.1;
+        }
+        var (Process.Result, Err*) run = Process::Run("", argv.0.Arr(), Zig::Env(runtimeCache));
+        if(run.1 != null) {
+            return run.1;
+        } else if(run.0.code != 0) {
+            return StrErr::New("zig cc failed to link " + output + ":\n" + run.0.output);
+        }
+        return null;
+    }
+
+    // Executable answers path as the name of an executable for t
+    public fun str(Target, str) Executable = (t, path) {
+        if(t.os == "windows" && !Strs::HasSuffix(path, ".exe")) {
+            return path + ".exe";
+        }
+        return path;
+    }
+
+    // abs answers path made absolute against the working directory
+    fun (str, Err*)(str) abs = (path) {
+        var str slashed = FS::ToSlash(path);
+        if(Paths::IsAbs(slashed)) {
+            return (slashed, null);
+        }
+        var (str, Err*) cwd = FS::Cwd();
+        if(cwd.1 != null) {
+            return ("", cwd.1);
+        }
+        return (Paths::Join(FS::ToSlash(cwd.0), slashed), null);
+    }
+
+    // linkArgs answers zig's arguments linking inputs, the objects and archives of the program, into an executable for t
+    fun (ArrList[str]*, Err*)(Target, str, str, ArrList[str]*, ArrList[str]*) linkArgs = (t, pack, output, inputs, links) {
+        var str lib = Paths::Join(pack, "lib");
+        var ArrList[str]* argv = ArrList::[str]New(6U, "zig", "cc", "-target", t.zig, "-o", output);
+        if(t.os == "linux") {
+            argv.AddLast("-static");
+            argv.AddLast("-Wl,--strip-debug");
+        } else if(t.os == "macos") {
+            argv.AddLast("-Wl,-S");
+            argv.AddLast("-Wl,-dead_strip_dylibs");
+            argv.AddLast("-F" + Paths::Join(pack, "frameworks"));
+        } else {
+            argv.AddLast("-Wl,--stack," + Build::stackBytes{str});
+        }
+        for(var uint i = 0U; i < inputs.Len(); i++) {
+            argv.AddLast(inputs.Get(i));
+        }
+        argv.AddLast("-L" + lib);
+        if(t.os == "linux") {
+            argv.AddLast("-Wl,--start-group");
+        }
+        for(var uint i = 0U; i < Pack::Libraries.Len(); i++) {
+            argv.AddLast(Pack::Libraries.Get(i));
+        }
+        for(var uint i = 0U; i < links.Len(); i++) {
+            argv.AddLast(links.Get(i));
+        }
+        if(t.os == "linux") {
+            argv.AddLast("-Wl,--end-group");
+        } else if(t.os == "macos") {
+            argv.AddLast("-framework");
+            argv.AddLast("SystemConfiguration");
+            argv.AddLast("-framework");
+            argv.AddLast("CoreFoundation");
+        } else {
+            var (Arr[str]*, Err*) names = FS::ReadDir(lib);
+            if(names.1 != null) {
+                return (null, names.1);
+            }
+            for(var uint i = 0U; i < names.0.Len(); i++) {
+                var str name = names.0.Get(i);
+                if(Strs::HasSuffix(name, ".lib") && !Strs::HasPrefix(name, "api-ms-win-crt") && name != "compiler_rt.lib" && !Strs::HasPrefix(name, "libmingw")) {
+                    argv.AddLast("-l" + Strs::Slice(name, 0U, Strs::ByteLen(name) - 4U));
+                }
+            }
+        }
+        return (argv, null);
+    }
+}

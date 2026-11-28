@@ -8,6 +8,7 @@ import std("lang/Err.zam");
 import std("lang/StrErr.zam");
 import std("lang/Strs.zam");
 import std("lang/System.zam");
+import "../cli/Optimization.zam";
 import "../cli/Target.zam";
 import "ir/Module.zam";
 
@@ -15,7 +16,7 @@ import "ir/Module.zam";
 public namespace Zig {
     // Host answers the target of the machine zam runs on, as zig reports it
     public fun (Target, Err*)(str) Host = (cache) {
-        var (Process.Result, Err*) run = Process::Run("", Arr::[str]New(2U, "zig", "env"), Zig::env(cache));
+        var (Process.Result, Err*) run = Process::Run("", Arr::[str]New(2U, "zig", "env"), Zig::Env(cache));
         if(run.1 != null) {
             return (Target::AArch64LinuxMusl, run.1);
         } else if(run.0.code != 0) {
@@ -41,20 +42,32 @@ public namespace Zig {
         return (Target::AArch64LinuxMusl, StrErr::New("native code is not supported on " + os + "/" + arch));
     }
 
-    // Compile compiles module for target into the bytes of an object file
-    public fun (ArrList[byte]*, Err*)(Module*, Target, str) Compile = (module, target, cache) {
+    // Compile compiles module for target into the bytes of an object file, optimized as optimization says
+    public fun (ArrList[byte]*, Err*)(Module*, Target, str, Optimization) Compile = (module, target, cache, optimization) {
+        if(optimization == Optimization::Size) {
+            module.OptSize();
+        }
         var (str, Err*) dir = FS::MakeTempDir(FS::TempDir(), "zam-object");
         if(dir.1 != null) {
             return (null, dir.1);
         }
         var str source = Paths::Join(dir.0, "module.ll");
         var str object = Paths::Join(dir.0, "module.o");
-        var Err* written = FS::WriteFile(source, module.Text());
+        var str text = module.Text();
+        var Err* written = FS::WriteFile(source, text);
         if(written != null) {
             FS::RemoveAll(dir.0);
             return (null, written);
         }
-        var (Process.Result, Err*) run = Process::Run("", Arr::[str]New(10U, "zig", "cc", "-c", "-target", target.zig, "-fPIC", "-O0", "-Wno-override-module", source, "-o" + object), Zig::env(cache));
+        var (str, bool) dump = System::Env("ZAM_LLVM_IR");
+        if(dump.1 && dump.0 != "") {
+            var Err* dumped = FS::WriteFile(dump.0, text);
+            if(dumped != null) {
+                FS::RemoveAll(dir.0);
+                return (null, dumped);
+            }
+        }
+        var (Process.Result, Err*) run = Process::Run("", Arr::[str]New(10U, "zig", "cc", "-c", "-target", target.zig, "-fPIC", Zig::level(optimization), "-Wno-override-module", source, "-o" + object), Zig::Env(cache));
         if(run.1 != null) {
             FS::RemoveAll(dir.0);
             return (null, run.1);
@@ -75,8 +88,21 @@ public namespace Zig {
         return (out, null);
     }
 
-    // env answers zig's cache settings: as inherited, or else beneath cache
-    fun Arr[str]*(str) env = (cache) {
+    // level answers the zig cc flag optimization compiles at
+    fun str(Optimization) level = (optimization) {
+        switch(optimization) {
+            case (Optimization::None)
+                return "-O0";
+            case (Optimization::Less)
+                return "-O1";
+            case (Optimization::Aggressive)
+                return "-O3";
+        }
+        return "-O2";
+    }
+
+    // Env answers zig's cache settings: as inherited, or else beneath cache
+    public fun Arr[str]*(str) Env = (cache) {
         return Arr::[str]New(2U, Zig::setting("ZIG_GLOBAL_CACHE_DIR", cache), Zig::setting("ZIG_LOCAL_CACHE_DIR", cache));
     }
 

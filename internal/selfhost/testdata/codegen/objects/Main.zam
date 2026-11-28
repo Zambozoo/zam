@@ -1,0 +1,90 @@
+namespace Main {
+    class Cell {
+        var int value;
+        var Cell* next;
+    }
+
+    class Counter {
+        var int count = 5;
+        var byte small = 7{byte};
+        var char letter = 'q';
+    }
+
+    abstract Base {
+        var int base = 3;
+    }
+
+    class Derived <: Base* {
+        var int own = 4;
+    }
+
+    struct Pair {
+        var byte a;
+        var int b;
+    }
+
+    class Chars~ {
+        var int n;
+        var char[~] chars;
+    }
+
+    class Box[T] {
+        var T item;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var Cell* a = new(Cell);
+        a.value = 4;
+        var int c1 = one / ((a.value == 4 && a.next{void*} == null) ? 1 : 0);
+        var Cell* b = new(Cell);
+        b.next = a;
+        b.next.value++;
+        var int c2 = one / ((b.next.value == 5 && a.value == 5 && b.value == 0) ? 1 : 0);
+
+        var Counter* k = new(Counter);
+        var Derived* d = new(Derived);
+        var int c3 = one / ((k.count == 5 && k.small == 7{byte} && k.letter == 'q' && d.base == 3 && d.own == 4) ? 1 : 0);
+
+        var Pair* p = new(Pair);
+        p.a = 300{byte};
+        p.b = -1;
+        var int* pb = &p.b;
+        var int c4 = one / ((p.a == 44{byte} && *pb == -1) ? 1 : 0);
+        *pb = 8;
+        var int c5 = one / ((p.b == 8) ? 1 : 0);
+
+        var int* run = new(int, 4U);
+        run[0] = 1;
+        run[3] = 9;
+        var int c6 = one / ((run[0] + run[3] == 10 && run[1] == 0) ? 1 : 0);
+        var int* third = run + 3;
+        *third = 2;
+        var int c7 = one / ((run[3] == 2 && *run == 1) ? 1 : 0);
+        free run;
+
+        var Chars~* cs = new(Chars~, 1U, 3U);
+        cs.chars[2] = 'z';
+        cs.n = 3;
+        var int c8 = one / ((cs.chars[2] == 'z' && cs.chars[0] == 0{char} && cs.n == 3) ? 1 : 0);
+
+        var Box[int]* box = new(Box[int]);
+        box.item = 6;
+        var int c9 = one / ((box.item == 6) ? 1 : 0);
+
+        var Cell* head = null;
+        for(var int i = 0; i < 200000; i++) {
+            var Cell* c = new(Cell);
+            c.value = i;
+            c.next = head;
+            head = c;
+        }
+        var int count = 0;
+        var int sum = 0;
+        for(var Cell* c = head; c{void*} != null; c = c.next) {
+            count++;
+            sum = sum + c.value % 7;
+        }
+        var int c10 = one / ((count == 200000 && sum == 599994 && a.value == 5) ? 1 : 0);
+    }
+}

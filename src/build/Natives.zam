@@ -1,0 +1,80 @@
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
+import std("io/local/File.zam");
+import std("io/local/FS.zam");
+import std("io/local/Process.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "../cli/Target.zam";
+import "../codegen/Zig.zam";
+import "../syntax/Path.zam";
+import "../syntax/Project.zam";
+import "RuntimeArchive.zam";
+
+// Natives compiles a project's own native C, which its project file names
+public namespace Natives {
+    // Compile compiles the native.files of project into dir with zig for t, against pack's headers and the runtime's under runtime, answering their objects
+    public fun (ArrList[str]*, Err*)(Project*, str, Target, str, str, str) Compile = (project, dir, t, pack, runtime, cache) {
+        var (ArrList[str]*, Err*) sources = Natives::sources(project);
+        if(sources.1 != null || sources.0.Len() == 0U) {
+            return (ArrList::[str]New(0U), sources.1);
+        }
+        var Arr[str]* env = Zig::Env(cache);
+        var (Process.Result, Err*) version = Process::Run("", Arr::[str]New(2U, "zig", "version"), env);
+        if(version.1 != null || version.0.code != 0) {
+            return (null, StrErr::New("the project has native files to compile, which needs zig on PATH"));
+        }
+        var ArrList[str]* flags = RuntimeArchive::CFlags(t, pack);
+        var ArrList[str]* objects = ArrList::[str]New(0U);
+        for(var uint i = 0U; i < sources.0.Len(); i++) {
+            var str object = Paths::Join(dir, "native" + i{str} + ".o");
+            var ArrList[str]* argv = ArrList::[str]New(2U, "zig", "cc");
+            for(var uint j = 0U; j < flags.Len(); j++) {
+                argv.AddLast(flags.Get(j));
+            }
+            argv.AddLast("-c");
+            argv.AddLast("-I" + Paths::Join(runtime, "include"));
+            argv.AddLast("-I" + Paths::Join(runtime, "src"));
+            argv.AddLast("-o");
+            argv.AddLast(object);
+            argv.AddLast(sources.0.Get(i));
+            var (Process.Result, Err*) run = Process::Run("", argv.Arr(), env);
+            if(run.1 != null) {
+                return (null, run.1);
+            } else if(run.0.code != 0) {
+                return (null, StrErr::New("zig cc failed on " + sources.0.Get(i) + ":\n" + run.0.output));
+            } else if(run.0.output != "") {
+                File::StdErr.WriteStr(run.0.output);
+            }
+            objects.AddLast(object);
+        }
+        return (objects, null);
+    }
+
+    // Links answers the linker flags project's native.links says it links with, or none
+    public fun ArrList[str]*(Project*) Links = (project) {
+        if(project == null) {
+            return ArrList::[str]New(0U);
+        }
+        return project.links;
+    }
+
+    // sources answers the native.files of project, each resolved against its project file and found on disk
+    fun (ArrList[str]*, Err*)(Project*) sources = (project) {
+        var ArrList[str]* sources = ArrList::[str]New(0U);
+        if(project == null) {
+            return (sources, null);
+        }
+        for(var uint i = 0U; i < project.files.Len(); i++) {
+            var str file = project.files.Get(i);
+            var str path = Path::Resolve(project.path, file);
+            if(!FS::Exists(path)) {
+                return (null, StrErr::New("native source " + Strs::Quote(file) + " not found at " + path));
+            }
+            sources.AddLast(path);
+        }
+        return (sources, null);
+    }
+}

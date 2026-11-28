@@ -1,0 +1,17 @@
+namespace Main {
+    fun int() unused = () {
+        var thread[void] t = async(native(STD_SYSTEM_EXIT){void(int)}(1));
+        return 1;
+    }
+
+    fun int() used = () {
+        var thread[void] t = async(native(STD_SYSTEM_EXIT){void(int)}(1));
+        return 2;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        if(argC > 5U) {
+            native(STD_SYSTEM_EXIT){void(int)}(Main::used());
+        }
+    }
+}

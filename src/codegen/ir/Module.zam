@@ -1,4 +1,5 @@
 import std("data/list/ArrList.zam");
+import std("data/map/HashMap.zam");
 import "IrType.zam";
 import "Quote.zam";
 import "Value.zam";
@@ -55,8 +56,17 @@ public class Module {
         public var IrType* ty;
         public var ArrList[Value*]* values;
         public var ArrList[Block*]* blocks;
+        // dbg is the location the instruction is at, as a metadata reference, or ""
+        public var str dbg;
 
         public fun str() Text = () {
+            if(this.dbg != "") {
+                return this.spelled() + ", !dbg " + this.dbg;
+            }
+            return this.spelled();
+        }
+
+        fun str() spelled = () {
             if(!this.phi) {
                 return this.text;
             }
@@ -85,6 +95,8 @@ public class Module {
         public var IrType* ty;
         public var str linkage;
         public var ArrList[str]* attributes;
+        // dbg is the subprogram describing the function, as a metadata reference, or ""
+        public var str dbg;
         public var ArrList[Value*]* params;
         public var ArrList[Block*]* blocks;
         var uint next;
@@ -141,18 +153,22 @@ public class Module {
             for(var uint i = 0U; i < this.attributes.Len(); i++) {
                 head = head + " " + this.attributes.Get(i);
             }
+            if(this.blocks.Len() > 0U && this.dbg != "") {
+                head = head + " !dbg " + this.dbg;
+            }
             if(this.blocks.Len() == 0U) {
                 return head + "\n";
             }
-            var str out = head + " {\n";
+            var ArrList[str]* parts = ArrList::[str]New(1U, head + " {\n");
             for(var uint i = 0U; i < this.blocks.Len(); i++) {
                 var Block* b = this.blocks.Get(i);
-                out = out + b.name + ":\n";
+                parts.AddLast(b.name + ":\n");
                 for(var uint j = 0U; j < b.instrs.Len(); j++) {
-                    out = out + "  " + b.instrs.Get(j).Text() + "\n";
+                    parts.AddLast("  " + b.instrs.Get(j).Text() + "\n");
                 }
             }
-            return out + "}\n";
+            parts.AddLast("}\n");
+            return Quote::Join(parts);
         }
     }
 
@@ -161,7 +177,13 @@ public class Module {
     var ArrList[IrType*]* structs;
     var ArrList[Global*]* globals;
     var ArrList[Function*]* functions;
-    var ArrList[str]* flags;
+    var ArrList[uint]* flags;
+    // nodes is the text of each metadata node, by its number
+    var ArrList[str]* nodes;
+    // named is each named metadata, spelled whole
+    var ArrList[str]* named;
+    // names is every name a global or function has, which a name asked for again is told apart from by a number after it, as LLVM's API does
+    var HashMap[str, uint]* names;
 
     public static fun Module*() New = () {
         var Module* m = new(Module);
@@ -170,7 +192,10 @@ public class Module {
         m.structs = ArrList::[IrType*]New(0U);
         m.globals = ArrList::[Global*]New(0U);
         m.functions = ArrList::[Function*]New(0U);
-        m.flags = ArrList::[str]New(0U);
+        m.flags = ArrList::[uint]New(0U);
+        m.nodes = ArrList::[str]New(0U);
+        m.named = ArrList::[str]New(0U);
+        m.names = HashMap::[str, uint]New(0U);
         return m;
     }
 
@@ -185,7 +210,7 @@ public class Module {
     // AddGlobal adds a global of t named name, defined by init, or declared when init is null
     public fun Global*(str, IrType*, Value*) AddGlobal = (name, t, init) {
         var Global* g = new(Global);
-        g.name = name;
+        g.name = this.unique(name);
         g.ty = t;
         g.linkage = "";
         g.init = init;
@@ -196,10 +221,11 @@ public class Module {
     // AddFunction adds a function of t named name, declared until a block is added to it
     public fun Function*(str, IrType*) AddFunction = (name, t) {
         var Function* f = new(Function);
-        f.name = name;
+        f.name = this.unique(name);
         f.ty = t;
         f.linkage = "";
         f.attributes = ArrList::[str]New(0U);
+        f.dbg = "";
         f.params = ArrList::[Value*]New(0U);
         f.blocks = ArrList::[Block*]New(0U);
         for(var uint i = 0U; i < t.fields.Len(); i++) {
@@ -211,41 +237,107 @@ public class Module {
 
     // AddFlag adds a module flag of the given behavior, name and value
     public fun void(uint, str, uint) AddFlag = (behavior, name, value) {
-        this.flags.AddLast("!{i32 " + behavior{str} + ", !\"" + name + "\", i32 " + value{str} + "}");
+        this.flags.AddLast(this.Node("!{i32 " + behavior{str} + ", !\"" + name + "\", i32 " + value{str} + "}"));
+    }
+
+    // Node adds the metadata node spelled text, answering its number
+    public fun uint(str) Node = (text) {
+        this.nodes.AddLast(text);
+        return this.nodes.Len() - 1U;
+    }
+
+    // Reserve numbers a metadata node spelled later, through Fill, so that nodes may name it before it is spelled
+    public fun uint() Reserve = () {
+        return this.Node("");
+    }
+
+    // Fill spells the reserved metadata node numbered n
+    public fun void(uint, str) Fill = (n, text) {
+        this.nodes.Set(n, text);
+    }
+
+    // AddNamed adds the named metadata name, listing the nodes numbered nodes
+    public fun void(str, ArrList[uint]*) AddNamed = (name, nodes) {
+        var str list = "";
+        for(var uint i = 0U; i < nodes.Len(); i++) {
+            if(i > 0U) {
+                list = list + ", ";
+            }
+            list = list + "!" + nodes.Get(i){str};
+        }
+        this.named.AddLast("!" + name + " = !{" + list + "}");
+    }
+
+    // OptSize marks every function the module defines as one to optimize for size
+    public fun void() OptSize = () {
+        for(var uint i = 0U; i < this.functions.Len(); i++) {
+            var Function* f = this.functions.Get(i);
+            if(f.blocks.Len() > 0U) {
+                f.attributes.AddLast("optsize");
+            }
+        }
+    }
+
+    // unique answers name, or, when a global or function already has it, name followed by the first number that makes it one none has
+    fun str(str) unique = (name) {
+        var (uint, bool) taken = this.names.Get(name);
+        if(!taken.1) {
+            this.names.Put(name, 0U);
+            return name;
+        }
+        var uint n = taken.0;
+        var str candidate = "";
+        for {
+            n++;
+            candidate = name + "." + n{str};
+            if(!this.names.Get(candidate).1) {
+                break;
+            }
+        }
+        this.names.Put(name, n);
+        this.names.Put(candidate, 0U);
+        return candidate;
     }
 
     // Text spells the whole module
     public fun str() Text = () {
-        var str out = "";
+        var ArrList[str]* parts = ArrList::[str]New(0U);
         if(this.dataLayout != "") {
-            out = out + "target datalayout = \"" + this.dataLayout + "\"\n";
+            parts.AddLast("target datalayout = \"" + this.dataLayout + "\"\n");
         }
         if(this.triple != "") {
-            out = out + "target triple = \"" + this.triple + "\"\n";
+            parts.AddLast("target triple = \"" + this.triple + "\"\n");
         }
         for(var uint i = 0U; i < this.structs.Len(); i++) {
             var IrType* t = this.structs.Get(i);
-            out = out + "%" + Quote::Name(t.name) + " = type " + t.Body() + "\n";
+            parts.AddLast("%" + Quote::Name(t.name) + " = type " + t.Body() + "\n");
         }
         for(var uint i = 0U; i < this.globals.Len(); i++) {
-            out = out + this.globals.Get(i).Text() + "\n";
+            parts.AddLast(this.globals.Get(i).Text() + "\n");
         }
         for(var uint i = 0U; i < this.functions.Len(); i++) {
-            out = out + "\n" + this.functions.Get(i).Text();
+            parts.AddLast("\n");
+            parts.AddLast(this.functions.Get(i).Text());
+        }
+        if(this.flags.Len() > 0U || this.named.Len() > 0U) {
+            parts.AddLast("\n");
+        }
+        for(var uint i = 0U; i < this.named.Len(); i++) {
+            parts.AddLast(this.named.Get(i) + "\n");
         }
         if(this.flags.Len() > 0U) {
-            out = out + "\n!llvm.module.flags = !{";
+            parts.AddLast("!llvm.module.flags = !{");
             for(var uint i = 0U; i < this.flags.Len(); i++) {
                 if(i > 0U) {
-                    out = out + ", ";
+                    parts.AddLast(", ");
                 }
-                out = out + "!" + i{str};
+                parts.AddLast("!" + this.flags.Get(i){str});
             }
-            out = out + "}\n";
-            for(var uint i = 0U; i < this.flags.Len(); i++) {
-                out = out + "!" + i{str} + " = " + this.flags.Get(i) + "\n";
-            }
+            parts.AddLast("}\n");
         }
-        return out;
+        for(var uint i = 0U; i < this.nodes.Len(); i++) {
+            parts.AddLast("!" + i{str} + " = " + this.nodes.Get(i) + "\n");
+        }
+        return Quote::Join(parts);
     }
 }

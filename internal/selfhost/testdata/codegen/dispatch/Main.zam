@@ -1,0 +1,140 @@
+namespace Main {
+    interface Sided {
+        fun int() Sides;
+    }
+
+    interface Scaled {
+        fun int(int) Scale;
+    }
+
+    abstract Shape {
+        var int factor = 2;
+
+        virtual fun int() Sides;
+
+        fun int() Weight = () {
+            return this.Sides() * factor;
+        }
+
+        fun int() Kind = () {
+            return 1;
+        }
+    }
+
+    class Square <: Shape* {
+        fun int() Sides = () {
+            return 4;
+        }
+
+        fun int() Kind = () {
+            return 10 + super.Kind();
+        }
+
+        fun int(int) Scale = (n) {
+            return n * Sides();
+        }
+    }
+
+    class Triangle <: Shape* {
+        var int extra;
+
+        fun int() Sides = () {
+            return 3 + extra;
+        }
+
+        fun int(int) Scale = (n) {
+            return n + this.Sides();
+        }
+    }
+
+    class Counter {
+        var int count;
+
+        fun void(int) Add = (n) {
+            count = count + n;
+        }
+
+        fun int() Twice = () {
+            Add(count);
+            return count;
+        }
+    }
+
+    struct Point {
+        var int x;
+        var int y;
+
+        fun int() Sum = () {
+            return x + y;
+        }
+
+        fun void(int) Shift = (d) {
+            x = x + d;
+            this.y = this.y + d;
+        }
+    }
+
+    class Box[T] {
+        var T held;
+
+        fun T() Get = () {
+            return held;
+        }
+
+        fun void(T) Set = (v) {
+            held = v;
+        }
+    }
+
+    enum Planet : int {
+        Mercury(1),
+        Venus(2);
+
+        fun int() Doubled = () {
+            return (*this){int} * 2;
+        }
+    }
+
+    fun int(Shape*) weigh = (s) {
+        return s.Weight() + s.Kind();
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var Square* square = new(Square);
+        var Triangle* triangle = new(Triangle);
+        triangle.extra = 1;
+        var int c1 = one / ((square.Sides() == 4 && triangle.Sides() == 4 && square.Kind() == 11) ? 1 : 0);
+
+        var Shape* shape = square;
+        var int c2 = one / ((shape.Sides() == 4 && shape.Weight() == 8 && shape.Kind() == 11) ? 1 : 0);
+        shape = triangle;
+        var int c3 = one / ((shape.Sides() == 4 && shape.Weight() == 8 && shape.Kind() == 1) ? 1 : 0);
+        var int c4 = one / ((Main::weigh(square) == 19 && Main::weigh(triangle) == 9) ? 1 : 0);
+
+        var Sided* sided = square;
+        var Scaled* scaled = triangle;
+        var int c5 = one / ((sided.Sides() == 4 && scaled.Scale(5) == 9) ? 1 : 0);
+        sided = triangle;
+        scaled = square;
+        var int c6 = one / ((sided.Sides() == 4 && scaled.Scale(5) == 20) ? 1 : 0);
+
+        var Counter* counter = new(Counter);
+        counter.Add(3);
+        var int c7 = one / ((counter.Twice() == 6 && counter.count == 6) ? 1 : 0);
+
+        var Point p;
+        p.x = 1;
+        p.y = 2;
+        p.Shift(3);
+        var Point* pp = &p;
+        var int c8 = one / ((p.Sum() == 9 && pp.Sum() == 9 && p.x == 4) ? 1 : 0);
+
+        var Box[int]* box = new(Box[int]);
+        box.Set(7);
+        var int c9 = one / ((box.Get() == 7) ? 1 : 0);
+
+        var Planet planet = Planet::Venus;
+        var int c10 = one / ((planet.Doubled() == 4 && Planet::Mercury.Doubled() == 2) ? 1 : 0);
+    }
+}

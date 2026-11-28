@@ -1,0 +1,54 @@
+namespace Main {
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var int c1 = one / ((Main::add(2, 3) == 5 && add(-2, 2) == 0) ? 1 : 0);
+        var int c2 = one / ((Main::fib(20) == 6765) ? 1 : 0);
+        var int c3 = one / ((Main::scale(1.5, 4U) == 6.0 && Main::shout('a') == 'A') ? 1 : 0);
+        var int c4 = one / ((Main::first(7, 9) == 7 && Main::early(4) == 8) ? 1 : 0);
+        var int c5 = one / ((Main::nested(3) == 12 && Main::narrow(250{byte}) == 4{byte}) ? 1 : 0);
+        Main::nothing(5);
+        var int c6 = one / ((Main::four() == 4) ? 1 : 0);
+    }
+
+    fun int(int, int) add = (a, b) {
+        return a + b;
+    }
+
+    fun int(int) fib = (n) {
+        return n < 2 ? n : Main::fib(n - 1) + Main::fib(n - 2);
+    }
+
+    fun flt(flt, uint) scale = (f, by) {
+        return f * by{flt};
+    }
+
+    fun char(char) shout = (c) {
+        return (c{int} - 32){char};
+    }
+
+    fun int(int, int) first = (a, _) {
+        return a;
+    }
+
+    fun int(int) early = (n) {
+        return n * 2;
+        return 0;
+    }
+
+    fun int(int) nested = (n) {
+        return Main::add(Main::add(n, n), Main::add(n, n));
+    }
+
+    fun byte(byte) narrow = (b) {
+        return b + 10{byte};
+    }
+
+    fun void(int) nothing = (n) {
+        var int ignored = n;
+    }
+
+    fun int() four = () {
+        var int x = 4;
+        return x;
+    }
+}

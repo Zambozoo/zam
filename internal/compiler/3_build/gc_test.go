@@ -45,7 +45,7 @@ func compileWith(t testing.TB, flags []string, source string) string {
 	ast, errs := syntax.NewAST(cmd, files, base.NewPackageProvider(t.TempDir()))
 	require.Empty(t, errs)
 	require.Empty(t, semantic.ValidateAST(ast))
-	object, err := codegen.GenerateObject(cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple, Optimization: cmd.Optimization})
+	object, err := generate(t, append(argv[2:], entry), cmd, ast, codegen.ObjectOptions{Triple: testTarget().Triple, Optimization: cmd.Optimization})
 	require.NoError(t, err)
 	cache, err := nativeRuntimeCache()
 	require.NoError(t, err)

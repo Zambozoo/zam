@@ -1,0 +1,43 @@
+namespace Main {
+    fun int(str) len = (s) {
+        var int* length = (s{byte*} - 8){void*}{int*};
+        return *length;
+    }
+
+    fun bool(str, str) same = (a, b) {
+        var int n = Main::len(a);
+        if(n != Main::len(b)) {
+            return false;
+        }
+        var byte* x = a{byte*};
+        var byte* y = b{byte*};
+        for(var int i = 0; i < n; i++) {
+            if(x[i] != y[i]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    fun void(uint, str...) main = (argC, argV) {
+        var int one = 1;
+        var str hello = "hello";
+        var byte* bytes = hello{byte*};
+        var int c1 = one / ((Main::len(hello) == 5 && bytes[1] == 'e'{byte} && bytes[4] == 'o'{byte}) ? 1 : 0);
+
+        var str joined = hello + ", " + "world";
+        var int c2 = one / ((Main::same(joined, "hello, world") && !Main::same(joined, hello)) ? 1 : 0);
+
+        var int c3 = one / ((Main::same(42{str}, "42") && Main::same((-7){str}, "-7") && Main::same(7U{str}, "7")) ? 1 : 0);
+        var int c4 = one / ((Main::same(true{str}, "true") && Main::same('x'{str}, "x")) ? 1 : 0);
+
+        var str none = null;
+        var int c5 = one / ((none{byte*} == null) ? 1 : 0);
+
+        var str acc = "";
+        for(var int i = 0; i < 3000; i++) {
+            acc = acc + "ab";
+        }
+        var int c6 = one / ((Main::len(acc) == 6000 && acc{byte*}[5999] == 'b'{byte}) ? 1 : 0);
+    }
+}

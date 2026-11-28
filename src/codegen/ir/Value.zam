@@ -78,13 +78,13 @@ public class Value {
     }
 
     static fun str(ArrList[Value*]*) typedList = (values) {
-        var str out = "";
+        var ArrList[str]* parts = ArrList::[str]New(0U);
         for(var uint i = 0U; i < values.Len(); i++) {
             if(i > 0U) {
-                out = out + ", ";
+                parts.AddLast(", ");
             }
-            out = out + values.Get(i).Typed();
+            parts.AddLast(values.Get(i).Typed());
         }
-        return out;
+        return Quote::Join(parts);
     }
 }

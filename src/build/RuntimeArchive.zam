@@ -1,0 +1,205 @@
+import std("codec/text/Hex.zam");
+import std("crypto/hash/Digest.zam");
+import std("crypto/hash/SHA256.zam");
+import std("data/list/ArrList.zam");
+import std("io/Paths.zam");
+import std("io/local/FS.zam");
+import std("io/local/Process.zam");
+import std("lang/Arr.zam");
+import std("lang/Err.zam");
+import std("lang/StrErr.zam");
+import std("lang/Strs.zam");
+import "../cli/Target.zam";
+import "../codegen/Zig.zam";
+import "Pack.zam";
+
+// RuntimeArchive compiles the C runtime for a target into a static archive, cached by what it is built from
+public namespace RuntimeArchive {
+    // Name is the file the archive is written to inside its cache entry
+    public var str$ Name = "libzamrt.a";
+    // parallel is how many sources compile at once
+    var uint$ parallel = 8U;
+
+    // Build answers the path of the runtime under runtime compiled for t into an archive beneath cache, compiling it with zig against pack the first time it is asked for
+    public fun (str, Err*)(str, Target, str, str) Build = (cache, t, pack, runtime) {
+        var Arr[str]* env = Zig::Env(cache);
+        var (Process.Result, Err*) version = Process::Run("", Arr::[str]New(2U, "zig", "version"), env);
+        if(version.1 != null || version.0.code != 0) {
+            var str prebuilt = Paths::Join(Paths::Join(pack, "lib"), RuntimeArchive::Name);
+            if(!FS::Exists(prebuilt)) {
+                return ("", StrErr::New("zig is not on PATH to compile the runtime with, and the " + t.name + " pack holds no prebuilt runtime"));
+            }
+            return (prebuilt, null);
+        }
+        var (str, Err*) sources = FS::ReadFile(Paths::Join(pack, "sources.txt"));
+        if(sources.1 != null) {
+            return ("", sources.1);
+        }
+        var ArrList[str]* flags = RuntimeArchive::CFlags(t, pack);
+        var (str, Err*) key = RuntimeArchive::key("zig\0" + version.0.output + "\0" + sources.0, flags, runtime);
+        if(key.1 != null) {
+            return ("", key.1);
+        }
+        var str entry = Paths::Join(cache, key.0);
+        var str archive = Paths::Join(entry, RuntimeArchive::Name);
+        if(FS::Exists(archive)) {
+            return (archive, null);
+        }
+        var Err* made = FS::MakeDirs(cache);
+        if(made != null) {
+            return ("", StrErr::New("cannot create runtime cache " + Strs::Quote(cache) + ": " + made.Err()));
+        }
+        var (str, Err*) staging = FS::MakeTempDir(cache, key.0 + ".tmp-");
+        if(staging.1 != null) {
+            return ("", StrErr::New("cannot stage runtime archive: " + staging.1.Err()));
+        }
+        defer FS::RemoveAll(staging.0);
+        var Err* compiled = RuntimeArchive::compile(staging.0, flags, runtime, env);
+        if(compiled != null) {
+            return ("", compiled);
+        }
+        var Err* stored = FS::Rename(staging.0, entry);
+        if(stored != null) {
+            if(FS::Exists(archive)) {
+                return (archive, null);
+            }
+            return ("", StrErr::New("cannot store runtime archive: " + stored.Err()));
+        }
+        return (archive, null);
+    }
+
+    // CFlags answers the flags C is compiled with for t, against pack's headers
+    public fun ArrList[str]*(Target, str) CFlags = (t, pack) {
+        var ArrList[str]* flags = ArrList::[str]New(5U, "-target", t.zig, "-std=gnu11", "-O3", "-fPIC");
+        var ArrList[str]* packed = Pack::CFlags(pack);
+        for(var uint i = 0U; i < packed.Len(); i++) {
+            flags.AddLast(packed.Get(i));
+        }
+        return flags;
+    }
+
+    // compile compiles each of the runtime's sources into dir with flags, each on a thread of its own, and archives their objects as Name there
+    fun Err*(str, ArrList[str]*, str, Arr[str]*) compile = (dir, flags, runtime, env) {
+        var str src = Paths::Join(runtime, "src");
+        var (Arr[str]*, Err*) names = FS::ReadDir(src);
+        if(names.1 != null) {
+            return StrErr::New("cannot stage runtime sources: " + names.1.Err());
+        }
+        var ArrList[str]* objects = ArrList::[str]New(0U);
+        var ArrList[thread[Err*]]* compiling = ArrList::[thread[Err*]]New(0U);
+        var Err* failed = null;
+        var uint waited = 0U;
+        for(var uint i = 0U; i < names.0.Len(); i++) {
+            var str name = names.0.Get(i);
+            if(!Strs::HasSuffix(name, ".c")) {
+                continue;
+            }
+            var str object = Paths::Join(dir, Strs::Slice(name, 0U, Strs::ByteLen(name) - 2U) + ".o");
+            objects.AddLast(object);
+            if(compiling.Len() - waited >= RuntimeArchive::parallel) {
+                var Err* err = wait(compiling.Get(waited));
+                waited++;
+                if(failed == null) {
+                    failed = err;
+                }
+            }
+            compiling.AddLast(async(RuntimeArchive::cc(RuntimeArchive::ccArgs(flags, runtime, Paths::Join(src, name), object), env, name)));
+        }
+        for(; waited < compiling.Len(); waited++) {
+            var Err* err = wait(compiling.Get(waited));
+            if(failed == null) {
+                failed = err;
+            }
+        }
+        if(failed != null) {
+            return failed;
+        }
+        var ArrList[str]* ar = ArrList::[str]New(4U, "zig", "ar", "rcs", Paths::Join(dir, RuntimeArchive::Name));
+        for(var uint i = 0U; i < objects.Len(); i++) {
+            ar.AddLast(objects.Get(i));
+        }
+        var (Process.Result, Err*) archived = Process::Run("", ar.Arr(), env);
+        if(archived.1 != null) {
+            return archived.1;
+        } else if(archived.0.code != 0) {
+            return StrErr::New("zig ar failed: " + archived.0.output);
+        }
+        return null;
+    }
+
+    // ccArgs answers zig's arguments compiling source to object with flags, against the runtime's own headers
+    fun Arr[str]*(ArrList[str]*, str, str, str) ccArgs = (flags, runtime, source, object) {
+        var ArrList[str]* argv = ArrList::[str]New(3U, "zig", "cc", "-c");
+        for(var uint i = 0U; i < flags.Len(); i++) {
+            argv.AddLast(flags.Get(i));
+        }
+        argv.AddLast("-I" + Paths::Join(runtime, "include"));
+        argv.AddLast("-I" + Paths::Join(runtime, "src"));
+        argv.AddLast("-o");
+        argv.AddLast(object);
+        argv.AddLast(source);
+        return argv.Arr();
+    }
+
+    // cc runs zig over argv, answering why the source named name did not compile, or null
+    fun Err*(Arr[str]*, Arr[str]*, str) cc = (argv, env, name) {
+        var (Process.Result, Err*) run = Process::Run("", argv, env);
+        if(run.1 != null) {
+            return run.1;
+        } else if(run.0.code != 0) {
+            return StrErr::New("zig cc failed on " + name + ":\n" + run.0.output);
+        }
+        return null;
+    }
+
+    // key hashes everything an archive is built from
+    fun (str, Err*)(str, ArrList[str]*, str) key = (identity, flags, runtime) {
+        var Digest* hash = SHA256::New();
+        var str joined = "";
+        for(var uint i = 0U; i < flags.Len(); i++) {
+            if(i > 0U) {
+                joined = joined + "\0";
+            }
+            joined = joined + flags.Get(i);
+        }
+        hash.WriteStr(identity + "\0" + joined + "\0");
+        var ArrList[str]* paths = ArrList::[str]New(0U);
+        var Err* listed = RuntimeArchive::list(runtime, "include/zam", ".h", paths);
+        if(listed == null) {
+            listed = RuntimeArchive::list(runtime, "src", ".c", paths);
+        }
+        if(listed == null) {
+            listed = RuntimeArchive::list(runtime, "src", ".h", paths);
+        }
+        if(listed != null) {
+            return ("", listed);
+        }
+        for(var uint i = 0U; i < paths.Len(); i++) {
+            var (str, Err*) bytes = FS::ReadFile(Paths::Join(runtime, paths.Get(i)));
+            if(bytes.1 != null) {
+                return ("", bytes.1);
+            }
+            hash.WriteStr(paths.Get(i) + "\0" + Strs::ByteLen(bytes.0){str} + "\0");
+            hash.WriteStr(bytes.0);
+        }
+        var Arr[byte]* sum = hash.Sum();
+        return (Strs::Slice(Hex::Encode(sum.Arr(), sum.Len()), 0U, 16U), null);
+    }
+
+    // list adds to paths, in order, the files of the runtime's directory dir ending in suffix, by their paths beneath the runtime
+    fun Err*(str, str, str, ArrList[str]*) list = (runtime, dir, suffix, paths) {
+        var (Arr[str]*, Err*) names = FS::ReadDir(Paths::Join(runtime, dir));
+        if(names.1 != null) {
+            return names.1;
+        }
+        for(var uint i = 0U; i < names.0.Len(); i++) {
+            if(Strs::HasSuffix(names.0.Get(i), suffix)) {
+                var str path = dir + "/" + names.0.Get(i);
+                var uint at = paths.Len();
+                for(; at > 0U && paths.Get(at - 1U) > path; at--) {}
+                paths.Add(at, path);
+            }
+        }
+        return null;
+    }
+}
