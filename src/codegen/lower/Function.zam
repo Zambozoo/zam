@@ -523,21 +523,41 @@ public class Function {
         this.setDeferred(d.id);
     }
 
-    // ifStmt compiles s, each branch in a scope of its own
+    // ifStmt compiles s, each branch in a scope of its own. An else that is another if is compiled by the same loop rather than by recursion, as stmt and branch would compile it, so that a long chain of them takes no more stack than one
     fun void(ast.Stmt.If*) ifStmt = (s) {
-        var Value* condition = this.x.Condition(s.condition);
-        var Module.Block* then = this.fn.AddBlock();
-        var Module.Block* end = this.fn.AddBlock();
-        var Module.Block* otherwise = end;
-        if(s.otherwise != null) {
-            otherwise = this.fn.AddBlock();
+        var ArrList[Module.Block*]* ends = ArrList::[Module.Block*]New(0U);
+        var ArrList[uint]* held = ArrList::[uint]New(0U);
+        for(var ast.Stmt.If* link = s; link != null;) {
+            var Value* condition = this.x.Condition(link.condition);
+            var Module.Block* then = this.fn.AddBlock();
+            var Module.Block* end = this.fn.AddBlock();
+            var Module.Block* otherwise = end;
+            if(link.otherwise != null) {
+                otherwise = this.fn.AddBlock();
+            }
+            this.b.CondBr(condition, then, otherwise);
+            this.branch(then, link.then, end);
+            ends.AddLast(end);
+            var ast.Stmt* next = link.otherwise;
+            link = null;
+            if(next != null && next.kind == ast.Stmt.Kind::If && this.reason == "") {
+                this.b.At(otherwise);
+                this.pushScope();
+                this.at(next.start);
+                this.cover(next.start);
+                held.AddLast(this.temps.Len());
+                link = next{ast.Stmt.If*};
+            } else if(next != null) {
+                this.branch(otherwise, next, end);
+            }
         }
-        this.b.CondBr(condition, then, otherwise);
-        this.branch(then, s.then, end);
-        if(s.otherwise != null) {
-            this.branch(otherwise, s.otherwise, end);
+        for(var uint i = ends.Len(); i > 0U; i--) {
+            this.b.At(ends.Get(i - 1U));
+            if(i > 1U) {
+                this.clearTemps(held.Get(i - 2U));
+                this.close(ends.Get(i - 2U));
+            }
         }
-        this.b.At(end);
     }
 
     // forStmt compiles s
@@ -689,6 +709,11 @@ public class Function {
         this.b.At(block);
         this.pushScope();
         this.stmt(s);
+        this.close(end);
+    }
+
+    // close runs the defers of the scope a branch opened and closes it, then falls to end
+    fun void(Module.Block*) close = (end) {
         var Scope* scope = this.scopes.GetLast();
         if(!this.b.Terminated()) {
             this.runDefers(scope);
